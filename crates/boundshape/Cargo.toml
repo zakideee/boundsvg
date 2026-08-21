@@ -1,0 +1,25 @@
+[package]
+name = "boundshape"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Low-level geometry and symbol kernel for boundsvg"
+authors = ["zakideee"]
+repository = "https://github.com/zakideee/boundsvg"
+
+[lints]
+workspace = true
+
+[dependencies]
+schemars = { version = "=1.2.2", optional = true }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[features]
+schema = ["dep:schemars"]
+
+[dev-dependencies]
+proptest = "1"
+serde_json = "1"

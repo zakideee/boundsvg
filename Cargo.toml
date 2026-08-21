@@ -1,0 +1,64 @@
+[workspace]
+members = [
+    "crates/boundsvg",
+    "crates/boundshape",
+    "crates/boundtext",
+    "crates/boundtext-cli",
+    "crates/boundmp4",
+]
+exclude = ["vendor/ttf-parser"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = { level = "warn", priority = -1 }
+# --- domain-specific allows (font/layout/graphics crate) ---
+# WASM boundary functions require flat parameter lists (wasm_bindgen constraint);
+# internal functions with many params use config structs where practical
+too_many_arguments = { level = "warn", priority = 1 }
+module_name_repetitions = { level = "allow", priority = 1 }
+must_use_candidate = { level = "warn", priority = 1 }
+missing_errors_doc = { level = "warn", priority = 1 }
+missing_panics_doc = { level = "warn", priority = 1 }
+# float ops are pervasive in layout/font metrics — exact comparison is intentional
+float_cmp = { level = "allow", priority = 1 }
+# coordinate variables (tx1/ty1, x1/x2) are standard naming in graphics code
+similar_names = { level = "allow", priority = 1 }
+# u16→f64, i16→f64 etc.: prefer From/Into for lossless widening
+cast_lossless = { level = "warn", priority = 1 }
+# f64→f32 (Taffy), f64→u32 (pixels): intentional truncation at specific sites
+cast_possible_truncation = { level = "warn", priority = 1 }
+# usize→f64: lossless on wasm32 (32-bit usize); counts never exceed 2^53 on 64-bit
+cast_precision_loss = { level = "allow", priority = 1 }
+# signed↔unsigned: only at validated boundaries
+cast_sign_loss = { level = "warn", priority = 1 }
+cast_possible_wrap = { level = "warn", priority = 1 }
+# --- quality lints kept as warn ---
+cognitive_complexity = { level = "warn", priority = 1 }
+# --- panic family: forbidden in production code (allow-*-in-tests in clippy.toml) ---
+unwrap_used = { level = "deny", priority = 1 }
+expect_used = { level = "deny", priority = 1 }
+panic = { level = "deny", priority = 1 }
+unreachable = { level = "deny", priority = 1 }
+todo = { level = "deny", priority = 1 }
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "unwind"
+
+# Vendored ttf-parser 0.25.1 with two one-line fixes for fonts that have
+# exactly 65535 glyphs (Noto Sans CJK VF): upstream discards the whole
+# loca/gvar tables, silently erasing every glyph outline. Also covers
+# rustybuzz's ttf-parser dependency (same version). See
+# vendor/ttf-parser/README-PATCH.md; drop once upstream ships a fix.
+[patch.crates-io]
+ttf-parser = { path = "vendor/ttf-parser" }

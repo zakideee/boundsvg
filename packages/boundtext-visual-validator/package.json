@@ -1,0 +1,19 @@
+{
+  "name": "@boundsvg/boundtext-visual-validator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Renders boundtext spec cases as PNG using boundsvg's full WASM pipeline for visual comparison",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "render": "tsx src/run.ts"
+  },
+  "dependencies": {
+    "@boundsvg/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.7.0"
+  }
+}

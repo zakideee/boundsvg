@@ -1,0 +1,372 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.2/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true,
+    "defaultBranch": "main"
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": ["**", "!apps/docs/public/rustdoc", "!packages/core/src/generated/ir"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "trailingCommas": "all",
+      "semicolons": "always"
+    }
+  },
+  "json": {
+    "parser": {
+      "allowComments": true,
+      "allowTrailingCommas": true
+    }
+  },
+  "css": {
+    "formatter": {
+      "quoteStyle": "double"
+    }
+  },
+  "plugins": ["./biome-plugins/no-as-assertion.grit"],
+  "linter": {
+    "enabled": true,
+    "domains": {
+      "project": "recommended"
+    },
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error",
+        "useExhaustiveDependencies": "warn"
+      },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": {
+            "maxAllowedComplexity": 20
+          }
+        },
+        "useMaxParams": {
+          "level": "error",
+          "options": {
+            "max": 3
+          }
+        }
+      },
+      "style": {
+        "useImportType": "error",
+        "noNonNullAssertion": "error",
+        "noParameterAssign": "error",
+        "useBlockStatements": "error",
+        "useConsistentTypeDefinitions": {
+          "level": "error",
+          "options": {
+            "style": "type"
+          }
+        },
+        "useNamingConvention": {
+          "level": "error",
+          "options": {
+            "strictCase": false,
+            "conventions": [
+              {
+                "selector": {
+                  "kind": "function"
+                },
+                "formats": ["camelCase", "PascalCase"]
+              },
+              {
+                "selector": {
+                  "kind": "typeAlias"
+                },
+                "formats": ["PascalCase"]
+              },
+              {
+                "selector": {
+                  "kind": "class"
+                },
+                "formats": ["PascalCase"]
+              },
+              {
+                "selector": {
+                  "kind": "enum"
+                },
+                "formats": ["PascalCase"]
+              },
+              {
+                "selector": {
+                  "kind": "const"
+                },
+                "formats": ["camelCase", "PascalCase", "CONSTANT_CASE"]
+              }
+            ]
+          }
+        },
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": {
+            "filenameCases": ["kebab-case", "PascalCase"]
+          }
+        }
+      },
+      "performance": {
+        "noReExportAll": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noConsole": {
+          "level": "warn",
+          "options": {
+            "allow": ["error", "warn", "info", "debug"]
+          }
+        },
+        "noImportCycles": "error"
+      }
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/tests/**/*", "**/bench/**/*"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "useNamingConvention": "off",
+            "noNonNullAssertion": "off"
+          },
+          "complexity": {
+            "useMaxParams": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/playground-react/**/*",
+        "apps/playground-cli/**/*",
+        "packages/react/src/components/boundsvg.tsx",
+        "packages/react/src/components/interactive-boundsvg.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "security": {
+            "noDangerouslySetInnerHtml": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "packages/core/src/wasm/types.ts",
+        "packages/browser/src/index.ts",
+        "packages/browser/src/wasm.ts",
+        "packages/core/src/vnode/types.ts",
+        "packages/react/src/utils/vnode-factory.ts",
+        "packages/video/src/generated-wasm.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "useNamingConvention": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "packages/core/src/wasm/index.ts",
+        "packages/browser/src/**",
+        "crates/boundtext/tools/**",
+        "apps/**"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "useMaxParams": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["crates/boundtext/tools/**", "packages/boundtext-visual-validator/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useNamingConvention": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "packages/browser/src/**/*",
+        "packages/react/src/**/*",
+        "packages/video/src/**/*"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noNodejsModules": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/video/src/**/*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@boundsvg/browser": "video must not depend on browser",
+                  "@boundsvg/react": "video must not depend on react",
+                  "@boundsvg/worker": "video must not depend on worker",
+                  "@boundsvg/cli": "video must not depend on cli"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/shape/src/**/*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@boundsvg/core": "shape must stay dependency-free (authoring types only)",
+                  "@boundsvg/browser": "shape must stay dependency-free (authoring types only)",
+                  "@boundsvg/react": "shape must stay dependency-free (authoring types only)",
+                  "@boundsvg/worker": "shape must stay dependency-free (authoring types only)",
+                  "@boundsvg/cli": "shape must stay dependency-free (authoring types only)",
+                  "@boundsvg/video": "shape must stay dependency-free (authoring types only)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/core/src/**/*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@boundsvg/browser": "core must not depend on browser",
+                  "@boundsvg/react": "core must not depend on react",
+                  "@boundsvg/worker": "core must not depend on worker",
+                  "@boundsvg/cli": "core must not depend on cli",
+                  "@boundsvg/video": "core must not depend on video"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/browser/src/**/*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@boundsvg/react": "browser must not depend on react",
+                  "@boundsvg/worker": "browser must not depend on worker",
+                  "@boundsvg/cli": "browser must not depend on cli",
+                  "@boundsvg/video": "browser must not depend on video"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/worker/src/**/*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@boundsvg/react": "worker must not depend on react",
+                  "@boundsvg/cli": "worker must not depend on cli",
+                  "@boundsvg/video": "worker must not depend on video"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/react/src/**/*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@boundsvg/cli": "react must not depend on cli",
+                  "@boundsvg/video": "react must not depend on video"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/cli/src/**/*"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@boundsvg/react": "cli must not depend on react",
+                  "@boundsvg/browser": "cli must not depend on browser",
+                  "@boundsvg/worker": "cli must not depend on worker",
+                  "@boundsvg/video": "cli must not depend on video"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

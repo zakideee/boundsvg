@@ -1,0 +1,34 @@
+{
+  "name": "@boundsvg/playground-react",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Interactive playground for boundsvg — live JSX-to-SVG/PNG preview",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@boundsvg/browser": "workspace:*",
+    "@boundsvg/core": "workspace:*",
+    "@boundsvg/react": "workspace:*",
+    "@boundsvg/shape": "workspace:*",
+    "@boundsvg/video": "workspace:*",
+    "jotai": "^2.10.1",
+    "prismjs": "^1.30.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@boundsvg/worker": "workspace:*",
+    "@types/prismjs": "^1.26.6",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}

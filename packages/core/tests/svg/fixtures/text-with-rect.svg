@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 300" width="500" height="300">
+  <rect x="10" y="10" width="480" height="60" rx="8" fill="#f0f0f0" />
+  <text x="20" y="48" font-family="Noto Sans JP" font-size="24" fill="#333333">Header in Box</text>
+  <rect x="10" y="90" width="230" height="180" rx="8" fill="#e8e8ff" />
+  <text x="20" y="130" font-family="Noto Sans JP" font-size="16" fill="#333333">Left column text</text>
+  <rect x="260" y="90" width="230" height="180" rx="8" fill="#ffe8e8" />
+  <text x="270" y="130" font-family="Noto Sans JP" font-size="16" fill="#333333">Right column text</text>
+</svg>

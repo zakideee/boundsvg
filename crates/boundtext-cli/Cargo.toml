@@ -1,0 +1,24 @@
+[package]
+name = "boundtext-cli"
+version = "0.1.0"
+publish = false
+authors = ["zakideee"]
+repository = "https://github.com/zakideee/boundsvg"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "CLI runner for boundtext layout validation — reads JSON fixtures and outputs layout results"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "boundtext-cli"
+path = "src/main.rs"
+
+[dependencies]
+boundtext = { path = "../boundtext", features = ["unicode-full"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }

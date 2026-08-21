@@ -1,0 +1,62 @@
+{
+  "name": "@boundsvg/worker",
+  "version": "0.1.0",
+  "description": "Web Worker adapter for boundsvg — offloads WASM rendering to a background thread",
+  "keywords": [
+    "svg",
+    "wasm",
+    "web-worker",
+    "layout"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zakideee/boundsvg.git",
+    "directory": "packages/worker"
+  },
+  "homepage": "https://github.com/zakideee/boundsvg/tree/main/packages/worker",
+  "bugs": {
+    "url": "https://github.com/zakideee/boundsvg/issues"
+  },
+  "author": "zakideee",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./worker": {
+      "types": "./dist/worker-script.d.ts",
+      "import": "./dist/worker-script.js"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@boundsvg/core": "workspace:*",
+    "@boundsvg/browser": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

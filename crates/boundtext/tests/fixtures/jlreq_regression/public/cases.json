@@ -1,0 +1,730 @@
+[
+  {
+    "id": "ruby.horizontal.mono.over",
+    "category": "jlreq-ruby",
+    "description": "横組 1 文字ルビの上配置",
+    "request": {
+      "text": "",
+      "rich_text": [
+        { "kind": "text", "text": "東" },
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "京" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょう",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        },
+        { "kind": "text", "text": "都" }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 240,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.horizontal.group.long.warning",
+    "category": "jlreq-ruby",
+    "description": "長いルビは warning を出し、baseline で観測する",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "今日" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょうというひ",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 260,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.horizontal.group.short",
+    "category": "jlreq-ruby",
+    "description": "横組グループルビの短い注記",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "space-around",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "山川" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "やま",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 220,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.vertical.mono.over",
+    "category": "jlreq-ruby",
+    "description": "縦組 1 文字ルビの右配置",
+    "request": {
+      "text": "",
+      "rich_text": [
+        { "kind": "text", "text": "古" },
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "都" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "みやこ",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 220,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.vertical.mono.under",
+    "category": "jlreq-ruby",
+    "description": "縦組 under ルビの左配置",
+    "request": {
+      "text": "",
+      "rich_text": [
+        { "kind": "text", "text": "都" },
+        {
+          "kind": "ruby",
+          "rubyPosition": "under",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "鳥" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "とり",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 220,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.horizontal.adjacent",
+    "category": "jlreq-ruby",
+    "description": "隣接ルビの相対位置と bbox を検出する",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "京都" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょうと",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        },
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "東京" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "とうきょう",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 260,
+      "max_height": 180,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.horizontal.default.gap",
+    "category": "jlreq-ruby",
+    "description": "横組ルビのデフォルト gap=0 と rubyAlign=space-around",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "京" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょう",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 220,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.horizontal.gap.offset",
+    "category": "jlreq-ruby",
+    "description": "rubyGapPx と rubyOffsetPx による横組 over ルビ距離の調整",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "rubyGapPx": 4,
+          "rubyOffsetPx": 3,
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "京" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょう",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 220,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.horizontal.line-sizing.css",
+    "category": "jlreq-ruby",
+    "description": "rubyLineSizing=css は annotation を親文字の行ボックス外に置く",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "rubyLineSizing": "css",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "京" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょう",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 220,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.horizontal.alternate.translation",
+    "category": "jlreq-ruby",
+    "description": "読みと英訳を上下に分ける alternate multi-level ruby",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "alternate",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "東京" }],
+          "rt": [],
+          "rtLevels": [
+            [
+              {
+                "kind": "span",
+                "text": "とうきょう",
+                "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+              }
+            ],
+            [
+              {
+                "kind": "span",
+                "text": "Tokyo",
+                "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+              }
+            ]
+          ]
+        },
+        { "kind": "text", "text": "大学" }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 260,
+      "max_height": 180,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.horizontal.inter-character.fallback",
+    "category": "jlreq-ruby",
+    "description": "inter-character は warning を出し over 相当へ fallback する",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "inter-character",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "案" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "あん",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 220,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "ruby.vertical.gap.offset",
+    "category": "jlreq-ruby",
+    "description": "rubyGapPx と rubyOffsetPx による縦組 over ルビ距離の調整",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "rubyGapPx": 4,
+          "rubyOffsetPx": 3,
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "都" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "みやこ",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 220,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "kinsoku.bracket.opening",
+    "category": "jlreq-kinsoku",
+    "description": "開き括弧の行末禁止",
+    "request": {
+      "text": "私は「東京」に住む。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "kinsoku.bracket.closing",
+    "category": "jlreq-kinsoku",
+    "description": "閉じ括弧・句点の行頭禁止",
+    "request": {
+      "text": "彼は「すごい」と言った。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "kinsoku.dash.leader",
+    "category": "jlreq-kinsoku",
+    "description": "ダッシュ・三点リーダーの分離禁止",
+    "request": {
+      "text": "それは——偶然ではない……と感じた。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 96,
+      "max_height": 260,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "kinsoku.level3.small-kana",
+    "category": "jlreq-kinsoku",
+    "description": "JaTypesettingV1 では小書き仮名の行頭を許容する",
+    "request": {
+      "text": "ちょっとした",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 24,
+      "max_height": 240,
+      "wrap": "Char",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "kinsoku.level3.prolonged-sound",
+    "category": "jlreq-kinsoku",
+    "description": "JaTypesettingV1 では長音記号の行頭を許容する",
+    "request": {
+      "text": "スーパー",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 24,
+      "max_height": 240,
+      "wrap": "Char",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "kinsoku.level3.iteration",
+    "category": "jlreq-kinsoku",
+    "description": "JaTypesettingV1 では繰返し記号の行頭を許容する",
+    "request": {
+      "text": "各々様々",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 24,
+      "max_height": 260,
+      "wrap": "Char",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "vertical.ascii.rotated",
+    "category": "jlreq-vertical",
+    "description": "ASCII は mixed 縦組で回転する",
+    "request": {
+      "text": "ABC",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "vertical.fullwidth.upright",
+    "category": "jlreq-vertical",
+    "description": "全角英数字は mixed 縦組で正立する",
+    "request": {
+      "text": "ＡＩ２０",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "vertical.punctuation.upright",
+    "category": "jlreq-vertical",
+    "description": "縦組句読点は正立扱いにする",
+    "request": {
+      "text": "「縦組でも、約物の向きは重要です。」",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 220,
+      "max_height": 220,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "vertical.tcy.two-digits",
+    "category": "jlreq-vertical",
+    "description": "手動縦中横",
+    "request": {
+      "text": "",
+      "rich_text": [
+        { "kind": "text", "text": "第" },
+        {
+          "kind": "combine",
+          "text": "12",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 }
+        },
+        { "kind": "text", "text": "章" }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "vertical.auto-tcy.not-applied",
+    "category": "jlreq-vertical",
+    "description": "plain text では自動縦中横をしない",
+    "request": {
+      "text": "第12章では、7月6日の記録を読む。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 240,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "mixed.api.version",
+    "category": "jlreq-mixed",
+    "description": "和欧文混植と version 文字列",
+    "request": {
+      "text": "Boundsvg v0.1.0 では JLREQ-informed profile を固定する。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 20,
+      "max_width": 220,
+      "max_height": 260,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "numbers.date.time.percent",
+    "category": "jlreq-mixed",
+    "description": "数字、日付、時刻、percent",
+    "request": {
+      "text": "2026年7月6日 14時30分に、成功率は99.5%になった。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 20,
+      "max_width": 220,
+      "max_height": 260,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  },
+  {
+    "id": "paragraph.dialogue.narrow",
+    "category": "jlreq-paragraph",
+    "description": "会話文の狭幅改行",
+    "request": {
+      "text": "「それで、結果はどうでしたか。」「予想より安定しています。」",
+      "font_family": "NotoSansJP",
+      "font_size_px": 20,
+      "max_width": 160,
+      "max_height": 360,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    }
+  }
+]

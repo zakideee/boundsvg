@@ -1,0 +1,13 @@
+{
+  "name": "@boundsvg/playground-shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@boundsvg/core": "workspace:*",
+    "prismjs": "^1.30.0"
+  },
+  "devDependencies": {
+    "@types/prismjs": "^1.26.6"
+  }
+}

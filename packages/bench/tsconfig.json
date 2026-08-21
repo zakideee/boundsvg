@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["browser/**/*.ts", "src/**/*.ts", "vite.layout-transition.config.ts"],
+  "exclude": ["node_modules"]
+}

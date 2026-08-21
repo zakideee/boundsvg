@@ -1,0 +1,60 @@
+{
+  "name": "@boundsvg/video",
+  "version": "0.1.0",
+  "description": "Browser MP4 export for boundsvg — WebCodecs H.264 encoding with a bundled MP4 muxer",
+  "keywords": [
+    "mp4",
+    "webcodecs",
+    "svg",
+    "video",
+    "animation"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zakideee/boundsvg.git",
+    "directory": "packages/video"
+  },
+  "homepage": "https://github.com/zakideee/boundsvg/tree/main/packages/video",
+  "bugs": {
+    "url": "https://github.com/zakideee/boundsvg/issues"
+  },
+  "author": "zakideee",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./dist/boundmp4_bg.wasm": "./dist/boundmp4_bg.wasm"
+  },
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "THIRD-PARTY-LICENSES"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@boundsvg/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@boundsvg/core": "workspace:*",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

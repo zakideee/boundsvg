@@ -1,0 +1,241 @@
+[
+  {
+    "id": "fallback-primary-hit-001",
+    "category": "fallback",
+    "description": "プライマリフォントで全グリフがカバーされる場合",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement. This case validates single-font coverage.",
+    "request": {
+      "text": "あいうえお",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "fallback-to-second-001",
+    "category": "fallback",
+    "description": "セカンダリフォントへのフォールバック",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement (font_families array support). Placeholder uses NotoSerifJP as primary.",
+    "request": {
+      "text": "東京都",
+      "font_family": "NotoSerifJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "fallback-mixed-fonts-001",
+    "category": "fallback",
+    "description": "複数フォントからのグリフ混在",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement. Placeholder uses ZenMaruGothic.",
+    "request": {
+      "text": "あいうえお",
+      "font_family": "ZenMaruGothic",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "fallback-three-fonts-001",
+    "category": "fallback",
+    "description": "3 フォント全てを使用するフォールバック",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement. Placeholder uses NotoSansJP.",
+    "request": {
+      "text": "東京都渋谷区",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "fallback-no-glyph-001",
+    "category": "fallback",
+    "description": "どのフォントにも含まれない文字",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement. Uses Inter font which lacks CJK glyphs to test missing glyph handling.",
+    "request": {
+      "text": "ABC",
+      "font_family": "Inter",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "fallback-cjk-latin-001",
+    "category": "fallback",
+    "description": "CJK は JP フォント、Latin は別フォントからのフォールバック",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement. Placeholder uses NotoSansJP which covers both CJK and basic Latin.",
+    "request": {
+      "text": "Hello世界",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "fallback-serif-sans-001",
+    "category": "fallback",
+    "description": "Serif プライマリ、Sans フォールバック",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement. Placeholder uses NotoSerifJP as single font.",
+    "request": {
+      "text": "テスト文字",
+      "font_family": "NotoSerifJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "fallback-vertical-001",
+    "category": "fallback",
+    "description": "縦書きでのフォールバック",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement. Placeholder uses NotoSansJP.",
+    "request": {
+      "text": "東京都",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1
+    }
+  },
+  {
+    "id": "fallback-consistency-001",
+    "category": "fallback",
+    "description": "同一テキストで異なるフォント順序",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement. Placeholder uses ZenMaruGothic.",
+    "request": {
+      "text": "テスト文字列",
+      "font_family": "ZenMaruGothic",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "fallback-linebreak-001",
+    "category": "fallback",
+    "description": "フォールバックが改行位置に影響する場合",
+    "_note": "CLI currently supports only a single font_family. Multi-font fallback chain requires CLI enhancement. Placeholder uses NotoSansJP.",
+    "request": {
+      "text": "東京都渋谷区神宮前",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none"
+    }
+  }
+]

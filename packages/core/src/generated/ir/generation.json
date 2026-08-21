@@ -1,0 +1,9 @@
+{
+  "schemaGenerator": "schemars@1.2.2",
+  "typeGenerator": "json-schema-to-typescript@15.0.4",
+  "validatorGenerator": "ajv@8.20.0",
+  "validatorAnnotations": false,
+  "validatorInlineRefs": 5,
+  "validatorMessages": false,
+  "normalizationVersion": 1
+}

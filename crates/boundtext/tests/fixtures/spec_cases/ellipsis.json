@@ -1,0 +1,380 @@
+[
+  {
+    "id": "ellipsis-single-001",
+    "category": "ellipsis",
+    "description": "1 行 ellipsis でテキスト超過時に切り詰め",
+    "request": {
+      "text": "これは非常に長いテキストです",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 150,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-single-fit-001",
+    "category": "ellipsis",
+    "description": "テキストが収まる場合は ellipsis 不要",
+    "request": {
+      "text": "短い",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "ends_with_ellipsis": false,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-multi-2line-001",
+    "category": "ellipsis",
+    "description": "max_lines=2 で 2 行目に ellipsis 挿入",
+    "request": {
+      "text": "これは非常に長いテキストで改行が複数回発生します",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 100,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 2,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 2
+    }
+  },
+  {
+    "id": "ellipsis-multi-3line-001",
+    "category": "ellipsis",
+    "description": "max_lines=3 で 3 行目に ellipsis 挿入",
+    "request": {
+      "text": "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 3,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 3
+    }
+  },
+  {
+    "id": "ellipsis-cjk-001",
+    "category": "ellipsis",
+    "description": "CJK テキストの 1 行切り詰め",
+    "request": {
+      "text": "東京都渋谷区神宮前",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-mixed-001",
+    "category": "ellipsis",
+    "description": "CJK + Latin 混在の切り詰め",
+    "request": {
+      "text": "Hello世界のテストです",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-short-001",
+    "category": "ellipsis",
+    "description": "max_width がほぼ ellipsis 幅分のみの場合",
+    "request": {
+      "text": "あいうえおかきく",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 48,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-no-truncate-001",
+    "category": "ellipsis",
+    "description": "max_lines 設定ありだがテキストが収まるので切り詰めなし",
+    "request": {
+      "text": "短い文",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 3,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "ends_with_ellipsis": false,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-grapheme-combining-001",
+    "category": "ellipsis",
+    "description": "濁点付き文字（結合文字）の切り詰め",
+    "request": {
+      "text": "がぎぐげござじずぜぞ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-multiline-exact-001",
+    "category": "ellipsis",
+    "description": "max_lines 境界ぴったりのテキスト（切り詰め不要）",
+    "request": {
+      "text": "あいうえお",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 72,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 2,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "line_count": 2
+    }
+  },
+  {
+    "id": "ellipsis-wide-text-001",
+    "category": "ellipsis",
+    "description": "幅に全て収まる場合は ellipsis 不要",
+    "request": {
+      "text": "短いテキスト",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 1000,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "ends_with_ellipsis": false,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-1char-001",
+    "category": "ellipsis",
+    "description": "1 文字テキストの ellipsis",
+    "request": {
+      "text": "あ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "ends_with_ellipsis": false,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-serif-001",
+    "category": "ellipsis",
+    "description": "NotoSerifJP での ellipsis 切り詰め",
+    "request": {
+      "text": "東京都渋谷区神宮前",
+      "font_family": "NotoSerifJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-letter-spacing-001",
+    "category": "ellipsis",
+    "description": "letter_spacing_px > 0 での ellipsis",
+    "request": {
+      "text": "あいうえおかきくけこ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 150,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 4,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 1
+    }
+  },
+  {
+    "id": "ellipsis-narrow-multiline-001",
+    "category": "ellipsis",
+    "description": "狭い幅 + max_lines=1 での ellipsis",
+    "request": {
+      "text": "あいうえおかきくけこさしすせそ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 60,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 1
+    }
+  }
+]

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" data-boundsvg-node-id="auto:0" viewBox="0 0 400 100" width="400" height="100">
+  <rect x="0" y="0" width="400" height="100" fill="#0f172a"/>
+  <g data-boundsvg-node-id="auto:0.0">
+    <g data-boundsvg-node-id="auto:0.0.0">
+      <rect x="16" y="20" width="60" height="60" rx="8" ry="8" fill="#3b82f6"/>
+    </g>
+    <g data-boundsvg-node-id="auto:0.0.1">
+      <rect x="170" y="20" width="60" height="60" rx="8" ry="8" fill="#8b5cf6"/>
+    </g>
+    <g data-boundsvg-node-id="auto:0.0.2">
+      <rect x="324" y="20" width="60" height="60" rx="8" ry="8" fill="#ec4899"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,568 @@
+[
+  {
+    "id": "vertical-cjk-upright-001",
+    "category": "vertical",
+    "description": "純 CJK テキストが正立で表示",
+    "request": {
+      "text": "東京都",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 100,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 0
+    }
+  },
+  {
+    "id": "vertical-latin-rotated-001",
+    "category": "vertical",
+    "description": "Latin テキストが 90 度回転して表示",
+    "request": {
+      "text": "ABCdef",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 6,
+      "glyph_assertions": [{ "text": "A", "rotation_deg": 90 }, { "text": "B", "rotation_deg": 90 }]
+    }
+  },
+  {
+    "id": "vertical-mixed-001",
+    "category": "vertical",
+    "description": "CJK + Latin 混在で CJK は正立、Latin は回転",
+    "request": {
+      "text": "東京ABC区",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 3
+    }
+  },
+  {
+    "id": "vertical-column-count-001",
+    "category": "vertical",
+    "description": "テキスト量が max_height を超え複数列になること",
+    "request": {
+      "text": "あいうえおかきくけこ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 100,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 3
+    }
+  },
+  {
+    "id": "vertical-fullwidth-alnum-upright-001",
+    "category": "vertical",
+    "description": "全角英数字は mixed 縦組で正立する",
+    "request": {
+      "text": "ＡＩ２０",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 0,
+      "glyph_assertions": [{ "text": "Ａ", "rotation_deg": 0 }, { "text": "２", "rotation_deg": 0 }]
+    }
+  },
+  {
+    "id": "vertical-column-overflow-001",
+    "category": "vertical",
+    "description": "列数が max_width を超過する場合",
+    "request": {
+      "text": "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 60,
+      "max_height": 100,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "overflow",
+      "column_count": 8
+    }
+  },
+  {
+    "id": "vertical-hanging-001",
+    "category": "vertical",
+    "description": "縦書きでのぶら下げ処理",
+    "request": {
+      "text": "ああ。いいう",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 72,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": true
+    },
+    "expected": {
+      "column_count": 2,
+      "kinsoku_violations": 0
+    }
+  },
+  {
+    "id": "vertical-digit-001",
+    "category": "vertical",
+    "description": "数字の縦書き（回転表示）",
+    "request": {
+      "text": "123",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 3
+    }
+  },
+  {
+    "id": "vertical-digit-mixed-001",
+    "category": "vertical",
+    "description": "CJK + 数字混在の縦書き",
+    "request": {
+      "text": "第1回目",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 1
+    }
+  },
+  {
+    "id": "vertical-text-combine-two-digits-001",
+    "category": "vertical",
+    "description": "手動縦中横は 2 桁数字を 1em セル内の横組 outline として配置する",
+    "request": {
+      "text": "",
+      "rich_text": [
+        { "kind": "text", "text": "第" },
+        {
+          "kind": "combine",
+          "text": "12",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 }
+        },
+        { "kind": "text", "text": "章" }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 0,
+      "bbox_h_max": 72,
+      "glyph_assertions": [
+        {
+          "text": "1",
+          "rotation_deg": 0,
+          "outline_writing_mode": "horizontal-tb",
+          "absolute_position": true
+        },
+        {
+          "text": "2",
+          "rotation_deg": 0,
+          "outline_writing_mode": "horizontal-tb",
+          "absolute_position": true
+        }
+      ]
+    }
+  },
+  {
+    "id": "vertical-auto-tcy-not-applied-001",
+    "category": "vertical",
+    "description": "plain text の 2 桁数字には自動縦中横を適用しない",
+    "request": {
+      "text": "第12章",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 2,
+      "glyph_assertions": [{ "text": "1", "rotation_deg": 90 }, { "text": "2", "rotation_deg": 90 }]
+    }
+  },
+  {
+    "id": "vertical-punctuation-period-001",
+    "category": "vertical",
+    "description": "句点（。）の縦書き正立表示",
+    "request": {
+      "text": "東京。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "glyph_assertions": [{ "text": "。", "rotation_deg": 0 }]
+    }
+  },
+  {
+    "id": "vertical-punctuation-comma-001",
+    "category": "vertical",
+    "description": "読点（、）の縦書き正立表示",
+    "request": {
+      "text": "東京、大阪",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1
+    }
+  },
+  {
+    "id": "vertical-punctuation-bracket-001",
+    "category": "vertical",
+    "description": "括弧の縦書き",
+    "request": {
+      "text": "「東京」です",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1
+    }
+  },
+  {
+    "id": "vertical-narrow-column-001",
+    "category": "vertical",
+    "description": "非常に狭い幅（1列分）の縦書き",
+    "request": {
+      "text": "あいう",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 36,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1
+    }
+  },
+  {
+    "id": "vertical-wide-height-001",
+    "category": "vertical",
+    "description": "高さが十分に広い場合は 1 列に収まる",
+    "request": {
+      "text": "あいうえお",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 1000,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1
+    }
+  },
+  {
+    "id": "vertical-serif-001",
+    "category": "vertical",
+    "description": "NotoSerifJP での縦書き",
+    "request": {
+      "text": "東京都",
+      "font_family": "NotoSerifJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1
+    }
+  },
+  {
+    "id": "vertical-letter-spacing-001",
+    "category": "vertical",
+    "description": "letter_spacing 付きの縦書き",
+    "request": {
+      "text": "あいうえお",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 4,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1
+    }
+  },
+  {
+    "id": "vertical-cjk-long-001",
+    "category": "vertical",
+    "description": "長い CJK テキストの縦書き（複数列）",
+    "request": {
+      "text": "あいうえおかきくけこさしすせそたちつてと",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 100,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none"
+    }
+  },
+  {
+    "id": "vertical-latin-word-001",
+    "category": "vertical",
+    "description": "複数単語の Latin テキストの縦書き",
+    "request": {
+      "text": "Hello World",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "rotated_glyph_count_min": 1
+    }
+  },
+  {
+    "id": "vertical-mixed-punctuation-001",
+    "category": "vertical",
+    "description": "CJK + Latin + 句読点の混在縦書き",
+    "request": {
+      "text": "東京、ABC。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 3
+    }
+  },
+  {
+    "id": "vertical-single-char-001",
+    "category": "vertical",
+    "description": "1 文字 CJK の縦書き",
+    "request": {
+      "text": "東",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "rotated_glyph_count_min": 0
+    }
+  },
+  {
+    "id": "vertical-two-columns-001",
+    "category": "vertical",
+    "description": "ちょうど 2 列に収まるテキスト",
+    "request": {
+      "text": "あいうえおかきくけこ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 120,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 2
+    }
+  }
+]

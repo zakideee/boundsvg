@@ -1,0 +1,55 @@
+name: Bug report
+description: Report incorrect rendering, layout, or API behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: check the
+        [Known Limitations](https://github.com/zakideee/boundsvg/blob/main/apps/docs/reference/known-limitations.md)
+        page — documented limitations are not bugs. Reports without a minimal
+        repro are converted to discussions.
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Smallest JSX/VNode snippet + font setup that reproduces the issue.
+      placeholder: |
+        ```tsx
+        const engine = await createEngineAsync({ fonts: [ ... ] });
+        const svg = engine.renderToSvg(
+          <Canvas width={400} height={200}>...</Canvas>
+        );
+        ```
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      description: What you expected (attach SVG/PNG or describe precisely).
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output
+      description: What actually happened (attach SVG/PNG, error message, or stack trace).
+    validations:
+      required: true
+  - type: input
+    id: fonts
+    attributes:
+      label: Fonts used
+      description: Font family/file and where it came from (needed to reproduce text bugs).
+      placeholder: NotoSansJP-Regular.ttf (Google Fonts)
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: boundsvg version/commit, runtime (Node/browser/worker), OS.
+      placeholder: core@0.1.0, Node 22, Ubuntu 24.04
+    validations:
+      required: false

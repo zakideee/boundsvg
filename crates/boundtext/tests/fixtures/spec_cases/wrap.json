@@ -1,0 +1,344 @@
+[
+  {
+    "id": "wrap-word-cjk-001",
+    "category": "wrap",
+    "description": "CJK テキストの語間折返し",
+    "request": {
+      "text": "東京都渋谷区神宮前",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 2
+    }
+  },
+  {
+    "id": "wrap-word-ascii-001",
+    "category": "wrap",
+    "description": "英文テキストの word wrap",
+    "request": {
+      "text": "The quick brown fox jumps",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 150,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 3
+    }
+  },
+  {
+    "id": "wrap-word-mixed-001",
+    "category": "wrap",
+    "description": "和欧混植テキストの折返し",
+    "request": {
+      "text": "Hello世界のテスト",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 2
+    }
+  },
+  {
+    "id": "wrap-char-cjk-001",
+    "category": "wrap",
+    "description": "Char モードで CJK テキストが文字単位で折返し",
+    "request": {
+      "text": "東京都渋谷区",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 72,
+      "max_height": 200,
+      "wrap": "Char",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 2
+    }
+  },
+  {
+    "id": "wrap-char-ascii-001",
+    "category": "wrap",
+    "description": "Char モードで ASCII テキストが文字単位で折返し",
+    "request": {
+      "text": "Internationalization",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Char",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 3
+    }
+  },
+  {
+    "id": "wrap-none-001",
+    "category": "wrap",
+    "description": "None モードで 1 行のまま表示",
+    "request": {
+      "text": "これは一行で表示",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 500,
+      "max_height": 200,
+      "wrap": "None",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "wrap-none-overflow-001",
+    "category": "wrap",
+    "description": "None モードでテキストが幅を超える場合も 1 行のまま",
+    "request": {
+      "text": "これは非常に長いテキスト",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "None",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "overflow",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "wrap-long-word-001",
+    "category": "wrap",
+    "description": "max_width を超える長い英単語の処理",
+    "request": {
+      "text": "Supercalifragilisticexpialidocious end",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 150,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "overflow",
+      "line_count": 2,
+      "break_indices": [35]
+    }
+  },
+  {
+    "id": "wrap-hyphen-001",
+    "category": "wrap",
+    "description": "ハイフン位置での折返し",
+    "request": {
+      "text": "well-known fact here",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 3
+    }
+  },
+  {
+    "id": "wrap-cjk-latin-001",
+    "category": "wrap",
+    "description": "CJK-Latin スクリプト境界での折返し",
+    "request": {
+      "text": "日本語とEnglishの混在",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 3
+    }
+  },
+  {
+    "id": "wrap-punctuation-boundary-001",
+    "category": "wrap",
+    "description": "句読点境界での折返し",
+    "request": {
+      "text": "Hello, world! This is a test.",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 150,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none"
+    }
+  },
+  {
+    "id": "wrap-whitespace-preserve-001",
+    "category": "wrap",
+    "description": "連続空白文字の処理",
+    "request": {
+      "text": "Hello   world   test",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 150,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none"
+    }
+  },
+  {
+    "id": "wrap-narrow-width-001",
+    "category": "wrap",
+    "description": "非常に狭い幅（2文字未満）での折返し",
+    "request": {
+      "text": "あいう",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 30,
+      "max_height": 400,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none"
+    }
+  },
+  {
+    "id": "wrap-wide-text-001",
+    "category": "wrap",
+    "description": "幅に全て収まる場合は折返しなし",
+    "request": {
+      "text": "これは短いテキスト",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 1000,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "wrap-letter-spacing-001",
+    "category": "wrap",
+    "description": "letter_spacing_px ありでの折返し",
+    "request": {
+      "text": "あいうえおかきく",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 150,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 4,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none"
+    }
+  }
+]

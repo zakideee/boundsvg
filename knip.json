@@ -1,0 +1,58 @@
+{
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs"]
+    },
+    "packages/core": {
+      "project": ["src/**/*.ts"],
+      "includeEntryExports": false,
+      "entry": ["src/wasm/index.ts", "src/wasm/types.ts", "src/generated/ir/output-ir.ts"]
+    },
+    "packages/react": {
+      "project": ["src/**/*.ts", "src/**/*.tsx"]
+    },
+    "packages/cli": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/worker": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/video": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/bench": {
+      "project": [
+        "src/**/*.ts",
+        "browser/**/*.ts",
+        "scripts/**/*.mjs",
+        "vite.layout-transition.config.ts"
+      ],
+      "entry": [
+        "src/main.ts",
+        "src/layout-transition.ts",
+        "src/layout-transition-rss.ts",
+        "browser/layout-transition.ts",
+        "scripts/layout-transition-browser.mjs",
+        "vite.layout-transition.config.ts"
+      ]
+    },
+    "apps/playground-react": {
+      "project": ["src/**/*.ts", "src/**/*.tsx"],
+      "entry": ["src/e2e/*.ts", "src/e2e/*.tsx"]
+    },
+    "apps/docs": {
+      "entry": ["scripts/generate-examples.ts"]
+    },
+    "packages/boundtext-visual-validator": {
+      "entry": ["src/run.ts"]
+    }
+  },
+  "ignore": [
+    "_build/**",
+    "crates/boundtext/tools/**",
+    "apps/playground-shared/**",
+    "scripts/render-conformance-visual.mts"
+  ],
+  "ignoreBinaries": ["wasm-pack"],
+  "ignoreDependencies": ["@boundsvg/core", "@j178/prek"]
+}

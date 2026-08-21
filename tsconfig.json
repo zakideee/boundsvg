@@ -1,0 +1,15 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/react" },
+    { "path": "apps/playground-react" },
+    { "path": "apps/playground-core" },
+    { "path": "packages/worker" },
+    { "path": "packages/cli" },
+    { "path": "packages/testing" },
+    { "path": "packages/extras" },
+    { "path": "packages/shape" },
+    { "path": "apps/playground-cli" }
+  ]
+}

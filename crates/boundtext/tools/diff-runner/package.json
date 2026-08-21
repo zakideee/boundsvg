@@ -1,0 +1,17 @@
+{
+  "name": "@boundsvg/diff-runner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Compares boundtext CLI output against spec case expectations",
+  "type": "module",
+  "scripts": {
+    "check": "tsx src/check.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

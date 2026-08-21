@@ -1,0 +1,449 @@
+{
+  "description": "Frozen number-to-string semantics for SVG attribute values. `input` is a canonical decimal string; parse it to a 64-bit float (JS Number(input) / Rust f64::from_str) before formatting. Any emitter implementation must reproduce every expected column byte-for-byte.",
+  "rules": [
+    {
+      "id": "string",
+      "algorithm": "ECMAScript String(number) (shortest round-trip representation; exponent notation outside [1e-6, 1e21); -0 formats as \"0\")",
+      "expectedField": "expected",
+      "sites": [
+        "packages/core/src/transform.ts transformToSvg (translate/rotate/scale operands via local formatSvgNumber, which is observably identical to String)",
+        "crates/boundsvg/src/svg_emit/emitter.rs (MISSING_GLYPH_OPACITY constant interpolation)",
+        "crates/boundsvg/src/svg_emit/emitter.rs (integer filter-region percentages x/y/width/height)"
+      ]
+    },
+    {
+      "id": "round2-string",
+      "algorithm": "String(Math.round(n * 100) / 100); NaN/Infinity throw before formatting; when rounding overflows to Infinity near Number.MAX_VALUE the unrounded value formats via String(n)",
+      "expectedField": "expectedRound2",
+      "sites": [
+        "packages/core/src/svg/utils.ts formatNumber (precision default 2)",
+        "crates/boundsvg/src/svg_emit/emitter.rs (viewBox/width/height, rect/image/path/nested-svg/shape geometry, rounded-rect and clip path data, stroke widths, group opacity, debug overlays)",
+        "crates/boundsvg/src/svg_emit/emitter.rs (clipPath geometry and radii, feDropShadow/feGaussianBlur/feMorphology/feOffset parameters)",
+        "crates/boundsvg/src/svg_emit/emitter.rs (gradient stop offset percentages)",
+        "packages/core/src/shape/serialize-region.ts (region path point coordinates)"
+      ]
+    },
+    {
+      "id": "round4-string",
+      "algorithm": "String(Math.round(n * 10000) / 10000); same non-finite and overflow behavior as round2-string",
+      "expectedField": "expectedRound4",
+      "sites": [
+        "crates/boundsvg/src/svg_emit/emitter.rs linearGradient defs (x1/y1/x2/y2 unit-space endpoints)"
+      ]
+    }
+  ],
+  "notes": [
+    "transformToSvg formats non-finite values via String (e.g. \"NaN\") instead of throwing; upstream validation prevents non-finite transform fields in practice, so no fixture case exercises it.",
+    "packages/core/src/path/utils.ts formatPathNumber is a fourth, near-round2 variant (no non-finite guard, no overflow fallback: Number.MAX_VALUE formats as \"Infinity\"; redundant -0 normalization). Its only caller transformPathData has no production call sites today - it must not be used as the emit-path reference."
+  ],
+  "cases": [
+    {
+      "input": "0",
+      "expected": "0",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "1",
+      "expected": "1",
+      "expectedRound2": "1",
+      "expectedRound4": "1"
+    },
+    {
+      "input": "-1",
+      "expected": "-1",
+      "expectedRound2": "-1",
+      "expectedRound4": "-1"
+    },
+    {
+      "input": "7",
+      "expected": "7",
+      "expectedRound2": "7",
+      "expectedRound4": "7"
+    },
+    {
+      "input": "42",
+      "expected": "42",
+      "expectedRound2": "42",
+      "expectedRound4": "42"
+    },
+    {
+      "input": "-17",
+      "expected": "-17",
+      "expectedRound2": "-17",
+      "expectedRound4": "-17"
+    },
+    {
+      "input": "100",
+      "expected": "100",
+      "expectedRound2": "100",
+      "expectedRound4": "100"
+    },
+    {
+      "input": "1200",
+      "expected": "1200",
+      "expectedRound2": "1200",
+      "expectedRound4": "1200"
+    },
+    {
+      "input": "65535",
+      "expected": "65535",
+      "expectedRound2": "65535",
+      "expectedRound4": "65535"
+    },
+    {
+      "input": "2147483647",
+      "expected": "2147483647",
+      "expectedRound2": "2147483647",
+      "expectedRound4": "2147483647"
+    },
+    {
+      "input": "-2147483648",
+      "expected": "-2147483648",
+      "expectedRound2": "-2147483648",
+      "expectedRound4": "-2147483648"
+    },
+    {
+      "input": "-0",
+      "expected": "0",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "0.5",
+      "expected": "0.5",
+      "expectedRound2": "0.5",
+      "expectedRound4": "0.5"
+    },
+    {
+      "input": "-0.5",
+      "expected": "-0.5",
+      "expectedRound2": "-0.5",
+      "expectedRound4": "-0.5"
+    },
+    {
+      "input": "0.25",
+      "expected": "0.25",
+      "expectedRound2": "0.25",
+      "expectedRound4": "0.25"
+    },
+    {
+      "input": "0.125",
+      "expected": "0.125",
+      "expectedRound2": "0.13",
+      "expectedRound4": "0.125"
+    },
+    {
+      "input": "-0.125",
+      "expected": "-0.125",
+      "expectedRound2": "-0.12",
+      "expectedRound4": "-0.125"
+    },
+    {
+      "input": "12.75",
+      "expected": "12.75",
+      "expectedRound2": "12.75",
+      "expectedRound4": "12.75"
+    },
+    {
+      "input": "16.5",
+      "expected": "16.5",
+      "expectedRound2": "16.5",
+      "expectedRound4": "16.5"
+    },
+    {
+      "input": "599.5",
+      "expected": "599.5",
+      "expectedRound2": "599.5",
+      "expectedRound4": "599.5"
+    },
+    {
+      "input": "33.333333333333336",
+      "expected": "33.333333333333336",
+      "expectedRound2": "33.33",
+      "expectedRound4": "33.3333"
+    },
+    {
+      "input": "314.999",
+      "expected": "314.999",
+      "expectedRound2": "315",
+      "expectedRound4": "314.999"
+    },
+    {
+      "input": "0.30000000000000004",
+      "expected": "0.30000000000000004",
+      "expectedRound2": "0.3",
+      "expectedRound4": "0.3"
+    },
+    {
+      "input": "2.675",
+      "expected": "2.675",
+      "expectedRound2": "2.68",
+      "expectedRound4": "2.675"
+    },
+    {
+      "input": "-2.675",
+      "expected": "-2.675",
+      "expectedRound2": "-2.67",
+      "expectedRound4": "-2.675"
+    },
+    {
+      "input": "0.005",
+      "expected": "0.005",
+      "expectedRound2": "0.01",
+      "expectedRound4": "0.005"
+    },
+    {
+      "input": "-0.005",
+      "expected": "-0.005",
+      "expectedRound2": "0",
+      "expectedRound4": "-0.005"
+    },
+    {
+      "input": "0.015",
+      "expected": "0.015",
+      "expectedRound2": "0.02",
+      "expectedRound4": "0.015"
+    },
+    {
+      "input": "1.005",
+      "expected": "1.005",
+      "expectedRound2": "1",
+      "expectedRound4": "1.005"
+    },
+    {
+      "input": "0.995",
+      "expected": "0.995",
+      "expectedRound2": "1",
+      "expectedRound4": "0.995"
+    },
+    {
+      "input": "267.4999999",
+      "expected": "267.4999999",
+      "expectedRound2": "267.5",
+      "expectedRound4": "267.5"
+    },
+    {
+      "input": "0.3333333333333333",
+      "expected": "0.3333333333333333",
+      "expectedRound2": "0.33",
+      "expectedRound4": "0.3333"
+    },
+    {
+      "input": "0.6666666666666666",
+      "expected": "0.6666666666666666",
+      "expectedRound2": "0.67",
+      "expectedRound4": "0.6667"
+    },
+    {
+      "input": "-33.333333333333336",
+      "expected": "-33.333333333333336",
+      "expectedRound2": "-33.33",
+      "expectedRound4": "-33.3333"
+    },
+    {
+      "input": "33.33333333333333",
+      "expected": "33.33333333333333",
+      "expectedRound2": "33.33",
+      "expectedRound4": "33.3333"
+    },
+    {
+      "input": "66.66666666666666",
+      "expected": "66.66666666666666",
+      "expectedRound2": "66.67",
+      "expectedRound4": "66.6667"
+    },
+    {
+      "input": "100000000000000000000",
+      "expected": "100000000000000000000",
+      "expectedRound2": "100000000000000000000",
+      "expectedRound4": "100000000000000000000"
+    },
+    {
+      "input": "1e+21",
+      "expected": "1e+21",
+      "expectedRound2": "999999999999999900000",
+      "expectedRound4": "1.0000000000000001e+21"
+    },
+    {
+      "input": "-1e+21",
+      "expected": "-1e+21",
+      "expectedRound2": "-999999999999999900000",
+      "expectedRound4": "-1.0000000000000001e+21"
+    },
+    {
+      "input": "1.5e+21",
+      "expected": "1.5e+21",
+      "expectedRound2": "1.5e+21",
+      "expectedRound4": "1.5e+21"
+    },
+    {
+      "input": "999999999999999900000",
+      "expected": "999999999999999900000",
+      "expectedRound2": "999999999999999900000",
+      "expectedRound4": "999999999999999900000"
+    },
+    {
+      "input": "123456789012345680000",
+      "expected": "123456789012345680000",
+      "expectedRound2": "123456789012345680000",
+      "expectedRound4": "123456789012345680000"
+    },
+    {
+      "input": "0.00001",
+      "expected": "0.00001",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "0.000001",
+      "expected": "0.000001",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "-0.000001",
+      "expected": "-0.000001",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "1e-7",
+      "expected": "1e-7",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "-1e-7",
+      "expected": "-1e-7",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "2.5e-7",
+      "expected": "2.5e-7",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "2.220446049250313e-16",
+      "expected": "2.220446049250313e-16",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "9007199254740991",
+      "expected": "9007199254740991",
+      "expectedRound2": "9007199254740991",
+      "expectedRound4": "9007199254740990"
+    },
+    {
+      "input": "-9007199254740991",
+      "expected": "-9007199254740991",
+      "expectedRound2": "-9007199254740991",
+      "expectedRound4": "-9007199254740990"
+    },
+    {
+      "input": "9007199254740992",
+      "expected": "9007199254740992",
+      "expectedRound2": "9007199254740992",
+      "expectedRound4": "9007199254740992"
+    },
+    {
+      "input": "1.7976931348623157e+308",
+      "expected": "1.7976931348623157e+308",
+      "expectedRound2": "1.7976931348623157e+308",
+      "expectedRound4": "1.7976931348623157e+308"
+    },
+    {
+      "input": "-1.7976931348623157e+308",
+      "expected": "-1.7976931348623157e+308",
+      "expectedRound2": "-1.7976931348623157e+308",
+      "expectedRound4": "-1.7976931348623157e+308"
+    },
+    {
+      "input": "5e-324",
+      "expected": "5e-324",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "2.2250738585072014e-308",
+      "expected": "2.2250738585072014e-308",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "3e-320",
+      "expected": "3e-320",
+      "expectedRound2": "0",
+      "expectedRound4": "0"
+    },
+    {
+      "input": "3.141592653589793",
+      "expected": "3.141592653589793",
+      "expectedRound2": "3.14",
+      "expectedRound4": "3.1416"
+    },
+    {
+      "input": "1.4142135623730951",
+      "expected": "1.4142135623730951",
+      "expectedRound2": "1.41",
+      "expectedRound4": "1.4142"
+    },
+    {
+      "input": "0.1",
+      "expected": "0.1",
+      "expectedRound2": "0.1",
+      "expectedRound4": "0.1"
+    },
+    {
+      "input": "0.2",
+      "expected": "0.2",
+      "expectedRound2": "0.2",
+      "expectedRound4": "0.2"
+    },
+    {
+      "input": "0.3",
+      "expected": "0.3",
+      "expectedRound2": "0.3",
+      "expectedRound4": "0.3"
+    },
+    {
+      "input": "0.7",
+      "expected": "0.7",
+      "expectedRound2": "0.7",
+      "expectedRound4": "0.7"
+    },
+    {
+      "input": "1.5",
+      "expected": "1.5",
+      "expectedRound2": "1.5",
+      "expectedRound4": "1.5"
+    },
+    {
+      "input": "2.25",
+      "expected": "2.25",
+      "expectedRound2": "2.25",
+      "expectedRound4": "2.25"
+    },
+    {
+      "input": "10.125",
+      "expected": "10.125",
+      "expectedRound2": "10.13",
+      "expectedRound4": "10.125"
+    },
+    {
+      "input": "1234.5678",
+      "expected": "1234.5678",
+      "expectedRound2": "1234.57",
+      "expectedRound4": "1234.5678"
+    },
+    {
+      "input": "-1234.5678",
+      "expected": "-1234.5678",
+      "expectedRound2": "-1234.57",
+      "expectedRound4": "-1234.5678"
+    }
+  ]
+}

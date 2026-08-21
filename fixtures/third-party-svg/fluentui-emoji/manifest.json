@@ -1,0 +1,58 @@
+{
+  "profile": "MIT/CC0",
+  "sourceRepo": "https://github.com/microsoft/fluentui-emoji",
+  "sourceCommit": "62ecdc0d7ca5c6df32148c169556bc8d3782fca4",
+  "license": "MIT",
+  "assets": [
+    {
+      "fileName": "sunset_color.svg",
+      "sourceRepo": "https://github.com/microsoft/fluentui-emoji",
+      "sourceCommit": "62ecdc0d7ca5c6df32148c169556bc8d3782fca4",
+      "sourcePath": "assets/Sunset/Color/sunset_color.svg",
+      "license": "MIT",
+      "sizeBytes": 63500,
+      "elementCount": 118,
+      "sha256": "bfd3e004ba51f897814d1b9a94cc6a160b0044747f076f305ac815438ae16970"
+    },
+    {
+      "fileName": "sun_with_face_color.svg",
+      "sourceRepo": "https://github.com/microsoft/fluentui-emoji",
+      "sourceCommit": "62ecdc0d7ca5c6df32148c169556bc8d3782fca4",
+      "sourcePath": "assets/Sun with face/Color/sun_with_face_color.svg",
+      "license": "MIT",
+      "sizeBytes": 35452,
+      "elementCount": 73,
+      "sha256": "9c5667d7cbd33644205c61f6701ea46370f5dbb746d6cea6b6462a4ff7998f7b"
+    },
+    {
+      "fileName": "desktop_computer_color.svg",
+      "sourceRepo": "https://github.com/microsoft/fluentui-emoji",
+      "sourceCommit": "62ecdc0d7ca5c6df32148c169556bc8d3782fca4",
+      "sourcePath": "assets/Desktop computer/Color/desktop_computer_color.svg",
+      "license": "MIT",
+      "sizeBytes": 60363,
+      "elementCount": 148,
+      "sha256": "705633f53bd7461057eab62f891bfd3faf8609d1ca94db851f7aa7133b8c8404"
+    },
+    {
+      "fileName": "laptop_color.svg",
+      "sourceRepo": "https://github.com/microsoft/fluentui-emoji",
+      "sourceCommit": "62ecdc0d7ca5c6df32148c169556bc8d3782fca4",
+      "sourcePath": "assets/Laptop/Color/laptop_color.svg",
+      "license": "MIT",
+      "sizeBytes": 74600,
+      "elementCount": 96,
+      "sha256": "b1e1413ef52cc1d8c5883b619d5b724ff3f325baa4539634a75b3d57597cf562"
+    },
+    {
+      "fileName": "chart_decreasing_color.svg",
+      "sourceRepo": "https://github.com/microsoft/fluentui-emoji",
+      "sourceCommit": "62ecdc0d7ca5c6df32148c169556bc8d3782fca4",
+      "sourcePath": "assets/Chart decreasing/Color/chart_decreasing_color.svg",
+      "license": "MIT",
+      "sizeBytes": 42979,
+      "elementCount": 111,
+      "sha256": "718f0999c84e81c54c88aa5b5d0c14fff3fd0e423a5eb3f8f2db22769d4e06f0"
+    }
+  ]
+}

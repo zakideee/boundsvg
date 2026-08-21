@@ -1,0 +1,15 @@
+{
+  "viewBox": { "width": 120, "height": 120 },
+  "root": {
+    "kind": "boolean",
+    "op": "subtract",
+    "children": [
+      {
+        "kind": "transform",
+        "transform": { "translateX": 10, "translateY": 10 },
+        "child": { "kind": "path", "d": "M0 0H100V100H0Z" }
+      },
+      { "kind": "path", "d": "M50 50H70V70H50Z" }
+    ]
+  }
+}

@@ -1,0 +1,210 @@
+[
+  {
+    "id": "varfont-inter-basic-001",
+    "category": "variable_fonts",
+    "description": "Inter Variable フォントでの基本レイアウト",
+    "_note": "Variable font test cases. font_variation_settings are applied to shaping via ShapeOptions.",
+    "request": {
+      "text": "Hello World",
+      "font_family": "Inter",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "font_variation_settings": {}
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "varfont-inter-wght-bold-001",
+    "category": "variable_fonts",
+    "description": "Inter Variable wght=700 (Bold) でのレイアウト",
+    "_note": "font_variation_settings are parsed and passed through to the shaping engine. The wght axis value affects glyph metrics during shaping.",
+    "request": {
+      "text": "Hello World",
+      "font_family": "Inter",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "font_variation_settings": { "wght": 700 }
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "varfont-inter-wght-thin-001",
+    "category": "variable_fonts",
+    "description": "Inter Variable wght=100 (Thin) でのレイアウト",
+    "_note": "font_variation_settings are parsed and passed through to the shaping engine.",
+    "request": {
+      "text": "Hello World",
+      "font_family": "Inter",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "font_variation_settings": { "wght": 100 }
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "varfont-inter-shrink-001",
+    "category": "variable_fonts",
+    "description": "Inter Variable での Shrink フィッティング",
+    "_note": "Tests Shrink with a variable font file. font_variation_settings are passed through to shaping.",
+    "request": {
+      "text": "The quick brown fox jumps over the lazy dog",
+      "font_family": "Inter",
+      "font_size_px": 24,
+      "max_width": 150,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "Shrink",
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "font_variation_settings": {}
+    },
+    "expected": {
+      "overflow": "none",
+      "chosen_font_size_px_max": 24,
+      "bbox_w_max": 150,
+      "bbox_h_max": 40
+    }
+  },
+  {
+    "id": "varfont-inter-grow-001",
+    "category": "variable_fonts",
+    "description": "Inter Variable での Grow フィッティング",
+    "_note": "Tests Grow with a variable font file. font_variation_settings are passed through to shaping.",
+    "request": {
+      "text": "Hi",
+      "font_family": "Inter",
+      "font_size_px": 12,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "Grow",
+      "max_lines": 1,
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "font_variation_settings": {}
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "chosen_font_size_px_min": 12,
+      "bbox_w_max": 200,
+      "bbox_h_max": 200
+    }
+  },
+  {
+    "id": "varfont-noto-cjk-basic-001",
+    "category": "variable_fonts",
+    "description": "NotoSansCJKjp Variable フォントでの CJK レイアウト",
+    "_note": "Tests CJK text with variable font. font_variation_settings are passed through to shaping.",
+    "request": {
+      "text": "東京都渋谷区",
+      "font_family": "NotoSansCJKjp",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "font_variation_settings": {}
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1
+    }
+  },
+  {
+    "id": "varfont-noto-cjk-vertical-001",
+    "category": "variable_fonts",
+    "description": "NotoSansCJKjp Variable フォントでの縦書き",
+    "_note": "Tests vertical writing with variable CJK font. font_variation_settings are passed through to shaping.",
+    "request": {
+      "text": "東京都",
+      "font_family": "NotoSansCJKjp",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "font_variation_settings": {}
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1
+    }
+  },
+  {
+    "id": "varfont-inter-ellipsis-001",
+    "category": "variable_fonts",
+    "description": "Inter Variable での ellipsis 切り詰め",
+    "_note": "Tests ellipsis with variable font. font_variation_settings are passed through to shaping.",
+    "request": {
+      "text": "The quick brown fox jumps over the lazy dog",
+      "font_family": "Inter",
+      "font_size_px": 24,
+      "max_width": 150,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "None",
+      "max_lines": 1,
+      "ellipsis": true,
+      "language": "En",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "font_variation_settings": {}
+    },
+    "expected": {
+      "ends_with_ellipsis": true,
+      "line_count": 1
+    }
+  }
+]

@@ -1,0 +1,21 @@
+<svg id="boundsvg-bbox-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320" style="fill-rule:evenodd;clip-rule:evenodd;">
+  <g id="bbox-corner-brackets">
+    <path d="M120,24 L120,12 Q120,0 108,0 L12,0 Q0,0 0,12 L0,108 Q0,120 12,120 L24,120 Q36,120 36,108 L36,48 Q36,36 48,36 L108,36 Q120,36 120,24 Z" style="fill:#E8ECF2;"/>
+    <path d="M200,296 L200,308 Q200,320 212,320 L308,320 Q320,320 320,308 L320,212 Q320,200 308,200 L296,200 Q284,200 284,212 L284,272 Q284,284 272,284 L212,284 Q200,284 200,296 Z" style="fill:#E8ECF2;"/>
+  </g>
+  <g id="bbox-anchor-squares">
+    <rect x="279" y="3" width="38" height="38" rx="5" style="fill:#E8ECF2;"/>
+    <rect x="3" y="279" width="38" height="38" rx="5" style="fill:#E8ECF2;"/>
+  </g>
+  <g id="bbox-frame-edges">
+    <rect x="133" y="9" width="133" height="18" rx="4" style="fill:#E8ECF2;"/>
+    <rect x="54" y="293" width="133" height="18" rx="4" style="fill:#E8ECF2;"/>
+    <rect x="9" y="133" width="18" height="133" rx="4" style="fill:#E8ECF2;"/>
+    <rect x="293" y="54" width="18" height="133" rx="4" style="fill:#E8ECF2;"/>
+  </g>
+  <g id="bbox-accent-bars">
+    <!-- Accent bars: height 37px matching b stem width, gap 37px, centered at y=160 -->
+    <rect x="65" y="105" width="170" height="37" rx="5" style="fill:#E8ECF2;"/>
+    <rect x="115" y="179" width="120" height="37" rx="5" style="fill:#E8ECF2;"/>
+  </g>
+</svg>

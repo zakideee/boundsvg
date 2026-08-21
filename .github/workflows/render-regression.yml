@@ -1,0 +1,109 @@
+name: Render Regression
+
+# One job for every check that pins rendered output: JLREQ contracts and
+# snapshots, conformance SVG/IR/PNG hashes, and the boundtext spec cases.
+# They share a toolchain, one WASM build, and one dependency install.
+
+on:
+  pull_request:
+    # Everything that can move rendered output: the engine crates, the core
+    # bridge, the vendored parser sources, the pinned toolchain, the fonts and
+    # fixtures the baselines resolve against, and the check scripts themselves.
+    paths:
+      - "crates/**"
+      - "vendor/**"
+      - "packages/core/**"
+      - "packages/shape/**"
+      - "packages/boundtext-visual-validator/**"
+      - "fixtures/fonts/**"
+      - "fixtures/conformance/**"
+      - "scripts/check-jlreq-*.sh"
+      - "scripts/check-conformance-visual.sh"
+      - "scripts/render-conformance-visual.mts"
+      - "scripts/conformance-visual-compare.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/render-regression.yml"
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render-regression:
+    name: Baseline Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
+        with:
+          tool: wasm-pack@0.13.1
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build renderer and replay tooling
+        run: |
+          pnpm build:wasm
+          pnpm --filter @boundsvg/shape build
+          pnpm --filter @boundsvg/core build
+          cargo build --release -p boundtext-cli
+
+      - name: Typecheck JLREQ tools
+        run: |
+          pnpm exec tsc --noEmit -p crates/boundtext/tools/jlreq-regression/tsconfig.json
+          pnpm exec tsc --noEmit -p packages/boundtext-visual-validator/tsconfig.json
+
+      - name: Check JLREQ contracts
+        run: pnpm run test:jlreq:contracts
+
+      - name: Check JLREQ logical layout snapshot
+        run: pnpm run test:jlreq:snapshot
+
+      - name: Check JLREQ visual PNG hashes
+        run: pnpm run test:jlreq:visual
+
+      - name: Run conformance SVG snapshot and IR suites
+        run: pnpm --filter @boundsvg/core exec vitest run tests/conformance
+
+      - name: Check conformance PNG hashes
+        run: pnpm run test:conformance:visual
+
+      - name: Validate boundtext spec cases
+        run: |
+          exit_code=0
+          for spec in crates/boundtext/tests/fixtures/spec_cases/*.json; do
+            name=$(basename "$spec" .json)
+            echo "--- Validating: $name ---"
+            ./target/release/boundtext-cli \
+              --fonts fixtures/fonts \
+              --input "$spec" \
+              > "/tmp/boundtext-${name}.json" 2>/dev/null
+            pnpm exec tsx crates/boundtext/tools/diff-runner/src/check.ts \
+              "/tmp/boundtext-${name}.json" "$spec" || exit_code=1
+          done
+          exit $exit_code

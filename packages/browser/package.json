@@ -1,0 +1,100 @@
+{
+  "name": "@boundsvg/browser",
+  "version": "0.1.0",
+  "description": "Browser WASM loader, SVG DOM utilities, and runtime adapter for boundsvg",
+  "keywords": [
+    "svg",
+    "wasm",
+    "browser",
+    "loader"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zakideee/boundsvg.git",
+    "directory": "packages/browser"
+  },
+  "homepage": "https://github.com/zakideee/boundsvg/tree/main/packages/browser",
+  "bugs": {
+    "url": "https://github.com/zakideee/boundsvg/issues"
+  },
+  "author": "zakideee",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./wasm": {
+      "types": "./dist/wasm.d.ts",
+      "import": "./dist/wasm.js"
+    },
+    "./png": {
+      "types": "./dist/png.d.ts",
+      "import": "./dist/png.js",
+      "require": "./dist/png.cjs"
+    },
+    "./fonts": {
+      "types": "./dist/fonts.d.ts",
+      "import": "./dist/fonts.js",
+      "require": "./dist/fonts.cjs"
+    },
+    "./assets": {
+      "types": "./dist/assets.d.ts",
+      "import": "./dist/assets.js",
+      "require": "./dist/assets.cjs"
+    },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "import": "./dist/events.js",
+      "require": "./dist/events.cjs"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "wasm": [
+        "./dist/wasm.d.ts"
+      ],
+      "png": [
+        "./dist/png.d.ts"
+      ],
+      "fonts": [
+        "./dist/fonts.d.ts"
+      ],
+      "assets": [
+        "./dist/assets.d.ts"
+      ],
+      "events": [
+        "./dist/events.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "THIRD-PARTY-LICENSES"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup --format esm && tsup --format cjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@boundsvg/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

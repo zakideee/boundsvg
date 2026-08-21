@@ -1,0 +1,108 @@
+{
+  "name": "@boundsvg/react",
+  "version": "0.1.0",
+  "description": "React bindings for boundsvg — render declarative JSX layouts as SVG or PNG in the browser",
+  "keywords": [
+    "react",
+    "svg",
+    "layout",
+    "wasm",
+    "component"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zakideee/boundsvg.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/zakideee/boundsvg/tree/main/packages/react",
+  "bugs": {
+    "url": "https://github.com/zakideee/boundsvg/issues"
+  },
+  "author": "zakideee",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./provider": {
+      "types": "./dist/provider.d.ts",
+      "import": "./dist/provider.js",
+      "require": "./dist/provider.cjs"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js",
+      "require": "./dist/worker.cjs"
+    },
+    "./png": {
+      "types": "./dist/png.d.ts",
+      "import": "./dist/png.js",
+      "require": "./dist/png.cjs"
+    },
+    "./interactive": {
+      "types": "./dist/interactive.d.ts",
+      "import": "./dist/interactive.js",
+      "require": "./dist/interactive.cjs"
+    },
+    "./debug": {
+      "types": "./dist/debug.d.ts",
+      "import": "./dist/debug.js",
+      "require": "./dist/debug.cjs"
+    },
+    "./inspect": {
+      "types": "./dist/inspect.d.ts",
+      "import": "./dist/inspect.js",
+      "require": "./dist/inspect.cjs"
+    },
+    "./assets": {
+      "types": "./dist/assets.d.ts",
+      "import": "./dist/assets.js",
+      "require": "./dist/assets.cjs"
+    },
+    "./internal/*": null
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "typecheck:types": "pnpm run build && tsc -p tsconfig.type-tests.json --noEmit"
+  },
+  "dependencies": {
+    "@boundsvg/core": "workspace:*",
+    "@boundsvg/browser": "workspace:*",
+    "@boundsvg/worker": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "happy-dom": "^20.7.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

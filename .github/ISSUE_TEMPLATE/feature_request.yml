@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check CONTRIBUTING.md "Scope" first — for the areas listed there as
+        unlikely for v1 (new animation channels, bidi/RTL, raw SVG attribute
+        passthrough, HTML/Tailwind input in core), a discussion is a better
+        starting point than an issue.
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Use case
+      description: What are you rendering, in what environment, and why do existing features not cover it?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API surface
+      description: Sketch the props/functions you would expect to use.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Text / typography (shaping, kinsoku, vertical, ruby)
+        - Layout (flex, grid, sizing)
+        - Visual (fills, borders, shadows, gradients)
+        - Animation / video (declarative keyframes, WebP/GIF/MP4 output)
+        - Output (SVG, PNG, layered export)
+        - React / browser / worker integration
+        - CLI / tooling
+        - Other
+    validations:
+      required: true

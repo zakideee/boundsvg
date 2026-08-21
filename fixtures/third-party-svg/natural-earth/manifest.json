@@ -1,0 +1,27 @@
+{
+  "profile": "MIT/CC0",
+  "sourceRepo": "https://github.com/zakideee/natural-earth-svg",
+  "sourceCommit": "da149d13ede557543da378fb8add3233ed4b74fa",
+  "license": "Public Domain",
+  "assets": [
+    {
+      "fileName": "world-terrain-borders-50m.svg",
+      "sourceRepo": "https://github.com/zakideee/natural-earth-svg",
+      "sourceCommit": "da149d13ede557543da378fb8add3233ed4b74fa",
+      "sourcePath": "output/terrain/world-terrain-borders-50m.svg",
+      "license": "Public Domain",
+      "sizeBytes": 1063488,
+      "elementCount": 1824,
+      "sha256": "6b0ec5dba4305e2e9912719547d1afaa9d0a14da9e0f3cd1ce64bcacf00329d1"
+    },
+    {
+      "fileName": "terrain-background.png",
+      "sourceRepo": "https://github.com/zakideee/natural-earth-svg",
+      "sourceCommit": "da149d13ede557543da378fb8add3233ed4b74fa",
+      "sourcePath": "output/terrain/terrain-background.png",
+      "license": "Public Domain",
+      "sizeBytes": 1991905,
+      "sha256": "8e9f72dd534a3a0fc7d9e109f15ec1ae8ec64d4ebfac09cbd90e9b75ffcfec7b"
+    }
+  ]
+}

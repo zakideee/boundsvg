@@ -1,0 +1,19 @@
+{
+  "name": "@boundsvg/jlreq-regression",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Creates and compares JLREQ-informed logical layout snapshots",
+  "type": "module",
+  "scripts": {
+    "snapshot": "tsx src/run.ts snapshot",
+    "compare": "tsx src/run.ts compare",
+    "accept": "tsx src/run.ts accept"
+  },
+  "dependencies": {
+    "tsx": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,39 @@
+# Biome handles these
+*.ts
+*.tsx
+*.js
+*.jsx
+*.mjs
+*.cjs
+*.json
+*.jsonc
+*.css
+
+# Build outputs
+dist/
+pkg/
+pkg-web/
+wasm-pkg/
+target/
+
+# Dependencies
+node_modules/
+
+# Lock files
+pnpm-lock.yaml
+
+# Generated
+*.wasm
+*.tsbuildinfo
+apps/docs/_generated/
+crates/boundtext/reports/
+CHANGELOG.md
+**/CHANGELOG.md
+
+# Test / tmp
+tmp/
+coverage/
+__verify_output__/
+
+# Generated Rustdoc
+apps/docs/public/rustdoc/

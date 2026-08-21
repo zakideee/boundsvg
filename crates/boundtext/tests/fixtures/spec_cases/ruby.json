@@ -1,0 +1,311 @@
+[
+  {
+    "id": "ruby-horizontal-mono-over",
+    "category": "ruby",
+    "description": "横組 1 文字 base / rubyPosition=over の基本配置",
+    "request": {
+      "text": "",
+      "rich_text": [
+        { "kind": "text", "text": "東" },
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "京" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょう",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        },
+        { "kind": "text", "text": "都" }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 240,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "glyph_assertions": [
+        { "text": "京", "font_size_px": 24 },
+        { "text": "き", "font_size_px": 12, "relative_to": "京", "position": "above" },
+        { "text": "ょ", "font_size_px": 12, "relative_to": "京", "position": "above" },
+        { "text": "都", "font_size_px": 24 }
+      ],
+      "atomic_text_groups": [["京", "き", "ょ", "う"]]
+    }
+  },
+  {
+    "id": "ruby-horizontal-mono-under",
+    "category": "ruby",
+    "description": "横組 1 文字 base / rubyPosition=under の基本配置",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "under",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "京" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょう",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 160,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "glyph_assertions": [
+        { "text": "京", "font_size_px": 24 },
+        { "text": "き", "font_size_px": 12, "relative_to": "京", "position": "below" }
+      ],
+      "atomic_text_groups": [["京", "き", "ょ", "う"]]
+    }
+  },
+  {
+    "id": "ruby-vertical-mono-over",
+    "category": "ruby",
+    "description": "縦組 1 文字 base / rubyPosition=over は親文字の右側に置く",
+    "request": {
+      "text": "",
+      "rich_text": [
+        { "kind": "text", "text": "古" },
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "都" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "みやこ",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 220,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "glyph_assertions": [
+        { "text": "都", "font_size_px": 24 },
+        { "text": "み", "font_size_px": 12, "relative_to": "都", "position": "right_of" }
+      ],
+      "atomic_text_groups": [["都", "み", "や", "こ"]]
+    }
+  },
+  {
+    "id": "ruby-vertical-mono-under",
+    "category": "ruby",
+    "description": "縦組 1 文字 base / rubyPosition=under は親文字の左側に置く",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "under",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "都" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "みやこ",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 200,
+      "max_height": 220,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "VerticalRl",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "column_count": 1,
+      "glyph_assertions": [
+        { "text": "都", "font_size_px": 24 },
+        { "text": "み", "font_size_px": 12, "relative_to": "都", "position": "left_of" }
+      ],
+      "atomic_text_groups": [["都", "み", "や", "こ"]]
+    }
+  },
+  {
+    "id": "ruby-horizontal-group-short-space-around",
+    "category": "ruby",
+    "description": "短い group ruby を space-around で親文字群内に分配する",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "space-around",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "日本語" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "にほんご",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 260,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "glyph_assertions": [
+        { "text": "に", "font_size_px": 12, "relative_to": "日", "position": "above" },
+        { "text": "ご", "font_size_px": 12, "relative_to": "語", "position": "above" }
+      ],
+      "atomic_text_groups": [["日", "本", "語", "に", "ほ", "ん", "ご"]]
+    }
+  },
+  {
+    "id": "ruby-horizontal-long-rt-warning",
+    "category": "ruby",
+    "description": "長いルビは描画しつつ Experimental warning を出す",
+    "request": {
+      "text": "",
+      "rich_text": [
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "今日" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょうというひ",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 260,
+      "max_height": 160,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "warning_codes": ["LONG_RUBY_ANNOTATION"],
+      "glyph_assertions": [
+        { "text": "き", "font_size_px": 12, "relative_to": "今", "position": "above" }
+      ]
+    }
+  },
+  {
+    "id": "ruby-horizontal-narrow-atomic",
+    "category": "ruby",
+    "description": "狭い幅でも simple ruby token 内部では改行しない",
+    "request": {
+      "text": "",
+      "rich_text": [
+        { "kind": "text", "text": "明日" },
+        {
+          "kind": "ruby",
+          "rubyPosition": "over",
+          "rubyAlign": "center",
+          "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 24 },
+          "base": [{ "kind": "text", "text": "京都" }],
+          "rt": [
+            {
+              "kind": "span",
+              "text": "きょうと",
+              "style": { "fontFamily": ["NotoSansJP"], "fontSizePx": 12 }
+            }
+          ]
+        },
+        { "kind": "text", "text": "へ行く" }
+      ],
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 72,
+      "max_height": 240,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "atomic_text_groups": [["京", "都", "き", "ょ", "う", "と"]]
+    }
+  }
+]

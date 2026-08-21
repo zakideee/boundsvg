@@ -1,0 +1,27 @@
+{
+  "name": "@boundsvg/bench",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Repeatable local performance harness for boundsvg's public Node.js API",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "bench": "tsx src/main.ts",
+    "bench:smoke": "tsx src/main.ts --smoke --iterations 1 --warmup 1 --output ../../_build/bench/smoke.json",
+    "bench:layout-transition": "tsx src/layout-transition.ts",
+    "bench:layout-transition:browser": "node scripts/layout-transition-browser.mjs",
+    "bench:layout-transition:rss": "tsx src/layout-transition-rss.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@boundsvg/core": "workspace:*",
+    "@boundsvg/video": "workspace:*",
+    "@boundsvg/worker": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.4.1"
+  }
+}

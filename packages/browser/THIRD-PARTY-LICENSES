@@ -1,0 +1,273 @@
+Third-Party Licenses
+====================
+
+boundsvg is licensed under MIT OR Apache-2.0.  This file lists third-party
+dependencies whose licenses require explicit attribution when the compiled
+WASM binary or npm packages are redistributed.
+
+Only dependencies with license obligations beyond MIT OR Apache-2.0 are
+listed here, together with any third-party code that boundsvg ships in
+modified form.  The same aggregate file ships with every WASM-carrying npm
+package so it can be verified byte-for-byte.  The majority of dependencies
+are MIT or MIT/Apache-2.0 dual licensed and are compatible without
+additional notice.
+
+
+────────────────────────────────────────────────────────────────────────────
+Modified third-party code
+────────────────────────────────────────────────────────────────────────────
+
+The compiled engine WASM binary does not use upstream ttf-parser 0.25.1 verbatim:
+it is built against the copy in vendor/ttf-parser/, which fixes the loca and
+gvar offset handling for fonts with exactly 65535 glyphs (the released code
+drops those tables, silently erasing every glyph outline; the loca fix is a
+backport of an unreleased upstream commit, and gvar gets the same treatment).
+The fixes and their rationale are documented in vendor/ttf-parser/README-PATCH.md
+in the source repository (https://github.com/zakideee/boundsvg).
+ttf-parser is MIT OR Apache-2.0 (no attribution obligation beyond this notice);
+this entry exists so that the provenance of the shipped binary is explicit.
+
+
+────────────────────────────────────────────────────────────────────────────
+BSD-3-Clause
+────────────────────────────────────────────────────────────────────────────
+
+tiny-skia 0.11.4 / tiny-skia-path 0.11.4
+─────────────────────────────────────────
+Repository: https://github.com/linebender/tiny-skia
+
+Copyright (c) 2011 Google Inc. All rights reserved.
+Copyright (c) 2020 Yevhenii Reizner All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived
+    from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+alloc-no-stdlib 2.0.4 / alloc-stdlib 0.2.2
+───────────────────────────────────────────
+Repository: https://github.com/dropbox/rust-alloc-no-stdlib
+
+Copyright (c) 2016 Dropbox, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+brotli 7.0.0 / brotli-decompressor 4.0.3
+─────────────────────────────────────────
+Repository: https://github.com/dropbox/rust-brotli
+            https://github.com/dropbox/rust-brotli-decompressor
+
+Pulled into the engine WASM via woff2-patched (WOFF2 font decoding).
+brotli is licensed "BSD-3-Clause AND MIT" (both apply);
+brotli-decompressor is "BSD-3-Clause OR MIT".
+
+Copyright (c) 2016 Dropbox, Inc.
+All rights reserved.
+
+The BSD-3-Clause terms reproduced in the tiny-skia entry above apply to
+this copyright holder identically.
+
+Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+────────────────────────────────────────────────────────────────────────────
+BSD-2-Clause
+────────────────────────────────────────────────────────────────────────────
+
+arrayref 0.3.9
+──────────────
+Repository: https://github.com/droundy/arrayref
+
+Copyright (c) 2015 David Roundy <roundyd@physics.oregonstate.edu>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the
+   distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+────────────────────────────────────────────────────────────────────────────
+Apache-2.0 (sole license — not dual-licensed with MIT)
+────────────────────────────────────────────────────────────────────────────
+
+The following crates are licensed solely under the Apache License,
+Version 2.0.  Users of boundsvg who choose the MIT license path for
+boundsvg's own code must still comply with the Apache-2.0 terms for
+these components.
+
+woff2-patched 0.4.0
+────────────────────
+Repository: https://github.com/nicokimmel/woff2-rs
+            (patched fork, published on crates.io as woff2-patched)
+Authors:    Brian Hanechak, Emily Crandall Fleischman, Zimon Tai
+
+Licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at:
+  http://www.apache.org/licenses/LICENSE-2.0
+
+
+unicode-linebreak 0.1.5
+────────────────────────
+Repository: https://github.com/axelf4/unicode-linebreak
+Author:     Axel Forsman
+
+Licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at:
+  http://www.apache.org/licenses/LICENSE-2.0
+
+
+shiguredo_mp4 2026.3.0
+───────────────────────
+Repository: https://github.com/shiguredo/mp4-rs
+Author:     Shiguredo Inc.
+
+Present only in the separate MP4 muxer WASM shipped with @boundsvg/video;
+it is not part of the boundsvg engine WASM.
+
+Licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at:
+  http://www.apache.org/licenses/LICENSE-2.0
+
+
+self_cell 1.2.2
+────────────────
+Repository: https://github.com/Voultapher/self_cell
+Author:     Lukas Bergdoll
+
+Dual-licensed under "Apache-2.0 OR GPL-2.0-only".  boundsvg elects the
+Apache License, Version 2.0; the GPL-2.0 option is NOT exercised and imposes
+no copyleft obligation on boundsvg or its users.
+You may obtain a copy of the License at:
+  http://www.apache.org/licenses/LICENSE-2.0
+
+
+────────────────────────────────────────────────────────────────────────────
+Zlib
+────────────────────────────────────────────────────────────────────────────
+
+slotmap 1.1.1
+──────────────
+Repository: https://github.com/orlp/slotmap
+Author:     Orson Peters
+
+Pulled into the engine WASM via usvg/fontdb.
+
+Copyright (c) 2021 Orson Peters <orsonpeters@gmail.com>
+
+This software is provided 'as-is', without any express or implied warranty. In
+no event will the authors be held liable for any damages arising from the use of
+this software.
+
+Permission is granted to anyone to use this software for any purpose, including
+commercial applications, and to alter it and redistribute it freely, subject to
+the following restrictions:
+
+ 1. The origin of this software must not be misrepresented; you must not claim
+    that you wrote the original software. If you use this software in a product,
+    an acknowledgment in the product documentation would be appreciated but is
+    not required.
+
+ 2. Altered source versions must be plainly marked as such, and must not be
+    misrepresented as being the original software.
+
+ 3. This notice may not be removed or altered from any source distribution.
+
+
+────────────────────────────────────────────────────────────────────────────
+Note on compile-time-only dependencies
+────────────────────────────────────────────────────────────────────────────
+
+unicode-ident (MIT OR Apache-2.0 AND Unicode-3.0) is used only at compile
+time by proc-macro2/syn/quote for Rust identifier validation.  It does not
+appear in the WASM binary output.  The Unicode License v3 is a permissive
+license requiring only copyright notice retention, which is satisfied by
+this notice and by the source distribution in the Cargo registry.

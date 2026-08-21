@@ -1,0 +1,40 @@
+[package]
+name = "boundtext"
+version = "0.1.0"
+publish = false
+authors = ["zakideee"]
+repository = "https://github.com/zakideee/boundsvg"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Multilingual text layout engine — line breaking, kinsoku, vertical text, font shaping, and fit-to-bounds"
+exclude = ["reports/", "tools/", "scripts/"]
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+boundshape = { path = "../boundshape" }
+schemars = { version = "=1.2.2", optional = true }
+rustybuzz = { version = "0.20", optional = true }
+self_cell = { version = "1", optional = true }
+ttf-parser = { version = "0.25", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+unicode-linebreak = "0.1"
+
+[dependencies.unicode-segmentation]
+version = "1.12"
+optional = true
+
+[features]
+default = ["rustybuzz-backend", "ttfparser-backend"]
+phase-trace = []
+rustybuzz-backend = ["dep:rustybuzz", "dep:self_cell"]
+schema = ["dep:schemars", "boundshape/schema"]
+ttfparser-backend = ["dep:ttf-parser", "dep:self_cell"]
+unicode-full = ["unicode-segmentation"]

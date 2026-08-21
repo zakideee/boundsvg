@@ -1,0 +1,554 @@
+[
+  {
+    "id": "ja-kinsoku-head-001",
+    "category": "kinsoku",
+    "description": "句読点（。）が行頭に出ないこと",
+    "request": {
+      "text": "これは、テストです。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 90,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_start_chars": ["、", "。"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-head-002",
+    "category": "kinsoku",
+    "description": "読点（、）が行頭に出ないこと",
+    "request": {
+      "text": "こんにちは、世界。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 110,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-head-003",
+    "category": "kinsoku",
+    "description": "閉じ括弧（」）が行頭に出ないこと",
+    "request": {
+      "text": "彼は「すごい」と言った。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_start_chars": ["」", "。"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-head-004",
+    "category": "kinsoku",
+    "description": "JaTypesettingV1 では通常幅で小書きカナを破綻なく処理する",
+    "request": {
+      "text": "がっこうのせんせい",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-head-005",
+    "category": "kinsoku",
+    "description": "JaTypesettingV1 では通常幅で長音符を破綻なく処理する",
+    "request": {
+      "text": "コンピューターの画面",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-level3-small-kana-001",
+    "category": "kinsoku",
+    "description": "JaTypesettingV1 は level 3 相当として小書き仮名の行頭を許容する",
+    "request": {
+      "text": "ちょっとした",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 24,
+      "max_height": 240,
+      "wrap": "Char",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 6,
+      "break_indices": [1, 2, 3, 4, 5],
+      "kinsoku_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-level3-prolonged-sound-001",
+    "category": "kinsoku",
+    "description": "JaTypesettingV1 は level 3 相当として長音符の行頭を許容する",
+    "request": {
+      "text": "スーパー",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 24,
+      "max_height": 200,
+      "wrap": "Char",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 4,
+      "break_indices": [1, 2, 3],
+      "kinsoku_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-level3-iteration-001",
+    "category": "kinsoku",
+    "description": "JaTypesettingV1 は level 3 相当として繰返し記号の行頭を許容する",
+    "request": {
+      "text": "人々は行く",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 24,
+      "max_height": 220,
+      "wrap": "Char",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 5,
+      "break_indices": [1, 2, 3, 4],
+      "kinsoku_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-tail-001",
+    "category": "kinsoku",
+    "description": "開き括弧（「）が行末に出ないこと",
+    "request": {
+      "text": "私は「東京」に住む。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_end_chars": ["「"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-nonbreak-001",
+    "category": "kinsoku",
+    "description": "三点リーダー（……）が分離されないこと",
+    "request": {
+      "text": "これは……重要です。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "non_break_pair_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-nonbreak-002",
+    "category": "kinsoku",
+    "description": "ダッシュ（——）が分離されないこと",
+    "request": {
+      "text": "彼は——驚いた。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "non_break_pair_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-consecutive-001",
+    "category": "kinsoku",
+    "description": "連続する行頭禁止文字（」）。）が全て行頭に出ないこと",
+    "request": {
+      "text": "ああ「いい」）。ううう",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_start_chars": ["」", "）", "。"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-hanging-001",
+    "category": "kinsoku",
+    "description": "ぶら下げ有効時に句読点がぶら下がること",
+    "request": {
+      "text": "ああ。いいう",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 72,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": true
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-head-006",
+    "category": "kinsoku",
+    "description": "半角句読点（｡）が行頭に出ないこと",
+    "request": {
+      "text": "ああ｡いいう",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 72,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_start_chars": ["｡"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-head-007",
+    "category": "kinsoku",
+    "description": "小書きカタカナ（ァ）が行頭に出ないこと",
+    "request": {
+      "text": "カラァンとした",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 96,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_start_chars": ["ァ"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-head-008",
+    "category": "kinsoku",
+    "description": "踊り字（々）が行頭に出ないこと",
+    "request": {
+      "text": "日々の暮らし",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 72,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_start_chars": ["々"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-tail-002",
+    "category": "kinsoku",
+    "description": "山括弧開き（〈）が行末に出ないこと",
+    "request": {
+      "text": "あの〈歴史〉の中",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 72,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_end_chars": ["〈"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-tail-003",
+    "category": "kinsoku",
+    "description": "丸括弧開き（（）が行末に出ないこと",
+    "request": {
+      "text": "それ（大事）です",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 72,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_end_chars": ["（"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-consecutive-002",
+    "category": "kinsoku",
+    "description": "連続する閉じ括弧（」））がバックトラックで処理されること",
+    "request": {
+      "text": "彼は「いい」）と言う",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_start_chars": ["」", "）"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-nonbreak-003",
+    "category": "kinsoku",
+    "description": "三点リーダー3連続（………）が分離されないこと",
+    "request": {
+      "text": "それは………重大だ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "non_break_pair_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-mixed-001",
+    "category": "kinsoku",
+    "description": "和欧混植テキストでも禁則が適用されること",
+    "request": {
+      "text": "Hello、World。テスト",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0,
+      "forbid_line_start_chars": ["、", "。"]
+    }
+  },
+  {
+    "id": "ja-kinsoku-hanging-002",
+    "category": "kinsoku",
+    "description": "ぶら下げ有効時に読点がぶら下がること",
+    "request": {
+      "text": "ああ、いいう",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 72,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": true
+    },
+    "expected": {
+      "overflow": "none",
+      "kinsoku_violations": 0
+    }
+  },
+  {
+    "id": "ja-kinsoku-unresolved-001",
+    "category": "kinsoku",
+    "description": "全文字が行頭禁止の場合 kinsoku_unresolved になること。boundtext は max_width 内に収めるため強制改行し kinsoku_unresolved を報告する。ブラウザ (line-break:strict) は改行機会なしと判断しオーバーフローする。また Chromium は text-spacing-trim:normal により連続句読点を半幅圧縮するため見た目の文字幅も異なる（既知差異）。",
+    "request": {
+      "text": "。。。。。。。。",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 50,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "None",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "kinsoku_unresolved",
+      "line_count": 4,
+      "break_indices": [2, 4, 6],
+      "_browser_incomparable": true,
+      "_note": "Browsers do not break all-head-prohibit sequences (no break opportunity under line-break:strict). boundtext force-breaks to respect max_width. Chromium also applies text-spacing-trim:normal compressing consecutive CJK punctuation to half-width."
+    }
+  }
+]

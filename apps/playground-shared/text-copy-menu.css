@@ -1,0 +1,73 @@
+.text-copy-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.text-copy-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  color: var(--text);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.text-copy-menu-item:hover {
+  background: var(--panel-2);
+  color: var(--accent);
+}
+
+.text-copy-menu-item:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.text-copy-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
+
+.text-copy-menu-preview {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.text-copy-toast {
+  position: fixed;
+  z-index: 1001;
+  padding: 4px 12px;
+  background: var(--accent);
+  color: #000;
+  border-radius: 4px;
+  font-size: 12px;
+  max-width: 220px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  opacity: 0;
+  white-space: nowrap;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+  transform: translateY(-4px);
+}
+
+.text-copy-toast[data-visible="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}

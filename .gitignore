@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+pkg/
+pkg-web/
+# Un-ignore only the tracked placeholder .gitignore inside (no artifacts tracked)
+!crates/boundsvg/pkg-web/
+wasm-pkg/
+*.wasm
+target/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Environment variables
+.env
+.env.*
+
+# Logs
+*.log
+
+# Test / coverage outputs
+tmp/
+coverage/
+__verify_output__/
+
+# Local build/benchmark outputs
+_build/
+
+# VitePress
+**/.vitepress/cache/
+**/.vitepress/.temp/
+
+# Generated rustdoc (built by scripts/generate-rustdoc.sh, deployed via CI)
+apps/docs/public/rustdoc/
+
+# Playwright
+e2e/test-results/
+e2e/playwright-report/
+vendor/ttf-parser/Cargo.lock

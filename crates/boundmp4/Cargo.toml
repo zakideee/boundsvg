@@ -1,0 +1,22 @@
+[package]
+name = "boundmp4"
+version = "0.1.0"
+edition.workspace = true
+# Above the workspace MSRV (1.85) because shiguredo_mp4 declares 1.88. Only this
+# crate is affected; the engine crates keep the workspace value.
+rust-version = "1.88.0"
+license.workspace = true
+authors = ["zakideee"]
+repository = "https://github.com/zakideee/boundsvg"
+description = "MP4 container muxer for @boundsvg/video (browser WebCodecs H.264 output)"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+shiguredo_mp4 = "=2026.3.0"
+wasm-bindgen = "0.2"

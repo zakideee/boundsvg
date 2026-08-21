@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "noEmit": true,
+    "rootDir": "..",
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@boundsvg/core/jsx-runtime": ["../src/vnode/jsx-runtime.ts"],
+      "@boundsvg/core/jsx-dev-runtime": ["../src/vnode/jsx-dev-runtime.ts"]
+    }
+  },
+  "include": ["../src/**/*.ts", "./**/*.ts", "./**/*.tsx"],
+  "exclude": ["../dist", "../node_modules"]
+}

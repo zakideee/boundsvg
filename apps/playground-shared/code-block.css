@@ -1,0 +1,121 @@
+/* ---- Code panel ---- */
+
+.code-col {
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.code-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  background: #1e1e1e;
+  flex-shrink: 0;
+}
+
+.code-tab {
+  padding: 8px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.code-tab:hover {
+  color: var(--text);
+}
+
+.code-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.code-tab-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 2px;
+  background: var(--line, #444);
+}
+
+.code-block {
+  flex: 1;
+  background: var(--panel);
+  padding: 16px;
+  overflow: auto;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #c9d1d9;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* ---- Prism.js syntax highlighting ---- */
+
+.code-block .token.comment,
+.code-block .token.prolog,
+.code-block .token.doctype,
+.code-block .token.cdata {
+  color: #6b7fa0;
+}
+
+.code-block .token.punctuation {
+  color: #8b9fc6;
+}
+
+.code-block .token.tag {
+  color: #7dd3fc;
+}
+
+.code-block .token.tag .token.punctuation {
+  color: #5b8fb8;
+}
+
+.code-block .token.attr-name {
+  color: #a5b4fc;
+}
+
+.code-block .token.attr-value,
+.code-block .token.string {
+  color: #86efac;
+}
+
+.code-block .token.number,
+.code-block .token.boolean {
+  color: #fbbf24;
+}
+
+.code-block .token.keyword,
+.code-block .token.operator {
+  color: #c084fc;
+}
+
+.code-block .token.function,
+.code-block .token.class-name {
+  color: #67e8f9;
+}
+
+.code-block .token.builtin {
+  color: #f9a8d4;
+}
+
+.code-block .token.script {
+  color: #dbeafe;
+}
+
+/* ---- Inspect hover: line-level highlight ---- */
+
+.code-line {
+  padding: 0 2px;
+  margin: 0 -2px;
+  border-radius: 2px;
+  transition: background 0.1s;
+}
+
+.code-line-highlight {
+  background: rgba(66, 133, 244, 0.12);
+}

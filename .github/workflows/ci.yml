@@ -1,0 +1,478 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "release/**"]
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Run the full CI suite, including coverage and E2E."
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      base_ref: ${{ steps.detect.outputs.base_ref }}
+      full: ${{ steps.detect.outputs.full }}
+      rust: ${{ steps.detect.outputs.rust }}
+      ts: ${{ steps.detect.outputs.ts }}
+      e2e: ${{ steps.detect.outputs.e2e }}
+      pack: ${{ steps.detect.outputs.pack }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - id: detect
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF_NAME: ${{ github.base_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.full || 'false' }}
+        run: |
+          set -euo pipefail
+
+          base_branch="${BASE_REF_NAME:-${DEFAULT_BRANCH}}"
+          base_ref="origin/${base_branch}"
+          git fetch --no-tags --prune --depth=1 origin "${base_branch}"
+
+          changed_files="$(mktemp)"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${WORKFLOW_FULL}" == "true" ]]; then
+            : >"${changed_files}"
+          else
+            git diff --name-only "${base_ref}...HEAD" | sort -u >"${changed_files}"
+          fi
+
+          has_changed() {
+            grep -Eq "$1" "${changed_files}"
+          }
+
+          set_output() {
+            printf '%s=%s\n' "$1" "$2" >>"${GITHUB_OUTPUT}"
+          }
+
+          full="false"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${WORKFLOW_FULL}" == "true" ]]; then
+            full="true"
+          fi
+
+          if has_changed '^\.github/workflows/ci\.yml$|^scripts/preflight-pr\.mjs$'; then
+            full="true"
+          fi
+
+          # Every push trigger (main after a merge, release branches) runs the
+          # full suite; path selection applies to pull requests only.
+          if [[ "${EVENT_NAME}" == "push" ]]; then
+            full="true"
+          fi
+
+          rust="false"
+          if [[ "${full}" == "true" ]] || has_changed '(^|/)(Cargo\.toml|Cargo\.lock)$|^crates/.*\.rs$'; then
+            rust="true"
+          fi
+
+          pack="false"
+          if [[ "${full}" == "true" ]] || has_changed '^(packages|crates)/|^fixtures/fonts/|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|Cargo\.toml|Cargo\.lock|rust-toolchain\.toml|LICENSE-MIT|LICENSE-APACHE|THIRD-PARTY-LICENSES)$|^scripts/pack-e2e\.mjs$|^\.github/workflows/pack-e2e\.yml$'; then
+            pack="true"
+          fi
+
+          ts="false"
+          if [[ "${full}" == "true" ]] || [[ "${rust}" == "true" ]] || [[ "${pack}" == "true" ]] || has_changed '^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig.*\.json|biome\.json)$|^(packages|apps|e2e)/|^\.changeset/'; then
+            ts="true"
+          fi
+
+          e2e="false"
+          if [[ "${full}" == "true" ]] || has_changed '^(e2e|apps/playground-|packages/(core|browser|worker|react|shape|video)|crates/(boundsvg|boundtext|boundshape|boundmp4))/|^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$'; then
+            e2e="true"
+          fi
+
+          # Demo fast path: playground/docs/markdown-only changes skip every
+          # heavy job (local preflight already lints and builds them; nothing
+          # downstream consumes demo code). The Playwright harnesses under
+          # apps/playground-react/src/e2e/ stay on the normal path.
+          demo_only="false"
+          demo_pattern='^apps/(docs|playground-core|playground-cli|playground-shared|playground-react)/|\.md$|^\.changeset/'
+          if [[ "${full}" != "true" ]] && [[ -s "${changed_files}" ]] \
+            && ! grep -Evq "${demo_pattern}" "${changed_files}" \
+            && ! grep -Eq '^apps/playground-react/src/e2e/|^apps/(playground-core|playground-react)/tests/' "${changed_files}"; then
+            demo_only="true"
+            rust="false"
+            ts="false"
+            e2e="false"
+            pack="false"
+          fi
+
+          {
+            echo "### CI change detection"
+            echo
+            echo "- base: ${base_ref}"
+            echo "- full: ${full}"
+            echo "- rust: ${rust}"
+            echo "- ts: ${ts}"
+            echo "- e2e: ${e2e}"
+            echo "- pack: ${pack}"
+            echo "- demo_only: ${demo_only}"
+            echo
+            echo "Changed files:"
+            if [[ -s "${changed_files}" ]]; then
+              sed 's/^/- `/' "${changed_files}" | sed 's/$/`/'
+            else
+              echo "- full run requested"
+            fi
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+          set_output "base_ref" "${base_ref}"
+          set_output "full" "${full}"
+          set_output "rust" "${rust}"
+          set_output "ts" "${ts}"
+          set_output "e2e" "${e2e}"
+          set_output "pack" "${pack}"
+
+      # Runs here because this job already has the full history and the base
+      # ref fetched. Cheap, and it gates the one promise the docs make that
+      # nothing else enforces: an output-affecting change reaches the release
+      # notes. See scripts/check-output-affecting-changeset.sh for the rule and
+      # its limits.
+      - name: Output-affecting changes are declared
+        shell: bash
+        env:
+          BASE_REF: ${{ steps.detect.outputs.base_ref }}
+        run: bash scripts/check-output-affecting-changeset.sh "${BASE_REF}"
+
+  docs-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the docs site
+        run: pnpm build:docs
+
+  lint-and-typecheck:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Toolchain only feeds the WASM fallback build; Rust lint/tests run in
+      # test-rust, and preflight below runs with --checks-only.
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
+        with:
+          tool: wasm-pack@0.13.1
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check generated IR contract freshness
+        run: pnpm check:ir-schema
+
+      # Restore-only (test-ts saves the exact-key artifact).
+      - name: Restore WASM artifacts
+        id: wasm-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            packages/core/wasm-pkg
+            crates/boundsvg/pkg-web
+          key: wasm-${{ runner.os }}-${{ hashFiles('crates/*/src/**', 'crates/*/Cargo.toml', 'vendor/**', 'crates/boundsvg/build.sh', 'package.json', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
+          # Lint only needs wasm-pkg/pkg-web type surfaces for `pnpm typecheck`;
+          # a slightly stale artifact is fine here (test-ts always builds the
+          # exact one), so fall back to the newest available instead of paying
+          # a full WASM build on every crates change.
+          restore-keys: |
+            wasm-${{ runner.os }}-
+
+      # Stale fallback types are only safe when the PR does not touch Rust -
+      # a crates change may add/alter WASM exports that `pnpm typecheck`
+      # references, so exact-miss + rust-changed builds fresh.
+      - name: Build WASM
+        if: steps.wasm-cache.outputs.cache-matched-key == '' || (steps.wasm-cache.outputs.cache-hit != 'true' && needs.changes.outputs.rust == 'true')
+        run: |
+          pnpm build:wasm
+          pnpm build:wasm:web
+
+      # Seconds to build and not covered by the conditional restore above, so a
+      # cache from before the crate existed cannot red a TS-only run.
+      - name: Build MP4 muxer WASM
+        run: pnpm build:wasm:mp4
+
+      - name: Fetch preflight base
+        env:
+          PREFLIGHT_BASE: ${{ needs.changes.outputs.base_ref }}
+        run: |
+          git fetch --no-tags --prune --depth=1 origin "${PREFLIGHT_BASE#origin/}"
+
+      - name: Changed-area preflight
+        env:
+          PREFLIGHT_BASE: ${{ needs.changes.outputs.base_ref }}
+          PREFLIGHT_FULL: ${{ needs.changes.outputs.full }}
+        run: |
+          if [[ "${PREFLIGHT_FULL}" == "true" ]]; then
+            pnpm preflight --full --checks-only --base "${PREFLIGHT_BASE}"
+          else
+            pnpm preflight --checks-only --base "${PREFLIGHT_BASE}"
+          fi
+
+      - name: Knip (unused exports/deps)
+        if: needs.changes.outputs.full == 'true'
+        run: pnpm knip
+
+  test-ts:
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
+        with:
+          tool: wasm-pack@0.13.1
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Restore WASM artifacts
+        id: wasm-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            packages/core/wasm-pkg
+            crates/boundsvg/pkg-web
+          key: wasm-${{ runner.os }}-${{ hashFiles('crates/*/src/**', 'crates/*/Cargo.toml', 'vendor/**', 'crates/boundsvg/build.sh', 'package.json', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
+
+      # ts-only changes still need the WASM artifacts (browser bundles pkg-web,
+      # core tests load wasm-pkg) - build only when the cache misses.
+      - name: Build WASM
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: |
+          pnpm build:wasm
+          pnpm build:wasm:web
+
+      - name: Build MP4 muxer WASM
+        run: pnpm build:wasm:mp4
+
+      - name: Build package outputs and declarations
+        run: pnpm typecheck
+
+      - name: Smoke benchmark harness
+        run: pnpm bench:smoke
+
+      - name: Test packed public runtime graph
+        if: needs.changes.outputs.pack == 'true'
+        run: node scripts/pack-e2e.mjs
+
+      - name: Test shape
+        run: pnpm --filter @boundsvg/shape test
+
+      - name: Test core
+        run: pnpm --filter @boundsvg/core test
+
+      - name: Test browser
+        run: pnpm --filter @boundsvg/browser test
+
+      - name: Test worker
+        run: pnpm --filter @boundsvg/worker test
+
+      - name: Test video
+        run: pnpm --filter @boundsvg/video test
+
+      - name: Test React
+        run: pnpm --filter @boundsvg/react test
+
+      - name: Install ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+
+      - name: Require ffmpeg for public CLI integration contracts
+        run: ffmpeg -version
+
+      - name: Test CLI
+        run: pnpm --filter @boundsvg/cli test
+
+      - name: Test extras
+        run: pnpm --filter @boundsvg/extras test
+
+      - name: Test public testing helpers
+        run: pnpm --filter @boundsvg/testing test
+
+      - name: Test playground Core
+        run: pnpm --filter @boundsvg/playground-core test
+
+      - name: Test playground React
+        run: pnpm --filter @boundsvg/playground-react test
+
+      - name: Test coverage gates
+        if: needs.changes.outputs.full == 'true'
+        run: pnpm run test:coverage:ts
+
+      - name: Upload TS coverage summaries
+        if: always() && needs.changes.outputs.full == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-ts-summary
+          path: |
+            packages/core/coverage/coverage-summary.json
+            packages/react/coverage/coverage-summary.json
+            packages/cli/coverage/coverage-summary.json
+
+  test-rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.0
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+        working-directory: crates/boundsvg
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: crates/boundsvg
+
+      - name: Test workspace
+        if: needs.changes.outputs.full != 'true'
+        run: cargo test --workspace
+        working-directory: crates/boundsvg
+
+      - name: Test vendored ttf-parser patch
+        run: cargo test --manifest-path vendor/ttf-parser/Cargo.toml --all-features
+
+      # Feature-unification contract (was preflight's job before --checks-only):
+      # the default-features run above does not cover unicode-full.
+      - name: Export contracts (unicode-full)
+        run: cargo test -p boundsvg --test lib_exports_test --features unicode-full
+        working-directory: crates/boundsvg
+
+      - name: Install llvm-tools-preview
+        if: needs.changes.outputs.full == 'true'
+        run: rustup component add llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        if: needs.changes.outputs.full == 'true'
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Test + Rust coverage
+        if: needs.changes.outputs.full == 'true'
+        run: |
+          mkdir -p target/llvm-cov
+          cargo llvm-cov --workspace --lcov --output-path target/llvm-cov/lcov.info
+        working-directory: crates/boundsvg
+
+      - name: Upload Rust coverage report
+        if: always() && needs.changes.outputs.full == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-rust-lcov
+          path: crates/boundsvg/target/llvm-cov/lcov.info
+
+  test-e2e:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
+        with:
+          tool: wasm-pack@0.13.1
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install chromium --with-deps firefox
+
+      - name: Build (full chain for E2E)
+        run: pnpm run test:e2e:prepare
+
+      - name: Run E2E tests
+        run: pnpm run test:e2e
+
+      - name: Upload E2E test results
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-test-results
+          path: e2e/test-results/

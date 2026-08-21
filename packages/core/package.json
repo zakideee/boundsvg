@@ -1,0 +1,110 @@
+{
+  "name": "@boundsvg/core",
+  "version": "0.1.0",
+  "description": "Core layout engine for boundsvg — JSX to SVG/PNG/WebP/GIF rendering pipeline",
+  "keywords": [
+    "svg",
+    "layout",
+    "text-layout",
+    "wasm",
+    "flexbox",
+    "jsx",
+    "png"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zakideee/boundsvg.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/zakideee/boundsvg/tree/main/packages/core",
+  "bugs": {
+    "url": "https://github.com/zakideee/boundsvg/issues"
+  },
+  "author": "zakideee",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./jsx-runtime": {
+      "types": "./dist/jsx-runtime.d.ts",
+      "import": "./dist/jsx-runtime.js",
+      "require": "./dist/jsx-runtime.cjs"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./dist/jsx-dev-runtime.d.ts",
+      "import": "./dist/jsx-dev-runtime.js",
+      "require": "./dist/jsx-dev-runtime.cjs"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
+      "require": "./dist/node.cjs"
+    },
+    "./scene": {
+      "types": "./dist/scene.d.ts",
+      "import": "./dist/scene.js",
+      "require": "./dist/scene.cjs"
+    },
+    "./inspect": {
+      "types": "./dist/inspect.d.ts",
+      "import": "./dist/inspect.js",
+      "require": "./dist/inspect.cjs"
+    },
+    "./vnode": {
+      "types": "./dist/vnode.d.ts",
+      "import": "./dist/vnode.js",
+      "require": "./dist/vnode.cjs"
+    },
+    "./svg": {
+      "types": "./dist/svg.d.ts",
+      "import": "./dist/svg.js",
+      "require": "./dist/svg.cjs"
+    },
+    "./codegen": {
+      "types": "./dist/codegen.d.ts",
+      "import": "./dist/codegen.js",
+      "require": "./dist/codegen.cjs"
+    },
+    "./wasm": {
+      "types": "./dist/wasm.d.ts",
+      "import": "./dist/wasm.js",
+      "require": "./dist/wasm.cjs"
+    },
+    "./internal/*": null
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "wasm-pkg",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "THIRD-PARTY-LICENSES"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck:types": "pnpm run build && tsc -p tsconfig.type-tests.json --noEmit"
+  },
+  "dependencies": {
+    "@boundsvg/shape": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "tsup": "^8.3.0",
+    "vitest": "^3.0.0"
+  }
+}

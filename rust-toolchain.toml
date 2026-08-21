@@ -1,0 +1,11 @@
+[toolchain]
+# MSRV is 1.85.0 (set in Cargo.toml workspace.package.rust-version).
+# Pinned to an exact stable so local clippy/rustfmt match CI byte-for-byte
+# (floating "stable" let CI drift ahead and fail lints that passed locally).
+# Bump deliberately: update the pin, run `pnpm lint:rust` + full tests.
+channel = "1.97.0"
+# Declared here so rustup's auto-install of the pinned toolchain always
+# carries them (a CI action installing "stable" leaves the 1.97.0 toolchain
+# at the minimal profile otherwise - no cargo-fmt/clippy).
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>boundsvg — Core</title>
+    <style>
+      /* Inline to prevent white flash before external CSS loads */
+      html {
+        background: #1a1a1a;
+      }
+
+      /* ---- App-specific: body layout ---- */
+      body {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .header-top-row {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .brand-copy {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .header-meta {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 12px;
+        flex-shrink: 0;
+      }
+
+      /* ---- Preset nav ---- */
+      .preset-category-nav {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        width: 100%;
+        margin-bottom: 6px;
+      }
+      .preset-category-nav button {
+        color: var(--muted);
+        border: 1px solid var(--line);
+        background: transparent;
+        border-radius: 999px;
+        padding: 6px 14px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: 0.2s;
+      }
+      .preset-category-nav button:hover {
+        border-color: #3b82f6;
+        color: #d4d4d4;
+      }
+      .preset-category-nav button.active {
+        border-color: var(--accent);
+        color: #1a1a1a;
+        background: linear-gradient(90deg, #67e8f9 0%, var(--accent) 100%);
+      }
+      /* Sub tier: underline tab strip, visually subordinate to the category pills. */
+      .preset-nav {
+        display: flex;
+        gap: 2px;
+        flex-wrap: wrap;
+        width: 100%;
+        padding-left: 2px;
+        border-bottom: 1px solid var(--line);
+      }
+      .preset-nav button {
+        text-decoration: none;
+        color: var(--muted);
+        border: none;
+        background: none;
+        border-radius: 0;
+        padding: 4px 10px 7px;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: 0.2s;
+      }
+      .preset-nav button:hover {
+        color: #d4d4d4;
+        border-bottom-color: #3b82f6;
+      }
+      .preset-nav button.active {
+        color: var(--accent);
+        font-weight: 600;
+        border-bottom-color: var(--accent);
+      }
+
+      .preset-desc {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      /* ---- Main content ---- */
+      .main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0;
+        min-height: 0;
+      }
+      @media (max-width: 1000px) {
+        .main {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* Left: render outputs (SVG + PNG stacked) */
+      .render-col {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px 16px 16px 24px;
+        overflow: auto;
+      }
+      .output-section h2 {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--muted);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .output-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .output-actions button {
+        font: inherit;
+        font-size: 12px;
+        padding: 4px 10px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.06);
+        color: inherit;
+        cursor: pointer;
+      }
+      .output-actions button:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.14);
+      }
+      .output-actions button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .output-actions-note {
+        font-size: 11px;
+        opacity: 0.6;
+      }
+      .output-frame {
+        background:
+          linear-gradient(
+            45deg,
+            rgba(255, 255, 255, 0.08) 25%,
+            transparent 25%
+          ),
+          linear-gradient(
+            -45deg,
+            rgba(255, 255, 255, 0.08) 25%,
+            transparent 25%
+          ),
+          linear-gradient(
+            45deg,
+            transparent 75%,
+            rgba(255, 255, 255, 0.08) 75%
+          ),
+          linear-gradient(
+            -45deg,
+            transparent 75%,
+            rgba(255, 255, 255, 0.08) 75%
+          );
+        background-size: 24px 24px;
+        background-position:
+          0 0,
+          0 12px,
+          12px -12px,
+          -12px 0;
+        background-color: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: auto;
+      }
+      .output-frame svg {
+        max-width: 100%;
+        height: auto;
+      }
+      .output-frame img {
+        max-width: 100%;
+        height: auto;
+      }
+
+      /* ---- Layered preset: Single / Stacked pair ---- */
+      .layered-output-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 32px;
+        align-items: flex-start;
+        justify-content: center;
+      }
+      .layered-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+      .layered-cell > h4 {
+        margin: 0;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .layered-cell-body {
+        display: block;
+        line-height: 0;
+      }
+      .layered-cell-body > svg,
+      .layered-cell-body > img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        max-width: none;
+      }
+      .layered-stack {
+        position: relative;
+        line-height: 0;
+      }
+      .layered-stack-item {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        transition:
+          transform 0.3s ease,
+          box-shadow 0.3s ease;
+      }
+      .layered-stack:hover .layered-stack-item {
+        transform: translate(
+          calc(var(--layered-i) * 14px),
+          calc(var(--layered-i) * -10px)
+        );
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+      }
+      .layered-stack-item > svg,
+      .layered-stack-item > img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        max-width: none;
+      }
+
+      /* ---- Event log ---- */
+      .event-log-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .event-log-bar code {
+        color: var(--accent);
+      }
+      .event-log-bar button {
+        padding: 3px 10px;
+        font-size: 11px;
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .event-log-entries {
+        height: 240px;
+        overflow-y: scroll;
+        padding: 8px;
+        font-family: "Fira Code", "Cascadia Code", "Consolas", monospace;
+        font-size: 11px;
+        line-height: 1.6;
+      }
+      .log-entry {
+        display: grid;
+        grid-template-columns: 85px 95px 1fr auto;
+        gap: 0 8px;
+        border-bottom: 1px solid var(--line);
+        padding: 2px 0;
+      }
+
+      /* ---- Loading ---- */
+      #status {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      #app {
+        display: none;
+        min-height: 100vh;
+        flex-direction: column;
+      }
+
+      @media (max-width: 960px) {
+        .header-top-row {
+          flex-wrap: wrap;
+          align-items: flex-start;
+        }
+
+        .header-meta {
+          width: 100%;
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">
+      <span>Loading WASM &amp; fonts&hellip;</span>
+    </div>
+
+    <div id="app">
+      <!-- Header -->
+      <header class="header">
+        <div class="header-top-row">
+          <div class="brand-copy">
+            <div class="brand-lockup">
+              <img
+                class="brand-logo"
+                src="/logo/boundsvg-logo-horizontal-violet-muted.svg"
+                alt=""
+                aria-hidden="true"
+              />
+              <h1 class="brand">Core</h1>
+            </div>
+            <span class="brand-sub"
+              >Code &rarr; SVG/PNG &mdash; no framework required</span
+            >
+          </div>
+          <div class="header-meta">
+            <a
+              class="github-link"
+              href="https://github.com/zakideee/boundsvg"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="GitHub repository"
+            >
+              <svg
+                aria-hidden="true"
+                width="20"
+                height="20"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <path
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+                />
+              </svg>
+            </a>
+            <div class="status-strip" id="status-strip">
+              <span class="status-dot" id="status-dot"></span>
+              <span id="status-text"></span>
+            </div>
+          </div>
+        </div>
+        <nav
+          class="preset-category-nav"
+          id="preset-categories"
+          aria-label="Preset categories"
+        ></nav>
+        <nav class="preset-nav" id="presets"></nav>
+      </header>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <span class="preset-desc" id="preset-desc"></span>
+        <details class="bbox-overlay-menu">
+          <summary id="bbox-overlay-summary">BBox Overlay: off</summary>
+          <fieldset class="bbox-overlay-options" aria-label="BBox Overlay">
+            <label>
+              <input
+                type="checkbox"
+                name="bbox-overlay-part"
+                value="specified"
+              />
+              node bounds
+            </label>
+            <label>
+              <input type="checkbox" name="bbox-overlay-part" value="layout" />
+              text lines
+            </label>
+            <label>
+              <input type="checkbox" name="bbox-overlay-part" value="actual" />
+              glyph bounds
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                name="bbox-overlay-part"
+                value="baseline"
+              />
+              baselines
+            </label>
+          </fieldset>
+        </details>
+        <label>
+          PNG Scale
+          <select id="png-scale">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+          </select>
+        </label>
+        <label>
+          Text Rendering
+          <select id="text-rendering">
+            <option value="merged">merged paths</option>
+            <option value="glyphs">per glyph</option>
+          </select>
+        </label>
+      </div>
+
+      <!-- Content -->
+      <div class="main">
+        <div class="render-col">
+          <div class="output-section">
+            <h2>SVG</h2>
+            <div class="output-frame" id="svg-output"></div>
+          </div>
+          <div class="output-section">
+            <h2>PNG</h2>
+            <div class="output-frame" id="png-output"></div>
+            <div class="output-actions" id="export-actions">
+              <button type="button" data-export="png">Download PNG</button>
+              <button type="button" data-export="webp">Download WebP</button>
+              <button type="button" data-export="animated-webp">
+                Download animated WebP
+              </button>
+              <button type="button" data-export="gif">
+                Download animated GIF
+              </button>
+              <span class="output-actions-note" id="export-note"></span>
+            </div>
+          </div>
+        </div>
+        <div class="code-col">
+          <div class="code-tabs" id="code-tabs">
+            <button type="button" class="code-tab active" data-tab="source">
+              Source Code
+            </button>
+            <button type="button" class="code-tab" data-tab="svg">
+              Rendered SVG
+            </button>
+          </div>
+          <div class="code-block" id="code-output"></div>
+          <div
+            id="event-log"
+            class="output-section"
+            style="display: none; padding: 12px"
+          >
+            <h2>Event Log</h2>
+            <div class="event-log-bar">
+              <span>Hover: <code id="event-log-hover">none</code></span>
+              <button type="button" id="event-log-clear">Clear</button>
+            </div>
+            <div class="event-log-entries" id="event-log-entries"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

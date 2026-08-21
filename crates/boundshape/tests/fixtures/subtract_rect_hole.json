@@ -1,0 +1,11 @@
+{
+  "viewBox": { "width": 80, "height": 80 },
+  "root": {
+    "kind": "boolean",
+    "op": "subtract",
+    "children": [
+      { "kind": "path", "d": "M0 0H80V80H0Z" },
+      { "kind": "path", "d": "M20 20H60V60H20Z" }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/zakideee/boundsvg/discussions
+    about: Usage questions, ideas, and anything without a reproducible bug go here.
+  - name: Security reports
+    url: https://github.com/zakideee/boundsvg/security/advisories/new
+    about: Report vulnerabilities privately — never through a public issue.

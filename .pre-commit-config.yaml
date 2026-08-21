@@ -1,0 +1,59 @@
+repos:
+  - repo: local
+    hooks:
+      # ── Biome: TS / JS / JSON / CSS ──────────────────────────────
+      - id: biome
+        name: biome check
+        language: system
+        entry: pnpm exec biome check --write --no-errors-on-unmatched
+        files: \.(ts|tsx|js|jsx|mjs|cjs|json|css)$
+        exclude: ^(apps/docs/public/rustdoc/|vendor/)
+
+      # ── rustfmt: all Rust files ─────────────────────────────────
+      - id: rustfmt
+        name: rustfmt
+        language: system
+        entry: rustfmt --config-path rustfmt.toml
+        files: ^crates/.*\.rs$
+
+      # ── Rust lint: full workspace before push ───────────────────
+      - id: rust-clippy
+        name: cargo clippy
+        language: system
+        entry: pnpm lint:rust
+        files: ^(Cargo\.(toml|lock)|crates/.*\.(rs|toml)|crates/.*/Cargo\.lock)$
+        pass_filenames: false
+        stages: [pre-push]
+
+      # ── PR preflight: changed-area checks before spending CI ─────
+      - id: pr-preflight
+        name: PR preflight
+        language: system
+        entry: pnpm preflight
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      # ── Prettier: Markdown / YAML ───────────────────────────────
+      - id: prettier
+        name: prettier
+        language: system
+        entry: pnpm exec prettier --write --ignore-unknown
+        files: \.(md|yml|yaml|html)$
+        exclude: ^(apps/docs/public/rustdoc/|vendor/)
+
+      # ── TypeScript: project references ──────────────────────────
+      - id: typecheck
+        name: TypeScript typecheck
+        language: system
+        entry: pnpm typecheck
+        files: ^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig.*\.json|packages/.*\.(ts|tsx|json)|apps/.*\.(ts|tsx|json)|e2e/.*\.(ts|tsx|json))$
+        pass_filenames: false
+
+      # ── Knip: unused exports / dependencies ────────────────────
+      - id: knip
+        name: knip
+        language: system
+        entry: pnpm knip
+        files: ^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig.*\.json|packages/.*\.(ts|tsx|json)|apps/.*\.(ts|tsx|json))$
+        pass_filenames: false

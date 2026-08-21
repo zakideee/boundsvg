@@ -1,0 +1,42 @@
+```tsx
+<Canvas width={240} height={140} background="#ffffff">
+  <Flex
+    width={240}
+    height={140}
+    padding={16}
+    justifyContent="center"
+    alignItems="center"
+  >
+    <Path
+      d="M10 80 Q 95 10 180 80"
+      width={200}
+      height={100}
+      fill="none"
+      stroke="#3b82f6"
+      strokeWidth={3}
+    />
+  </Flex>
+</Canvas>
+```
+
+<div class="example-output">
+  <img src="/generated/path-bezier.svg" alt="path-bezier example" />
+</div>
+
+<details>
+<summary>Generated SVG</summary>
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" data-boundsvg-node-id="auto:0" viewBox="0 0 240 140" width="240" height="140">
+  <rect x="0" y="0" width="240" height="140" fill="#ffffff"/>
+  <g data-boundsvg-node-id="auto:0.0">
+    <g data-boundsvg-node-id="auto:0.0.0">
+      <svg data-boundsvg-node-id="auto:0.0.0" x="20" y="20" width="200" height="100" overflow="hidden">
+        <path d="M10 80 Q 95 10 180 80" fill="none" stroke="#3b82f6" stroke-width="3"/>
+      </svg>
+    </g>
+  </g>
+</svg>
+```
+
+</details>

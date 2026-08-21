@@ -1,0 +1,378 @@
+[
+  {
+    "id": "fit-shrink-basic-001",
+    "category": "fit",
+    "description": "基本 Shrink: 幅超過テキストを 1 行に収まるよう縮小",
+    "request": {
+      "text": "これは非常に長いテキストです",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "Shrink",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "chosen_font_size_px_max": 24,
+      "bbox_w_max": 120,
+      "bbox_h_max": 40
+    }
+  },
+  {
+    "id": "fit-shrink-height-001",
+    "category": "fit",
+    "description": "高さ制約による Shrink",
+    "request": {
+      "text": "あいうえおかきくけこさしすせそ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 60,
+      "wrap": "Word",
+      "fit": "Shrink",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "chosen_font_size_px_max": 24,
+      "bbox_h_max": 60
+    }
+  },
+  {
+    "id": "fit-shrink-maxlines-001",
+    "category": "fit",
+    "description": "max_lines + Shrink で行数制約内に収める",
+    "request": {
+      "text": "あいうえおかきくけこさしすせそたちつてと",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "Shrink",
+      "max_lines": 2,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 2,
+      "chosen_font_size_px_max": 24
+    }
+  },
+  {
+    "id": "fit-shrink-cannot-001",
+    "category": "fit",
+    "description": "min サイズでも収まらない場合 cannot_fit",
+    "request": {
+      "text": "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 30,
+      "max_height": 30,
+      "wrap": "Word",
+      "fit": "Shrink",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "min_font_size_px": 8
+    },
+    "expected": {
+      "overflow": "cannot_fit"
+    }
+  },
+  {
+    "id": "fit-grow-basic-001",
+    "category": "fit",
+    "description": "基本 Grow: 余裕のあるテキストを拡大",
+    "request": {
+      "text": "短い",
+      "font_family": "NotoSansJP",
+      "font_size_px": 12,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "Grow",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "chosen_font_size_px_min": 12,
+      "bbox_w_max": 200,
+      "bbox_h_max": 200
+    }
+  },
+  {
+    "id": "fit-grow-maxlines-001",
+    "category": "fit",
+    "description": "max_lines + Grow で 1 行制約内に拡大",
+    "request": {
+      "text": "あいうえお",
+      "font_family": "NotoSansJP",
+      "font_size_px": 12,
+      "max_width": 120,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "Grow",
+      "max_lines": 1,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "chosen_font_size_px_min": 12,
+      "bbox_w_max": 120
+    }
+  },
+  {
+    "id": "fit-grow-bounded-001",
+    "category": "fit",
+    "description": "max_font_size_px 指定で Grow 上限を制限",
+    "request": {
+      "text": "短い",
+      "font_family": "NotoSansJP",
+      "font_size_px": 12,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "Grow",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "max_font_size_px": 24
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "chosen_font_size_px_min": 12,
+      "chosen_font_size_px_max": 24
+    }
+  },
+  {
+    "id": "fit-grow-already-001",
+    "category": "fit",
+    "description": "既に制約内で最大の場合は変化なし（24px で 2 行ちょうど 72px、拡大すると溢れる）",
+    "request": {
+      "text": "あいうえおかきくけこ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 72,
+      "wrap": "Word",
+      "fit": "Grow",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "chosen_font_size_px_min": 24
+    }
+  },
+  {
+    "id": "fit-shrink-1px-001",
+    "category": "fit",
+    "description": "約 1px はみ出すテキストの縮小",
+    "request": {
+      "text": "あいうえお",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 119,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "Shrink",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "chosen_font_size_px_max": 24,
+      "bbox_w_max": 119
+    }
+  },
+  {
+    "id": "fit-shrink-height-only-001",
+    "category": "fit",
+    "description": "幅は収まるが高さが超過する場合の縮小",
+    "request": {
+      "text": "あいうえおかきくけこ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 35,
+      "wrap": "Word",
+      "fit": "Shrink",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "bbox_h_max": 35
+    }
+  },
+  {
+    "id": "fit-grow-1px-001",
+    "category": "fit",
+    "description": "余裕が約 1px しかない場合の拡大",
+    "request": {
+      "text": "あいうえお",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 121,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "Grow",
+      "max_lines": 1,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "chosen_font_size_px_min": 24,
+      "bbox_w_max": 121
+    }
+  },
+  {
+    "id": "fit-shrink-serif-001",
+    "category": "fit",
+    "description": "NotoSerifJP での Shrink",
+    "request": {
+      "text": "これは非常に長いテキストです",
+      "font_family": "NotoSerifJP",
+      "font_size_px": 24,
+      "max_width": 120,
+      "max_height": 40,
+      "wrap": "Word",
+      "fit": "Shrink",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "chosen_font_size_px_max": 24,
+      "bbox_w_max": 120,
+      "bbox_h_max": 40
+    }
+  },
+  {
+    "id": "fit-grow-serif-001",
+    "category": "fit",
+    "description": "NotoSerifJP での Grow",
+    "request": {
+      "text": "短い",
+      "font_family": "NotoSerifJP",
+      "font_size_px": 12,
+      "max_width": 200,
+      "max_height": 200,
+      "wrap": "Word",
+      "fit": "Grow",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "chosen_font_size_px_min": 12,
+      "bbox_w_max": 200,
+      "bbox_h_max": 200
+    }
+  },
+  {
+    "id": "fit-shrink-multiline-001",
+    "category": "fit",
+    "description": "複数行テキストの Shrink",
+    "request": {
+      "text": "あいうえおかきくけこさしすせそたちつてと",
+      "font_family": "NotoSansJP",
+      "font_size_px": 24,
+      "max_width": 100,
+      "max_height": 60,
+      "wrap": "Word",
+      "fit": "Shrink",
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false
+    },
+    "expected": {
+      "overflow": "none",
+      "chosen_font_size_px_max": 24,
+      "bbox_w_max": 100,
+      "bbox_h_max": 60
+    }
+  },
+  {
+    "id": "fit-grow-large-gap-001",
+    "category": "fit",
+    "description": "現在サイズと最大サイズの差が大きい Grow",
+    "request": {
+      "text": "あ",
+      "font_family": "NotoSansJP",
+      "font_size_px": 8,
+      "max_width": 400,
+      "max_height": 400,
+      "wrap": "Word",
+      "fit": "Grow",
+      "max_lines": 1,
+      "language": "Ja",
+      "writing_mode": "HorizontalTb",
+      "line_height": 1.5,
+      "letter_spacing_px": 0,
+      "hanging_punctuation": false,
+      "max_font_size_px": 200
+    },
+    "expected": {
+      "overflow": "none",
+      "line_count": 1,
+      "chosen_font_size_px_min": 8,
+      "chosen_font_size_px_max": 200,
+      "bbox_w_max": 400,
+      "bbox_h_max": 400
+    }
+  }
+]

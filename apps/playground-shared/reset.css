@@ -1,0 +1,51 @@
+/* ---- Reset & base ---- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ---- Scrollbar ---- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+html {
+  width: 100%;
+  height: 100%;
+  background: var(--bg, #1a1a1a);
+}
+
+body {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  font-family: "Inter", system-ui, "Segoe UI", sans-serif;
+  background: radial-gradient(circle at 0% 0%, #2a2a2a 0%, var(--bg) 60%);
+  color: var(--text);
+}

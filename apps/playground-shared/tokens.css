@@ -1,0 +1,31 @@
+/* ---- Design tokens & @font-face ---- */
+
+/* UI font — vendored variable Inter (400-700) */
+@font-face {
+  font-family: "Inter";
+  src: url("../../fixtures/fonts/Inter-Variable.ttf") format("truetype");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --bg: #1a1a1a;
+  --panel: #252526;
+  --panel-2: #1e1e1e;
+  --line: #3c3c3c;
+  --text: #d4d4d4;
+  --muted: #858585;
+  --accent: #22d3ee;
+  --accent-2: #f97316;
+  --error: #fca5a5;
+}
+
+/* Code font — vendored for Prism code blocks */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../fixtures/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

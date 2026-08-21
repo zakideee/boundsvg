@@ -1,0 +1,15 @@
+<svg id="boundsvg-icon-b" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320" style="fill-rule:evenodd;clip-rule:evenodd;">
+  <g id="bbox-frame">
+    <path d="M120,24 L120,12 Q120,0 108,0 L12,0 Q0,0 0,12 L0,108 Q0,120 12,120 L24,120 Q36,120 36,108 L36,48 Q36,36 48,36 L108,36 Q120,36 120,24 Z" style="fill:#14B8A6;"/>
+    <path d="M200,296 L200,308 Q200,320 212,320 L308,320 Q320,320 320,308 L320,212 Q320,200 308,200 L296,200 Q284,200 284,212 L284,272 Q284,284 272,284 L212,284 Q200,284 200,296 Z" style="fill:#06B6D4;"/>
+    <rect x="279" y="3" width="38" height="38" rx="5" style="fill:#3B475E;"/>
+    <rect x="3" y="279" width="38" height="38" rx="5" style="fill:#3B475E;"/>
+    <rect x="133" y="9" width="133" height="18" rx="4" style="fill:#3B475E;"/>
+    <rect x="54" y="293" width="133" height="18" rx="4" style="fill:#3B475E;"/>
+    <rect x="9" y="133" width="18" height="133" rx="4" style="fill:#3B475E;"/>
+    <rect x="293" y="54" width="18" height="133" rx="4" style="fill:#3B475E;"/>
+  </g>
+  <g id="icon-letter-b" transform="translate(160 160) scale(4.57) translate(-51.3 -102)">
+    <path d="M37.98,82.71L46.41,82.71L46.41,97.69L46.62,97.69C48.89,95.42 51.01,94.28 54.78,94.28C62.18,94.28 64.61,101.16 64.61,107.29C64.61,115.31 60.62,121.34 51.98,121.34C48.16,121.34 47.12,120.98 43.61,120.98L37.98,120.98L37.98,82.71ZM46.41,115.61C47.65,115.92 48.94,116.02 50.23,116.02C55.14,116.02 57.01,112.15 57.01,107.75C57.01,103.83 56.02,100.26 51.83,100.26C49.81,100.26 48.11,101.16 46.41,102.76L46.41,115.61Z" style="fill:#3B475E;fill-rule:nonzero;"/>
+  </g>
+</svg>

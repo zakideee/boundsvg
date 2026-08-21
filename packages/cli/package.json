@@ -1,0 +1,60 @@
+{
+  "name": "@boundsvg/cli",
+  "version": "0.1.0",
+  "description": "CLI tool for boundsvg — convert, export and inspect SVG files and Scene Documents, plus a local environment doctor",
+  "keywords": [
+    "svg",
+    "cli",
+    "png",
+    "convert",
+    "wasm"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zakideee/boundsvg.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/zakideee/boundsvg/tree/main/packages/cli",
+  "bugs": {
+    "url": "https://github.com/zakideee/boundsvg/issues"
+  },
+  "author": "zakideee",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "bin": {
+    "boundsvg": "./dist/bin.js",
+    "boundsvg-convert": "./dist/index-convert.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@boundsvg/core": "workspace:*",
+    "tinyglobby": "^0.2.15"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "tsup": "^8.3.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

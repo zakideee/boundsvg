@@ -1,0 +1,2037 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GeneratedOutputIr",
+  "description": "Complete intermediate representation for a rendered tree.\nSerializes as the TS `IR` shape (camelCase, `debug` omitted unless true).",
+  "type": "object",
+  "properties": {
+    "root": {
+      "$ref": "#/$defs/IrNode"
+    },
+    "drawOrder": {
+      "description": "Node IDs in z-ascending order (back-to-front).",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "width": {
+      "type": "number"
+    },
+    "height": {
+      "type": "number"
+    },
+    "debug": {
+      "description": "Declarative Canvas debug overlay default; omitted unless enabled.",
+      "type": "boolean"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RenderWarning"
+      }
+    }
+  },
+  "required": [
+    "root",
+    "drawOrder",
+    "width",
+    "height",
+    "warnings"
+  ],
+  "$defs": {
+    "IrNode": {
+      "description": "An IR node in the rendering tree.\nSerializes flat (kind fields inline next to `nodeId`/`bbox`, plus a\n`type` discriminant) to match the TS `IRNode` shape.",
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string"
+        },
+        "bbox": {
+          "$ref": "#/$defs/BBox"
+        }
+      },
+      "required": [
+        "nodeId",
+        "bbox"
+      ],
+      "oneOf": [
+        {
+          "description": "Container group (may clip children).",
+          "type": "object",
+          "properties": {
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IrNode"
+              }
+            },
+            "clipPath": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BBox"
+                }
+              ]
+            },
+            "clipBorderRadius": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BorderRadius"
+                }
+              ]
+            },
+            "opacity": {
+              "type": "number"
+            },
+            "boxShadow": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BoxShadow"
+                }
+              ]
+            },
+            "meta": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "transform": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Transform2D"
+                }
+              ]
+            },
+            "animation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AnimationSpec"
+                }
+              ]
+            },
+            "on": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HandlersRef"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "group"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Filled/stroked rectangle.",
+          "type": "object",
+          "properties": {
+            "fill": {
+              "type": "string"
+            },
+            "gradient": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Gradient"
+                }
+              ]
+            },
+            "stroke": {
+              "type": "string"
+            },
+            "strokeWidth": {
+              "type": "number"
+            },
+            "strokeScaling": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeScaling"
+                }
+              ]
+            },
+            "borderRadius": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BorderRadius"
+                }
+              ]
+            },
+            "strokeLinecap": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeLinecap"
+                }
+              ]
+            },
+            "strokeLinejoin": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeLinejoin"
+                }
+              ]
+            },
+            "strokeDasharray": {
+              "type": "string"
+            },
+            "strokeMiterlimit": {
+              "type": "number"
+            },
+            "type": {
+              "type": "string",
+              "const": "rect"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Text node with line-broken content.",
+          "type": "object",
+          "properties": {
+            "lines": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/LineProjection"
+              }
+            },
+            "font": {
+              "type": "string"
+            },
+            "fontFallback": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fontSizePx": {
+              "type": "number"
+            },
+            "fontWeight": {
+              "type": "integer",
+              "maximum": 65535,
+              "minimum": 0
+            },
+            "fontStyle": {
+              "type": "string",
+              "enum": [
+                "normal",
+                "italic"
+              ]
+            },
+            "letterSpacingPx": {
+              "type": "number"
+            },
+            "fontVariationSettings": {
+              "type": "string"
+            },
+            "fontFeatureSettings": {
+              "type": "string"
+            },
+            "color": {
+              "type": "string"
+            },
+            "textAlign": {
+              "$ref": "#/$defs/IrTextAlign"
+            },
+            "layoutBox": {
+              "description": "Allotted text layout box; `bbox` is the aligned measured block.",
+              "$ref": "#/$defs/BBox"
+            },
+            "writingMode": {
+              "type": "string",
+              "enum": [
+                "horizontal-tb",
+                "vertical-rl"
+              ]
+            },
+            "language": {
+              "type": "string",
+              "enum": [
+                "ja",
+                "en",
+                "auto"
+              ]
+            },
+            "lineHeightPx": {
+              "type": "number"
+            },
+            "textLayoutKind": {
+              "type": "string",
+              "enum": [
+                "path"
+              ]
+            },
+            "sourceText": {
+              "type": "string"
+            },
+            "displayText": {
+              "type": "string"
+            },
+            "textPath": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextPathMetadata"
+                }
+              ]
+            },
+            "glyphPaths": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TextOutlinePath"
+              }
+            },
+            "unitMap": {
+              "description": "Stable paint-unit metadata generated by boundtext for opt-in text.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextUnitMap"
+                }
+              ]
+            },
+            "unitAnimation": {
+              "description": "Raw unit animation semantic retained across frame sampling.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextUnitAnimation"
+                }
+              ]
+            },
+            "unitAnimationSamples": {
+              "description": "Per-unit actual outline bounds and sampled pose.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TextUnitAnimationSample"
+              }
+            },
+            "stroke": {
+              "type": "string"
+            },
+            "strokeWidth": {
+              "type": "number"
+            },
+            "strokeLinecap": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeLinecap"
+                }
+              ]
+            },
+            "strokeLinejoin": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeLinejoin"
+                }
+              ]
+            },
+            "strokeDasharray": {
+              "type": "string"
+            },
+            "strokeMiterlimit": {
+              "type": "number"
+            },
+            "strokes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TextStrokeLayer"
+              }
+            },
+            "shadows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TextShadowLayer"
+              }
+            },
+            "textDecorations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TextDecorationFragment"
+              }
+            },
+            "on": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HandlersRef"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "required": [
+            "type",
+            "lines",
+            "font",
+            "fontSizePx",
+            "color",
+            "textAlign",
+            "layoutBox",
+            "lineHeightPx"
+          ]
+        },
+        {
+          "description": "Raster image (base64 data URI).",
+          "type": "object",
+          "properties": {
+            "src": {
+              "type": "string"
+            },
+            "preserveAspectRatio": {
+              "type": "string"
+            },
+            "on": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HandlersRef"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "image"
+            }
+          },
+          "required": [
+            "type",
+            "src",
+            "preserveAspectRatio"
+          ]
+        },
+        {
+          "description": "SVG path element.",
+          "type": "object",
+          "properties": {
+            "pathData": {
+              "type": "string"
+            },
+            "fill": {
+              "type": "string"
+            },
+            "stroke": {
+              "type": "string"
+            },
+            "strokeWidth": {
+              "type": "number"
+            },
+            "strokeScaling": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeScaling"
+                }
+              ]
+            },
+            "fillRule": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IrFillRule"
+                }
+              ]
+            },
+            "strokeLinecap": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeLinecap"
+                }
+              ]
+            },
+            "strokeLinejoin": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeLinejoin"
+                }
+              ]
+            },
+            "strokeDasharray": {
+              "type": "string"
+            },
+            "strokeMiterlimit": {
+              "type": "number"
+            },
+            "on": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HandlersRef"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "path"
+            }
+          },
+          "required": [
+            "type",
+            "pathData"
+          ]
+        },
+        {
+          "description": "Nested SVG content.",
+          "type": "object",
+          "properties": {
+            "svgContent": {
+              "type": "string"
+            },
+            "svgViewBox": {
+              "type": "string"
+            },
+            "preserveAspectRatio": {
+              "type": "string"
+            },
+            "on": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HandlersRef"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "svg"
+            }
+          },
+          "required": [
+            "type",
+            "svgContent",
+            "preserveAspectRatio"
+          ]
+        },
+        {
+          "description": "Structural shape with viewport-baked part paths.",
+          "type": "object",
+          "properties": {
+            "shapeParts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ShapePathPart"
+              }
+            },
+            "fill": {
+              "type": "string"
+            },
+            "stroke": {
+              "type": "string"
+            },
+            "strokeWidth": {
+              "type": "number"
+            },
+            "fillRule": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IrFillRule"
+                }
+              ]
+            },
+            "strokeLinecap": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeLinecap"
+                }
+              ]
+            },
+            "strokeLinejoin": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StrokeLinejoin"
+                }
+              ]
+            },
+            "strokeDasharray": {
+              "type": "string"
+            },
+            "strokeMiterlimit": {
+              "type": "number"
+            },
+            "on": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HandlersRef"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "shape"
+            }
+          },
+          "required": [
+            "type",
+            "shapeParts"
+          ]
+        }
+      ]
+    },
+    "BBox": {
+      "description": "Axis-aligned bounding box.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "w": {
+          "type": "number"
+        },
+        "h": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ]
+    },
+    "BorderRadius": {
+      "description": "Resolved border radius — uniform or per-corner.\nSerializes as the TS union `number | BorderRadii`.",
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "#/$defs/BorderRadii"
+        }
+      ]
+    },
+    "BorderRadii": {
+      "description": "Per-corner border radius.",
+      "type": "object",
+      "properties": {
+        "tl": {
+          "type": "number"
+        },
+        "tr": {
+          "type": "number"
+        },
+        "br": {
+          "type": "number"
+        },
+        "bl": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "tl",
+        "tr",
+        "br",
+        "bl"
+      ]
+    },
+    "BoxShadow": {
+      "description": "Parsed box-shadow definition.",
+      "type": "object",
+      "properties": {
+        "dx": {
+          "type": "number"
+        },
+        "dy": {
+          "type": "number"
+        },
+        "blur": {
+          "type": "number"
+        },
+        "spread": {
+          "type": "number"
+        },
+        "color": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dx",
+        "dy",
+        "blur",
+        "spread",
+        "color"
+      ]
+    },
+    "Transform2D": {
+      "type": "object",
+      "properties": {
+        "translateX": {
+          "type": "number"
+        },
+        "translateY": {
+          "type": "number"
+        },
+        "scaleX": {
+          "type": "number"
+        },
+        "scaleY": {
+          "type": "number"
+        },
+        "rotateDeg": {
+          "type": "number"
+        },
+        "originX": {
+          "type": "number"
+        },
+        "originY": {
+          "type": "number"
+        }
+      }
+    },
+    "AnimationSpec": {
+      "type": "object",
+      "properties": {
+        "keyframes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AnimationKeyframe"
+          }
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "delayMs": {
+          "type": "number"
+        },
+        "easing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnimationEasing"
+            }
+          ]
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnimationIterations"
+            }
+          ]
+        },
+        "fill": {
+          "type": "string",
+          "enum": [
+            "none",
+            "both"
+          ]
+        }
+      },
+      "required": [
+        "keyframes",
+        "durationMs"
+      ]
+    },
+    "AnimationKeyframe": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "number"
+        },
+        "opacity": {
+          "type": "number"
+        },
+        "transform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnimationTransform2D"
+            }
+          ]
+        }
+      },
+      "required": [
+        "at"
+      ]
+    },
+    "AnimationTransform2D": {
+      "description": "Transform channels allowed in animation keyframes. Animation origins are\nfixed to the logical node center and are therefore intentionally absent.",
+      "type": "object",
+      "properties": {
+        "translateX": {
+          "type": "number"
+        },
+        "translateY": {
+          "type": "number"
+        },
+        "scaleX": {
+          "type": "number"
+        },
+        "scaleY": {
+          "type": "number"
+        },
+        "rotateDeg": {
+          "type": "number"
+        }
+      }
+    },
+    "AnimationEasing": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "linear",
+            "ease",
+            "ease-in",
+            "ease-out",
+            "ease-in-out",
+            "step-start",
+            "step-end"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        {
+          "$ref": "#/$defs/AnimationSpring"
+        },
+        {
+          "$ref": "#/$defs/AnimationSteps"
+        }
+      ]
+    },
+    "AnimationSpring": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "spring"
+          ]
+        },
+        "stiffness": {
+          "type": "number"
+        },
+        "damping": {
+          "type": "number"
+        },
+        "mass": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ]
+    },
+    "AnimationSteps": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "steps"
+          ]
+        },
+        "count": {
+          "type": "number"
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "jump-start",
+            "jump-end",
+            "jump-none",
+            "jump-both"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "count"
+      ]
+    },
+    "AnimationIterations": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "infinite"
+          ]
+        }
+      ]
+    },
+    "HandlersRef": {
+      "description": "Event handler references (string identifiers for hit testing).",
+      "type": "object",
+      "properties": {
+        "onClick": {
+          "type": "string"
+        },
+        "onDoubleClick": {
+          "type": "string"
+        },
+        "onContextMenu": {
+          "type": "string"
+        },
+        "onPointerDown": {
+          "type": "string"
+        },
+        "onPointerUp": {
+          "type": "string"
+        },
+        "onPointerCancel": {
+          "type": "string"
+        },
+        "onPointerMove": {
+          "type": "string"
+        },
+        "onPointerEnter": {
+          "type": "string"
+        },
+        "onPointerLeave": {
+          "type": "string"
+        },
+        "onPointerOver": {
+          "type": "string"
+        },
+        "onPointerOut": {
+          "type": "string"
+        },
+        "onMouseDown": {
+          "type": "string"
+        },
+        "onMouseUp": {
+          "type": "string"
+        },
+        "onMouseMove": {
+          "type": "string"
+        },
+        "onMouseEnter": {
+          "type": "string"
+        },
+        "onMouseLeave": {
+          "type": "string"
+        },
+        "onMouseOver": {
+          "type": "string"
+        },
+        "onMouseOut": {
+          "type": "string"
+        },
+        "onTouchStart": {
+          "type": "string"
+        },
+        "onTouchEnd": {
+          "type": "string"
+        },
+        "onTouchMove": {
+          "type": "string"
+        }
+      }
+    },
+    "Gradient": {
+      "description": "Parsed CSS gradient.\nSerializes as the TS gradient union (`{ type: \"linear\" | \"radial\", ... }`).",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "angle": {
+              "description": "Angle in degrees (CSS convention: 0 = to top, 90 = to right).",
+              "type": "number"
+            },
+            "stops": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/GradientStop"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "linear"
+            }
+          },
+          "required": [
+            "type",
+            "angle",
+            "stops"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "geometry": {
+              "description": "Present for gradients produced by the layout pipeline. Optional so\npreviously-authored IR keeps the CSS default geometry at emission.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RadialGradientGeometry"
+                }
+              ]
+            },
+            "stops": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/GradientStop"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "radial"
+            }
+          },
+          "required": [
+            "type",
+            "stops"
+          ]
+        }
+      ]
+    },
+    "GradientStop": {
+      "description": "A single gradient color stop.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "offset": {
+          "description": "Offset in 0..1 range.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "color",
+        "offset"
+      ]
+    },
+    "RadialGradientGeometry": {
+      "description": "Resolved radial-gradient geometry in local gradient-box coordinates.",
+      "type": "object",
+      "properties": {
+        "centerX": {
+          "type": "number"
+        },
+        "centerY": {
+          "type": "number"
+        },
+        "radiusX": {
+          "type": "number"
+        },
+        "radiusY": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "centerX",
+        "centerY",
+        "radiusX",
+        "radiusY"
+      ]
+    },
+    "StrokeScaling": {
+      "description": "Whether a supported stroke scales with post-layout transforms or remains\nstable in canvas user space.",
+      "type": "string",
+      "enum": [
+        "transform",
+        "canvas"
+      ]
+    },
+    "StrokeLinecap": {
+      "description": "Stroke line cap.",
+      "type": "string",
+      "enum": [
+        "butt",
+        "round",
+        "square"
+      ]
+    },
+    "StrokeLinejoin": {
+      "description": "Stroke line join.",
+      "type": "string",
+      "enum": [
+        "miter",
+        "round",
+        "bevel"
+      ]
+    },
+    "LineProjection": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "glyphs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GlyphInfo"
+          }
+        },
+        "width": {
+          "type": "number"
+        },
+        "baselineY": {
+          "type": "number"
+        },
+        "fragments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FragmentProjection"
+          }
+        },
+        "positionedGlyphs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PositionedGlyph"
+          }
+        }
+      },
+      "required": [
+        "text",
+        "glyphs",
+        "width",
+        "baselineY"
+      ]
+    },
+    "GlyphInfo": {
+      "description": "Single glyph info returned to TS.\nAlso deserializable: the boundsvg SVG emitter parses TS-produced IR JSON\nwhose text lines embed this shape.",
+      "type": "object",
+      "properties": {
+        "glyphId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "xAdvance": {
+          "type": "number"
+        },
+        "yAdvance": {
+          "type": "number"
+        },
+        "xOffset": {
+          "type": "number"
+        },
+        "yOffset": {
+          "type": "number"
+        },
+        "cluster": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fontAlias": {
+          "type": "string"
+        },
+        "fontWeight": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "fontStyle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FontStyle"
+            }
+          ]
+        },
+        "rotationDeg": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "glyphId",
+        "xAdvance",
+        "yAdvance",
+        "xOffset",
+        "yOffset",
+        "cluster"
+      ]
+    },
+    "FontStyle": {
+      "type": "string",
+      "enum": [
+        "normal",
+        "italic"
+      ]
+    },
+    "FragmentProjection": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "glyphs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GlyphInfo"
+          }
+        },
+        "width": {
+          "type": "number"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextRunStyleProjection"
+            }
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "glyphs",
+        "width"
+      ]
+    },
+    "TextRunStyleProjection": {
+      "description": "Exact serialized form of a color-bearing inline style.\n\nThe layout type keeps `color` optional, but the IR serializer emits a\nfragment style only when that color is present. Keeping this as a real Rust\nprojection makes the serializer and the serialize-direction schema share\none structural source.",
+      "type": "object",
+      "properties": {
+        "font": {
+          "type": "string"
+        },
+        "fallback": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fontWeight": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "fontStyle": {
+          "$ref": "#/$defs/FontStyle"
+        },
+        "fontSizePx": {
+          "type": "number"
+        },
+        "letterSpacingPx": {
+          "type": "number"
+        },
+        "textOrientation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextOrientation"
+            }
+          ]
+        },
+        "fontVariationSettings": {
+          "type": "string"
+        },
+        "fontFeatureSettings": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "textStrokes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextStrokeLayer"
+          }
+        },
+        "textShadows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextShadowLayer"
+          }
+        },
+        "language": {
+          "type": "string",
+          "enum": [
+            "ja",
+            "en",
+            "auto"
+          ]
+        }
+      },
+      "required": [
+        "font",
+        "fontWeight",
+        "fontStyle",
+        "fontSizePx",
+        "letterSpacingPx",
+        "color"
+      ]
+    },
+    "TextOrientation": {
+      "type": "string",
+      "enum": [
+        "mixed",
+        "upright"
+      ]
+    },
+    "TextStrokeLayer": {
+      "description": "Canonical wire representation of one text outline layer.\n\nThis type is shared by boundtext input/output and boundsvg IR so serde\noptionality cannot drift between carriers.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "widthPx": {
+          "type": "number"
+        },
+        "linejoin": {
+          "type": "string",
+          "enum": [
+            "miter",
+            "round",
+            "bevel"
+          ]
+        },
+        "linecap": {
+          "type": "string",
+          "enum": [
+            "butt",
+            "round",
+            "square"
+          ]
+        },
+        "dasharray": {
+          "type": "string"
+        },
+        "miterlimit": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "color",
+        "widthPx"
+      ]
+    },
+    "TextShadowLayer": {
+      "description": "Canonical wire representation of one text drop-shadow layer.",
+      "type": "object",
+      "properties": {
+        "dx": {
+          "type": "number"
+        },
+        "dy": {
+          "type": "number"
+        },
+        "blurPx": {
+          "type": "number"
+        },
+        "color": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dx",
+        "dy",
+        "color"
+      ]
+    },
+    "PositionedGlyph": {
+      "type": "object",
+      "properties": {
+        "glyphId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        },
+        "clusterStart": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clusterEnd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceStart": {
+          "description": "Grapheme range in the logical base text. Unlike `cluster_*`, these\noffsets remain stable across rich-text runs. Ruby annotations point to\nthe range of the base text they annotate.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceEnd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceRole": {
+          "type": "string",
+          "enum": [
+            "content",
+            "rubyBase",
+            "rubyAnnotation"
+          ]
+        },
+        "fontAlias": {
+          "type": "string"
+        },
+        "fontFallback": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fontWeight": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "fontStyle": {
+          "$ref": "#/$defs/FontStyle"
+        },
+        "fontSizePx": {
+          "type": "number"
+        },
+        "fontVariationSettings": {
+          "type": "string"
+        },
+        "fontFeatureSettings": {
+          "type": "string"
+        },
+        "fill": {
+          "type": "string"
+        },
+        "textStrokes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextStrokeLayer"
+          }
+        },
+        "textShadows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextShadowLayer"
+          }
+        },
+        "paintRangeIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "originX": {
+          "type": "number"
+        },
+        "originY": {
+          "type": "number"
+        },
+        "xOffset": {
+          "type": "number"
+        },
+        "yOffset": {
+          "type": "number"
+        },
+        "xAdvance": {
+          "type": "number"
+        },
+        "yAdvance": {
+          "type": "number"
+        },
+        "rotationDeg": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "baselineRotationDeg": {
+          "type": "number"
+        },
+        "inlineScale": {
+          "description": "Additive scale along the shaped inline axis, applied before baseline\nrotation. Absent and `1` are canonical-equivalent.",
+          "type": "number"
+        },
+        "syntheticKind": {
+          "description": "Identifies glyphs synthesized by layout rather than sourced from the\nauthored text.",
+          "type": "string",
+          "enum": [
+            "ellipsis"
+          ]
+        },
+        "outlineWritingMode": {
+          "type": "string",
+          "enum": [
+            "horizontal-tb",
+            "vertical-rl"
+          ]
+        },
+        "absolutePosition": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "glyphId",
+        "text",
+        "clusterStart",
+        "clusterEnd",
+        "fontAlias",
+        "fontWeight",
+        "fontStyle",
+        "originX",
+        "originY",
+        "xOffset",
+        "yOffset",
+        "xAdvance",
+        "yAdvance",
+        "rotationDeg"
+      ]
+    },
+    "IrTextAlign": {
+      "description": "Text alignment for SVG emission.",
+      "type": "string",
+      "enum": [
+        "start",
+        "center",
+        "end"
+      ]
+    },
+    "TextPathMetadata": {
+      "type": "object",
+      "properties": {
+        "d": {
+          "type": "string"
+        },
+        "startOffsetPx": {
+          "type": "number"
+        },
+        "textAnchor": {
+          "type": "string",
+          "enum": [
+            "start",
+            "middle",
+            "end"
+          ]
+        },
+        "pathDirection": {
+          "type": "string",
+          "enum": [
+            "forward",
+            "reverse"
+          ]
+        },
+        "pathNormal": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right"
+          ]
+        },
+        "pathOffsetPx": {
+          "type": "number"
+        },
+        "pathFit": {
+          "type": "string",
+          "enum": [
+            "none",
+            "spacing",
+            "scale",
+            "shrink"
+          ]
+        },
+        "pathOverflow": {
+          "type": "string",
+          "enum": [
+            "hidden",
+            "error",
+            "ellipsis"
+          ]
+        }
+      },
+      "required": [
+        "d",
+        "startOffsetPx",
+        "textAnchor",
+        "pathDirection",
+        "pathNormal",
+        "pathOffsetPx",
+        "pathFit",
+        "pathOverflow"
+      ]
+    },
+    "TextOutlinePath": {
+      "description": "A text run resolved to glyph outline paths.\nMirrors TS `TextOutlinePath` (`packages/core/src/text/types.ts`).",
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string"
+        },
+        "d": {
+          "type": "string"
+        },
+        "fill": {
+          "type": "string"
+        },
+        "glyphIds": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "text": {
+          "type": "string"
+        },
+        "bbox": {
+          "$ref": "#/$defs/BBox"
+        },
+        "unitId": {
+          "type": "string"
+        },
+        "sourceStart": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceEnd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceRole": {
+          "type": "string",
+          "enum": [
+            "content",
+            "rubyBase",
+            "rubyAnnotation"
+          ]
+        },
+        "paintRangeIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "strokes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextStrokeLayer"
+          }
+        },
+        "shadows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextShadowLayer"
+          }
+        },
+        "missingGlyph": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "nodeId",
+        "d",
+        "fill",
+        "glyphIds",
+        "text",
+        "bbox"
+      ]
+    },
+    "TextUnitMap": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/TextUnitKind"
+        },
+        "ruby": {
+          "$ref": "#/$defs/TextUnitRubyMode"
+        },
+        "units": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextUnitMapEntry"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "ruby",
+        "units"
+      ]
+    },
+    "TextUnitKind": {
+      "type": "string",
+      "enum": [
+        "cluster",
+        "line"
+      ]
+    },
+    "TextUnitRubyMode": {
+      "type": "string",
+      "enum": [
+        "with-base",
+        "separate"
+      ]
+    },
+    "TextUnitMapEntry": {
+      "type": "object",
+      "properties": {
+        "unitId": {
+          "description": "Deterministic but opaque. Consumers must not parse this representation.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/TextUnitKind"
+        },
+        "sourceStart": {
+          "description": "Logical source range in the base text's segmentation space. Ruby\nannotations retain the range of the base text they annotate.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceEnd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lineId": {
+          "description": "Layout-local line/column identity. It may change after reflow.",
+          "type": "string"
+        },
+        "logicalOrder": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "visualOrder": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextUnitGlyphMember"
+          }
+        }
+      },
+      "required": [
+        "unitId",
+        "kind",
+        "sourceStart",
+        "sourceEnd",
+        "lineId",
+        "logicalOrder",
+        "visualOrder",
+        "members"
+      ]
+    },
+    "TextUnitGlyphMember": {
+      "type": "object",
+      "properties": {
+        "lineIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "glyphIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceRole": {
+          "$ref": "#/$defs/TextUnitSourceRole"
+        }
+      },
+      "required": [
+        "lineIndex",
+        "glyphIndex",
+        "sourceRole"
+      ]
+    },
+    "TextUnitSourceRole": {
+      "type": "string",
+      "enum": [
+        "content",
+        "rubyBase",
+        "rubyAnnotation"
+      ]
+    },
+    "TextUnitAnimation": {
+      "description": "Raw text paint-unit animation semantic retained after sampling.",
+      "type": "object",
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/TextUnitKind"
+        },
+        "animation": {
+          "$ref": "#/$defs/AnimationSpec"
+        },
+        "delayStepMs": {
+          "type": "number"
+        },
+        "order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextUnitAnimationOrder"
+            }
+          ]
+        },
+        "ruby": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextUnitRubyMode"
+            }
+          ]
+        }
+      },
+      "required": [
+        "by",
+        "animation"
+      ]
+    },
+    "TextUnitAnimationOrder": {
+      "type": "string",
+      "enum": [
+        "logical",
+        "visual"
+      ]
+    },
+    "TextUnitAnimationSample": {
+      "description": "Actual outline bounds and sampled pose for one text paint unit.",
+      "type": "object",
+      "properties": {
+        "unitId": {
+          "type": "string"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BBox"
+            }
+          ]
+        },
+        "opacity": {
+          "type": "number"
+        },
+        "transform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Transform2D"
+            }
+          ]
+        }
+      },
+      "required": [
+        "unitId"
+      ]
+    },
+    "TextDecorationFragment": {
+      "type": "object",
+      "properties": {
+        "line": {
+          "$ref": "#/$defs/TextDecorationLine"
+        },
+        "style": {
+          "$ref": "#/$defs/TextDecorationStyle"
+        },
+        "color": {
+          "type": "string"
+        },
+        "skipInk": {
+          "type": "string",
+          "enum": [
+            "all"
+          ]
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextDecorationPaintPath"
+          }
+        },
+        "sourceStart": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceEnd": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "line",
+        "style",
+        "color",
+        "paths",
+        "sourceStart",
+        "sourceEnd"
+      ]
+    },
+    "TextDecorationLine": {
+      "type": "string",
+      "enum": [
+        "underline",
+        "overline",
+        "line-through"
+      ]
+    },
+    "TextDecorationStyle": {
+      "type": "string",
+      "enum": [
+        "solid",
+        "double",
+        "dotted",
+        "dashed",
+        "wavy"
+      ]
+    },
+    "TextDecorationPaintPath": {
+      "type": "object",
+      "properties": {
+        "d": {
+          "type": "string"
+        },
+        "originX": {
+          "type": "number"
+        },
+        "originY": {
+          "type": "number"
+        },
+        "contourCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "segmentCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pathDistanceStartPx": {
+          "type": "number"
+        },
+        "pathDistanceEndPx": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "d",
+        "originX",
+        "originY",
+        "contourCount",
+        "segmentCount"
+      ]
+    },
+    "IrFillRule": {
+      "description": "Fill rule for paths.",
+      "type": "string",
+      "enum": [
+        "nonzero",
+        "evenodd"
+      ]
+    },
+    "ShapePathPart": {
+      "description": "One baked part of a shape IR node. Mirrors TS `ShapePathPart`.",
+      "type": "object",
+      "properties": {
+        "partId": {
+          "type": "string"
+        },
+        "d": {
+          "type": "string"
+        },
+        "strokeD": {
+          "type": "string"
+        },
+        "bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ShapePartBounds"
+            }
+          ]
+        },
+        "paint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ShapePartPaint"
+            }
+          ]
+        }
+      },
+      "required": [
+        "d"
+      ]
+    },
+    "ShapePartBounds": {
+      "description": "Viewport-baked bounds of one shape part.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ]
+    },
+    "ShapePartPaint": {
+      "description": "Per-part paint override; unset fields inherit the node paint.\nMirrors the `paint` member of TS `ShapePathPart`.",
+      "type": "object",
+      "properties": {
+        "fill": {
+          "type": "string"
+        },
+        "stroke": {
+          "type": "string"
+        },
+        "strokeWidth": {
+          "type": "number"
+        },
+        "strokeLinecap": {
+          "type": "string"
+        },
+        "strokeLinejoin": {
+          "type": "string"
+        },
+        "strokeDasharray": {
+          "type": "string"
+        },
+        "strokeMiterlimit": {
+          "type": "number"
+        }
+      }
+    },
+    "RenderWarning": {
+      "description": "A structured warning emitted during IR build or SVG emission.\n\nMatches the TS `StructuredError` schema\n(`{ severity, code, message, stage?, nodeId?, fallback? }`).",
+      "type": "object",
+      "properties": {
+        "severity": {
+          "$ref": "#/$defs/ErrorSeverity"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "stage": {
+          "$ref": "#/$defs/PipelineStage"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "fallback": {
+          "description": "Description of the fallback action taken (e.g. \"`placeholder_rect`\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "severity",
+        "code",
+        "message",
+        "stage"
+      ]
+    },
+    "ErrorSeverity": {
+      "description": "Error severity — matches TS `ErrorSeverity` in `packages/core/src/errors.ts`.",
+      "type": "string",
+      "enum": [
+        "fatal",
+        "recoverable"
+      ]
+    },
+    "PipelineStage": {
+      "description": "Pipeline stages for structured warning/error reporting.\nMatches TS `PipelineStage` in `packages/core/src/errors.ts`.",
+      "type": "string",
+      "enum": [
+        "validate",
+        "layout",
+        "text",
+        "ir",
+        "emit",
+        "wasm",
+        "font",
+        "engine",
+        "analyzer"
+      ]
+    }
+  },
+  "$id": "https://github.com/zakideee/boundsvg/schemas/output-ir-v1.json"
+}

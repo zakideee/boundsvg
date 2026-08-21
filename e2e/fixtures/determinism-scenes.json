@@ -1,0 +1,753 @@
+{
+  "ja-horizontal-kinsoku": {
+    "type": "Canvas",
+    "props": {
+      "width": 480,
+      "height": 200,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Text",
+        "props": {
+          "font": "NotoSansJP",
+          "fontSizePx": 24,
+          "color": "#111111",
+          "language": "ja",
+          "width": 440
+        },
+        "children": ["禁則処理のテスト。「約物」が行頭に来ない、ぶら下げ。"]
+      }
+    ]
+  },
+  "ja-vertical-ruby": {
+    "type": "Canvas",
+    "props": {
+      "width": 240,
+      "height": 320,
+      "background": "#fffef8"
+    },
+    "children": [
+      {
+        "type": "Text",
+        "props": {
+          "font": "NotoSansJP",
+          "fontSizePx": 28,
+          "color": "#222222",
+          "language": "ja",
+          "writingMode": "vertical-rl",
+          "height": 300
+        },
+        "children": [
+          "縦書きの",
+          {
+            "type": "Ruby",
+            "props": {},
+            "children": [
+              "東京",
+              {
+                "type": "Rt",
+                "props": {},
+                "children": ["とうきょう"]
+              }
+            ]
+          },
+          "都"
+        ]
+      }
+    ]
+  },
+  "fit-shrink": {
+    "type": "Canvas",
+    "props": {
+      "width": 320,
+      "height": 120,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Text",
+        "props": {
+          "font": "NotoSansJP",
+          "fontSizePx": 48,
+          "color": "#0f172a",
+          "width": 300,
+          "height": 100,
+          "fit": "shrink"
+        },
+        "children": ["長いテキストを箱に収める自動縮小"]
+      }
+    ]
+  },
+  "grid-cards": {
+    "type": "Canvas",
+    "props": {
+      "width": 400,
+      "height": 240,
+      "background": "#161616"
+    },
+    "children": [
+      {
+        "type": "Grid",
+        "props": {
+          "templateColumns": "1fr 1fr",
+          "templateRows": "1fr 1fr",
+          "rowGap": 12,
+          "columnGap": 12,
+          "width": 400,
+          "height": 240,
+          "padding": 16
+        },
+        "children": [
+          {
+            "type": "Box",
+            "props": {
+              "background": "#2d2d2d",
+              "borderRadius": 10,
+              "padding": 10
+            },
+            "children": [
+              {
+                "type": "Text",
+                "props": {
+                  "font": "JetBrainsMono",
+                  "fontSizePx": 16,
+                  "color": "#f8fafc"
+                },
+                "children": ["A1"]
+              }
+            ]
+          },
+          {
+            "type": "Box",
+            "props": {
+              "background": "#0f766e",
+              "borderRadius": 10,
+              "padding": 10
+            },
+            "children": [
+              {
+                "type": "Text",
+                "props": {
+                  "font": "JetBrainsMono",
+                  "fontSizePx": 16,
+                  "color": "#f8fafc"
+                },
+                "children": ["B1"]
+              }
+            ]
+          },
+          {
+            "type": "Box",
+            "props": {
+              "gridColumn": "1 / 3",
+              "background": "#1e3a8a",
+              "borderRadius": 10,
+              "padding": 10
+            },
+            "children": [
+              {
+                "type": "Text",
+                "props": {
+                  "font": "NotoSansJP",
+                  "fontSizePx": 16,
+                  "color": "#f8fafc"
+                },
+                "children": ["全幅"]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "gradient-shadow": {
+    "type": "Canvas",
+    "props": {
+      "width": 300,
+      "height": 160,
+      "background": "#f1f5f9"
+    },
+    "children": [
+      {
+        "type": "Flex",
+        "props": {
+          "alignItems": "center",
+          "justifyContent": "center",
+          "width": 300,
+          "height": 160
+        },
+        "children": [
+          {
+            "type": "Box",
+            "props": {
+              "width": 220,
+              "height": 100,
+              "background": "linear-gradient(135deg, #6366f1, #ec4899)",
+              "borderRadius": 16,
+              "boxShadow": "0 8 24 rgba(15,23,42,0.35)"
+            },
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "inline-decoration": {
+    "type": "Canvas",
+    "props": {
+      "width": 420,
+      "height": 140,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Text",
+        "props": {
+          "font": "NotoSansJP",
+          "fontSizePx": 20,
+          "color": "#111111",
+          "width": 380,
+          "language": "ja"
+        },
+        "children": [
+          "装飾付き",
+          {
+            "type": "Inline",
+            "props": {
+              "background": "#fde68a",
+              "borderColor": "#d97706",
+              "borderWidth": 1,
+              "borderRadius": [3, 3, 3, 3],
+              "paddingInline": [4, 4],
+              "color": "#7c2d12"
+            },
+            "children": ["インライン強調"]
+          },
+          "が行をまたいでも安定して描画される。"
+        ]
+      }
+    ]
+  },
+  "variable-font-weights": {
+    "type": "Canvas",
+    "props": {
+      "width": 360,
+      "height": 160,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Flex",
+        "props": {
+          "direction": "column",
+          "padding": 12,
+          "gap": 6,
+          "width": 360,
+          "height": 160
+        },
+        "children": [
+          {
+            "type": "Text",
+            "props": {
+              "font": "InterVariable",
+              "fontSizePx": 22,
+              "color": "#111111"
+            },
+            "children": ["Inter default"]
+          },
+          {
+            "type": "Text",
+            "props": {
+              "font": "InterVariable",
+              "fontSizePx": 22,
+              "color": "#111111",
+              "fontVariationSettings": "'wght' 700"
+            },
+            "children": ["Inter wght 700"]
+          }
+        ]
+      }
+    ]
+  },
+  "fallback-mixed-script": {
+    "type": "Canvas",
+    "props": {
+      "width": 420,
+      "height": 100,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Text",
+        "props": {
+          "font": "JetBrainsMono",
+          "fallback": ["NotoSansJP"],
+          "fontSizePx": 20,
+          "color": "#111111",
+          "width": 400
+        },
+        "children": ["code_point 混在テキスト fallback"]
+      }
+    ]
+  },
+  "letter-spacing-features": {
+    "type": "Canvas",
+    "props": {
+      "width": 360,
+      "height": 90,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Text",
+        "props": {
+          "font": "InterVariable",
+          "fontSizePx": 20,
+          "color": "#334155",
+          "letterSpacingPx": 2,
+          "fontFeatureSettings": "'liga' 0"
+        },
+        "children": ["waffle office 1/2"]
+      }
+    ]
+  },
+  "embedded-svg-paths": {
+    "type": "Canvas",
+    "props": {
+      "width": 200,
+      "height": 200,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Svg",
+        "props": {
+          "content": "<svg viewBox=\"0 0 24 24\"><path d=\"M12 2 L22 22 L2 22 Z\" fill=\"#0ea5e9\" stroke=\"#0369a1\" stroke-width=\"1\"/></svg>",
+          "width": 200,
+          "height": 200
+        },
+        "children": []
+      }
+    ]
+  },
+  "z-index-paint-order": {
+    "type": "Canvas",
+    "props": {
+      "width": 200,
+      "height": 200,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Path",
+        "props": {
+          "id": "front",
+          "zIndex": 2,
+          "d": "M0 0H120V120H0Z",
+          "width": 120,
+          "height": 120,
+          "fill": "#2563eb",
+          "position": "absolute",
+          "top": 20,
+          "left": 20
+        },
+        "children": []
+      },
+      {
+        "type": "Path",
+        "props": {
+          "id": "back",
+          "zIndex": 1,
+          "d": "M0 0H120V120H0Z",
+          "width": 120,
+          "height": 120,
+          "fill": "#f59e0b",
+          "position": "absolute",
+          "top": 60,
+          "left": 60
+        },
+        "children": []
+      }
+    ]
+  },
+  "shape-structural-parts": {
+    "type": "Canvas",
+    "props": {
+      "width": 200,
+      "height": 140,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Shape",
+        "props": {
+          "id": "badge",
+          "width": 160,
+          "height": 100,
+          "fill": "#0f766e",
+          "stroke": "#134e4a",
+          "strokeWidth": 2,
+          "emitPartIds": true,
+          "geometry": {
+            "viewBox": {
+              "width": 80,
+              "height": 50
+            },
+            "root": {
+              "kind": "group",
+              "children": [
+                {
+                  "kind": "path",
+                  "nodeId": "plate",
+                  "d": "M0 0H80V50H0Z"
+                },
+                {
+                  "kind": "boolean",
+                  "nodeId": "notch",
+                  "op": "union",
+                  "children": [
+                    {
+                      "kind": "path",
+                      "d": "M10 20H45V35H10Z"
+                    },
+                    {
+                      "kind": "path",
+                      "d": "M40 15H70V30H40Z"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "position": "absolute",
+          "left": 20,
+          "top": 20
+        },
+        "children": []
+      }
+    ]
+  },
+  "shape-defs-sharing": {
+    "type": "Canvas",
+    "props": {
+      "width": 220,
+      "height": 90,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Shape",
+        "props": {
+          "id": "coin-a",
+          "width": 60,
+          "height": 60,
+          "fill": "#f59e0b",
+          "emitPartIds": true,
+          "geometry": {
+            "viewBox": {
+              "width": 20,
+              "height": 20
+            },
+            "root": {
+              "kind": "group",
+              "children": [
+                {
+                  "kind": "path",
+                  "nodeId": "disc",
+                  "d": "M0 0H20V20H0Z"
+                },
+                {
+                  "kind": "path",
+                  "nodeId": "slot",
+                  "d": "M8 4H12V16H8Z"
+                }
+              ]
+            }
+          },
+          "position": "absolute",
+          "left": 15,
+          "top": 15
+        },
+        "children": []
+      },
+      {
+        "type": "Shape",
+        "props": {
+          "id": "coin-b",
+          "width": 60,
+          "height": 60,
+          "fill": "#f59e0b",
+          "emitPartIds": true,
+          "geometry": {
+            "viewBox": {
+              "width": 20,
+              "height": 20
+            },
+            "root": {
+              "kind": "group",
+              "children": [
+                {
+                  "kind": "path",
+                  "nodeId": "disc",
+                  "d": "M0 0H20V20H0Z"
+                },
+                {
+                  "kind": "path",
+                  "nodeId": "slot",
+                  "d": "M8 4H12V16H8Z"
+                }
+              ]
+            }
+          },
+          "position": "absolute",
+          "left": 140,
+          "top": 15
+        },
+        "children": []
+      }
+    ]
+  },
+  "node-metadata": {
+    "type": "Canvas",
+    "props": {
+      "width": 160,
+      "height": 120,
+      "background": "#ffffff",
+      "meta": {
+        "scene": "metadata"
+      }
+    },
+    "children": [
+      {
+        "type": "Box",
+        "props": {
+          "id": "tagged",
+          "width": 120,
+          "height": 80,
+          "background": "#0ea5e9",
+          "borderRadius": 8,
+          "meta": {
+            "role": "cta",
+            "variant": "a"
+          }
+        },
+        "children": []
+      }
+    ]
+  },
+  "text-effects-telop": {
+    "type": "Canvas",
+    "props": {
+      "width": 360,
+      "height": 120,
+      "background": "#1a1a1a"
+    },
+    "children": [
+      {
+        "type": "Text",
+        "props": {
+          "font": "NotoSansJP",
+          "fontSizePx": 40,
+          "color": "#facc15",
+          "textStrokes": [
+            {
+              "color": "#111827",
+              "widthPx": 10
+            },
+            {
+              "color": "#ffffff",
+              "widthPx": 5
+            }
+          ],
+          "textShadows": [
+            {
+              "dx": 3,
+              "dy": 3,
+              "blurPx": 4,
+              "color": "#000000"
+            }
+          ]
+        },
+        "children": ["縁取り文字"]
+      }
+    ]
+  },
+  "animated-opacity-motion": {
+    "type": "Canvas",
+    "props": {
+      "width": 240,
+      "height": 120,
+      "background": "#ffffff"
+    },
+    "children": [
+      {
+        "type": "Box",
+        "props": {
+          "width": 80,
+          "height": 40,
+          "background": "#2563eb",
+          "borderRadius": 8,
+          "animation": {
+            "keyframes": [
+              {
+                "at": 0,
+                "opacity": 0.2,
+                "transform": {
+                  "translateX": 0
+                }
+              },
+              {
+                "at": 1,
+                "opacity": 1,
+                "transform": {
+                  "translateX": 120
+                }
+              }
+            ],
+            "durationMs": 300
+          }
+        },
+        "children": [
+          {
+            "type": "Text",
+            "props": {
+              "font": "NotoSansJP",
+              "fontSizePx": 14,
+              "color": "#ffffff"
+            },
+            "children": ["動く"]
+          }
+        ]
+      }
+    ]
+  },
+  "conformance-rich-inline": {
+    "type": "Canvas",
+    "props": {
+      "width": 560,
+      "height": 315,
+      "background": "#1e1b4b",
+      "id": "nri-canvas"
+    },
+    "children": [
+      {
+        "type": "Flex",
+        "props": {
+          "id": "nri-root",
+          "direction": "column",
+          "width": 560,
+          "height": 315,
+          "padding": [30, 38, 30, 38],
+          "gap": 18
+        },
+        "children": [
+          {
+            "type": "Text",
+            "props": {
+              "id": "nri-heading",
+              "font": "NotoSansJP",
+              "fontSizePx": 32,
+              "color": "#fbbf24",
+              "language": "ja",
+              "textStrokes": [
+                {
+                  "color": "#312e81",
+                  "widthPx": 6
+                },
+                {
+                  "color": "#c7d2fe",
+                  "widthPx": 2
+                }
+              ],
+              "textShadows": [
+                {
+                  "dx": 0,
+                  "dy": 3,
+                  "blurPx": 0,
+                  "color": "#0f0d2e"
+                }
+              ]
+            },
+            "children": ["多層アウトライン見出し"]
+          },
+          {
+            "type": "Box",
+            "props": {
+              "id": "nri-panel",
+              "background": "#312e81",
+              "borderRadius": 12,
+              "padding": [18, 22, 18, 22]
+            },
+            "children": [
+              {
+                "type": "Text",
+                "props": {
+                  "id": "nri-body",
+                  "font": "NotoSansJP",
+                  "fontSizePx": 17,
+                  "lineHeight": 1.9,
+                  "color": "#e0e7ff",
+                  "language": "ja",
+                  "width": 440
+                },
+                "children": [
+                  "装飾付きの",
+                  {
+                    "type": "Inline",
+                    "props": {
+                      "background": "#4c1d95",
+                      "borderColor": "#a78bfa",
+                      "borderWidth": 1,
+                      "borderRadius": [4, 4, 4, 4],
+                      "paddingInline": [5, 5],
+                      "color": "#ddd6fe"
+                    },
+                    "children": [
+                      "インライン強調は",
+                      {
+                        "type": "Inline",
+                        "props": {
+                          "color": "#f0abfc",
+                          "letterSpacingPx": 2
+                        },
+                        "children": ["ネスト"]
+                      },
+                      "しても"
+                    ]
+                  },
+                  "行をまたいで安定し、",
+                  {
+                    "type": "InlineBox",
+                    "props": {
+                      "font": "JetBrainsMono",
+                      "fontSizePx": 14,
+                      "color": "#86efac",
+                      "background": "#052e16",
+                      "borderColor": "#166534",
+                      "borderWidth": 1,
+                      "borderRadius": 4,
+                      "paddingInline": [6, 6]
+                    },
+                    "children": ["InlineBox"]
+                  },
+                  "は分割されない一体の箱として流れる。"
+                ]
+              }
+            ]
+          },
+          {
+            "type": "Text",
+            "props": {
+              "id": "nri-footer",
+              "font": "InterVariable",
+              "fontSizePx": 12,
+              "color": "#818cf8"
+            },
+            "children": ["rich inline fragments / decorations / nested spans"]
+          }
+        ]
+      }
+    ]
+  }
+}
