@@ -1,13 +1,14 @@
 [package]
 name = "boundtext"
 version = "0.1.0"
-publish = false
 authors = ["zakideee"]
 repository = "https://github.com/zakideee/boundsvg"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Multilingual text layout engine — line breaking, kinsoku, vertical text, font shaping, and fit-to-bounds"
+keywords = ["text-layout", "shaping", "kinsoku", "japanese", "linebreak"]
+categories = ["text-processing"]
 exclude = ["reports/", "tools/", "scripts/"]
 
 [lints]
@@ -17,7 +18,7 @@ workspace = true
 crate-type = ["rlib"]
 
 [dependencies]
-boundshape = { path = "../boundshape" }
+boundshape = { path = "../boundshape", version = "0.1.0" }
 schemars = { version = "=1.2.2", optional = true }
 rustybuzz = { version = "0.20", optional = true }
 self_cell = { version = "1", optional = true }

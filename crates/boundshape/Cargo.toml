@@ -1,11 +1,12 @@
 [package]
 name = "boundshape"
 version = "0.1.0"
-publish = false
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Low-level geometry and symbol kernel for boundsvg"
+keywords = ["geometry", "svg", "path", "boolean"]
+categories = ["graphics"]
 authors = ["zakideee"]
 repository = "https://github.com/zakideee/boundsvg"
 
