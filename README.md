@@ -66,9 +66,11 @@ boundsvg can also render the same JSX to both SVG and PNG independently:
 
 <sub>Source: <a href="apps/docs/scripts/generate-examples.ts"><code>generate-examples.ts</code></a></sub>
 
-Many more scenes — typography, geometry, text motion, and interactive demos — live in the
-[playground apps](apps/playground-react/); run them locally with `pnpm dev:playground`
-(see [CONTRIBUTING.md](CONTRIBUTING.md)).
+Many more scenes — typography, geometry, text motion, and interactive demos — run live in the
+**[playground](https://zakideee.github.io/boundsvg/playground/react/)**
+(with a [core-API](https://zakideee.github.io/boundsvg/playground/core/) and a
+[CLI-codegen](https://zakideee.github.io/boundsvg/playground/cli/) variant), or locally with
+`pnpm dev:playground` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Prerequisites
 
@@ -240,9 +242,11 @@ dependency order, the test suites, E2E, and the playground dev servers — is in
 
 ## Documentation
 
-- [Getting Started](apps/docs/getting-started/introduction.md)
-- [Component Reference](apps/docs/components/)
-- [API Reference](apps/docs/api/)
+Full documentation lives at **[zakideee.github.io/boundsvg](https://zakideee.github.io/boundsvg/)**:
+
+- [Getting Started](https://zakideee.github.io/boundsvg/getting-started/introduction)
+- [Component Reference](https://zakideee.github.io/boundsvg/components/canvas)
+- [API Reference](https://zakideee.github.io/boundsvg/api/core)
 
 ## Related projects
 
