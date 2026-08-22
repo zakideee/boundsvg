@@ -11,9 +11,8 @@ You can expect an acknowledgement within a week. There is no bug bounty.
 
 ## Supported versions
 
-boundsvg is not yet published to a package registry; only the latest state of
-`main` is supported. Once releases begin, only the latest published version
-receives security fixes.
+Only the latest published version of the `@boundsvg/*` packages receives
+security fixes.
 
 ## Scope
 

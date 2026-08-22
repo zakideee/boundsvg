@@ -4,7 +4,9 @@ CLI tool for boundsvg — convert, export and inspect SVG files and Scene Docume
 
 ## Installation
 
-> Not yet published to npm — build from source. See the [monorepo README](https://github.com/zakideee/boundsvg) for setup instructions.
+```bash
+npm install @boundsvg/cli
+```
 
 ## Usage
 

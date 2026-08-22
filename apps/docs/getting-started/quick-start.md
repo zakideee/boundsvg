@@ -4,10 +4,7 @@ title: Quick Start
 
 # Quick Start
 
-::: warning Work in Progress
-boundsvg is not yet published to npm. Follow [Installation](/getting-started/installation)
-to build from source first — the imports below then resolve via the workspace.
-:::
+Install `@boundsvg/core` first — see [Installation](/getting-started/installation).
 
 ## Node.js (Core)
 

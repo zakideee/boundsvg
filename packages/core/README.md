@@ -6,7 +6,9 @@ All text shaping, measurement, layout, and rasterization run inside WASM. No bro
 
 ## Installation
 
-> Not yet published to npm — build from source. See the [monorepo README](https://github.com/zakideee/boundsvg) for setup instructions.
+```bash
+npm install @boundsvg/core
+```
 
 ## Usage
 

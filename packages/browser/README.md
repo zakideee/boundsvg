@@ -6,7 +6,9 @@ This package provides the browser-targeted WASM bindings and SVG DOM interaction
 
 ## Installation
 
-> Not yet published to npm — build from source. See the [monorepo README](https://github.com/zakideee/boundsvg) for setup instructions.
+```bash
+npm install @boundsvg/browser
+```
 
 ## When to use the asset utilities
 

@@ -4,7 +4,9 @@ Browser MP4 export for boundsvg — WebCodecs H.264 encoding with a bundled MP4 
 
 ## Installation
 
-> Not yet published to npm — build from source. See the [monorepo README](https://github.com/zakideee/boundsvg) for setup instructions.
+```bash
+npm install @boundsvg/video
+```
 
 ## Usage
 

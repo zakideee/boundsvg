@@ -80,25 +80,17 @@ Many more scenes — typography, geometry, text motion, and interactive demos �
 [CLI-codegen](https://zakideee.github.io/boundsvg/playground/cli/) variant), or locally with
 `pnpm dev:playground` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
-## Prerequisites
-
-- [Node.js](https://nodejs.org/) (v20+)
-- [pnpm](https://pnpm.io/) (v9+)
-- [Rust](https://rustup.rs/) toolchain — `rust-toolchain.toml` pins the exact version, so `rustup` installs it for you
-- [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/) — `cargo install wasm-pack`
-
-## Quick Start
+## Installation
 
 ```bash
-pnpm install
-pnpm build:wasm                       # Build WASM (Node.js target)
-pnpm build:wasm:web                   # Build WASM (Browser target)
-pnpm --filter @boundsvg/shape build   # Geometry package that core depends on
-pnpm --filter @boundsvg/core build    # Build core TypeScript
-pnpm --filter @boundsvg/browser build # Rebundle browser loader + embedded web WASM
+npm install @boundsvg/core
 ```
 
-> `@boundsvg/shape` must be built before `@boundsvg/core` — core's declaration build imports its types, so a clean checkout fails without it.
+Requires Node.js v20+. All packages ship prebuilt WASM — no Rust toolchain
+needed to use the library. The other packages (React bindings, CLI, browser
+loader, MP4 export, …) are listed in [Packages](#packages).
+
+## Quick Start
 
 ```tsx
 // tsconfig.json: { "jsx": "react-jsx", "jsxImportSource": "@boundsvg/core" }
@@ -213,10 +205,6 @@ Seven OFL-licensed families are bundled in [`fixtures/fonts/`](fixtures/fonts/) 
 
 ## Limitations
 
-**Availability**
-
-- Not yet published to npm. Build from source (see [Installation](apps/docs/getting-started/installation.md))
-
 **Text**
 
 - LTR only — no RTL or bidirectional text
@@ -244,9 +232,26 @@ More detail — including the full support tiers and the animation/video gaps �
 
 ## Build & Development
 
-The Quick Start above is the minimal build. The full chain — every package in
-dependency order, the test suites, E2E, and the playground dev servers — is in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Building from source requires:
+
+- [Node.js](https://nodejs.org/) (v20+)
+- [pnpm](https://pnpm.io/) (v9+)
+- [Rust](https://rustup.rs/) toolchain — `rust-toolchain.toml` pins the exact version, so `rustup` installs it for you
+- [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/) — `cargo install wasm-pack`
+
+```bash
+pnpm install
+pnpm build:wasm                       # Build WASM (Node.js target)
+pnpm build:wasm:web                   # Build WASM (Browser target)
+pnpm --filter @boundsvg/shape build   # Geometry package that core depends on
+pnpm --filter @boundsvg/core build    # Build core TypeScript
+pnpm --filter @boundsvg/browser build # Rebundle browser loader + embedded web WASM
+```
+
+> `@boundsvg/shape` must be built before `@boundsvg/core` — core's declaration build imports its types, so a clean checkout fails without it.
+
+The full chain — every package in dependency order, the test suites, E2E, and
+the playground dev servers — is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
