@@ -8,6 +8,12 @@ WASM-powered font measurement and layout library for SVG.
 
 **bound** + **SVG** — Measure text bounding boxes, auto-fit fonts within containers, and apply HTML-like layouts to SVG, all without browser DOM or OS fonts.
 
+<p align="center">
+  <a href="https://zakideee.github.io/boundsvg/playground/react/"><b>Live playground</b></a>
+  ·
+  <a href="https://zakideee.github.io/boundsvg/">Documentation</a>
+</p>
+
 ## Why
 
 SVG has no built-in text measurement or layout: you cannot auto-size text to fit a container, wrap lines, or use flexbox the way HTML does. The usual workarounds — `canvas.measureText`, hidden DOM elements — depend on the runtime, so the same document can measure differently across OS fonts and browser engines.
@@ -16,7 +22,9 @@ boundsvg takes the runtime out of the equation. Font shaping (rustybuzz, HarfBuz
 
 ## Examples
 
-The following images are generated entirely by boundsvg from JSX components.
+The following images are generated entirely by boundsvg from JSX components —
+all of them (and many more) run live in the
+[playground](https://zakideee.github.io/boundsvg/playground/react/).
 
 <p align="center">
   <img src="fixtures/generated/terminal-typing.svg" alt="A terminal window that types a pnpm test command one character at a time, prints colored runner output, advances a progress bar, and reports PASS" width="720" style="max-width: 100%; height: auto;" />
