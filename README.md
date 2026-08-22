@@ -159,7 +159,7 @@ private and not listed.
 
 **boundtext** is a standalone Rust crate with no WOFF2, SVG, or WASM dependencies. It handles left-to-right text layout (font management, HarfBuzz shaping, UAX#14 line breaking, JLREQ-informed Japanese kinsoku, vertical writing, shrink/grow fit, ellipsis, rich text with ruby) and can be used independently in contexts such as PDF generation, game UI, or terminal rendering. Bidi/RTL is not implemented, and Japanese is the only line-break-prohibition profile.
 
-> boundtext currently lives in this monorepo as a Cargo workspace member. It is designed for eventual separation into its own repository and crates.io publication once its API stabilizes and external consumers emerge.
+> `boundsvg`, `boundtext`, and `boundshape` are published on [crates.io](https://crates.io/crates/boundtext) (`cargo add boundtext`); `boundmp4` and `boundtext-cli` are internal workspace members and stay unpublished. boundtext currently lives in this monorepo and may eventually move to its own repository as external consumers emerge.
 
 The split between the two main crates — `boundtext` owns how text is measured, wrapped, fragmented, and fit; `boundsvg` owns how laid-out text becomes a scene and an output file — is documented in the two crate READMEs.
 

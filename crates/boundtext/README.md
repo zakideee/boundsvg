@@ -19,6 +19,12 @@ Scope: LTR only. Bidi and RTL reordering are not implemented, and the only line-
 - **Glyph outline extraction** — SVG path data from font glyph outlines
 - **Variable fonts** — Variation axis support (e.g. `wght`)
 
+## Installation
+
+```bash
+cargo add boundtext
+```
+
 ## Usage
 
 ```rust
@@ -171,7 +177,7 @@ When `ellipsis=true` and text overflows:
 
 boundtext is extracted from [boundsvg](https://github.com/zakideee/boundsvg) and currently lives in the same monorepo as a Cargo workspace member. boundsvg depends on boundtext for all text layout.
 
-boundtext is designed for eventual separation into its own repository and crates.io publication once its API stabilizes.
+boundtext is published on [crates.io](https://crates.io/crates/boundtext) and may eventually move to its own repository as external consumers emerge.
 
 ## Known Limitations
 
