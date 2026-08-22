@@ -77,7 +77,7 @@ rustfmt, prettier, typecheck, and knip).
 ## Platform notes
 
 Development checkouts use git symlinks (shared playground assets and
-`AGENTS.md`). On Windows, enable Developer Mode (or clone with
+`CLAUDE.md`). On Windows, enable Developer Mode (or clone with
 `core.symlinks=true` from an elevated shell) so git can create them; without
 symlink support those paths materialize as plain text files and the
 playgrounds cannot resolve their assets. The published npm packages contain
