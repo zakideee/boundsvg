@@ -533,18 +533,25 @@ describe("PNG outline glyph limit", () => {
     expect(svgToPngFn).not.toHaveBeenCalled();
   });
 
-  it("does not apply the PNG limit to SVG, layered SVG, or text-outline consumers", () => {
-    const { engine, resolveAndEmitSvgFromIrFn, resolveIrFn, svgToPngFn } = createHarness();
-    const scene = createScene(MAX_OUTLINE_GLYPHS + 1);
+  // Renders a scene past MAX_OUTLINE_GLYPHS through four consumers; under
+  // coverage instrumentation on a 2-core CI runner this exceeds the default
+  // 5s test timeout.
+  it(
+    "does not apply the PNG limit to SVG, layered SVG, or text-outline consumers",
+    { timeout: 30_000 },
+    () => {
+      const { engine, resolveAndEmitSvgFromIrFn, resolveIrFn, svgToPngFn } = createHarness();
+      const scene = createScene(MAX_OUTLINE_GLYPHS + 1);
 
-    // renderToSvgAndIR resolves outlines on the returned IR (renderToSvg is a
-    // string-only fast path that skips that redundant pass).
-    expect(engine.renderToSvgAndIR(scene).svg).toContain("<svg");
-    expect(engine.renderToLayeredSvg(scene).layers).toHaveLength(1);
-    expect(engine.renderToTextOutlines(scene)).toHaveLength(1);
+      // renderToSvgAndIR resolves outlines on the returned IR (renderToSvg is a
+      // string-only fast path that skips that redundant pass).
+      expect(engine.renderToSvgAndIR(scene).svg).toContain("<svg");
+      expect(engine.renderToLayeredSvg(scene).layers).toHaveLength(1);
+      expect(engine.renderToTextOutlines(scene)).toHaveLength(1);
 
-    expect(resolveIrFn).toHaveBeenCalledTimes(2);
-    expect(resolveAndEmitSvgFromIrFn).not.toHaveBeenCalled();
-    expect(svgToPngFn).not.toHaveBeenCalled();
-  });
+      expect(resolveIrFn).toHaveBeenCalledTimes(2);
+      expect(resolveAndEmitSvgFromIrFn).not.toHaveBeenCalled();
+      expect(svgToPngFn).not.toHaveBeenCalled();
+    },
+  );
 });
