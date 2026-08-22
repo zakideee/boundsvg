@@ -4,7 +4,9 @@ Testing helpers for boundsvg snapshots and render diagnostics.
 
 ## Installation
 
-> Not yet published to npm — build from source. See the [monorepo README](https://github.com/zakideee/boundsvg) for setup instructions.
+```bash
+npm install @boundsvg/testing
+```
 
 ## When to use
 

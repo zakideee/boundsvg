@@ -4,9 +4,15 @@ title: Installation
 
 # Installation
 
-::: warning Work in Progress
-boundsvg is not yet published to npm. For now, build from source.
-:::
+## From npm
+
+```bash
+npm install @boundsvg/core
+```
+
+All packages ship prebuilt WASM — no Rust toolchain is needed to use the
+library. For browser rendering add `@boundsvg/browser` (plus `@boundsvg/react`
+or `@boundsvg/worker` as needed); MP4 export is `@boundsvg/video`.
 
 ## From Source
 

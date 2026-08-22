@@ -4,7 +4,9 @@ Web Worker adapter for boundsvg — offloads WASM rendering to a background thre
 
 ## Installation
 
-> Not yet published to npm — build from source. See the [monorepo README](https://github.com/zakideee/boundsvg) for setup instructions.
+```bash
+npm install @boundsvg/worker
+```
 
 ## Usage
 
