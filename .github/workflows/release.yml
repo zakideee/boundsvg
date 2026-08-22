@@ -3,6 +3,11 @@ name: Release
 on:
   # Auto trigger is intentionally disabled.
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish unpublished package versions to npm"
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -10,6 +15,7 @@ concurrency:
 
 jobs:
   release:
+    if: ${{ !inputs.publish }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -34,3 +40,55 @@ jobs:
           version: pnpm run version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publishes every package version that is not yet on the registry, in
+  # dependency order, with provenance. Gated by the npm-publish environment
+  # (required reviewer) and runs without caches; installs skip lifecycle
+  # scripts. Tags are created and pushed by the maintainer afterwards with
+  # `pnpm changeset tag`.
+  npm-publish:
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        # Toolchain and wasm32 target come from rust-toolchain.toml
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
+        with:
+          tool: wasm-pack@0.13.1
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build WASM (all targets)
+        run: |
+          pnpm build:wasm
+          pnpm build:wasm:web
+          pnpm build:wasm:mp4
+
+      - name: Build every package
+        run: pnpm typecheck
+
+      - name: Packaging gate
+        run: node scripts/pack-e2e.mjs
+
+      - name: Publish to npm
+        run: pnpm changeset publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
