@@ -63,7 +63,16 @@ function changedFiles() {
   );
   const unstaged = splitLines(runCapture("git", ["diff", "--name-only", "--diff-filter=d"]));
   const untracked = splitLines(runCapture("git", ["ls-files", "--others", "--exclude-standard"]));
-  return [...new Set([...committed, ...staged, ...unstaged, ...untracked])].sort();
+  const merged = [...new Set([...committed, ...staged, ...unstaged, ...untracked])].sort();
+  // Symlinks must not reach per-file lint invocations either — prettier
+  // hard-errors on an explicitly listed symbolic link. Their targets are
+  // linted under their own paths.
+  const symlinks = new Set(
+    splitLines(runCapture("git", ["ls-files", "-s"]))
+      .filter((line) => line.startsWith("120000 "))
+      .map((line) => line.split("\t")[1]),
+  );
+  return merged.filter((file) => !symlinks.has(file));
 }
 
 const files = all ? [] : changedFiles();
