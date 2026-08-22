@@ -1,0 +1,37 @@
+name: Render Regression
+
+# Companion to render-regression.yml: reports the same "Baseline Checks"
+# required status for pull requests that touch none of its paths, so the
+# check is always present. Keep the paths-ignore list identical to the
+# paths list in render-regression.yml.
+
+on:
+  pull_request:
+    paths-ignore:
+      - "crates/**"
+      - "vendor/**"
+      - "packages/core/**"
+      - "packages/shape/**"
+      - "packages/boundtext-visual-validator/**"
+      - "fixtures/fonts/**"
+      - "fixtures/conformance/**"
+      - "scripts/check-jlreq-*.sh"
+      - "scripts/check-conformance-visual.sh"
+      - "scripts/render-conformance-visual.mts"
+      - "scripts/conformance-visual-compare.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/render-regression.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  baseline-checks:
+    name: Baseline Checks
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No render-affecting paths changed; baselines are unaffected."
