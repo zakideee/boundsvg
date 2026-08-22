@@ -1,11 +1,12 @@
 [package]
 name = "boundsvg"
 version = "0.1.0"
-publish = false
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "WASM engine for boundsvg — Taffy layout, IR build, SVG/PNG/WebP/GIF emit, WOFF2 decode, rasterization"
+keywords = ["svg", "layout", "wasm", "flexbox", "typography"]
+categories = ["graphics", "wasm"]
 authors = ["zakideee"]
 repository = "https://github.com/zakideee/boundsvg"
 
@@ -21,8 +22,8 @@ path = "src/bin/generate_ir_schema.rs"
 required-features = ["ir-schema"]
 
 [dependencies]
-boundshape = { path = "../boundshape" }
-boundtext = { path = "../boundtext" }
+boundshape = { path = "../boundshape", version = "0.1.0" }
+boundtext = { path = "../boundtext", version = "0.1.0" }
 schemars = { version = "=1.2.2", optional = true, features = ["preserve_order"] }
 wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
@@ -44,7 +45,7 @@ woff2 = { package = "woff2-patched", version = "0.4.0" }
 [dev-dependencies]
 # Decoding side of the roundtrip assertions in tests/. Not linked into the
 # shipped wasm.
-boundtext = { path = "../boundtext", features = ["phase-trace"] }
+boundtext = { path = "../boundtext", version = "0.1.0", features = ["phase-trace"] }
 image-webp = "0.2"
 gif = "0.13"
 quote = "1"
