@@ -13,24 +13,30 @@ environments (the Feature Matrix in the docs describes the boundaries).
 Layout is resolved once; declarative animation rides on top of that single
 resolved layout.
 
-The following are unlikely to be accepted for v1 — a discussion is a better
-place than an issue for them:
+The following design invariants are not up for change via PR — a discussion
+is the place to challenge them:
 
-- Animation channels beyond opacity and center-pivot translate/rotate/scale —
-  in particular layout-property tracks. A scene whose layout changes over time
-  is materialized per frame by the application, not interpolated by core
-- Bidi/RTL text (not supported in v1)
 - Exposing raw SVG attributes (`x`, `y`, `style`, `transform` strings) in the
-  public API
-- Browser DOM or OS-font dependence inside render functions
-- HTML string input and Tailwind in `@boundsvg/core` (adapter-layer territory)
+  public API — layout is the only positioning authority, and the emitted SVG
+  structure is an implementation detail, not a contract
+- Browser DOM or OS-font dependence inside render functions — the entire
+  pipeline runs in WASM with fonts injected as data, which is what makes
+  output byte-identical across runtimes
+- HTML string input and Tailwind in `@boundsvg/core` — adapter-layer
+  territory; core keeps a closed, fully validated input model
 
-If your request falls outside the supported feature matrix in the docs, an
-open discussion is the best starting point.
+For what the engine currently does and does not do — animation channels,
+Bidi/RTL, and everything else — the Feature Matrix and Known Limitations
+pages in the docs are the source of truth. A feature request outside them is
+best opened as a discussion first.
 
 ## Development setup
 
-Prerequisites: Node.js ≥ 20, pnpm ≥ 9, Rust toolchain, `wasm-pack`.
+Prerequisites: Node.js and pnpm — exact versions are pinned by
+`.node-version` and the `packageManager` field (`corepack enable` picks the
+right pnpm automatically) — plus the Rust toolchain, which rustup installs
+automatically from `rust-toolchain.toml` (including the wasm32 target), and
+`wasm-pack`.
 
 ```bash
 pnpm install
