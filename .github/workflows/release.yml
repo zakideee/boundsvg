@@ -45,7 +45,8 @@ jobs:
   # dependency order, with provenance. Gated by the npm-publish environment
   # (required reviewer) and runs without caches; installs skip lifecycle
   # scripts. Tags are created and pushed by the maintainer afterwards with
-  # `pnpm changeset tag`.
+  # `pnpm changeset tag`. Publishing goes through `pnpm -r publish` so
+  # workspace: ranges are rewritten to real versions.
   npm-publish:
     if: ${{ inputs.publish }}
     runs-on: ubuntu-latest
@@ -87,8 +88,11 @@ jobs:
       - name: Packaging gate
         run: node scripts/pack-e2e.mjs
 
+      # pnpm rewrites workspace: ranges to real versions at publish time and
+      # publishes in dependency order; npm-based publishers do neither for a
+      # pnpm workspace.
       - name: Publish to npm
-        run: pnpm changeset publish
+        run: pnpm -r publish --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
