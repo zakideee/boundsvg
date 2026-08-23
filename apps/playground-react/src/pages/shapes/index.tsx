@@ -37,6 +37,7 @@ import {
   SelectField,
 } from "../../components/fields";
 import { RenderSurface } from "../../components/RenderSurface";
+import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspect } from "../../hooks/use-svg-inspect";
 import { generateFullComponent, generateJsxSnippet } from "../../lib/codegen";
 import { resolveDebugOverlayConfig } from "../../lib/debug-overlay";
@@ -817,6 +818,8 @@ export function ShapesPage() {
   const [isPending, startTransition] = useTransition();
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
+  const mobileViewer = useMobileViewer();
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
   const deferred = useDeferredValue(state);
 
   const update = <K extends keyof ShapesPageState>(key: K, value: ShapesPageState[K]) => {
@@ -919,7 +922,7 @@ export function ShapesPage() {
           />
         </Section>
 
-        <Section title="Render">
+        <Section title="Render" className="mobile-viewer-secondary">
           <SelectField
             id="shape-renderer"
             label="Renderer"

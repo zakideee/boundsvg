@@ -5,15 +5,17 @@ import { BBOX_OVERLAY_OPTIONS, formatBBoxOverlaySummary } from "../lib/debug-ove
 export function Section({
   title,
   defaultOpen = true,
+  className,
   children,
 }: {
   title: string;
   defaultOpen?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="section">
+    <div className={`section${className ? ` ${className}` : ""}`}>
       <button type="button" className="section-header" onClick={() => setOpen(!open)}>
         <span>{title}</span>
         <span className="section-chevron">{open ? "\u25BE" : "\u25B8"}</span>
@@ -82,7 +84,7 @@ export function SelectField({
   const selectedOptionLabel = options.find((option) => option.value === value)?.label ?? value;
   return (
     <div
-      className="control-group"
+      className="control-group control-group-select"
       data-playground-locator-level="control"
       data-playground-locator-segment={`Control: ${label} = ${selectedOptionLabel} [${id}=${value}]`}
     >
@@ -122,7 +124,7 @@ export function BBoxOverlayField({
   };
 
   return (
-    <div className="control-group">
+    <div className="control-group control-group-bbox">
       <div className="control-head">
         <span>BBox Overlay</span>
       </div>
@@ -194,7 +196,7 @@ export function TextAreaField({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="control-group">
+    <div className="control-group control-group-textarea">
       <div className="control-head">
         <label htmlFor={id}>{label}</label>
       </div>
@@ -343,7 +345,7 @@ export function FeatureSettingsField({
   const customTags = [...parsed.keys()].filter((tag) => !presetTags.has(tag));
 
   return (
-    <div className="control-group">
+    <div className="control-group control-group-features">
       <div className="control-head">
         <label htmlFor="ffs-custom-tag">Font Feature Settings</label>
       </div>

@@ -1,6 +1,7 @@
 import { BoundSvgProvider, useBoundSvg } from "@boundsvg/react/provider";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { installPlaygroundLocatorCopy } from "../../playground-shared/locator-copy.js";
+import { useMobileViewer } from "./hooks/use-mobile-viewer";
 import { asset } from "./lib/asset";
 import { ApiExamplesPage } from "./pages/ApiExamplesPage";
 import { AnimationPage } from "./pages/animation/index";
@@ -44,6 +45,7 @@ function LoadingScreen() {
 
 function ExampleSpa() {
   const route = useHashRoute();
+  const mobileViewer = useMobileViewer();
 
   useEffect(() => {
     if (!import.meta.env.DEV) {
@@ -53,7 +55,7 @@ function ExampleSpa() {
   }, []);
 
   return (
-    <div className="example-shell">
+    <div className="example-shell" data-route={route}>
       <header className="example-header">
         <div className="header-top-row">
           <div className="brand-copy">
@@ -90,7 +92,7 @@ function ExampleSpa() {
             <StatusStrip />
           </div>
         </div>
-        <RouteNav route={route} />
+        <RouteNav route={route} mobileViewer={mobileViewer} />
       </header>
 
       <main className="example-main">
@@ -113,23 +115,44 @@ function ExampleSpa() {
   );
 }
 
-function RouteNav({ route }: { route: RouteKey }) {
+function RouteNav({ route, mobileViewer }: { route: RouteKey; mobileViewer: boolean }) {
   const activeGroup = ROUTE_GROUP_BY_ROUTE.get(route) ?? ROUTE_GROUPS[0];
+  const activeRoutes =
+    activeGroup?.routes.filter((routeItem) => !mobileViewer || routeItem.key !== "api") ?? [];
+  const navRef = useRef<HTMLElement>(null);
   // Remember the last visited page per category so switching categories
   // returns to where the user left off.
   const lastVisitedRef = useRef(new Map<string, string>());
   if (activeGroup) {
-    const currentDef = activeGroup.routes.find((r) => r.key === route);
+    const currentDef = activeRoutes.find((routeItem) => routeItem.key === route);
     if (currentDef) {
       lastVisitedRef.current.set(activeGroup.key, currentDef.hash);
     }
   }
 
+  useEffect(() => {
+    // Changing routes is the signal to reveal each rail's newly active link.
+    void route;
+    for (const row of navRef.current?.querySelectorAll<HTMLElement>(".route-nav-row") ?? []) {
+      const activeLink = row.querySelector<HTMLElement>(".route-link.active");
+      if (activeLink) {
+        row.scrollLeft = activeLink.offsetLeft - (row.clientWidth - activeLink.clientWidth) / 2;
+      }
+    }
+  }, [route]);
+
   return (
-    <nav className="route-nav route-nav-grouped" aria-label="Pages">
+    <nav ref={navRef} className="route-nav route-nav-grouped" aria-label="Pages">
       <div className="route-nav-row route-nav-categories">
         {ROUTE_GROUPS.map((group) => {
-          const target = lastVisitedRef.current.get(group.key) ?? group.routes[0]?.hash ?? "#/";
+          const groupRoutes = group.routes.filter(
+            (routeItem) => !mobileViewer || routeItem.key !== "api",
+          );
+          const rememberedTarget = lastVisitedRef.current.get(group.key);
+          const target =
+            groupRoutes.find((routeItem) => routeItem.hash === rememberedTarget)?.hash ??
+            groupRoutes[0]?.hash ??
+            "#/";
           return (
             <a
               key={group.key}
@@ -144,11 +167,12 @@ function RouteNav({ route }: { route: RouteKey }) {
         })}
       </div>
       <div className="route-nav-row route-nav-pages">
-        {(activeGroup?.routes ?? []).map((r) => (
+        {activeRoutes.map((r) => (
           <a
             key={r.key}
             href={r.hash}
             className={`route-link ${route === r.key ? "active" : ""}`}
+            aria-current={route === r.key ? "page" : undefined}
             data-playground-locator-level="page"
             data-playground-locator-segment={`Page: ${r.label} [${r.key}]`}
           >

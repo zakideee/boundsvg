@@ -22,6 +22,7 @@ import {
   type TextUnitPlaygroundControls,
 } from "../../../../playground-shared/animation-playground.js";
 import { CheckField, NumberField, Section, SelectField } from "../../components/fields";
+import { useMobileViewer } from "../../hooks/use-mobile-viewer";
 import {
   isLayoutReactivePresetKey,
   LAYOUT_REACTIVE_PRESET_OPTIONS,
@@ -278,6 +279,10 @@ function samplingDescription(isLayoutReactivePreset: boolean): string {
     : "Each slider position renders a deterministic SVG sampled by the core at that exact time.";
 }
 
+function staticSamplingMobileClass(isLayoutReactivePreset: boolean): string | undefined {
+  return isLayoutReactivePreset ? undefined : "mobile-viewer-secondary";
+}
+
 function motionDescription(isLayoutReactivePreset: boolean, reducedMotion: boolean): string {
   if (reducedMotion) {
     return "Reduced motion is enabled: both previews show deterministic still frames.";
@@ -490,6 +495,7 @@ function LayoutReactiveMetricsSection({
 }
 
 function A1PreviewPanels({
+  mobileViewer,
   reducedMotion,
   posterTimeMs,
   declarativeStartTimeMs,
@@ -508,6 +514,7 @@ function A1PreviewPanels({
   staticPreviewContentRef,
   staticPreviewRevision,
 }: {
+  mobileViewer: boolean;
   reducedMotion: boolean;
   posterTimeMs: number;
   declarativeStartTimeMs: number;
@@ -547,94 +554,99 @@ function A1PreviewPanels({
         <div className="preview-stage animation-preview-stage">{declarativePreview}</div>
       </section>
 
-      <section
-        className="panel preview-panel animation-preview-panel"
-        data-testid="animation-static-preview"
-      >
-        <header className="animation-preview-header">
-          <div>
-            <strong>Static sampling preview</strong>
-            <span>
-              Exact SVG output at {timeMs} ms · {runtime}
-            </span>
+      {!mobileViewer && (
+        <section
+          className="panel preview-panel animation-preview-panel"
+          data-testid="animation-static-preview"
+        >
+          <header className="animation-preview-header">
+            <div>
+              <strong>Static sampling preview</strong>
+              <span>
+                Exact SVG output at {timeMs} ms · {runtime}
+              </span>
+            </div>
+            <span className="animation-mode-badge">timeMs</span>
+          </header>
+          <div className="preview-stage animation-preview-stage animation-static-stage">
+            <StaticPreviewContent
+              key={staticPreviewRevision}
+              renderResult={staticRenderResult}
+              metrics={staticMetrics}
+              showUnitOverlay={showUnitOverlay}
+              contentRef={staticPreviewContentRef}
+            />
           </div>
-          <span className="animation-mode-badge">timeMs</span>
-        </header>
-        <div className="preview-stage animation-preview-stage animation-static-stage">
-          <StaticPreviewContent
-            key={staticPreviewRevision}
-            renderResult={staticRenderResult}
-            metrics={staticMetrics}
-            showUnitOverlay={showUnitOverlay}
-            contentRef={staticPreviewContentRef}
-          />
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Spans both preview columns: keeping it inside the static panel made
           that panel's stage shorter than the declarative one by the height of
           this row, so the two samples no longer lined up. The exports are
           scene-level anyway — neither is a property of one preview. */}
-      <div className="animation-export-actions" data-testid="animation-export-actions">
-        <button
-          data-testid="animation-download-still"
-          disabled={animatedExportPending}
-          onClick={onDownloadStill}
-          type="button"
-        >
-          Download PNG at this time
-        </button>
-        <button
-          type="button"
-          disabled={animatedExportPending}
-          onClick={() => onDownloadAnimated("animated-webp")}
-        >
-          Download animated WebP
-        </button>
-        <button
-          type="button"
-          disabled={animatedExportPending}
-          onClick={() => onDownloadAnimated("gif")}
-        >
-          Download animated GIF
-        </button>
-        {/* Hidden rather than disabled where WebCodecs is missing: a button that
-            can never work is worse than no button. */}
-        {mp4Supported ? (
-          <>
-            <button
-              data-testid="animation-download-mp4-30"
-              type="button"
-              disabled={animatedExportPending}
-              onClick={() => onDownloadMp4(30)}
-            >
-              Download MP4 (30fps)
-            </button>
-            <button
-              data-testid="animation-download-mp4-ntsc"
-              type="button"
-              disabled={animatedExportPending}
-              onClick={() => onDownloadMp4(29.97)}
-            >
-              Download MP4 (29.97fps)
-            </button>
-          </>
-        ) : null}
-        <span>
-          {animatedExportPending
-            ? "Encoding…"
-            : animatedExportError
-              ? `Export failed: ${animatedExportError.message}`
-              : mp4Supported
-                ? "PNG is this frame; the animated formats and MP4 sample the whole animation."
-                : "PNG is this frame; the animated formats sample the whole animation. MP4 needs WebCodecs, which this browser lacks."}
-        </span>
-      </div>
+      {!mobileViewer ? (
+        <div className="animation-export-actions" data-testid="animation-export-actions">
+          <button
+            data-testid="animation-download-still"
+            disabled={animatedExportPending}
+            onClick={onDownloadStill}
+            type="button"
+          >
+            Download PNG at this time
+          </button>
+          <button
+            type="button"
+            disabled={animatedExportPending}
+            onClick={() => onDownloadAnimated("animated-webp")}
+          >
+            Download animated WebP
+          </button>
+          <button
+            type="button"
+            disabled={animatedExportPending}
+            onClick={() => onDownloadAnimated("gif")}
+          >
+            Download animated GIF
+          </button>
+          {/* Hidden rather than disabled where WebCodecs is missing: a button that
+              can never work is worse than no button. */}
+          {mp4Supported ? (
+            <>
+              <button
+                data-testid="animation-download-mp4-30"
+                type="button"
+                disabled={animatedExportPending}
+                onClick={() => onDownloadMp4(30)}
+              >
+                Download MP4 (30fps)
+              </button>
+              <button
+                data-testid="animation-download-mp4-ntsc"
+                type="button"
+                disabled={animatedExportPending}
+                onClick={() => onDownloadMp4(29.97)}
+              >
+                Download MP4 (29.97fps)
+              </button>
+            </>
+          ) : null}
+          <span>
+            {animatedExportPending
+              ? "Encoding…"
+              : animatedExportError
+                ? `Export failed: ${animatedExportError.message}`
+                : mp4Supported
+                  ? "PNG is this frame; the animated formats and MP4 sample the whole animation."
+                  : "PNG is this frame; the animated formats sample the whole animation. MP4 needs WebCodecs, which this browser lacks."}
+          </span>
+        </div>
+      ) : null}
     </>
   );
 }
 
 function LayoutReactivePreviewPanels({
+  mobileViewer,
   presetKey,
   timeMs,
   canvasFit,
@@ -644,6 +656,7 @@ function LayoutReactivePreviewPanels({
   materializedPreviewContentRef,
   staticPreviewRevision,
 }: {
+  mobileViewer: boolean;
   presetKey: LayoutReactivePresetKey;
   timeMs: number;
   canvasFit: LayoutReactivePlaygroundControls["canvasFit"];
@@ -666,28 +679,32 @@ function LayoutReactivePreviewPanels({
       : `Resolved once; only paint transforms at ${timeMs} ms`;
   return (
     <>
-      <section
-        className="panel preview-panel animation-preview-panel"
-        data-testid="layout-rigid-preview"
-        data-animation-mode="rigid"
-      >
-        <header className="animation-preview-header">
-          <div>
-            <strong>{rigidHeading}</strong>
-            <span>{rigidDescription}</span>
+      {!mobileViewer && (
+        <section
+          className="panel preview-panel animation-preview-panel"
+          data-testid="layout-rigid-preview"
+          data-animation-mode="rigid"
+        >
+          <header className="animation-preview-header">
+            <div>
+              <strong>{rigidHeading}</strong>
+              <span>{rigidDescription}</span>
+            </div>
+            <span className="animation-mode-badge">
+              {declarativeRigid ? "DECLARATIVE" : "RIGID"}
+            </span>
+          </header>
+          <div className={`preview-stage animation-preview-stage is-${canvasFit}`}>
+            <StaticPreviewContent
+              key={staticPreviewRevision}
+              renderResult={rigidRenderResult}
+              metrics={null}
+              showUnitOverlay={false}
+              contentRef={rigidPreviewContentRef}
+            />
           </div>
-          <span className="animation-mode-badge">{declarativeRigid ? "DECLARATIVE" : "RIGID"}</span>
-        </header>
-        <div className={`preview-stage animation-preview-stage is-${canvasFit}`}>
-          <StaticPreviewContent
-            key={staticPreviewRevision}
-            renderResult={rigidRenderResult}
-            metrics={null}
-            showUnitOverlay={false}
-            contentRef={rigidPreviewContentRef}
-          />
-        </div>
-      </section>
+        </section>
+      )}
 
       <section
         className="panel preview-panel animation-preview-panel"
@@ -718,6 +735,7 @@ function LayoutReactivePreviewPanels({
 
 export function AnimationPage() {
   const { engine, defaultRenderOptions } = useBoundSvg();
+  const mobileViewer = useMobileViewer();
   const [presetKey, setPresetKey] = useState<AnimationPagePresetKey>(DEFAULT_PRESET);
   const reducedMotion = usePrefersReducedMotion();
   const layoutPreset = isLayoutReactivePresetKey(presetKey)
@@ -1378,7 +1396,10 @@ export function AnimationPage() {
           </Section>
         )}
 
-        <Section title="Static sampling">
+        <Section
+          title="Static sampling"
+          className={staticSamplingMobileClass(isLayoutReactivePreset)}
+        >
           <div className="animation-time-heading">
             <label htmlFor="animation-time">timeMs</label>
             <output
@@ -1490,6 +1511,7 @@ export function AnimationPage() {
 
       {isLayoutReactivePreset ? (
         <LayoutReactivePreviewPanels
+          mobileViewer={mobileViewer}
           presetKey={presetKey as LayoutReactivePresetKey}
           timeMs={timeMs}
           canvasFit={layoutControls.canvasFit}
@@ -1501,6 +1523,7 @@ export function AnimationPage() {
         />
       ) : (
         <A1PreviewPanels
+          mobileViewer={mobileViewer}
           reducedMotion={reducedMotion}
           posterTimeMs={posterTimeMs}
           declarativeStartTimeMs={declarativeStartTimeMs}

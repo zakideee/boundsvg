@@ -40,8 +40,12 @@ import type { FlowObstacles, FlowRichObstacles } from "./obstacle-types";
 // ---------------------------------------------------------------------------
 
 export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
-  const canvasWidth = 1120;
-  const canvasHeight = 360;
+  const canvasWidth = 800;
+  const rowHeight = 360;
+  const canvasHeight = rowHeight * 2;
+  const verticalRowTop = rowHeight;
+  const verticalEllipsisLeft = 248;
+  const verticalFitLeft = 664;
   const children: VNode[] = [];
 
   // Section labels
@@ -62,17 +66,17 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
   );
   children.push(
     Box(
-      { position: "absolute", left: 810, top: 10, width: 140 },
+      { position: "absolute", left: 16, top: verticalRowTop + 10, width: 372 },
       Text(
-        { font: FA, fontSizePx: 10, color: "#475569", wrap: "none" },
+        { font: FA, fontSizePx: 11, color: "#475569", wrap: "none" },
         "Vertical ellipsis + maxLines",
       ),
     ),
   );
   children.push(
     Box(
-      { position: "absolute", left: 970, top: 10, width: 120 },
-      Text({ font: FA, fontSizePx: 10, color: "#475569", wrap: "none" }, "Vertical fit-shrink"),
+      { position: "absolute", left: 420, top: verticalRowTop + 10, width: 364 },
+      Text({ font: FA, fontSizePx: 11, color: "#475569", wrap: "none" }, "Vertical fit-shrink"),
     ),
   );
   // Dividers
@@ -82,17 +86,27 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
       left: 404,
       top: 30,
       width: 1,
-      height: canvasHeight - 40,
+      height: rowHeight - 40,
       background: "#2d2d2d",
     }),
   );
   children.push(
     Box({
       position: "absolute",
-      left: 794,
-      top: 30,
+      left: 16,
+      top: verticalRowTop,
+      width: canvasWidth - 32,
+      height: 1,
+      background: "#2d2d2d",
+    }),
+  );
+  children.push(
+    Box({
+      position: "absolute",
+      left: 404,
+      top: verticalRowTop + 30,
       width: 1,
-      height: canvasHeight - 40,
+      height: rowHeight - 40,
       background: "#2d2d2d",
     }),
   );
@@ -117,7 +131,7 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
         wrap: "char",
         maxLines: 7,
         ellipsis: true,
-        flowBox: { x: 16, y: 36, width: 372, height: canvasHeight - 46 },
+        flowBox: { x: 16, y: 36, width: 372, height: rowHeight - 46 },
         exclusions: [
           { kind: "rect", x: rect.x, y: rect.y, width: rect.w, height: rect.h, marginPx: 8 },
           geometryToFlowExclusion(CIRCLE_GEOMETRY, {
@@ -132,6 +146,7 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
       children.push(...renderFlowWarnings(result.warnings, 16, 24));
       children.push(
         Box({
+          id: "flow-obstacle-left-rect",
           position: "absolute",
           left: rect.x,
           top: rect.y,
@@ -143,6 +158,7 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
       );
       children.push(
         Shape({
+          id: "flow-obstacle-left-circle",
           geometry: CIRCLE_GEOMETRY,
           width: circ.r * 2,
           height: circ.r * 2,
@@ -178,7 +194,7 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
         wrap: "char",
         fit: "shrink",
         minFontSizePx: 8,
-        flowBox: { x: 420, y: 36, width: 364, height: canvasHeight - 46 },
+        flowBox: { x: 420, y: 36, width: 364, height: rowHeight - 46 },
         exclusions: [
           {
             kind: "rect",
@@ -193,6 +209,7 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
       children.push(...renderFlowWarnings(result.warnings, 420, 24));
       children.push(
         Box({
+          id: "flow-obstacle-right-rect",
           position: "absolute",
           left: fitRect.x,
           top: fitRect.y,
@@ -239,24 +256,37 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
         writingMode: "vertical-rl",
         maxLines: 4,
         ellipsis: true,
-        flowBox: { x: 0, y: 0, width: 140, height: canvasHeight - 46 },
+        flowBox: { x: 0, y: 0, width: 140, height: rowHeight - 46 },
         exclusions: [],
       });
       children.push(
         Box({
           position: "absolute",
-          left: 810,
-          top: 30,
+          left: verticalEllipsisLeft,
+          top: verticalRowTop + 30,
           width: 140,
-          height: canvasHeight - 46,
+          height: rowHeight - 46,
           borderColor: "#474747",
           borderWidth: 1,
         }),
       );
-      renderVerticalFlowFragments(children, result, 14, 1.5, "#e2e8f0", 810, 30);
+      renderVerticalFlowFragments(
+        children,
+        result,
+        14,
+        1.5,
+        "#e2e8f0",
+        verticalEllipsisLeft,
+        verticalRowTop + 30,
+      );
       children.push(
         Box(
-          { position: "absolute", left: 810, top: canvasHeight - 12, width: 140 },
+          {
+            position: "absolute",
+            left: verticalEllipsisLeft,
+            top: verticalRowTop + rowHeight - 12,
+            width: 140,
+          },
           Text(
             { font: FA, fontSizePx: 9, color: "#64748b", wrap: "none" },
             `${result.usedLineCount} cols · maxLines=4`,
@@ -266,7 +296,7 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
     } catch (error) {
       children.push(
         Box(
-          { position: "absolute", left: 810, top: 40 },
+          { position: "absolute", left: 16, top: verticalRowTop + 40 },
           Text({ font: FA, fontSizePx: 12, color: "#ef4444", wrap: "char" }, String(error)),
         ),
       );
@@ -288,25 +318,38 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
         writingMode: "vertical-rl",
         fit: "shrink",
         minFontSizePx: 8,
-        flowBox: { x: 0, y: 0, width: 120, height: canvasHeight - 46 },
+        flowBox: { x: 0, y: 0, width: 120, height: rowHeight - 46 },
         exclusions: [],
       });
       children.push(
         Box({
           position: "absolute",
-          left: 970,
-          top: 30,
+          left: verticalFitLeft,
+          top: verticalRowTop + 30,
           width: 120,
-          height: canvasHeight - 46,
+          height: rowHeight - 46,
           borderColor: "#474747",
           borderWidth: 1,
         }),
       );
       const chosenSize = result.chosenFontSizePx ?? 20;
-      renderVerticalFlowFragments(children, result, chosenSize, 1.5, "#e2e8f0", 970, 30);
+      renderVerticalFlowFragments(
+        children,
+        result,
+        chosenSize,
+        1.5,
+        "#e2e8f0",
+        verticalFitLeft,
+        verticalRowTop + 30,
+      );
       children.push(
         Box(
-          { position: "absolute", left: 970, top: canvasHeight - 12, width: 120 },
+          {
+            position: "absolute",
+            left: verticalFitLeft,
+            top: verticalRowTop + rowHeight - 12,
+            width: 120,
+          },
           Text(
             { font: FA, fontSizePx: 9, color: "#64748b", wrap: "none" },
             `fit: ${chosenSize.toFixed(1)}px`,
@@ -316,7 +359,7 @@ export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
     } catch (error) {
       children.push(
         Box(
-          { position: "absolute", left: 970, top: 40 },
+          { position: "absolute", left: 420, top: verticalRowTop + 40 },
           Text({ font: FA, fontSizePx: 12, color: "#ef4444", wrap: "char" }, String(error)),
         ),
       );
@@ -336,6 +379,7 @@ function buildRichSection(
   obs: FlowRichObstacles,
   canvasWidth: number,
   canvasHeight: number,
+  sectionHeight: number,
 ): void {
   const circ = obs.richCirc;
   try {
@@ -346,7 +390,7 @@ function buildRichSection(
       language: "ja",
       wrap: "char",
       text: "",
-      flowBox: { x: 16, y: 30, width: 252, height: canvasHeight - 40 },
+      flowBox: { x: 16, y: 30, width: 252, height: sectionHeight - 40 },
       exclusions: [{ kind: "circle", cx: circ.cx, cy: circ.cy, r: circ.r, marginPx: 6 }],
       spans: [
         { text: "枕草子", fontSizePx: 20, color: "#fbbf24" },
@@ -360,7 +404,13 @@ function buildRichSection(
     children.push(...renderFlowWarnings(result.warnings, 16, 18));
     const circlePathData = `M ${circ.cx - circ.r} ${circ.cy} A ${circ.r} ${circ.r} 0 1 1 ${circ.cx + circ.r} ${circ.cy} A ${circ.r} ${circ.r} 0 1 1 ${circ.cx - circ.r} ${circ.cy} Z`;
     children.push(
-      Path({ d: circlePathData, width: canvasWidth, height: canvasHeight, fill: "#1e3a5f" }),
+      Path({
+        id: "flow-obstacle-rich-circle",
+        d: circlePathData,
+        width: canvasWidth,
+        height: canvasHeight,
+        fill: "#1e3a5f",
+      }),
     );
     renderStyledFlowFragments(children, result, 14, 1.5, "#e2e8f0");
   } catch (error) {
@@ -377,7 +427,8 @@ function buildVerticalSection(
   engine: Engine,
   children: VNode[],
   obs: FlowRichObstacles,
-  canvasHeight: number,
+  rowTop: number,
+  sectionHeight: number,
 ): void {
   const fontSize = 14;
   const lineHeight = 1.5;
@@ -393,16 +444,17 @@ function buildVerticalSection(
       language: "ja",
       wrap: "char",
       writingMode: "vertical-rl",
-      flowBox: { x: 300, y: 30, width: 236, height: canvasHeight - 40 },
+      flowBox: { x: 16, y: rowTop + 30, width: 528, height: sectionHeight - 40 },
       exclusions: [
         { kind: "rect", x: rect.x, y: rect.y, width: rect.w, height: rect.h, marginPx: 6 },
       ],
     });
     children.push(
-      ...renderFlowWarnings(result.warnings, 300, 6, "Vertical-RL (drag) · tofu demo: 祇"),
+      ...renderFlowWarnings(result.warnings, 16, rowTop + 6, "Vertical-RL (drag) · tofu demo: 祇"),
     );
     children.push(
       Box({
+        id: "flow-obstacle-vertical-rect",
         position: "absolute",
         left: rect.x,
         top: rect.y,
@@ -416,7 +468,7 @@ function buildVerticalSection(
   } catch (error) {
     children.push(
       Box(
-        { position: "absolute", left: 300, top: 34 },
+        { position: "absolute", left: 16, top: rowTop + 34 },
         Text({ font: FA, fontSizePx: 12, color: "#ef4444", wrap: "char" }, String(error)),
       ),
     );
@@ -427,7 +479,7 @@ function buildRubySection(
   engine: Engine,
   children: VNode[],
   obs: FlowRichObstacles,
-  canvasHeight: number,
+  sectionHeight: number,
 ): void {
   const fontSize = 15;
   const lineHeight = 1.9;
@@ -440,7 +492,7 @@ function buildRubySection(
       language: "ja",
       wrap: "char",
       text: "",
-      flowBox: { x: 564, y: 30, width: 260, height: canvasHeight - 40 },
+      flowBox: { x: 284, y: 30, width: 260, height: sectionHeight - 40 },
       exclusions: [
         {
           kind: "rect",
@@ -482,9 +534,10 @@ function buildRubySection(
         { text: "びちがひたる。" },
       ],
     });
-    children.push(...renderFlowWarnings(result.warnings, 564, 18));
+    children.push(...renderFlowWarnings(result.warnings, 284, 18));
     children.push(
       Box({
+        id: "flow-obstacle-ruby-rect",
         position: "absolute",
         left: rubyRect.x,
         top: rubyRect.y,
@@ -498,7 +551,7 @@ function buildRubySection(
   } catch (error) {
     children.push(
       Box(
-        { position: "absolute", left: 564, top: 34 },
+        { position: "absolute", left: 284, top: 34 },
         Text({ font: FA, fontSizePx: 12, color: "#ef4444", wrap: "char" }, String(error)),
       ),
     );
@@ -506,8 +559,9 @@ function buildRubySection(
 }
 
 export function buildFlowRichVNode(engine: Engine, obs: FlowRichObstacles): VNode {
-  const canvasWidth = 840;
-  const canvasHeight = 280;
+  const canvasWidth = 560;
+  const rowHeight = 280;
+  const canvasHeight = rowHeight * 2;
   const children: VNode[] = [];
 
   // Section labels
@@ -519,7 +573,7 @@ export function buildFlowRichVNode(engine: Engine, obs: FlowRichObstacles): VNod
   );
   children.push(
     Box(
-      { position: "absolute", left: 560, top: 8 },
+      { position: "absolute", left: 284, top: 8 },
       Text({ font: FA, fontSizePx: 11, color: "#475569" }, "Ruby (drag)"),
     ),
   );
@@ -527,27 +581,27 @@ export function buildFlowRichVNode(engine: Engine, obs: FlowRichObstacles): VNod
   children.push(
     Box({
       position: "absolute",
-      left: 284,
+      left: 276,
       top: 26,
       width: 1,
-      height: canvasHeight - 36,
+      height: rowHeight - 36,
       background: "#2d2d2d",
     }),
   );
   children.push(
     Box({
       position: "absolute",
-      left: 550,
-      top: 26,
-      width: 1,
-      height: canvasHeight - 36,
+      left: 16,
+      top: rowHeight,
+      width: canvasWidth - 32,
+      height: 1,
       background: "#2d2d2d",
     }),
   );
 
-  buildRichSection(engine, children, obs, canvasWidth, canvasHeight);
-  buildVerticalSection(engine, children, obs, canvasHeight);
-  buildRubySection(engine, children, obs, canvasHeight);
+  buildRichSection(engine, children, obs, canvasWidth, canvasHeight, rowHeight);
+  buildVerticalSection(engine, children, obs, rowHeight, rowHeight);
+  buildRubySection(engine, children, obs, rowHeight);
 
   return Canvas({ width: canvasWidth, height: canvasHeight, background: "#1a1a1a" }, ...children);
 }

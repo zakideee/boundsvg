@@ -66,8 +66,8 @@ export function HitTestPage() {
             left={PLACEMENT.x}
             top={30}
           >
-            Move the pointer over the badge - hitTestShapeAt reports every part under it (topmost
-            last), stroke band included
+            Point to or tap the badge - hitTestShapeAt reports every part under it (topmost last),
+            stroke band included
           </Text>
           <Shape
             geometry={BADGE_GEOMETRY}
@@ -128,6 +128,14 @@ export function HitTestPage() {
     );
   };
 
+  const handlePointerLeave = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") {
+      return;
+    }
+    setCursor(null);
+    setHits([]);
+  };
+
   const topHit = hits.at(-1);
 
   return (
@@ -145,11 +153,9 @@ export function HitTestPage() {
           maxWidth: "100%",
           cursor: "crosshair",
         }}
+        onPointerDown={handlePointerMove}
         onPointerMove={handlePointerMove}
-        onPointerLeave={() => {
-          setCursor(null);
-          setHits([]);
-        }}
+        onPointerLeave={handlePointerLeave}
       >
         {svg ? (
           // lineHeight 0 removes the inline-svg baseline gap so the wrapper

@@ -18,6 +18,7 @@ import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
 import { getPrismGrammar } from "../../../playground-shared/prism.js";
 import { Section, useCloseDetailsOnOutsidePointer } from "../components/fields";
+import { useMobileViewer, useResetPreviewForMobile } from "../hooks/use-mobile-viewer";
 import { useSvgInspect } from "../hooks/use-svg-inspect";
 import { formatMarkup, generateJsxSnippet } from "../lib/codegen";
 import {
@@ -39,8 +40,55 @@ const COMPARE_OVERLAY_OPTIONS: Array<{ value: CompareOverlayPart; label: string 
   { value: "html-text", label: "HTML text" },
 ];
 
+function useElementContentWidth(): [
+  setElement: (element: HTMLDivElement | null) => void,
+  contentWidth: number | null,
+] {
+  const [contentWidth, setContentWidth] = useState<number | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const setElement = useCallback((element: HTMLDivElement | null) => {
+    resizeObserverRef.current?.disconnect();
+    resizeObserverRef.current = null;
+    if (!element) {
+      return;
+    }
+    const updateContentWidth = () => {
+      const style = getComputedStyle(element);
+      const nextContentWidth = Math.max(
+        0,
+        element.clientWidth -
+          Number.parseFloat(style.paddingLeft) -
+          Number.parseFloat(style.paddingRight),
+      );
+      setContentWidth((currentWidth) =>
+        currentWidth === nextContentWidth ? currentWidth : nextContentWidth,
+      );
+    };
+    updateContentWidth();
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const resizeObserver = new ResizeObserver(updateContentWidth);
+    resizeObserver.observe(element);
+    resizeObserverRef.current = resizeObserver;
+  }, []);
+  return [setElement, contentWidth];
+}
+
+function resolveCompareScale(
+  mobileViewer: boolean,
+  contentWidth: number | null,
+  canvasWidth: number,
+): number {
+  if (!mobileViewer || contentWidth === null || contentWidth <= 0) {
+    return 1;
+  }
+  return Math.min(1, contentWidth / canvasWidth);
+}
+
 export function LayoutComparePage() {
   const { engine, status } = useBoundSvg();
+  const mobileViewer = useMobileViewer();
   const firstPattern = COMPARE_PATTERNS[0];
   if (!firstPattern) {
     throw new Error("COMPARE_PATTERNS must have at least one entry");
@@ -51,10 +99,22 @@ export function LayoutComparePage() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [viewTab, setViewTab] = useState<CompareViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
+  const [setCompareStageElement, compareContentWidth] = useElementContentWidth();
 
   const [isPending, startTransition] = useTransition();
 
   const pattern = COMPARE_PATTERN_BY_ID.get(patternId) ?? firstPattern;
+  const compareScale = resolveCompareScale(mobileViewer, compareContentWidth, pattern.canvasWidth);
+  const compareViewportStyle = {
+    width: pattern.canvasWidth * compareScale,
+    height: pattern.canvasHeight * compareScale,
+  };
+  const compareLogicalSurfaceStyle = {
+    width: pattern.canvasWidth,
+    height: pattern.canvasHeight,
+    transform: `scale(${compareScale})`,
+  };
   const vnode = useMemo(() => pattern.buildVNode(), [pattern]);
   const renderOptions = useMemo<RenderOptions>(() => ({ debug: false }), []);
   const selectedOverlayParts = useMemo(() => new Set(overlayParts), [overlayParts]);
@@ -153,31 +213,44 @@ export function LayoutComparePage() {
     <div className="playground-layout">
       <aside className="panel controls-panel">
         <Section title="Pattern" defaultOpen>
-          <div className="stack-list">
-            {COMPARE_PATTERNS.map((pattern) => {
-              const active = pattern.id === patternId;
-              return (
-                <button
-                  key={pattern.id}
-                  type="button"
-                  className={`template-button ${active ? "active" : ""}`}
-                  data-playground-locator-level="sample"
-                  data-playground-locator-segment={`Sample: ${pattern.title} [${pattern.id}]`}
-                  onClick={() => selectPattern(pattern.id)}
-                >
-                  <div className="pattern-title-row">
-                    <strong>{pattern.title}</strong>
-                    <span className="pattern-category">{categoryLabel(pattern.category)}</span>
-                  </div>
-                  <span>{pattern.description}</span>
-                </button>
-              );
-            })}
-          </div>
+          {mobileViewer ? (
+            <label className="mobile-sample-select">
+              <span>Sample</span>
+              <select value={patternId} onChange={(event) => selectPattern(event.target.value)}>
+                {COMPARE_PATTERNS.map((pattern) => (
+                  <option key={pattern.id} value={pattern.id}>
+                    {pattern.title} — {categoryLabel(pattern.category)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="stack-list">
+              {COMPARE_PATTERNS.map((pattern) => {
+                const active = pattern.id === patternId;
+                return (
+                  <button
+                    key={pattern.id}
+                    type="button"
+                    className={`template-button ${active ? "active" : ""}`}
+                    data-playground-locator-level="sample"
+                    data-playground-locator-segment={`Sample: ${pattern.title} [${pattern.id}]`}
+                    onClick={() => selectPattern(pattern.id)}
+                  >
+                    <div className="pattern-title-row">
+                      <strong>{pattern.title}</strong>
+                      <span className="pattern-category">{categoryLabel(pattern.category)}</span>
+                    </div>
+                    <span>{pattern.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </Section>
       </aside>
 
-      <aside className="panel controls-panel">
+      <aside className="panel controls-panel mobile-viewer-secondary">
         <Section title="Options" defaultOpen>
           <CompareBBoxOverlayField
             id="compare-debug"
@@ -296,46 +369,55 @@ export function LayoutComparePage() {
 
         <div className="preview-body">
           <div
+            ref={setCompareStageElement}
             className={`compare-stage${isPending ? " is-pending" : ""}`}
             style={{ "--compare-canvas-w": `${pattern.canvasWidth}px` } as React.CSSProperties}
           >
             <div className="compare-pane">
               <div className="compare-pane-label">BoundSvg</div>
-              <div ref={setInspectPreviewEl} className="compare-pane-surface-wrap">
-                <BoundSvg
-                  vnode={deferredVNode}
-                  className="rendered-content"
-                  renderOptions={deferredRenderOptions}
-                  fallback={<p className="placeholder-text">Rendering…</p>}
-                  errorFallback={(error) => (
-                    <p className="error-text">Render failed: {error.message}</p>
-                  )}
-                />
-                {showSvgOverlay && (
-                  <BoundSvgDebugOverlay
-                    inspection={svgInspection}
-                    labelMode="summary"
-                    filter={(bbox) => selectedOverlayParts.has(getCompareSvgOverlayPart(bbox))}
-                    selectedNodeId={selectedNodeId}
-                    highlightedNodeIds={hoveredNodeId != null ? [hoveredNodeId] : []}
+              <div className="compare-pane-surface-viewport" style={compareViewportStyle}>
+                <div
+                  ref={setInspectPreviewEl}
+                  className="compare-pane-surface-wrap"
+                  style={compareLogicalSurfaceStyle}
+                >
+                  <BoundSvg
+                    vnode={deferredVNode}
+                    className="rendered-content"
+                    renderOptions={deferredRenderOptions}
+                    fallback={<p className="placeholder-text">Rendering…</p>}
+                    errorFallback={(error) => (
+                      <p className="error-text">Render failed: {error.message}</p>
+                    )}
                   />
-                )}
+                  {showSvgOverlay && (
+                    <BoundSvgDebugOverlay
+                      inspection={svgInspection}
+                      labelMode="summary"
+                      filter={(bbox) => selectedOverlayParts.has(getCompareSvgOverlayPart(bbox))}
+                      selectedNodeId={selectedNodeId}
+                      highlightedNodeIds={hoveredNodeId != null ? [hoveredNodeId] : []}
+                    />
+                  )}
+                </div>
               </div>
             </div>
 
             <div className="compare-pane">
               <div className="compare-pane-label">HTML / CSS</div>
-              <div className="compare-pane-surface-wrap">
-                <div
-                  ref={htmlSurfaceRef}
-                  className={`compare-html-surface${showHtmlBoxOverlay ? " debug" : ""}`}
-                  style={{ width: pattern.canvasWidth, height: pattern.canvasHeight }}
-                >
-                  {pattern.buildHtml()}
+              <div className="compare-pane-surface-viewport" style={compareViewportStyle}>
+                <div className="compare-pane-surface-wrap" style={compareLogicalSurfaceStyle}>
+                  <div
+                    ref={htmlSurfaceRef}
+                    className={`compare-html-surface${showHtmlBoxOverlay ? " debug" : ""}`}
+                    style={{ width: pattern.canvasWidth, height: pattern.canvasHeight }}
+                  >
+                    {pattern.buildHtml()}
+                  </div>
+                  {showHtmlOverlay && (
+                    <MeasureLabels rects={htmlRects} hiddenKinds={htmlHiddenKinds} />
+                  )}
                 </div>
-                {showHtmlOverlay && (
-                  <MeasureLabels rects={htmlRects} hiddenKinds={htmlHiddenKinds} />
-                )}
               </div>
             </div>
           </div>
@@ -419,7 +501,7 @@ function CompareBBoxOverlayField({
   };
 
   return (
-    <div className="control-group">
+    <div className="control-group control-group-bbox">
       <div className="control-head">
         <span>BBox Overlay</span>
       </div>

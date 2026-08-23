@@ -39,6 +39,7 @@ import {
   COMPOSITION_PROVIDER_CONFIG,
   EDITOR_FONT_OPTIONS,
 } from "../editor/builders";
+import { useMobileViewer, useResetPreviewForMobile } from "../hooks/use-mobile-viewer";
 import { generateJsxSnippet } from "../lib/codegen";
 
 const ASSET_LABELS: Record<EditorAssetId, string> = {
@@ -139,6 +140,7 @@ export function MultiSvgEditorPage() {
 }
 
 function MultiSvgEditorScreen() {
+  const mobileViewer = useMobileViewer();
   const assetStates = useAtomValue(assetStatesAtom);
   const placements = useAtomValue(compositionPlacementsAtom);
   const patchPlacement = useSetAtom(patchCompositionPlacementAtom);
@@ -172,7 +174,7 @@ function MultiSvgEditorScreen() {
   return (
     <div className="editor-page">
       <div className="editor-layout">
-        <EditorControlsPanel />
+        <EditorControlsPanel mobileViewer={mobileViewer} />
         <AssetPreviewPanel />
         <CompositionPanel />
       </div>
@@ -180,7 +182,7 @@ function MultiSvgEditorScreen() {
   );
 }
 
-function EditorControlsPanel() {
+function EditorControlsPanel({ mobileViewer }: { mobileViewer: boolean }) {
   const assetStates = useAtomValue(assetStatesAtom);
   const renderCache = useAtomValue(assetRenderCacheAtom);
   const placements = useAtomValue(compositionPlacementsAtom);
@@ -188,6 +190,12 @@ function EditorControlsPanel() {
   const [exportScale, setExportScale] = useAtom(exportScaleAtom);
   const patchAssetState = useSetAtom(patchAssetStateAtom);
   const patchPlacement = useSetAtom(patchCompositionPlacementAtom);
+
+  useEffect(() => {
+    if (mobileViewer && exportScale > 2) {
+      setExportScale(2);
+    }
+  }, [exportScale, mobileViewer, setExportScale]);
 
   const activeAssetId = selectedAssetId ?? "headline";
   const activeAsset = assetStates[activeAssetId];
@@ -336,15 +344,14 @@ function EditorControlsPanel() {
         </div>
       </Section>
 
-      <Section title="Export" defaultOpen>
+      <Section title="Export" defaultOpen={!mobileViewer}>
         <SelectField
           id="editor-export-scale"
           label="Whole PNG Scale"
           value={String(exportScale)}
-          options={EXPORT_SCALE_OPTIONS.map((option) => ({
-            value: option.value,
-            label: option.label,
-          }))}
+          options={EXPORT_SCALE_OPTIONS.filter(
+            (option) => !mobileViewer || Number(option.value) <= 2,
+          ).map((option) => ({ value: option.value, label: option.label }))}
           onChange={(value) => setExportScale(Number(value))}
         />
         <div className="editor-inline-note">
@@ -357,7 +364,7 @@ function EditorControlsPanel() {
 
 function AssetPreviewPanel() {
   return (
-    <section className="panel controls-panel">
+    <section className="panel controls-panel mobile-viewer-secondary">
       <div className="editor-panel-head">
         <div>
           <h3>Isolated Asset Previews</h3>
@@ -566,7 +573,7 @@ function CompositionPreviewBody({
     <div className="preview-body">
       <div className="editor-composition-info">
         <span>Selected: {selectedAssetId ?? "none"}</span>
-        <span>Hover: {hoverNodeId ?? "none"}</span>
+        <span className="copy-hover">Hover: {hoverNodeId ?? "none"}</span>
         <span>Mode: {isDragging ? "dragging" : "idle"}</span>
       </div>
 
@@ -623,6 +630,7 @@ function CompositionPreviewBody({
 
 function CompositionPanelInner() {
   const { engine, status } = useBoundSvg();
+  const mobileViewer = useMobileViewer();
   const renderCache = useAtomValue(assetRenderCacheAtom);
   const placements = useAtomValue(compositionPlacementsAtom);
   const [selectedAssetId, setSelectedAssetId] = useAtom(selectedAssetIdAtom);
@@ -634,6 +642,7 @@ function CompositionPanelInner() {
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [viewTab, setViewTab] = useState<EditorViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<EditorCodeLayout>("tab");
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
   const [, startTransition] = useTransition();
 
   const handlerIds = useMemo(
@@ -688,6 +697,7 @@ function CompositionPanelInner() {
             setSelectedAssetId(assetId);
             const evt = info.nativeEvent;
             if ("clientX" in evt) {
+              evt.preventDefault();
               startDragForAsset(assetId, evt.clientX, evt.clientY);
             }
           },
@@ -879,10 +889,11 @@ function CompositionPanelInner() {
     <section
       className={`panel preview-panel has-code-area layout-${codeLayout}${showCode ? " show-code" : ""}`}
     >
-      <div className="preview-header">
+      <div className="preview-header editor-composition-header">
         <div className="preview-header-meta">
           <h3>Main Composition</h3>
-          <span>Drag an embedded SVG to move it.</span>
+          <span className="copy-hover">Drag an embedded SVG to move it.</span>
+          <span className="copy-touch">Tap an asset to inspect the composed result.</span>
         </div>
         {codeLayout === "tab" && (
           <div className="preview-view-tabs">
@@ -905,14 +916,19 @@ function CompositionPanelInner() {
             })}
           </div>
         )}
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        <div className="editor-composition-actions">
           <button
             type="button"
-            className="export-button"
+            className="export-button editor-composition-export"
+            title={`Export composition as PNG at ${exportScale}x scale`}
             disabled={status !== "ready" || !engine || isExporting}
             onClick={handleExport}
           >
-            {isExporting ? "Exporting…" : `Export PNG (${exportScale}x)`}
+            {isExporting
+              ? "Exporting…"
+              : mobileViewer
+                ? `PNG · ${exportScale}×`
+                : `Export PNG (${exportScale}x)`}
           </button>
           <button
             type="button"

@@ -88,7 +88,7 @@ const FLOW_CIRCLE_GEOMETRY: GeometryDoc = {
 export function buildFlowRichSection(
   engine: Engine,
   children: VNode[],
-  canvasHeight: number,
+  sectionHeight: number,
 ): void {
   const circ = flowRichObstacles.rich;
   try {
@@ -99,7 +99,7 @@ export function buildFlowRichSection(
       language: "ja",
       wrap: "char",
       text: "",
-      flowBox: { x: 16, y: 30, width: 252, height: canvasHeight - 40 },
+      flowBox: { x: 16, y: 30, width: 252, height: sectionHeight - 40 },
       exclusions: [
         geometryToFlowExclusion(FLOW_CIRCLE_GEOMETRY, {
           x: circ.cx - circ.r,
@@ -175,7 +175,8 @@ export function buildFlowRichSection(
 export function buildFlowVerticalSection(
   engine: Engine,
   children: VNode[],
-  canvasHeight: number,
+  rowTop: number,
+  sectionHeight: number,
 ): void {
   const fontSize = 14;
   const lineHeight = 1.5;
@@ -191,7 +192,7 @@ export function buildFlowVerticalSection(
       language: "ja",
       wrap: "char",
       writingMode: "vertical-rl",
-      flowBox: { x: 300, y: 30, width: 236, height: canvasHeight - 40 },
+      flowBox: { x: 16, y: rowTop + 30, width: 528, height: sectionHeight - 40 },
       exclusions: [
         { kind: "rect", x: rect.x, y: rect.y, width: rect.w, height: rect.h, marginPx: 6 },
       ],
@@ -199,8 +200,8 @@ export function buildFlowVerticalSection(
     children.push(
       ...renderFlowWarnings(
         result.warnings,
-        300,
-        6,
+        16,
+        rowTop + 6,
         "Vertical-RL (drag) · tofu demo (intentional): 祇",
       ),
     );
@@ -247,7 +248,7 @@ export function buildFlowVerticalSection(
   } catch (error) {
     children.push(
       Box(
-        { position: "absolute", left: 300, top: 34 },
+        { position: "absolute", left: 16, top: rowTop + 34 },
         Text({ font: FA, fontSizePx: 12, color: "#ef4444", wrap: "char" }, String(error)),
       ),
     );
@@ -257,7 +258,7 @@ export function buildFlowVerticalSection(
 export function buildFlowRubySection(
   engine: Engine,
   children: VNode[],
-  canvasHeight: number,
+  sectionHeight: number,
 ): void {
   const fontSize = 15;
   const lineHeight = 1.9;
@@ -270,7 +271,7 @@ export function buildFlowRubySection(
       language: "ja",
       wrap: "char",
       text: "",
-      flowBox: { x: 564, y: 30, width: 260, height: canvasHeight - 40 },
+      flowBox: { x: 284, y: 30, width: 260, height: sectionHeight - 40 },
       exclusions: [
         {
           kind: "rect",
@@ -312,7 +313,7 @@ export function buildFlowRubySection(
         { text: "びちがひたる。" },
       ],
     });
-    children.push(...renderFlowWarnings(result.warnings, 564, 18));
+    children.push(...renderFlowWarnings(result.warnings, 284, 18));
     children.push(
       Box({
         position: "absolute",
@@ -333,7 +334,7 @@ export function buildFlowRubySection(
   } catch (error) {
     children.push(
       Box(
-        { position: "absolute", left: 564, top: 34 },
+        { position: "absolute", left: 284, top: 34 },
         Text({ font: FA, fontSizePx: 12, color: "#ef4444", wrap: "char" }, String(error)),
       ),
     );
