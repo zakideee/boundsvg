@@ -246,7 +246,7 @@ export const ROUTE_GROUPS: RouteGroupDef[] = [
         key: "interactive",
         hash: "#/interactive",
         label: "Events",
-        description: "Click & hover event handling",
+        description: "Pointer and touch event handling",
       },
       {
         key: "hit-test",

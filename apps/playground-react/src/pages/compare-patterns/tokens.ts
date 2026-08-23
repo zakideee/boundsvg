@@ -1,6 +1,5 @@
 export const FONT = "NotoSansJP-woff2";
-export const FONT_CSS =
-  '"NotoSansJP-woff2", "NotoSansJP", "Noto Sans JP", "Segoe UI", "Hiragino Sans", sans-serif';
+export const FONT_CSS = '"BoundSvg Editor Sans", sans-serif';
 
 export const BG = "#2d2d2d";
 export const BG_DARK = "#1e1e1e";

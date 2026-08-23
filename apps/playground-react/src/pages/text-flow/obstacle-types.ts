@@ -21,8 +21,8 @@ export const INITIAL_FLOW_OBSTACLES: FlowObstacles = {
 
 export const INITIAL_FLOW_RICH_OBSTACLES: FlowRichObstacles = {
   richCirc: { cx: 200, cy: 100, r: 40 },
-  verticalRect: { x: 460, y: 100, w: 60, h: 70 },
-  rubyRect: { x: 720, y: 60, w: 90, h: 50 },
+  verticalRect: { x: 460, y: 380, w: 60, h: 70 },
+  rubyRect: { x: 440, y: 60, w: 90, h: 50 },
 };
 
 export type HitResult = { section: string; offsetX: number; offsetY: number };

@@ -12,6 +12,6 @@ export const flowObstacles = {
 /** Mutable obstacle positions for the Flow Rich, Vertical & Ruby preset. */
 export const flowRichObstacles = {
   rich: { cx: 200, cy: 100, r: 40 },
-  vertical: { x: 460, y: 100, w: 60, h: 70 },
-  ruby: { x: 720, y: 60, w: 90, h: 50 },
+  vertical: { x: 460, y: 380, w: 60, h: 70 },
+  ruby: { x: 440, y: 60, w: 90, h: 50 },
 };

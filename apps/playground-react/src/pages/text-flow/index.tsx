@@ -8,6 +8,7 @@ import "prismjs/components/prism-tsx";
 import { useCallback, useMemo, useState, useTransition } from "react";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
 import { BBoxOverlayField, Section } from "../../components/fields";
+import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspect } from "../../hooks/use-svg-inspect";
 import { generateFullComponent, generateJsxSnippet } from "../../lib/codegen";
 import { FlowCanvas } from "./FlowCanvas";
@@ -30,22 +31,67 @@ const PRESETS: { key: FlowPreset; label: string; description: string }[] = [
     key: "text-flow",
     label: "Text Flow",
     description:
-      "Obstacle avoidance with ellipsis and fit-shrink for horizontal and vertical-rl text. Drag obstacles to reflow.",
+      "Horizontal text uses the top row; vertical-rl text uses the bottom row. Drag obstacles to reflow.",
   },
   {
     key: "flow-rich",
     label: "Flow Rich, Vertical & Ruby",
     description:
-      "Rich text spans, vertical-rl columns, and ruby annotations. Drag obstacles to reflow.",
+      "Rich text and ruby share the top row; vertical-rl columns use the full bottom row. Drag obstacles to reflow.",
   },
 ];
 
+function FlowPresetControl({
+  mobileViewer,
+  preset,
+  onChange,
+}: {
+  mobileViewer: boolean;
+  preset: FlowPreset;
+  onChange: (preset: FlowPreset) => void;
+}) {
+  if (mobileViewer) {
+    return (
+      <label className="mobile-sample-select">
+        <span>Sample</span>
+        <select value={preset} onChange={(event) => onChange(event.target.value as FlowPreset)}>
+          {PRESETS.map((presetOption) => (
+            <option key={presetOption.key} value={presetOption.key}>
+              {presetOption.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
+  return (
+    <div className="stack-list">
+      {PRESETS.map((presetOption) => (
+        <button
+          key={presetOption.key}
+          type="button"
+          className={`template-button ${preset === presetOption.key ? "active" : ""}`}
+          data-playground-locator-level="sample"
+          data-playground-locator-segment={`Sample: ${presetOption.label} [${presetOption.key}]`}
+          onClick={() => onChange(presetOption.key)}
+        >
+          <strong>{presetOption.label}</strong>
+          <span>{presetOption.description}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function TextFlowPage() {
   const { engine, status } = useBoundSvg();
+  const mobileViewer = useMobileViewer();
   const [preset, setPreset] = useState<FlowPreset>("text-flow");
   const [debugOverlayParts, setDebugOverlayParts] = useState<DebugOverlayPart[]>([]);
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
   const [currentVNode, setCurrentVNode] = useState<VNode | null>(null);
   const [, startTransition] = useTransition();
 
@@ -91,24 +137,10 @@ export function TextFlowPage() {
     <div className="split-layout">
       <aside className="panel controls-panel">
         <Section title="Preset" defaultOpen>
-          <div className="stack-list">
-            {PRESETS.map((presetOption) => (
-              <button
-                key={presetOption.key}
-                type="button"
-                className={`template-button ${preset === presetOption.key ? "active" : ""}`}
-                data-playground-locator-level="sample"
-                data-playground-locator-segment={`Sample: ${presetOption.label} [${presetOption.key}]`}
-                onClick={() => setPreset(presetOption.key)}
-              >
-                <strong>{presetOption.label}</strong>
-                <span>{presetOption.description}</span>
-              </button>
-            ))}
-          </div>
+          <FlowPresetControl mobileViewer={mobileViewer} preset={preset} onChange={setPreset} />
         </Section>
 
-        <Section title="Render" defaultOpen>
+        <Section title="Render" defaultOpen className="mobile-viewer-secondary">
           <BBoxOverlayField
             id="flow-debug"
             value={debugOverlayParts}

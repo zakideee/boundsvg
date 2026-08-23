@@ -4,7 +4,7 @@ import { NodeInspectorPanel } from "@boundsvg/react/debug";
 import { useBoundSvgInspection } from "@boundsvg/react/inspect";
 import { useBoundSvg } from "@boundsvg/react/provider";
 import type { BooleanOp } from "@boundsvg/shape";
-import { useCallback, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useState } from "react";
 import {
   CheckField,
   ColorField,
@@ -15,6 +15,7 @@ import {
   TextAreaField,
 } from "../../components/fields";
 import { Tooltip } from "../../components/Tooltip";
+import { useMobileViewer } from "../../hooks/use-mobile-viewer";
 import { generateFullComponent, generateJsxSnippet } from "../../lib/codegen";
 import { FONT_DEFS, fontAlias, type RendererMode } from "../../types";
 import { type EditorArtifacts, EditorCanvas } from "./EditorCanvas";
@@ -36,6 +37,7 @@ type OutputTab = "svg" | "jsx" | "component";
 
 export function PlaygroundPage() {
   const { engine, status } = useBoundSvg();
+  const mobileViewer = useMobileViewer();
   const [state, dispatch] = useReducer(editorReducer, undefined, createInitialEditorState);
   const [artifacts, setArtifacts] = useState<EditorArtifacts>(null);
   const [showDebug, setShowDebug] = useState(false);
@@ -56,6 +58,31 @@ export function PlaygroundPage() {
   const selectedLayers = state.present.document.layers.filter((layer) =>
     state.present.selectedLayerIds.includes(layer.id),
   );
+  const canvasWidth = state.present.document.canvas.width;
+  const canvasHeight = state.present.document.canvas.height;
+
+  useLayoutEffect(() => {
+    if (mobileViewer && state.outputOpen) {
+      dispatch({ type: "set-output-open", open: false });
+    }
+  }, [mobileViewer, state.outputOpen]);
+
+  useEffect(() => {
+    if (!mobileViewer) {
+      return;
+    }
+    const fitCanvasToPhone = () => {
+      const availableWidth = Math.max(240, window.innerWidth - 44);
+      const availableHeight = Math.max(180, window.innerHeight * 0.55);
+      dispatch({
+        type: "set-zoom",
+        zoom: Math.min(availableWidth / canvasWidth, availableHeight / canvasHeight),
+      });
+    };
+    fitCanvasToPhone();
+    window.addEventListener("resize", fitCanvasToPhone);
+    return () => window.removeEventListener("resize", fitCanvasToPhone);
+  }, [canvasHeight, canvasWidth, mobileViewer]);
   const handleArtifacts = useCallback((next: EditorArtifacts) => setArtifacts(next), []);
   const applyBooleanOperation = useCallback(
     (operation: BooleanOp) => {
@@ -114,6 +141,7 @@ export function PlaygroundPage() {
             onArtifacts={handleArtifacts}
             showDebug={showDebug}
             onBooleanOperation={applyBooleanOperation}
+            mobileViewer={mobileViewer}
           />
         </main>
 

@@ -63,6 +63,17 @@ type Props = {
   onArtifacts: (artifacts: EditorArtifacts) => void;
   showDebug: boolean;
   onBooleanOperation: (operation: BooleanOp) => void;
+  mobileViewer: boolean;
+};
+
+type ArtboardStyle = CSSProperties & {
+  "--visual-editor-handle-size": string;
+  "--visual-editor-marker-size": string;
+  "--visual-editor-marker-border-width": string;
+  "--visual-editor-rotate-offset": string;
+  "--visual-editor-selection-dash-cycle": string;
+  "--visual-editor-selection-dash-size": string;
+  "--visual-editor-selection-border-width": string;
 };
 
 type CanvasPointEvent = ReactPointerEvent<HTMLElement> | ReactMouseEvent<HTMLElement>;
@@ -77,9 +88,10 @@ type CaretSegment = {
 type SelectionBounds = { left: number; top: number; right: number; bottom: number };
 type CanvasPoint = { x: number; y: number };
 type TextSelectionStart = { selection: EditorTextSelection; drag: DragState };
+type MutableValueRef<T> = { current: T };
 
 const MIN_LAYER_SIZE = 20;
-const DRAG_THRESHOLD_PX = 2;
+const DRAG_THRESHOLD_VIEWPORT_PX = 4;
 const RESIZE_HANDLE_LABELS: Record<ResizeHandle, string> = {
   nw: "Resize from top left",
   n: "Resize from top",
@@ -91,6 +103,90 @@ const RESIZE_HANDLE_LABELS: Record<ResizeHandle, string> = {
   w: "Resize from left",
 };
 
+function canStartMobileSelectionMove(
+  mobileViewer: boolean,
+  canvasMode: EditorState["canvasMode"],
+  layer: EditorLayer | undefined,
+): layer is EditorLayer {
+  return mobileViewer && canvasMode === "move" && layer !== undefined && !layer.locked;
+}
+
+function createArtboardStyle(
+  width: number,
+  height: number,
+  zoom: number,
+  mobileViewer: boolean,
+): ArtboardStyle {
+  const inverseZoom = 1 / zoom;
+  return {
+    width,
+    height,
+    transform: `scale(${zoom})`,
+    "--visual-editor-handle-size": `${(mobileViewer ? 44 : 26) * inverseZoom}px`,
+    "--visual-editor-marker-size": `${(mobileViewer ? 12 : 10) * inverseZoom}px`,
+    "--visual-editor-marker-border-width": `${1.5 * inverseZoom}px`,
+    "--visual-editor-rotate-offset": `${(mobileViewer ? 38 : 34) * inverseZoom}px`,
+    "--visual-editor-selection-dash-cycle": `${(mobileViewer ? 10 : 8) * inverseZoom}px`,
+    "--visual-editor-selection-dash-size": `${(mobileViewer ? 6 : 5) * inverseZoom}px`,
+    "--visual-editor-selection-border-width": `${(mobileViewer ? 2 : 1.5) * inverseZoom}px`,
+  };
+}
+
+function captureEditorPointer(
+  container: HTMLElement | null,
+  activePointerIdRef: MutableValueRef<number | null>,
+  pointerId: number,
+) {
+  activePointerIdRef.current = pointerId;
+  if (!container) {
+    return;
+  }
+  try {
+    container.setPointerCapture(pointerId);
+  } catch {
+    activePointerIdRef.current = null;
+  }
+}
+
+function releaseEditorPointer(
+  container: HTMLElement | null,
+  activePointerIdRef: MutableValueRef<number | null>,
+) {
+  const pointerId = activePointerIdRef.current;
+  activePointerIdRef.current = null;
+  if (!container || pointerId === null) {
+    return;
+  }
+  try {
+    if (container.hasPointerCapture(pointerId)) {
+      container.releasePointerCapture(pointerId);
+    }
+  } catch {
+    return;
+  }
+}
+
+function flushPendingEditorDrag(
+  rafRef: MutableValueRef<number>,
+  pendingPointRef: MutableValueRef<CanvasPoint | null>,
+  dragRef: MutableValueRef<DragState | null>,
+  state: EditorState,
+  selectionMap: TextSelectionMap | undefined,
+  dispatch: (action: EditorAction) => void,
+) {
+  if (rafRef.current !== 0) {
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+  }
+  const point = pendingPointRef.current;
+  const drag = dragRef.current;
+  pendingPointRef.current = null;
+  if (!point || !drag) {
+    return;
+  }
+  applyDrag(drag, point, state, selectionMap, dispatch);
+}
+
 export function EditorCanvas({
   engine,
   vnode,
@@ -99,6 +195,7 @@ export function EditorCanvas({
   onArtifacts,
   showDebug,
   onBooleanOperation,
+  mobileViewer,
 }: Props) {
   const document = state.present.document;
   const selectedLayer = document.layers.find((layer) => layer.id === state.present.selectedLayerId);
@@ -112,6 +209,7 @@ export function EditorCanvas({
   const compositionBeforeRef = useRef<EditorPresent | null>(null);
   const compositionActiveRef = useRef(false);
   const dragRef = useRef<DragState | null>(null);
+  const activePointerIdRef = useRef<number | null>(null);
   const pendingPointRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeRef = useRef<MarqueeSelection | null>(null);
   const rafRef = useRef(0);
@@ -122,6 +220,11 @@ export function EditorCanvas({
   const textEditorLayer = selectedLayer?.type === "text" ? selectedLayer : null;
   const textEditorLayerId = textEditorLayer?.id;
   const hoveredLayer = document.layers.find((layer) => layer.id === hoveredLayerId);
+  const mobileMoveEnabled = canStartMobileSelectionMove(
+    mobileViewer,
+    state.canvasMode,
+    selectedLayer,
+  );
 
   const renderResult = useMemo(() => {
     try {
@@ -308,7 +411,7 @@ export function EditorCanvas({
       document.layers,
     );
     if (state.canvasMode === "range") {
-      event.currentTarget.setPointerCapture(event.pointerId);
+      captureEditorPointer(containerRef.current, activePointerIdRef, event.pointerId);
       if (layerId) {
         dispatch({ type: "select", layerId, additive: event.shiftKey });
         return;
@@ -327,7 +430,7 @@ export function EditorCanvas({
     if (!layer) {
       return;
     }
-    event.currentTarget.setPointerCapture(event.pointerId);
+    captureEditorPointer(containerRef.current, activePointerIdRef, event.pointerId);
 
     const textSelectionStart = resolveTextSelectionStart({
       layer,
@@ -389,11 +492,20 @@ export function EditorCanvas({
       if (!nextPoint || !activeDrag) {
         return;
       }
+      pendingPointRef.current = null;
       applyDrag(activeDrag, nextPoint, state, interaction?.textSelectionMap, dispatch);
     });
   };
 
   const endDrag = () => {
+    flushPendingEditorDrag(
+      rafRef,
+      pendingPointRef,
+      dragRef,
+      state,
+      interaction?.textSelectionMap,
+      dispatch,
+    );
     const activeMarquee = marqueeRef.current;
     if (activeMarquee) {
       dispatch({
@@ -404,6 +516,7 @@ export function EditorCanvas({
       marqueeRef.current = null;
       setMarquee(null);
       setActiveInteraction(null);
+      releaseEditorPointer(containerRef.current, activePointerIdRef);
       return;
     }
     const drag = dragRef.current;
@@ -415,6 +528,7 @@ export function EditorCanvas({
     dragRef.current = null;
     pendingPointRef.current = null;
     setActiveInteraction(null);
+    releaseEditorPointer(containerRef.current, activePointerIdRef);
   };
 
   const startHandleDrag = (
@@ -435,7 +549,9 @@ export function EditorCanvas({
     if (!point) {
       return;
     }
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    captureEditorPointer(containerRef.current, activePointerIdRef, event.pointerId);
+    const centerX = selectedLayer.x + selectedLayer.width / 2;
+    const centerY = selectedLayer.y + selectedLayer.height / 2;
     dragRef.current = {
       mode,
       before: state.present,
@@ -444,8 +560,24 @@ export function EditorCanvas({
       startX: point.x,
       startY: point.y,
       handle,
+      startAngleDeg: radiansToDegrees(Math.atan2(point.y - centerY, point.x - centerX)),
     };
     setActiveInteraction(mode);
+  };
+
+  const startMobileSelectionMove = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!canStartMobileSelectionMove(mobileViewer, state.canvasMode, selectedLayer)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    keyboardTargetRef.current?.focus({ preventScroll: true });
+    const point = pointFromEvent(event);
+    if (!point) {
+      return;
+    }
+    captureEditorPointer(containerRef.current, activePointerIdRef, event.pointerId);
+    selectLayerFromPointer(selectedLayer, point, false);
   };
 
   const startGroupHandleDrag = (
@@ -471,7 +603,7 @@ export function EditorCanvas({
     if (!point) {
       return;
     }
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    captureEditorPointer(containerRef.current, activePointerIdRef, event.pointerId);
     const centerX = (layerSelectionBounds.left + layerSelectionBounds.right) / 2;
     const centerY = (layerSelectionBounds.top + layerSelectionBounds.bottom) / 2;
     dragRef.current = {
@@ -487,6 +619,13 @@ export function EditorCanvas({
     };
     setActiveInteraction(mode);
   };
+
+  const artboardStyle = createArtboardStyle(
+    document.canvas.width,
+    document.canvas.height,
+    state.zoom,
+    mobileViewer,
+  );
 
   const handleContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();
@@ -583,15 +722,12 @@ export function EditorCanvas({
             ref={containerRef}
             className={`visual-editor-artboard-content is-${state.canvasMode}${activeInteraction ? ` is-interacting interaction-${activeInteraction}` : ""}`}
             aria-label="Editable canvas"
-            style={{
-              width: document.canvas.width,
-              height: document.canvas.height,
-              transform: `scale(${state.zoom})`,
-            }}
+            style={artboardStyle}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
+            onLostPointerCapture={endDrag}
             onPointerLeave={() => {
               if (!dragRef.current && !marqueeRef.current) {
                 setHoveredLayerId(null);
@@ -721,6 +857,8 @@ export function EditorCanvas({
                 showControls
                 showLabel
                 onStart={startHandleDrag}
+                mobileMoveEnabled={mobileMoveEnabled}
+                onMoveStart={startMobileSelectionMove}
               />
             )}
             {selectedLayers.length > 1 && layerSelectionBounds && (
@@ -864,6 +1002,8 @@ function SelectionFrame({
   showControls,
   showLabel,
   onStart,
+  mobileMoveEnabled = false,
+  onMoveStart,
 }: {
   layer: EditorLayer;
   editing: boolean;
@@ -876,6 +1016,8 @@ function SelectionFrame({
     mode: "resize" | "rotate",
     handle?: ResizeHandle,
   ) => void;
+  mobileMoveEnabled?: boolean;
+  onMoveStart?: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
   return (
     <div
@@ -888,6 +1030,17 @@ function SelectionFrame({
         transform: `rotate(${layer.rotateDeg}deg)`,
       }}
     >
+      <span className="visual-editor-selection-edge edge-top" aria-hidden="true" />
+      <span className="visual-editor-selection-edge edge-right" aria-hidden="true" />
+      <span className="visual-editor-selection-edge edge-bottom" aria-hidden="true" />
+      <span className="visual-editor-selection-edge edge-left" aria-hidden="true" />
+      {mobileMoveEnabled && onMoveStart && (
+        <div
+          className="visual-editor-selection-drag-surface"
+          role="presentation"
+          onPointerDown={onMoveStart}
+        />
+      )}
       {!layer.locked &&
         !editing &&
         showControls &&
@@ -1520,7 +1673,7 @@ function applyDrag(
     }
     return;
   }
-  if (!drag.changed && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+  if (!drag.changed && Math.hypot(dx, dy) * state.zoom < DRAG_THRESHOLD_VIEWPORT_PX) {
     return;
   }
   if (drag.mode === "move") {
@@ -1545,32 +1698,7 @@ function applyDrag(
   }
   drag.changed = true;
   if (drag.mode === "rotate") {
-    if (drag.layers.length > 1 && drag.bounds && drag.startAngleDeg !== undefined) {
-      const centerX = (drag.bounds.left + drag.bounds.right) / 2;
-      const centerY = (drag.bounds.top + drag.bounds.bottom) / 2;
-      const currentAngleDeg = radiansToDegrees(Math.atan2(point.y - centerY, point.x - centerX));
-      const deltaDeg = normalizeAngleDelta(currentAngleDeg - drag.startAngleDeg);
-      dispatch({
-        type: "patch-layers",
-        record: false,
-        patches: rotateLayerSelection(
-          drag.layers,
-          drag.bounds,
-          deltaDeg,
-          state.present.document.canvas,
-        ),
-      });
-      return;
-    }
-    const centerX = drag.layer.x + drag.layer.width / 2;
-    const centerY = drag.layer.y + drag.layer.height / 2;
-    const angle = (Math.atan2(point.y - centerY, point.x - centerX) * 180) / Math.PI + 90;
-    dispatch({
-      type: "patch-layer",
-      layerId: drag.layer.id,
-      record: false,
-      patch: { rotateDeg: Math.round(angle) },
-    });
+    applyRotationDrag(drag, point, state, dispatch);
     return;
   }
   if (drag.mode === "resize" && drag.handle) {
@@ -1591,6 +1719,44 @@ function applyDrag(
     const patch = resizeFrame(drag.layer, drag.handle, dx, dy);
     dispatch({ type: "patch-layer", layerId: drag.layer.id, record: false, patch });
   }
+}
+
+function applyRotationDrag(
+  drag: DragState,
+  point: CanvasPoint,
+  state: EditorState,
+  dispatch: (action: EditorAction) => void,
+) {
+  const centerX = drag.bounds
+    ? (drag.bounds.left + drag.bounds.right) / 2
+    : drag.layer.x + drag.layer.width / 2;
+  const centerY = drag.bounds
+    ? (drag.bounds.top + drag.bounds.bottom) / 2
+    : drag.layer.y + drag.layer.height / 2;
+  const startAngleDeg =
+    drag.startAngleDeg ??
+    radiansToDegrees(Math.atan2(drag.startY - centerY, drag.startX - centerX));
+  const currentAngleDeg = radiansToDegrees(Math.atan2(point.y - centerY, point.x - centerX));
+  const deltaDeg = normalizeAngleDelta(currentAngleDeg - startAngleDeg);
+  if (drag.layers.length > 1 && drag.bounds) {
+    dispatch({
+      type: "patch-layers",
+      record: false,
+      patches: rotateLayerSelection(
+        drag.layers,
+        drag.bounds,
+        deltaDeg,
+        state.present.document.canvas,
+      ),
+    });
+    return;
+  }
+  dispatch({
+    type: "patch-layer",
+    layerId: drag.layer.id,
+    record: false,
+    patch: { rotateDeg: Math.round(normalizeAngle(drag.layer.rotateDeg + deltaDeg)) },
+  });
 }
 
 export function rotateLayerSelection(

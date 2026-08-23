@@ -17,6 +17,7 @@ import {
   SelectField,
 } from "../../components/fields";
 import { RenderSurface } from "../../components/RenderSurface";
+import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspect } from "../../hooks/use-svg-inspect";
 import { generateFullComponent, generateJsxSnippet } from "../../lib/codegen";
 import { resolveDebugOverlayConfig } from "../../lib/debug-overlay";
@@ -45,41 +46,62 @@ type TemplateMenuProps = {
 };
 
 function TemplateMenu({ templateKey, onSelect }: TemplateMenuProps) {
+  const mobileViewer = useMobileViewer();
   return (
     <aside className="panel controls-panel">
       <Section title="Template" defaultOpen>
-        <div className="stack-list">
-          {TEMPLATE_GROUPS.map((group) => (
-            <div key={group.key} className="template-group">
-              <h4
-                className="template-group-heading"
-                data-playground-locator-level="source"
-                data-playground-locator-segment={`Group: ${group.label} [${group.key}]`}
-              >
-                {group.label}
-              </h4>
-              {group.templateKeys.map((key) => {
-                const def = TEMPLATE_DEFINITIONS[key];
-                if (!def) {
-                  return null;
-                }
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`template-button ${key === templateKey ? "active" : ""}`}
-                    data-playground-locator-level="sample"
-                    data-playground-locator-segment={`Sample: ${def.title} [${key}]`}
-                    onClick={() => onSelect(key)}
-                  >
-                    <strong>{def.title}</strong>
-                    <span>{def.description}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+        {mobileViewer ? (
+          <label className="mobile-sample-select">
+            <span>Sample</span>
+            <select value={templateKey} onChange={(event) => onSelect(event.target.value)}>
+              {TEMPLATE_GROUPS.map((group) => (
+                <optgroup key={group.key} label={group.label}>
+                  {group.templateKeys.map((key) => {
+                    const def = TEMPLATE_DEFINITIONS[key];
+                    return def ? (
+                      <option key={key} value={key}>
+                        {def.title}
+                      </option>
+                    ) : null;
+                  })}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <div className="stack-list">
+            {TEMPLATE_GROUPS.map((group) => (
+              <div key={group.key} className="template-group">
+                <h4
+                  className="template-group-heading"
+                  data-playground-locator-level="source"
+                  data-playground-locator-segment={`Group: ${group.label} [${group.key}]`}
+                >
+                  {group.label}
+                </h4>
+                {group.templateKeys.map((key) => {
+                  const def = TEMPLATE_DEFINITIONS[key];
+                  if (!def) {
+                    return null;
+                  }
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`template-button ${key === templateKey ? "active" : ""}`}
+                      data-playground-locator-level="sample"
+                      data-playground-locator-segment={`Sample: ${def.title} [${key}]`}
+                      onClick={() => onSelect(key)}
+                    >
+                      <strong>{def.title}</strong>
+                      <span>{def.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
       </Section>
     </aside>
   );
@@ -151,6 +173,8 @@ export function TemplatesPage() {
   );
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
+  const mobileViewer = useMobileViewer();
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
   const [isPending, startTransition] = useTransition();
 
   const showCode = viewTab !== "preview" && viewTab !== "svg";
@@ -310,46 +334,48 @@ export function TemplatesPage() {
           />
         </Section>
 
-        <Section title="Render" defaultOpen>
-          <SelectField
-            id="tpl-renderer"
-            label="Renderer API"
-            value={overrides.renderer}
-            onChange={(v) => setOverrideField("renderer", v as RendererMode)}
-            options={[
-              { value: "boundsvg", label: "BoundSvg component" },
-              { value: "svg-hook", label: "useRenderToSvg" },
-              { value: "png-hook", label: "useRenderToPng" },
-            ]}
-          />
-          <SelectField
-            id="tpl-text-rendering"
-            label="Text Rendering"
-            value={overrides.textPathMode}
-            onChange={(v) => setOverrideField("textPathMode", v as TextPathModeOption)}
-            options={[
-              { value: "merged", label: "merged paths" },
-              { value: "glyphs", label: "per glyph" },
-            ]}
-          />
-          {overrides.renderer === "png-hook" && (
+        <div className="mobile-viewer-secondary">
+          <Section title="Render" defaultOpen>
             <SelectField
-              id="tpl-png-scale"
-              label="PNG Scale"
-              value={String(overrides.pngScale)}
-              onChange={(v) => setOverrideField("pngScale", Number(v))}
+              id="tpl-renderer"
+              label="Renderer API"
+              value={overrides.renderer}
+              onChange={(v) => setOverrideField("renderer", v as RendererMode)}
               options={[
-                { value: "1", label: "1x" },
-                { value: "2", label: "2x" },
+                { value: "boundsvg", label: "BoundSvg component" },
+                { value: "svg-hook", label: "useRenderToSvg" },
+                { value: "png-hook", label: "useRenderToPng" },
               ]}
             />
-          )}
-          <BBoxOverlayField
-            id="tpl-debug"
-            value={overrides.debugOverlayParts}
-            onChange={(v) => setOverrideField("debugOverlayParts", v)}
-          />
-        </Section>
+            <SelectField
+              id="tpl-text-rendering"
+              label="Text Rendering"
+              value={overrides.textPathMode}
+              onChange={(v) => setOverrideField("textPathMode", v as TextPathModeOption)}
+              options={[
+                { value: "merged", label: "merged paths" },
+                { value: "glyphs", label: "per glyph" },
+              ]}
+            />
+            {overrides.renderer === "png-hook" && (
+              <SelectField
+                id="tpl-png-scale"
+                label="PNG Scale"
+                value={String(overrides.pngScale)}
+                onChange={(v) => setOverrideField("pngScale", Number(v))}
+                options={[
+                  { value: "1", label: "1x" },
+                  { value: "2", label: "2x" },
+                ]}
+              />
+            )}
+            <BBoxOverlayField
+              id="tpl-debug"
+              value={overrides.debugOverlayParts}
+              onChange={(v) => setOverrideField("debugOverlayParts", v)}
+            />
+          </Section>
+        </div>
       </aside>
 
       <section

@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
 import type { EventEffectOverlayDisplayOptions } from "../../../../playground-shared/inspect-hover.js";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
 import { BBoxOverlayField } from "../../components/fields";
+import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspectFromData } from "../../hooks/use-svg-inspect";
 import { asset } from "../../lib/asset";
 import { generateJsxSnippet } from "../../lib/codegen";
@@ -113,6 +114,8 @@ function useStableResult<T>(data: T | null, isRendering: boolean, vnode: VNode |
 function useLayeredRenders(
   vnode: VNode | null,
   opts: { validate: boolean; debug: false | DebugOverlayConfig },
+  includePng: boolean,
+  includeSingleSvg: boolean,
 ) {
   const { validate, debug } = opts;
   const layeredOptions = useMemo(
@@ -120,20 +123,26 @@ function useLayeredRenders(
     [validate, debug],
   );
 
-  const singleSvg = useRenderToSvgAndIrAsync(vnode);
-  const singlePng = useRenderToPngAsync(vnode);
+  const pngVNode = includePng ? vnode : null;
+  const singleSvgVNode = includeSingleSvg ? vnode : null;
+  const singleSvg = useRenderToSvgAndIrAsync(singleSvgVNode);
+  const singlePng = useRenderToPngAsync(pngVNode);
   const layeredSvg = useRenderToLayeredSvgAsync(vnode, layeredOptions);
-  const layeredPng = useRenderToLayeredPngAsync(vnode, layeredOptions);
+  const layeredPng = useRenderToLayeredPngAsync(pngVNode, layeredOptions);
 
-  const stableSingleSvg = useStableResult(singleSvg.svg, singleSvg.isRendering, vnode);
-  const stableSingleIr = useStableResult(singleSvg.ir, singleSvg.isRendering, vnode);
-  const stableSinglePngDataUrl = useStableResult(singlePng.dataUrl, singlePng.isRendering, vnode);
+  const stableSingleSvg = useStableResult(singleSvg.svg, singleSvg.isRendering, singleSvgVNode);
+  const stableSingleIr = useStableResult(singleSvg.ir, singleSvg.isRendering, singleSvgVNode);
+  const stableSinglePngDataUrl = useStableResult(
+    singlePng.dataUrl,
+    singlePng.isRendering,
+    pngVNode,
+  );
   const stableLayeredSvg = useStableResult(layeredSvg.result, layeredSvg.isRendering, vnode);
-  const stableLayeredPng = useStableResult(layeredPng.result, layeredPng.isRendering, vnode);
+  const stableLayeredPng = useStableResult(layeredPng.result, layeredPng.isRendering, pngVNode);
   const stableLayerDataUrls = useStableResult(
     layeredPng.layerDataUrls,
     layeredPng.isRendering,
-    vnode,
+    pngVNode,
   );
 
   return {
@@ -287,6 +296,7 @@ function LayerStatusTable({
 }
 
 type LayeredPreviewBodyProps = {
+  showSingle: boolean;
   format: Format;
   stableSingleSvg: string | null;
   stableSinglePngDataUrl: string | null;
@@ -303,6 +313,7 @@ type LayeredPreviewBodyProps = {
 };
 
 function LayeredPreviewBody({
+  showSingle,
   format,
   stableSingleSvg,
   stableSinglePngDataUrl,
@@ -319,35 +330,48 @@ function LayeredPreviewBody({
 }: LayeredPreviewBodyProps) {
   return (
     <div className="preview-body">
-      <div className="preview-meta-inline">
-        <h3>Single {format.toUpperCase()}</h3>
-        <span>Full composite from {format === "svg" ? "renderToSvg" : "renderToPng"}</span>
-      </div>
-      {format === "svg" && stableSingleSvg ? (
-        <div ref={setPreviewEl} className="preview-stage">
-          <div className="rendered-content" dangerouslySetInnerHTML={{ __html: stableSingleSvg }} />
-        </div>
-      ) : (
-        <div className="preview-stage">
-          {format === "png" && stableSinglePngDataUrl ? (
-            <div className="rendered-content">
-              <img className="preview-image" src={stableSinglePngDataUrl} alt="Single PNG output" />
+      {showSingle && (
+        <>
+          <div className="preview-meta-inline">
+            <h3>Single {format.toUpperCase()}</h3>
+            <span>Full composite from {format === "svg" ? "renderToSvg" : "renderToPng"}</span>
+          </div>
+          {format === "svg" && stableSingleSvg ? (
+            <div ref={setPreviewEl} className="preview-stage">
+              <div
+                className="rendered-content"
+                dangerouslySetInnerHTML={{ __html: stableSingleSvg }}
+              />
             </div>
           ) : (
-            <p className="placeholder-text">
-              {currentSingleIsRendering ? "Rendering in Worker…" : "Waiting for Worker…"}
-            </p>
+            <div className="preview-stage">
+              {format === "png" && stableSinglePngDataUrl ? (
+                <div className="rendered-content">
+                  <img
+                    className="preview-image"
+                    src={stableSinglePngDataUrl}
+                    alt="Single PNG output"
+                  />
+                </div>
+              ) : (
+                <p className="placeholder-text">
+                  {currentSingleIsRendering ? "Rendering in Worker…" : "Waiting for Worker…"}
+                </p>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
 
-      <div className="preview-meta-inline" style={{ marginTop: 24 }}>
-        <h3>Layered (stacked)</h3>
-        <span>
-          {format === "svg" ? "renderToLayeredSvg" : "renderToLayeredPng"} — hover a layer to
-          isolate it
-        </span>
-      </div>
+      {showSingle && (
+        <div className="preview-meta-inline" style={{ marginTop: 24 }}>
+          <h3>Layered (stacked)</h3>
+          <span>
+            {format === "svg" ? "renderToLayeredSvg" : "renderToLayeredPng"} — point to or tap a
+            layer to isolate it
+          </span>
+        </div>
+      )}
       <div className="preview-stage">
         <LayeredStage
           format={format}
@@ -431,6 +455,7 @@ function LayeredCodeArea({
 
 function LayeredContent() {
   const { status, error: providerError, workerEngine } = useBoundSvg();
+  const mobileViewer = useMobileViewer();
   const fixtures = useMemo(() => buildLayeredFixtures(), []);
   const [presetId, setPresetId] = useState(fixtures[0]?.id ?? "");
   const fixture = fixtures.find((fixtureItem) => fixtureItem.id === presetId) ?? fixtures[0];
@@ -446,6 +471,7 @@ function LayeredContent() {
 
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
   const [, startTransition] = useTransition();
 
   const vnode = fixture?.vnode ?? null;
@@ -455,7 +481,7 @@ function LayeredContent() {
   // active vnode's render settles — this prevents preset/format toggles from
   // flashing the previous preset's result.
   const { singleSvgStatus, singlePngStatus, layeredSvgStatus, layeredPngStatus } =
-    useLayeredRenders(vnode, { validate, debug });
+    useLayeredRenders(vnode, { validate, debug }, !mobileViewer, !mobileViewer);
   const renders = { singleSvgStatus, singlePngStatus, layeredSvgStatus, layeredPngStatus };
   const stableSingleSvg = singleSvgStatus.svg;
   const stableSingleIr = singleSvgStatus.ir;
@@ -534,96 +560,114 @@ function LayeredContent() {
   return (
     <div className="split-layout">
       <aside className="panel controls-panel">
-        <h3>Preset</h3>
-        <label className="layered-control-row">
-          <span className="layered-control-label">Scene</span>
-          <select value={presetId} onChange={(event) => setPresetId(event.target.value)}>
-            {fixtures.map((def) => (
-              <option key={def.id} value={def.id}>
-                {def.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {fixture && <p className="layered-fixture-desc">{fixture.description}</p>}
+        {mobileViewer ? (
+          <label className="mobile-sample-select">
+            <span>Scene</span>
+            <select value={presetId} onChange={(event) => setPresetId(event.target.value)}>
+              {fixtures.map((def) => (
+                <option key={def.id} value={def.id}>
+                  {def.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <>
+            <h3>Preset</h3>
+            <label className="layered-control-row">
+              <span className="layered-control-label">Scene</span>
+              <select value={presetId} onChange={(event) => setPresetId(event.target.value)}>
+                {fixtures.map((def) => (
+                  <option key={def.id} value={def.id}>
+                    {def.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {fixture && <p className="layered-fixture-desc">{fixture.description}</p>}
 
-        <h3>Toggles</h3>
-        <label className="layered-toggle">
-          <input
-            type="checkbox"
-            checked={validate}
-            onChange={(event) => setValidate(event.target.checked)}
-          />
-          <span>Composition validation</span>
-        </label>
-        <BBoxOverlayField
-          id="layered-debug"
-          value={debugOverlayParts}
-          onChange={setDebugOverlayParts}
-        />
-        <label className="layered-toggle">
-          <input
-            type="checkbox"
-            checked={tilt}
-            onChange={(event) => setTilt(event.target.checked)}
-          />
-          <span>3D stack view</span>
-        </label>
+            <h3>Toggles</h3>
+            <label className="layered-toggle">
+              <input
+                type="checkbox"
+                checked={validate}
+                onChange={(event) => setValidate(event.target.checked)}
+              />
+              <span>Composition validation</span>
+            </label>
+            <BBoxOverlayField
+              id="layered-debug"
+              value={debugOverlayParts}
+              onChange={setDebugOverlayParts}
+            />
+            <label className="layered-toggle">
+              <input
+                type="checkbox"
+                checked={tilt}
+                onChange={(event) => setTilt(event.target.checked)}
+              />
+              <span>3D stack view</span>
+            </label>
 
-        <h3>Overlay</h3>
-        <label className="layered-control-row">
-          <span className="layered-control-label">Mode</span>
-          <select
-            value={overlayMode}
-            onChange={(event) => setOverlayMode(event.target.value as OverlayMode)}
-          >
-            {OVERLAY_MODE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="layered-toggle">
-          <input
-            type="checkbox"
-            checked={showOrigin}
-            onChange={(event) => setShowOrigin(event.target.checked)}
-          />
-          <span>Show origin anchor</span>
-        </label>
-        {showOrigin && !fixtureHasOrigins && (
-          <p className="layered-hint-text">
-            This fixture has no transformed nodes - pick "Transform ancestor" to see origin anchors.
-          </p>
+            <h3>Overlay</h3>
+            <label className="layered-control-row">
+              <span className="layered-control-label">Mode</span>
+              <select
+                value={overlayMode}
+                onChange={(event) => setOverlayMode(event.target.value as OverlayMode)}
+              >
+                {OVERLAY_MODE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="layered-toggle">
+              <input
+                type="checkbox"
+                checked={showOrigin}
+                onChange={(event) => setShowOrigin(event.target.checked)}
+              />
+              <span>Show origin anchor</span>
+            </label>
+            {showOrigin && !fixtureHasOrigins && (
+              <p className="layered-hint-text">
+                This fixture has no transformed nodes - pick "Transform ancestor" to see origin
+                anchors.
+              </p>
+            )}
+            <p className="layered-fixture-desc">
+              Slate dashed = layout / Cyan = transform / Pink corners = visual / Amber = origin
+            </p>
+
+            <h3>Layers</h3>
+            <LayerList
+              layers={layerKeys}
+              hidden={hidden}
+              focusKey={focusKey}
+              isRendering={currentLayeredIsRendering}
+              onFocusChange={handleLayerFocus}
+              onToggleHidden={toggleLayerHidden}
+            />
+
+            <h3>Status</h3>
+            <LayerStatusTable
+              status={status}
+              workerActive={workerEngine !== null}
+              format={format}
+              layeredSvgResult={layeredSvgResult}
+              compositionValidation={compositionValidation}
+              providerError={providerError}
+              renders={renders}
+            />
+
+            <WarningsPanel layers={layersForWarnings} />
+            {compositionValidation && (
+              <CompositionValidationPanel validation={compositionValidation} />
+            )}
+          </>
         )}
-        <p className="layered-fixture-desc">
-          Slate dashed = layout / Cyan = transform / Pink corners = visual / Amber = origin
-        </p>
-
-        <h3>Layers</h3>
-        <LayerList
-          layers={layerKeys}
-          hidden={hidden}
-          focusKey={focusKey}
-          isRendering={currentLayeredIsRendering}
-          onFocusChange={handleLayerFocus}
-          onToggleHidden={toggleLayerHidden}
-        />
-
-        <h3>Status</h3>
-        <LayerStatusTable
-          status={status}
-          workerActive={workerEngine !== null}
-          format={format}
-          layeredSvgResult={layeredSvgResult}
-          compositionValidation={compositionValidation}
-          providerError={providerError}
-          renders={renders}
-        />
-
-        <WarningsPanel layers={layersForWarnings} />
-        {compositionValidation && <CompositionValidationPanel validation={compositionValidation} />}
       </aside>
 
       <section
@@ -631,24 +675,26 @@ function LayeredContent() {
       >
         <div className="preview-header">
           <div className="preview-header-meta">
-            <h3>Layered Export</h3>
+            <h3>{mobileViewer ? "Layered SVG" : "Layered Export"}</h3>
             <span>
               Visualize how <code>renderToLayeredSvg</code> splits a scene by the <code>layer</code>{" "}
               prop
             </span>
           </div>
-          <div className="layered-format-toggle">
-            {(["svg", "png"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                className={`layered-format-option ${format === value ? "active" : ""}`}
-                onClick={() => startTransition(() => setFormat(value))}
-              >
-                {value.toUpperCase()}
-              </button>
-            ))}
-          </div>
+          {!mobileViewer && (
+            <div className="layered-format-toggle">
+              {(["svg", "png"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`layered-format-option ${format === value ? "active" : ""}`}
+                  onClick={() => startTransition(() => setFormat(value))}
+                >
+                  {value.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          )}
           {codeLayout === "tab" && (
             <div className="preview-view-tabs">
               <button
@@ -710,6 +756,7 @@ function LayeredContent() {
         </div>
 
         <LayeredPreviewBody
+          showSingle={!mobileViewer}
           format={format}
           stableSingleSvg={stableSingleSvg}
           stableSinglePngDataUrl={stableSinglePngDataUrl}
@@ -870,6 +917,7 @@ function Layered3DStage<T extends { id: string; paintOrder: number }>({
               aria-label={`Layer ${layer.id}`}
               aria-pressed={isFocused}
               onMouseEnter={() => onFocusChange(key)}
+              onClick={() => onFocusChange(isFocused ? null : key)}
               onFocus={() => onFocusChange(key)}
               onBlur={() => onFocusChange(null)}
               onKeyDown={(event) => {

@@ -8,6 +8,7 @@ import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
 import { useMemo, useState, useTransition } from "react";
 import { getPrismGrammar } from "../../../playground-shared/prism.js";
+import { useMobileViewer, useResetPreviewForMobile } from "../hooks/use-mobile-viewer";
 import { useSvgInspectFromData } from "../hooks/use-svg-inspect";
 import { asset } from "../lib/asset";
 import { generateFullComponent, generateJsxSnippet } from "../lib/codegen";
@@ -32,7 +33,7 @@ const workerConfig: BoundSvgConfig = {
 // Demo VNode
 // ---------------------------------------------------------------------------
 
-function buildDemoVNode(): VNode {
+function buildDemoVNode(mobileViewer: boolean): VNode {
   return toVNode(
     <Canvas width={640} height={240} background="#1e1e1e">
       <Flex
@@ -44,10 +45,12 @@ function buildDemoVNode(): VNode {
         gap={12}
       >
         <Text font="NotoSansJP-woff2" fontSizePx={32} color="#f8fafc" wrap="none">
-          Worker Rendering
+          {mobileViewer ? "SVG via Worker" : "Worker Rendering"}
         </Text>
         <Text font="NotoSansJP-woff2" fontSizePx={18} color="#94a3b8" wrap="char">
-          Off-main-thread WASM via useRenderToSvgAsync / useRenderToPngAsync
+          {mobileViewer
+            ? "Off-main-thread WASM"
+            : "Off-main-thread WASM via useRenderToSvgAsync / useRenderToPngAsync"}
         </Text>
       </Flex>
     </Canvas>,
@@ -65,6 +68,8 @@ type SvgAndIrAsyncResult = ReturnType<typeof useRenderToSvgAndIrAsync>;
 type PngAsyncResult = ReturnType<typeof useRenderToPngAsync>;
 
 type WorkerStatusPanelProps = {
+  compact: boolean;
+  showPng: boolean;
   status: string;
   providerError: Error | null;
   workerEngineActive: boolean;
@@ -72,13 +77,54 @@ type WorkerStatusPanelProps = {
   pngResult: PngAsyncResult;
 };
 
+function WorkerCompactStatus({
+  status,
+  providerError,
+  workerEngineActive,
+  svgAndIrResult,
+}: Pick<
+  WorkerStatusPanelProps,
+  "status" | "providerError" | "workerEngineActive" | "svgAndIrResult"
+>) {
+  const svgStatus = svgAndIrResult.error
+    ? "error"
+    : svgAndIrResult.isReady
+      ? "ready"
+      : svgAndIrResult.isRendering
+        ? "rendering"
+        : "waiting";
+  const workerStatus = workerEngineActive ? "active" : status;
+  const error = providerError ?? svgAndIrResult.error;
+
+  return (
+    <aside className="panel controls-panel worker-mobile-status" role={error ? "alert" : "status"}>
+      <span>Worker {workerStatus}</span>
+      <span>SVG {svgStatus}</span>
+      {error && <span className="error-text">{error.message}</span>}
+    </aside>
+  );
+}
+
 function WorkerStatusPanel({
+  compact,
+  showPng,
   status,
   providerError,
   workerEngineActive,
   svgAndIrResult,
   pngResult,
 }: WorkerStatusPanelProps) {
+  if (compact) {
+    return (
+      <WorkerCompactStatus
+        status={status}
+        providerError={providerError}
+        workerEngineActive={workerEngineActive}
+        svgAndIrResult={svgAndIrResult}
+      />
+    );
+  }
+
   return (
     <aside className="panel controls-panel">
       <h3>Provider Status</h3>
@@ -121,32 +167,37 @@ function WorkerStatusPanel({
         )}
       </div>
 
-      <h3>PNG (async)</h3>
-      <div className="status-table">
-        <div className="status-row">
-          <span className="status-label">isReady</span>
-          <code className="status-value">{String(pngResult.isReady)}</code>
-        </div>
-        <div className="status-row">
-          <span className="status-label">isRendering</span>
-          <code className="status-value">{String(pngResult.isRendering)}</code>
-        </div>
-        <div className="status-row">
-          <span className="status-label">Byte length</span>
-          <code className="status-value">{pngResult.png?.byteLength ?? 0}</code>
-        </div>
-        {pngResult.error && (
-          <div className="status-row">
-            <span className="status-label">Error</span>
-            <code className="status-value error-text">{pngResult.error.message}</code>
+      {showPng && (
+        <>
+          <h3>PNG (async)</h3>
+          <div className="status-table">
+            <div className="status-row">
+              <span className="status-label">isReady</span>
+              <code className="status-value">{String(pngResult.isReady)}</code>
+            </div>
+            <div className="status-row">
+              <span className="status-label">isRendering</span>
+              <code className="status-value">{String(pngResult.isRendering)}</code>
+            </div>
+            <div className="status-row">
+              <span className="status-label">Byte length</span>
+              <code className="status-value">{pngResult.png?.byteLength ?? 0}</code>
+            </div>
+            {pngResult.error && (
+              <div className="status-row">
+                <span className="status-label">Error</span>
+                <code className="status-value error-text">{pngResult.error.message}</code>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </aside>
   );
 }
 
 type WorkerOutputPreviewProps = {
+  showPng: boolean;
   viewTab: ViewTab;
   codeLayout: CodeLayout;
   highlightedRenderedSvg: string;
@@ -157,6 +208,7 @@ type WorkerOutputPreviewProps = {
 };
 
 function WorkerOutputPreview({
+  showPng,
   viewTab,
   codeLayout,
   highlightedRenderedSvg,
@@ -178,10 +230,12 @@ function WorkerOutputPreview({
   }
   return (
     <div className="preview-body">
-      <div className="preview-meta-inline">
-        <h3>SVG Output</h3>
-        <span>Rendered via Worker + useRenderToSvgAsync</span>
-      </div>
+      {showPng && (
+        <div className="preview-meta-inline">
+          <h3>SVG Output</h3>
+          <span>Rendered via Worker + useRenderToSvgAsync</span>
+        </div>
+      )}
       {svgAndIrResult.svg ? (
         <div ref={setPreviewEl} className="preview-stage">
           <div
@@ -197,20 +251,24 @@ function WorkerOutputPreview({
         </div>
       )}
 
-      <div className="preview-meta-inline" style={{ marginTop: 24 }}>
-        <h3>PNG Output</h3>
-        <span>Rendered via Worker + useRenderToPngAsync</span>
-      </div>
-      {pngResult.dataUrl ? (
-        <div className="preview-stage">
-          <img className="preview-image" src={pngResult.dataUrl} alt="Worker PNG output" />
-        </div>
-      ) : (
-        <div className="preview-stage">
-          <p className="placeholder-text">
-            {pngResult.isRendering ? "Rendering in Worker…" : "Waiting for Worker…"}
-          </p>
-        </div>
+      {showPng && (
+        <>
+          <div className="preview-meta-inline" style={{ marginTop: 24 }}>
+            <h3>PNG Output</h3>
+            <span>Rendered via Worker + useRenderToPngAsync</span>
+          </div>
+          {pngResult.dataUrl ? (
+            <div className="preview-stage">
+              <img className="preview-image" src={pngResult.dataUrl} alt="Worker PNG output" />
+            </div>
+          ) : (
+            <div className="preview-stage">
+              <p className="placeholder-text">
+                {pngResult.isRendering ? "Rendering in Worker…" : "Waiting for Worker…"}
+              </p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -218,13 +276,15 @@ function WorkerOutputPreview({
 
 function WorkerAsyncContent() {
   const { status, error: providerError, workerEngine } = useBoundSvg();
-  const vnode = useMemo(() => buildDemoVNode(), []);
+  const mobileViewer = useMobileViewer();
+  const vnode = useMemo(() => buildDemoVNode(mobileViewer), [mobileViewer]);
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
   const [, startTransition] = useTransition();
 
   const svgAndIrResult = useRenderToSvgAndIrAsync(vnode);
-  const pngResult = useRenderToPngAsync(vnode);
+  const pngResult = useRenderToPngAsync(mobileViewer ? null : vnode);
 
   // Inspect hover via Worker-produced SVG + IR
   const {
@@ -251,6 +311,8 @@ function WorkerAsyncContent() {
   return (
     <div className="split-layout">
       <WorkerStatusPanel
+        compact={mobileViewer}
+        showPng={!mobileViewer}
         status={status}
         providerError={providerError}
         workerEngineActive={workerEngine !== null}
@@ -261,10 +323,12 @@ function WorkerAsyncContent() {
       <section
         className={`panel preview-panel has-code-area layout-${codeLayout}${showCode ? " show-code" : ""}`}
       >
-        <div className="preview-header">
+        <div className="preview-header worker-preview-header">
           <div className="preview-header-meta">
             <h3>Worker Rendering</h3>
-            <span>Off-main-thread WASM via useRenderToSvgAsync / useRenderToPngAsync</span>
+            {!mobileViewer && (
+              <span>Off-main-thread WASM via useRenderToSvgAsync / useRenderToPngAsync</span>
+            )}
           </div>
           {codeLayout === "tab" && (
             <div className="preview-view-tabs">
@@ -328,6 +392,7 @@ function WorkerAsyncContent() {
         </div>
 
         <WorkerOutputPreview
+          showPng={!mobileViewer}
           viewTab={viewTab}
           codeLayout={codeLayout}
           highlightedRenderedSvg={highlightedRenderedSvg}

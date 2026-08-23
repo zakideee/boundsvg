@@ -22,6 +22,7 @@ import {
 } from "../../../playground-shared/event-effects.js";
 import { formatSvgCode } from "../../../playground-shared/html-utils.js";
 import { getPrismGrammar } from "../../../playground-shared/prism.js";
+import { useMobileViewer, useResetPreviewForMobile } from "../hooks/use-mobile-viewer";
 import { generateJsxSnippet } from "../lib/codegen";
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,13 @@ const TOAST_OFFSET_PX = 12;
 const TOAST_MAX_WIDTH_PX = 220;
 const TOAST_ESTIMATED_HEIGHT_PX = 36;
 const VIEWPORT_PADDING_PX = 16;
+
+function visibleLogEntries(log: readonly LogEntry[], mobileViewer: boolean): readonly LogEntry[] {
+  if (mobileViewer) {
+    return log.slice(0, 5);
+  }
+  return log;
+}
 
 function now(): string {
   const date = new Date();
@@ -116,6 +124,93 @@ function buildStaticVNode() {
   );
 }
 
+type EventHandlerFactory = (event: string) => (info: PointerEventInfo) => void;
+
+function MobileInteractionScene({ handleEvent }: { handleEvent: EventHandlerFactory }) {
+  return (
+    <Flex direction="column" padding={32} gap={16} width={800} height={580}>
+      <Flex direction="row" gap={16}>
+        <Box
+          id="card-click"
+          background="#2d2d2d"
+          borderRadius={12}
+          padding={24}
+          width={360}
+          height={240}
+          onClick={handleEvent("click")}
+        >
+          <Flex direction="column" gap={12} width={312} height={192} justifyContent="center">
+            <Text font="NotoSansJP-woff2" fontSizePx={28} color="#38bdf8" wrap="char">
+              Tap
+            </Text>
+            <Text font="NotoSansJP-woff2" fontSizePx={18} color="#94a3b8" wrap="char">
+              onClick
+            </Text>
+          </Flex>
+        </Box>
+        <Box
+          id="card-ptr"
+          background="#2d2d2d"
+          borderRadius={12}
+          padding={24}
+          width={360}
+          height={240}
+          onPointerDown={handleEvent("pointerDown")}
+          onPointerUp={handleEvent("pointerUp")}
+        >
+          <Flex direction="column" gap={12} width={312} height={192} justifyContent="center">
+            <Text font="NotoSansJP-woff2" fontSizePx={28} color="#f472b6" wrap="char">
+              Press
+            </Text>
+            <Text font="NotoSansJP-woff2" fontSizePx={18} color="#94a3b8" wrap="char">
+              pointerDown / pointerUp
+            </Text>
+          </Flex>
+        </Box>
+      </Flex>
+      <Flex direction="row" gap={16}>
+        <Box
+          id="card-touch"
+          background="#2d2d2d"
+          borderRadius={12}
+          padding={24}
+          width={360}
+          height={240}
+          onTouchStart={handleEvent("touchStart")}
+          onTouchEnd={handleEvent("touchEnd")}
+        >
+          <Flex direction="column" gap={12} width={312} height={192} justifyContent="center">
+            <Text font="NotoSansJP-woff2" fontSizePx={28} color="#ff6b6b" wrap="char">
+              Touch
+            </Text>
+            <Text font="NotoSansJP-woff2" fontSizePx={18} color="#94a3b8" wrap="char">
+              touchStart / touchEnd
+            </Text>
+          </Flex>
+        </Box>
+        <Box
+          id="card-touchmove"
+          background="#2d2d2d"
+          borderRadius={12}
+          padding={24}
+          width={360}
+          height={240}
+          onTouchMove={handleEvent("touchMove")}
+        >
+          <Flex direction="column" gap={12} width={312} height={192} justifyContent="center">
+            <Text font="NotoSansJP-woff2" fontSizePx={28} color="#f9ca24" wrap="char">
+              Touch Move
+            </Text>
+            <Text font="NotoSansJP-woff2" fontSizePx={18} color="#94a3b8" wrap="char">
+              touchMove (rAF throttled)
+            </Text>
+          </Flex>
+        </Box>
+      </Flex>
+    </Flex>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -129,11 +224,13 @@ type CodeLayout = "tab" | "panel";
 
 export function InteractivePage() {
   const { engine, status } = useBoundSvg();
+  const mobileViewer = useMobileViewer();
   const [log, setLog] = useState<LogEntry[]>([]);
   const [copyMenu, setCopyMenu] = useState<TextCopyMenuInfo | null>(null);
   const [toast, setToast] = useState<ToastInfo | null>(null);
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
   const [, startTransition] = useTransition();
   const toastTimerRef = useRef<ReturnType<typeof setTimeout>>(0 as never);
   const mountedRef = useRef(false);
@@ -309,7 +406,10 @@ export function InteractivePage() {
       <aside className="panel controls-panel">
         <h3>Event Log</h3>
 
-        <div style={{ marginBottom: 8, fontSize: 12, color: "var(--muted)" }}>
+        <div
+          className="copy-hover"
+          style={{ marginBottom: 8, fontSize: 12, color: "var(--muted)" }}
+        >
           Hover:{" "}
           <code ref={hoverDisplayRef} style={{ color: "var(--accent)" }}>
             none
@@ -331,7 +431,7 @@ export function InteractivePage() {
               Interact with SVG elements to see the event log
             </p>
           )}
-          {log.map((e) => (
+          {visibleLogEntries(log, mobileViewer).map((e) => (
             <div
               key={e.id}
               style={{
@@ -375,7 +475,8 @@ export function InteractivePage() {
         <div className="preview-header">
           <div className="preview-header-meta">
             <h3>Interactive Events</h3>
-            <span>Click, hover, and right-click on SVG elements</span>
+            <span className="copy-hover">Click, hover, and right-click on SVG elements</span>
+            <span className="copy-touch">Tap or press the SVG cards to inspect touch events</span>
           </div>
           {codeLayout === "tab" && (
             <div className="preview-view-tabs">
@@ -447,8 +548,12 @@ export function InteractivePage() {
           ) : (
             <div className="preview-stage-wrap">
               <div className="preview-stage">
-                <div ref={wrapperRef} style={{ position: "relative", display: "inline-block" }}>
+                <div
+                  ref={wrapperRef}
+                  className={`interactive-stage-content${mobileViewer ? " is-mobile" : ""}`}
+                >
                   <InteractiveBoundSvg
+                    className="interactive-canvas"
                     width={800}
                     height={580}
                     background="#1e1e1e"
@@ -461,374 +566,378 @@ export function InteractivePage() {
                       <p style={{ color: "var(--error)" }}>Error: {err.message}</p>
                     )}
                   >
-                    <Flex direction="column" padding={32} gap={16} width={800} height={580}>
-                      {/* Row 1 — Click / Hover / ContextMenu */}
-                      <Flex direction="row" gap={16}>
-                        {/* Card 1 — click only */}
-                        <Box
-                          id="card-click"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                          onClick={handleEvent("click")}
-                        >
-                          <Flex direction="column" gap={8} width={135} height={100}>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={18}
-                              color="#38bdf8"
-                              wrap="char"
-                            >
-                              Click
-                            </Text>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="char"
-                            >
-                              onClick only
-                            </Text>
-                          </Flex>
-                        </Box>
-
-                        {/* Card 2 — pointer enter/leave */}
-                        <Box
-                          id="card-hover"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                          onPointerEnter={handleEvent("pointerEnter")}
-                          onPointerLeave={handleEvent("pointerLeave")}
-                          onPointerOver={handleEvent("pointerOver")}
-                          onPointerOut={handleEvent("pointerOut")}
-                        >
-                          <Flex direction="column" gap={8} width={135} height={100}>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={18}
-                              color="#a78bfa"
-                              wrap="char"
-                            >
-                              Hover
-                            </Text>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="char"
-                            >
-                              pointer Enter/Leave/Over/Out
-                            </Text>
-                          </Flex>
-                        </Box>
-
-                        {/* Card 3 — context menu + dblclick */}
-                        <Box
-                          id="card-ctx"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                          onContextMenu={handleEvent("contextMenu")}
-                          onDoubleClick={handleEvent("dblclick")}
-                        >
-                          <Flex direction="column" gap={8} width={135} height={100}>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={18}
-                              color="#fbbf24"
-                              wrap="char"
-                            >
-                              Right / Dbl
-                            </Text>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="char"
-                            >
-                              contextMenu + doubleClick
-                            </Text>
-                          </Flex>
-                        </Box>
-
-                        {/* Card 4 — star path with geometry hit */}
-                        <Box
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                        >
-                          <Flex
-                            direction="column"
-                            gap={4}
-                            width={135}
-                            height={100}
-                            alignItems="center"
+                    {mobileViewer ? (
+                      MobileInteractionScene({ handleEvent })
+                    ) : (
+                      <Flex direction="column" padding={32} gap={16} width={800} height={580}>
+                        {/* Row 1 — Click / Hover / ContextMenu */}
+                        <Flex direction="row" gap={16}>
+                          {/* Card 1 — click only */}
+                          <Box
+                            id="card-click"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                            onClick={handleEvent("click")}
                           >
-                            <Path
-                              id="star"
-                              d="M43 0 L54 30 L85 30 L60 49 L68 81 L43 61 L17 81 L26 49 L0 30 L32 30 Z"
-                              width={86}
-                              height={82}
-                              fill="#fbbf24"
-                              onClick={handleEvent("click")}
-                              onContextMenu={handleEvent("contextMenu")}
-                            />
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="none"
-                            >
-                              Path hit-test
-                            </Text>
-                          </Flex>
-                        </Box>
-                      </Flex>
+                            <Flex direction="column" gap={8} width={135} height={100}>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={18}
+                                color="#38bdf8"
+                                wrap="char"
+                              >
+                                Click
+                              </Text>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="char"
+                              >
+                                onClick only
+                              </Text>
+                            </Flex>
+                          </Box>
 
-                      {/* Row 2 — Pointer Down/Up, Mouse Down/Up, Mouse Enter/Leave, Mouse Move */}
-                      <Flex direction="row" gap={16}>
-                        <Box
-                          id="card-ptr"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                          onPointerDown={handleEvent("pointerDown")}
-                          onPointerUp={handleEvent("pointerUp")}
-                        >
-                          <Flex direction="column" gap={8} width={135} height={100}>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={18}
-                              color="#f472b6"
-                              wrap="char"
-                            >
-                              Press
-                            </Text>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="char"
-                            >
-                              pointerDown / pointerUp
-                            </Text>
-                          </Flex>
-                        </Box>
-                        <Box
-                          id="card-mouse"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                          onMouseDown={handleEvent("mouseDown")}
-                          onMouseUp={handleEvent("mouseUp")}
-                        >
-                          <Flex direction="column" gap={8} width={135} height={100}>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={18}
-                              color="#c084fc"
-                              wrap="char"
-                            >
-                              Mouse
-                            </Text>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="char"
-                            >
-                              mouseDown / mouseUp
-                            </Text>
-                          </Flex>
-                        </Box>
-                        <Box
-                          id="card-mouse-hover"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                          onMouseEnter={handleEvent("mouseEnter")}
-                          onMouseLeave={handleEvent("mouseLeave")}
-                          onMouseOver={handleEvent("mouseOver")}
-                          onMouseOut={handleEvent("mouseOut")}
-                        >
-                          <Flex direction="column" gap={8} width={135} height={100}>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={18}
-                              color="#34d399"
-                              wrap="char"
-                            >
-                              Mouse Hover
-                            </Text>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="char"
-                            >
-                              mouseEnter/Leave/Over/Out
-                            </Text>
-                          </Flex>
-                        </Box>
-                        <Box
-                          id="card-mousemove"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                          onMouseMove={handleEvent("mouseMove")}
-                          onPointerMove={handleEvent("pointerMove")}
-                        >
-                          <Flex direction="column" gap={8} width={135} height={100}>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={18}
-                              color="#64748b"
-                              wrap="char"
-                            >
-                              Move
-                            </Text>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="char"
-                            >
-                              mouseMove + pointerMove (rAF)
-                            </Text>
-                          </Flex>
-                        </Box>
-                      </Flex>
+                          {/* Card 2 — pointer enter/leave */}
+                          <Box
+                            id="card-hover"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                            onPointerEnter={handleEvent("pointerEnter")}
+                            onPointerLeave={handleEvent("pointerLeave")}
+                            onPointerOver={handleEvent("pointerOver")}
+                            onPointerOut={handleEvent("pointerOut")}
+                          >
+                            <Flex direction="column" gap={8} width={135} height={100}>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={18}
+                                color="#a78bfa"
+                                wrap="char"
+                              >
+                                Hover
+                              </Text>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="char"
+                              >
+                                pointer Enter/Leave/Over/Out
+                              </Text>
+                            </Flex>
+                          </Box>
 
-                      {/* Row 3 — Touch events */}
-                      <Flex direction="row" gap={16}>
-                        <Box
-                          id="card-touch"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                          onTouchStart={handleEvent("touchStart")}
-                          onTouchEnd={handleEvent("touchEnd")}
-                        >
-                          <Flex direction="column" gap={8} width={135} height={100}>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={18}
-                              color="#ff6b6b"
-                              wrap="char"
+                          {/* Card 3 — context menu + dblclick */}
+                          <Box
+                            id="card-ctx"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                            onContextMenu={handleEvent("contextMenu")}
+                            onDoubleClick={handleEvent("dblclick")}
+                          >
+                            <Flex direction="column" gap={8} width={135} height={100}>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={18}
+                                color="#fbbf24"
+                                wrap="char"
+                              >
+                                Right / Dbl
+                              </Text>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="char"
+                              >
+                                contextMenu + doubleClick
+                              </Text>
+                            </Flex>
+                          </Box>
+
+                          {/* Card 4 — star path with geometry hit */}
+                          <Box
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                          >
+                            <Flex
+                              direction="column"
+                              gap={4}
+                              width={135}
+                              height={100}
+                              alignItems="center"
                             >
-                              Touch
-                            </Text>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="char"
-                            >
-                              touchStart / touchEnd
-                            </Text>
-                          </Flex>
-                        </Box>
-                        <Box
-                          id="card-touchmove"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                          onTouchMove={handleEvent("touchMove")}
-                        >
-                          <Flex direction="column" gap={8} width={135} height={100}>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={18}
-                              color="#f9ca24"
-                              wrap="char"
-                            >
-                              Touch Move
-                            </Text>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="char"
-                            >
-                              touchMove (rAF throttled)
-                            </Text>
-                          </Flex>
-                        </Box>
-                        <Box
-                          id="card-zindex"
-                          background="#2d2d2d"
-                          borderRadius={12}
-                          padding={20}
-                          width={175}
-                          height={140}
-                        >
-                          <Flex direction="column" gap={4} width={135} height={100}>
-                            <Box width={135} height={72}>
                               <Path
-                                id="z-front"
-                                zIndex={2}
-                                d="M0 0H80V52H0Z"
-                                width={80}
-                                height={52}
-                                fill="#2563eb"
-                                position="absolute"
-                                left={0}
-                                top={0}
+                                id="star"
+                                d="M43 0 L54 30 L85 30 L60 49 L68 81 L43 61 L17 81 L26 49 L0 30 L32 30 Z"
+                                width={86}
+                                height={82}
+                                fill="#fbbf24"
                                 onClick={handleEvent("click")}
+                                onContextMenu={handleEvent("contextMenu")}
                               />
-                              <Path
-                                id="z-under"
-                                zIndex={1}
-                                d="M0 0H80V52H0Z"
-                                width={80}
-                                height={52}
-                                fill="#f97316"
-                                position="absolute"
-                                left={40}
-                                top={16}
-                                onClick={handleEvent("click")}
-                              />
-                            </Box>
-                            <Text
-                              font="NotoSansJP-woff2"
-                              fontSizePx={12}
-                              color="#94a3b8"
-                              wrap="none"
-                            >
-                              zIndex hit: click overlap
-                            </Text>
-                          </Flex>
-                        </Box>
-                      </Flex>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="none"
+                              >
+                                Path hit-test
+                              </Text>
+                            </Flex>
+                          </Box>
+                        </Flex>
 
-                      {/* Footer note */}
-                      <Text font="NotoSansJP-woff2" fontSizePx={13} color="#475569" wrap="char">
-                        20 event types: click, dblclick, contextMenu,
-                        pointerDown/Up/Move/Enter/Leave/Over/Out,
-                        mouseDown/Up/Move/Enter/Leave/Over/Out, touchStart/End/Move
-                      </Text>
-                    </Flex>
+                        {/* Row 2 — Pointer Down/Up, Mouse Down/Up, Mouse Enter/Leave, Mouse Move */}
+                        <Flex direction="row" gap={16}>
+                          <Box
+                            id="card-ptr"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                            onPointerDown={handleEvent("pointerDown")}
+                            onPointerUp={handleEvent("pointerUp")}
+                          >
+                            <Flex direction="column" gap={8} width={135} height={100}>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={18}
+                                color="#f472b6"
+                                wrap="char"
+                              >
+                                Press
+                              </Text>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="char"
+                              >
+                                pointerDown / pointerUp
+                              </Text>
+                            </Flex>
+                          </Box>
+                          <Box
+                            id="card-mouse"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                            onMouseDown={handleEvent("mouseDown")}
+                            onMouseUp={handleEvent("mouseUp")}
+                          >
+                            <Flex direction="column" gap={8} width={135} height={100}>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={18}
+                                color="#c084fc"
+                                wrap="char"
+                              >
+                                Mouse
+                              </Text>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="char"
+                              >
+                                mouseDown / mouseUp
+                              </Text>
+                            </Flex>
+                          </Box>
+                          <Box
+                            id="card-mouse-hover"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                            onMouseEnter={handleEvent("mouseEnter")}
+                            onMouseLeave={handleEvent("mouseLeave")}
+                            onMouseOver={handleEvent("mouseOver")}
+                            onMouseOut={handleEvent("mouseOut")}
+                          >
+                            <Flex direction="column" gap={8} width={135} height={100}>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={18}
+                                color="#34d399"
+                                wrap="char"
+                              >
+                                Mouse Hover
+                              </Text>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="char"
+                              >
+                                mouseEnter/Leave/Over/Out
+                              </Text>
+                            </Flex>
+                          </Box>
+                          <Box
+                            id="card-mousemove"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                            onMouseMove={handleEvent("mouseMove")}
+                            onPointerMove={handleEvent("pointerMove")}
+                          >
+                            <Flex direction="column" gap={8} width={135} height={100}>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={18}
+                                color="#64748b"
+                                wrap="char"
+                              >
+                                Move
+                              </Text>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="char"
+                              >
+                                mouseMove + pointerMove (rAF)
+                              </Text>
+                            </Flex>
+                          </Box>
+                        </Flex>
+
+                        {/* Row 3 — Touch events */}
+                        <Flex direction="row" gap={16}>
+                          <Box
+                            id="card-touch"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                            onTouchStart={handleEvent("touchStart")}
+                            onTouchEnd={handleEvent("touchEnd")}
+                          >
+                            <Flex direction="column" gap={8} width={135} height={100}>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={18}
+                                color="#ff6b6b"
+                                wrap="char"
+                              >
+                                Touch
+                              </Text>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="char"
+                              >
+                                touchStart / touchEnd
+                              </Text>
+                            </Flex>
+                          </Box>
+                          <Box
+                            id="card-touchmove"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                            onTouchMove={handleEvent("touchMove")}
+                          >
+                            <Flex direction="column" gap={8} width={135} height={100}>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={18}
+                                color="#f9ca24"
+                                wrap="char"
+                              >
+                                Touch Move
+                              </Text>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="char"
+                              >
+                                touchMove (rAF throttled)
+                              </Text>
+                            </Flex>
+                          </Box>
+                          <Box
+                            id="card-zindex"
+                            background="#2d2d2d"
+                            borderRadius={12}
+                            padding={20}
+                            width={175}
+                            height={140}
+                          >
+                            <Flex direction="column" gap={4} width={135} height={100}>
+                              <Box width={135} height={72}>
+                                <Path
+                                  id="z-front"
+                                  zIndex={2}
+                                  d="M0 0H80V52H0Z"
+                                  width={80}
+                                  height={52}
+                                  fill="#2563eb"
+                                  position="absolute"
+                                  left={0}
+                                  top={0}
+                                  onClick={handleEvent("click")}
+                                />
+                                <Path
+                                  id="z-under"
+                                  zIndex={1}
+                                  d="M0 0H80V52H0Z"
+                                  width={80}
+                                  height={52}
+                                  fill="#f97316"
+                                  position="absolute"
+                                  left={40}
+                                  top={16}
+                                  onClick={handleEvent("click")}
+                                />
+                              </Box>
+                              <Text
+                                font="NotoSansJP-woff2"
+                                fontSizePx={12}
+                                color="#94a3b8"
+                                wrap="none"
+                              >
+                                zIndex hit: click overlap
+                              </Text>
+                            </Flex>
+                          </Box>
+                        </Flex>
+
+                        {/* Footer note */}
+                        <Text font="NotoSansJP-woff2" fontSizePx={13} color="#475569" wrap="char">
+                          20 event types: click, dblclick, contextMenu,
+                          pointerDown/Up/Move/Enter/Leave/Over/Out,
+                          mouseDown/Up/Move/Enter/Leave/Over/Out, touchStart/End/Move
+                        </Text>
+                      </Flex>
+                    )}
                   </InteractiveBoundSvg>
                 </div>
               </div>

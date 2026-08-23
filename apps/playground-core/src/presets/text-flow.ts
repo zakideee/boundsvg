@@ -7,7 +7,7 @@ import type { Preset } from "../types";
 export const textFlowPreset: Preset = {
   title: "Text Flow",
   description:
-    "Obstacle avoidance with ellipsis and fit-shrink for horizontal (left pair) and vertical-rl (right pair). Drag obstacles to reflow text.",
+    "Obstacle avoidance with ellipsis and fit-shrink for horizontal text (top row) and vertical-rl text (bottom row). Drag obstacles to reflow text.",
   source: `import { Box, Canvas, Text } from "@boundsvg/core";
 
 const text = "春はあけぼの。やうやう白くなりゆく山際、少し明かりて、" +
@@ -58,14 +58,18 @@ const fitResult = engine.layoutTextFlowWithExclusions({
 // fitResult.chosenFontSizePx — the auto-chosen font size
 
 const vnode = Canvas(
-  { width: 1120, height: 360, background: "#1a1a1a" },
+  { width: 800, height: 720, background: "#1a1a1a" },
   ...children,
 );
 
 const svg = engine.renderToSvg(vnode);`,
   build: (engine?) => {
-    const canvasWidth = 1120;
-    const canvasHeight = 360;
+    const canvasWidth = 800;
+    const rowHeight = 360;
+    const canvasHeight = rowHeight * 2;
+    const verticalRowTop = rowHeight;
+    const verticalEllipsisLeft = 248;
+    const verticalFitLeft = 664;
     if (!engine) {
       return Canvas({ width: canvasWidth, height: canvasHeight, background: "#1a1a1a" });
     }
@@ -90,17 +94,17 @@ const svg = engine.renderToSvg(vnode);`,
     );
     children.push(
       Box(
-        { position: "absolute", left: 810, top: 10, width: 140 },
+        { position: "absolute", left: 16, top: verticalRowTop + 10, width: 372 },
         Text(
-          { font: FA, fontSizePx: 10, color: "#475569", wrap: "none" },
+          { font: FA, fontSizePx: 11, color: "#475569", wrap: "none" },
           "Vertical ellipsis + maxLines",
         ),
       ),
     );
     children.push(
       Box(
-        { position: "absolute", left: 970, top: 10, width: 120 },
-        Text({ font: FA, fontSizePx: 10, color: "#475569", wrap: "none" }, "Vertical fit-shrink"),
+        { position: "absolute", left: 420, top: verticalRowTop + 10, width: 364 },
+        Text({ font: FA, fontSizePx: 11, color: "#475569", wrap: "none" }, "Vertical fit-shrink"),
       ),
     );
     // Dividers
@@ -110,17 +114,27 @@ const svg = engine.renderToSvg(vnode);`,
         left: 404,
         top: 30,
         width: 1,
-        height: canvasHeight - 40,
+        height: rowHeight - 40,
         background: "#2d2d2d",
       }),
     );
     children.push(
       Box({
         position: "absolute",
-        left: 794,
-        top: 30,
+        left: 16,
+        top: verticalRowTop,
+        width: canvasWidth - 32,
+        height: 1,
+        background: "#2d2d2d",
+      }),
+    );
+    children.push(
+      Box({
+        position: "absolute",
+        left: 404,
+        top: verticalRowTop + 30,
         width: 1,
-        height: canvasHeight - 40,
+        height: rowHeight - 40,
         background: "#2d2d2d",
       }),
     );
@@ -145,7 +159,7 @@ const svg = engine.renderToSvg(vnode);`,
           wrap: "char",
           maxLines: 7,
           ellipsis: true,
-          flowBox: { x: 16, y: 36, width: 372, height: canvasHeight - 46 },
+          flowBox: { x: 16, y: 36, width: 372, height: rowHeight - 46 },
           exclusions: [
             { kind: "rect", x: rect.x, y: rect.y, width: rect.w, height: rect.h, marginPx: 8 },
             { kind: "circle", cx: circ.cx, cy: circ.cy, r: circ.r, marginPx: 8 },
@@ -220,7 +234,7 @@ const svg = engine.renderToSvg(vnode);`,
           wrap: "char",
           fit: "shrink",
           minFontSizePx: 8,
-          flowBox: { x: 420, y: 36, width: 364, height: canvasHeight - 46 },
+          flowBox: { x: 420, y: 36, width: 364, height: rowHeight - 46 },
           exclusions: [
             {
               kind: "rect",
@@ -308,24 +322,37 @@ const svg = engine.renderToSvg(vnode);`,
           writingMode: "vertical-rl",
           maxLines: 4,
           ellipsis: true,
-          flowBox: { x: 0, y: 0, width: 140, height: canvasHeight - 46 },
+          flowBox: { x: 0, y: 0, width: 140, height: rowHeight - 46 },
           exclusions: [],
         });
         children.push(
           Box({
             position: "absolute",
-            left: 810,
-            top: 30,
+            left: verticalEllipsisLeft,
+            top: verticalRowTop + 30,
             width: 140,
-            height: canvasHeight - 46,
+            height: rowHeight - 46,
             borderColor: "#474747",
             borderWidth: 1,
           }),
         );
-        renderVerticalFlowFragments(children, result, 14, 1.5, "#e2e8f0", 810, 30);
+        renderVerticalFlowFragments(
+          children,
+          result,
+          14,
+          1.5,
+          "#e2e8f0",
+          verticalEllipsisLeft,
+          verticalRowTop + 30,
+        );
         children.push(
           Box(
-            { position: "absolute", left: 810, top: canvasHeight - 12, width: 140 },
+            {
+              position: "absolute",
+              left: verticalEllipsisLeft,
+              top: verticalRowTop + rowHeight - 12,
+              width: 140,
+            },
             Text(
               { font: FA, fontSizePx: 9, color: "#64748b", wrap: "none" },
               `${result.usedLineCount} cols · maxLines=4`,
@@ -335,7 +362,7 @@ const svg = engine.renderToSvg(vnode);`,
       } catch (error) {
         children.push(
           Box(
-            { position: "absolute", left: 810, top: 40 },
+            { position: "absolute", left: 16, top: verticalRowTop + 40 },
             Text({ font: FA, fontSizePx: 12, color: "#ef4444", wrap: "char" }, String(error)),
           ),
         );
@@ -357,25 +384,38 @@ const svg = engine.renderToSvg(vnode);`,
           writingMode: "vertical-rl",
           fit: "shrink",
           minFontSizePx: 8,
-          flowBox: { x: 0, y: 0, width: 120, height: canvasHeight - 46 },
+          flowBox: { x: 0, y: 0, width: 120, height: rowHeight - 46 },
           exclusions: [],
         });
         children.push(
           Box({
             position: "absolute",
-            left: 970,
-            top: 30,
+            left: verticalFitLeft,
+            top: verticalRowTop + 30,
             width: 120,
-            height: canvasHeight - 46,
+            height: rowHeight - 46,
             borderColor: "#474747",
             borderWidth: 1,
           }),
         );
         const chosenSize = result.chosenFontSizePx ?? 20;
-        renderVerticalFlowFragments(children, result, chosenSize, 1.5, "#e2e8f0", 970, 30);
+        renderVerticalFlowFragments(
+          children,
+          result,
+          chosenSize,
+          1.5,
+          "#e2e8f0",
+          verticalFitLeft,
+          verticalRowTop + 30,
+        );
         children.push(
           Box(
-            { position: "absolute", left: 970, top: canvasHeight - 12, width: 120 },
+            {
+              position: "absolute",
+              left: verticalFitLeft,
+              top: verticalRowTop + rowHeight - 12,
+              width: 120,
+            },
             Text(
               { font: FA, fontSizePx: 9, color: "#64748b", wrap: "none" },
               `fit: ${chosenSize.toFixed(1)}px`,
@@ -385,7 +425,7 @@ const svg = engine.renderToSvg(vnode);`,
       } catch (error) {
         children.push(
           Box(
-            { position: "absolute", left: 970, top: 40 },
+            { position: "absolute", left: 420, top: verticalRowTop + 40 },
             Text({ font: FA, fontSizePx: 12, color: "#ef4444", wrap: "char" }, String(error)),
           ),
         );

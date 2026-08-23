@@ -10,7 +10,7 @@ import type { Preset } from "../types";
 export const flowRichPreset: Preset = {
   title: "Flow Rich, Vertical & Ruby",
   description:
-    "Rich text spans (left), vertical-rl columns with an intentional missing-glyph tofu marker (center), and ruby annotations (right). Drag obstacles to reflow.",
+    "Rich text spans and ruby annotations share the top row; vertical-rl columns use the full bottom row with an intentional missing-glyph tofu marker. Drag obstacles to reflow.",
   source: `import { Box, Canvas, Text } from "@boundsvg/core";
 
 // Rich text spans: mixed sizes and colors with obstacle avoidance
@@ -50,16 +50,16 @@ const vert = engine.layoutTextFlowWithExclusions({
   text: "祇園精舎の鐘の声、諸行無常の響きあり。…",
   fontFamily: "${FA}", fontSizePx: 14, lineHeight: 1.5,
   language: "ja", wrap: "char", writingMode: "vertical-rl",
-  flowBox: { x: 300, y: 30, width: 236, height: 240 },
-  exclusions: [{ kind: "rect", x: 460, y: 100, width: 60, height: 70, marginPx: 6 }],
+  flowBox: { x: 16, y: 310, width: 528, height: 240 },
+  exclusions: [{ kind: "rect", x: 460, y: 380, width: 60, height: 70, marginPx: 6 }],
 });
 
 // Ruby annotations with obstacle
 const ruby = engine.layoutTextFlowWithExclusions({
   fontFamily: "${FA}", fontSizePx: 15, lineHeight: 1.9,
   text: "", language: "ja", wrap: "char",
-  flowBox: { x: 564, y: 30, width: 260, height: 240 },
-  exclusions: [{ kind: "rect", x: 720, y: 60, width: 90, height: 50, marginPx: 6 }],
+  flowBox: { x: 284, y: 30, width: 260, height: 240 },
+  exclusions: [{ kind: "rect", x: 440, y: 60, width: 90, height: 50, marginPx: 6 }],
   spans: [
     { text: "枕草子", rubyText: "まくらのそうし", rubyFontSizePx: 7 },
     { text: "　" },
@@ -69,14 +69,15 @@ const ruby = engine.layoutTextFlowWithExclusions({
 });
 
 const vnode = Canvas(
-  { width: 840, height: 280, background: "#1a1a1a" },
+  { width: 560, height: 560, background: "#1a1a1a" },
   ...children,
 );
 
 const svg = engine.renderToSvg(vnode);`,
   build: (engine?) => {
-    const canvasWidth = 840;
-    const canvasHeight = 280;
+    const canvasWidth = 560;
+    const rowHeight = 280;
+    const canvasHeight = rowHeight * 2;
     if (!engine) {
       return Canvas({ width: canvasWidth, height: canvasHeight, background: "#1a1a1a" });
     }
@@ -92,7 +93,7 @@ const svg = engine.renderToSvg(vnode);`,
     );
     children.push(
       Box(
-        { position: "absolute", left: 560, top: 8 },
+        { position: "absolute", left: 284, top: 8 },
         Text({ font: FA, fontSizePx: 11, color: "#475569" }, "Ruby (drag)"),
       ),
     );
@@ -100,27 +101,27 @@ const svg = engine.renderToSvg(vnode);`,
     children.push(
       Box({
         position: "absolute",
-        left: 284,
+        left: 276,
         top: 26,
         width: 1,
-        height: canvasHeight - 36,
+        height: rowHeight - 36,
         background: "#2d2d2d",
       }),
     );
     children.push(
       Box({
         position: "absolute",
-        left: 550,
-        top: 26,
-        width: 1,
-        height: canvasHeight - 36,
+        left: 16,
+        top: rowHeight,
+        width: canvasWidth - 32,
+        height: 1,
         background: "#2d2d2d",
       }),
     );
 
-    buildFlowRichSection(engine, children, canvasHeight);
-    buildFlowVerticalSection(engine, children, canvasHeight);
-    buildFlowRubySection(engine, children, canvasHeight);
+    buildFlowRichSection(engine, children, rowHeight);
+    buildFlowVerticalSection(engine, children, rowHeight, rowHeight);
+    buildFlowRubySection(engine, children, rowHeight);
 
     return Canvas({ width: canvasWidth, height: canvasHeight, background: "#1a1a1a" }, ...children);
   },

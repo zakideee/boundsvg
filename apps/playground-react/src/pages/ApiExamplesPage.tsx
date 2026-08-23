@@ -26,6 +26,7 @@ import "prismjs/components/prism-tsx";
 import { getPrismGrammar } from "../../../playground-shared/prism.js";
 import { BBoxOverlayField, SelectField } from "../components/fields";
 import { RenderSurface } from "../components/RenderSurface";
+import { useMobileViewer, useResetPreviewForMobile } from "../hooks/use-mobile-viewer";
 import { useSvgInspect } from "../hooks/use-svg-inspect";
 import { asset } from "../lib/asset";
 import { generateJsxSnippet } from "../lib/codegen";
@@ -640,6 +641,8 @@ export function ApiExamplesPage() {
   const [isPending, startTransition] = useTransition();
   const [viewTab, setViewTab] = useState<ApiViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
+  const mobileViewer = useMobileViewer();
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
 
   const vnode = useMemo(() => buildApiShowcaseVNode(), []);
   const interactiveData = useMemo(() => buildInteractiveVNode(), []);
@@ -679,7 +682,7 @@ export function ApiExamplesPage() {
 
   return (
     <div className="split-layout">
-      <aside className="panel controls-panel">
+      <aside className="panel controls-panel mobile-viewer-secondary">
         <h3>API</h3>
         <SelectField
           id="api-view"

@@ -10,6 +10,7 @@ import type { EventEffectOverlayDisplayOptions } from "../../../../playground-sh
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
 import { CheckField, ColorField, NumberField, Section, SelectField } from "../../components/fields";
 import { RenderSurface } from "../../components/RenderSurface";
+import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspect } from "../../hooks/use-svg-inspect";
 import { generateFullComponent, generateJsxSnippet } from "../../lib/codegen";
 import type { RendererMode } from "../../types";
@@ -76,6 +77,8 @@ export function TransformPage() {
   const [isPending, startTransition] = useTransition();
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
+  const mobileViewer = useMobileViewer();
+  useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
   const deferred = useDeferredValue(state);
 
   const update = <K extends keyof ExtendedState>(key: K, value: ExtendedState[K]) => {
@@ -246,7 +249,7 @@ export function TransformPage() {
           />
         </Section>
 
-        <Section title="Render">
+        <Section title="Render" className="mobile-viewer-secondary">
           <SelectField
             id="transform-renderer"
             label="Renderer"
