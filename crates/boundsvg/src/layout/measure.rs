@@ -42,8 +42,16 @@ pub(super) struct MeasureContext<'a> {
 // Taffy measures in f32 while boundtext accumulates advances in f64. Round
 // intrinsic answers outward, then reserve one guard ULP only when Taffy feeds
 // a measured shrink-to-fit width back into the text engine.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "Taffy dimensions are f32 while text measurements are f64"
+)]
+fn layout_f32(value: f64) -> f32 {
+    value as f32
+}
+
 fn ceil_nonnegative_f32(value: f64) -> f32 {
-    let rounded = value as f32;
+    let rounded = layout_f32(value);
     if value > 0.0 && rounded.is_finite() && f64::from(rounded) < value {
         return f32::from_bits(rounded.to_bits() + 1);
     }
@@ -61,7 +69,7 @@ fn measured_width_px(value: f64, max_width: f32, is_intrinsic_width: bool) -> f3
     let measured = if is_intrinsic_width {
         ceil_nonnegative_f32(value)
     } else {
-        value as f32
+        layout_f32(value)
     };
     measured.min(max_width)
 }
