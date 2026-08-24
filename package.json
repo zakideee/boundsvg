@@ -48,7 +48,11 @@
     "bench:smoke": "pnpm --filter @boundsvg/bench bench:smoke",
     "typecheck": "pnpm --filter @boundsvg/shape build && pnpm --filter @boundsvg/core build && pnpm --filter @boundsvg/browser build && pnpm --filter @boundsvg/worker build && pnpm --filter @boundsvg/video build && pnpm --filter @boundsvg/react build && pnpm --filter @boundsvg/cli build && pnpm --filter @boundsvg/extras build && pnpm --filter @boundsvg/testing build && pnpm --filter @boundsvg/bench typecheck && pnpm check:public-declarations && tsc --build --noEmit tsconfig.check.json && tsc -p packages/core/tsconfig.type-tests.json --noEmit && tsc -p packages/react/tsconfig.type-tests.json --noEmit",
     "check:public-declarations": "node scripts/check-public-declarations.mjs",
+    "check:release-version-sync": "node scripts/check-release-version-sync.mjs",
+    "check:release-version-transition": "node scripts/check-release-version-transition.mjs",
+    "check:release-artifacts": "node scripts/check-release-version-sync.mjs --artifacts",
     "check:third-party-source-overrides": "node scripts/check-third-party-source-overrides.mjs",
+    "test:release-version-sync": "node --test scripts/check-release-version-sync.test.mjs scripts/check-release-version-transition.test.mjs scripts/package-version-contract.test.mjs scripts/sync-cargo-version.test.mjs",
     "test:third-party-source-overrides": "node --test scripts/check-third-party-source-overrides.test.mjs",
     "knip": "knip",
     "lint": "biome check .",
@@ -58,7 +62,7 @@
     "format": "biome format --write . && prettier --write '**/*.md' '**/*.yml' '**/*.yaml' '**/*.html' --ignore-unknown",
     "format:check": "biome check . && prettier --check '**/*.md' '**/*.yml' '**/*.yaml' '**/*.html' --ignore-unknown",
     "changeset": "changeset",
-    "version": "changeset version && bash scripts/sync-cargo-version.sh"
+    "version": "pnpm check:release-version-transition && changeset version && bash scripts/sync-cargo-version.sh && pnpm check:release-version-sync && pnpm check:release-version-transition"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.2",
@@ -69,11 +73,14 @@
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.2.4",
     "ajv": "8.20.0",
+    "fast-glob": "^3.3.3",
     "json-schema-to-typescript": "15.0.4",
     "knip": "^5.85.0",
     "prettier": "^3.8.1",
+    "semver": "^7.7.4",
     "tsx": "^4.21.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "yaml": "^2.8.2"
   },
   "engines": {
     "node": ">=20",

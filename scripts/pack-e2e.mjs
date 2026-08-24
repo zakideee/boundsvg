@@ -12,12 +12,15 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readPreviousVersion } from "./check-release-version-transition.mjs";
+import { auditPackedWorkspaceDependencyVersions } from "./package-version-contract.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packagesRoot = join(repoRoot, "packages");
 const workDir = mkdtempSync(join(tmpdir(), "boundsvg-pack-e2e-"));
 const fontPath = join(repoRoot, "fixtures", "fonts", "NotoSansJP-Regular.subset.ttf");
 const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
+const checkPreviousCore = process.argv.includes("--check-previous-core");
 function fail(message) {
   throw new Error(`[pack-e2e] ${message}`);
 }
@@ -106,25 +109,9 @@ function assertNoWorkspaceProtocols(packageName, manifest) {
   }
 }
 function assertInternalDependencyVersions(manifest, candidateVersions) {
-  // Candidate packages intentionally use workspace:* so the release artifact pins
-  // every internal edge to the exact version packed in this batch. Peer edges
-  // use workspace:^ instead: consumers may hold a newer compatible dependency,
-  // so the packed range must contain the candidate version rather than pin it.
-  const peers = manifest.peerDependencies ?? {};
-  for (const dependencies of dependencyFields(manifest)) {
-    for (const [dependencyName, specification] of Object.entries(dependencies)) {
-      const candidateVersion = candidateVersions.get(dependencyName);
-      if (!candidateVersion) {
-        continue;
-      }
-      const accepted =
-        dependencies === peers ? [candidateVersion, `^${candidateVersion}`] : [candidateVersion];
-      if (!accepted.includes(specification)) {
-        fail(
-          `${manifest.name} requires ${dependencyName}@${String(specification)}, expected candidate ${candidateVersion}`,
-        );
-      }
-    }
+  const violations = auditPackedWorkspaceDependencyVersions(manifest, candidateVersions);
+  if (violations.length > 0) {
+    fail(violations.join("\n"));
   }
 }
 function collectRelativeTargets(value, targets = []) {
@@ -549,6 +536,66 @@ console.log('[pack-e2e] video WASM default OK');
   writeFileSync(join(workDir, "video.mjs"), source);
   run("node", ["video.mjs"], { cwd: workDir });
 }
+function runPreviousCoreCompatibilitySmoke(packedPackages) {
+  const packedCore = packedPackages.find((item) => item.manifest.name === "@boundsvg/core");
+  const packedVideo = packedPackages.find((item) => item.manifest.name === "@boundsvg/video");
+  if (!packedCore || !packedVideo) {
+    fail("core and video tarballs are required for the compatibility smoke");
+  }
+  const previousCore = readPreviousVersion(repoRoot, packedCore.manifest.version);
+  const consumerDirectory = mkdtempSync(join(tmpdir(), "boundsvg-video-compatibility-"));
+  try {
+    writeFileSync(
+      join(consumerDirectory, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "boundsvg-video-compatibility-consumer",
+          private: true,
+          type: "module",
+          dependencies: {
+            "@boundsvg/core": previousCore.version,
+            "@boundsvg/video": `file:${packedVideo.path}`,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    run(
+      "pnpm",
+      ["install", "--ignore-scripts", "--strict-peer-dependencies", "--frozen-lockfile=false"],
+      { cwd: consumerDirectory },
+    );
+    const installedCore = readJson(
+      join(consumerDirectory, "node_modules", "@boundsvg", "core", "package.json"),
+    );
+    if (installedCore.version !== previousCore.version) {
+      fail(
+        `previous-core smoke installed @boundsvg/core@${String(installedCore.version)}, expected ${previousCore.version}`,
+      );
+    }
+    writeFileSync(
+      join(consumerDirectory, "smoke.mjs"),
+      `import { FatalError } from "@boundsvg/core";
+import { encodePngFramesToMp4 } from "@boundsvg/video";
+
+let observedError;
+try {
+  await encodePngFramesToMp4([], { frameRate: 0 });
+} catch (error) {
+  observedError = error;
+}
+if (!(observedError instanceof FatalError) || observedError.code !== "VIDEO_INVALID_FRAME_RATE") {
+  throw new Error("candidate video did not preserve the previous core error contract");
+}
+`,
+    );
+    run("node", ["smoke.mjs"], { cwd: consumerDirectory });
+    log(`candidate video accepts @boundsvg/core@${previousCore.version}`);
+  } finally {
+    rmSync(consumerDirectory, { recursive: true, force: true });
+  }
+}
 function runWorkerSubpathSmoke() {
   const source = `
 const responses = [];
@@ -587,6 +634,9 @@ try {
   const runtimes = runRuntimeConsumers(entries);
   runBrowserSmoke();
   runVideoSmoke();
+  if (checkPreviousCore) {
+    runPreviousCoreCompatibilitySmoke(packedPackages);
+  }
   runWorkerSubpathSmoke();
   runCliSmoke();
   log(

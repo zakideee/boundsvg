@@ -2,15 +2,33 @@
   "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
   "changelog": ["@changesets/changelog-github", { "repo": "zakideee/boundsvg" }],
   "commit": false,
-  "fixed": [],
+  "fixed": [
+    [
+      "@boundsvg/browser",
+      "@boundsvg/cli",
+      "@boundsvg/core",
+      "@boundsvg/extras",
+      "@boundsvg/react",
+      "@boundsvg/shape",
+      "@boundsvg/testing",
+      "@boundsvg/video",
+      "@boundsvg/worker"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
+  "___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH": {
+    "onlyUpdatePeerDependentsWhenOutOfRange": true
+  },
   "ignore": [
     "@boundsvg/playground-react",
     "@boundsvg/playground-core",
     "@boundsvg/playground-cli",
-    "@boundsvg/docs"
+    "@boundsvg/playground-shared",
+    "@boundsvg/docs",
+    "@boundsvg/bench",
+    "@boundsvg/boundtext-visual-validator"
   ]
 }

@@ -98,6 +98,7 @@ const tasks = [];
 const STATIC_CHECK_IDS = new Set([
   "biome",
   "prettier",
+  "release-version-sync",
   "typecheck-build-chain",
   "third-party-source-overrides",
 ]);
@@ -124,6 +125,12 @@ const shapeBoundaryChanged =
 
 addTask("third-party-source-overrides", "third-party source policy applies to every change", [
   ["pnpm", ["check:third-party-source-overrides"]],
+]);
+
+addTask("release-version-sync", "release versions must stay synchronized", [
+  ["pnpm", ["test:release-version-sync"]],
+  ["node", ["scripts/check-release-version-transition.mjs", "--base", base]],
+  ["pnpm", ["check:release-version-sync"]],
 ]);
 
 if (all) {

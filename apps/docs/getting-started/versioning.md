@@ -6,6 +6,9 @@ title: Versioning & Stability
 
 boundsvg follows [Semantic Versioning](https://semver.org/). All
 `@boundsvg/*` packages are versioned together via changesets.
+The publishable npm packages, the `boundshape`, `boundtext`, `boundsvg`, and
+`boundmp4` crates, and generated node/web/MP4 WASM packages are checked for one
+matching version before release.
 
 ## 0.x expectations
 
@@ -17,6 +20,18 @@ While the major version is `0`:
 - Deprecated APIs keep working for at least one minor release after the
   deprecation is announced, with a `@deprecated` JSDoc tag pointing at the
   replacement.
+
+Version components are independent integers, not decimal fractions. For
+example, the minor release after `0.9.0` is `0.10.0`. Increasing the minor
+component does not move the project toward `1.0.0` automatically; `1.0.0`
+requires a separate decision that the public API is ready for a long-term
+stability commitment.
+
+The release workflow accepts a release type (`patch`, `minor`, or `major`) and
+calculates the next version. It rejects skipped increments and verifies the
+planned and applied transitions against the current release. If any public
+package or crate in the synchronized release group requires a minor bump, the
+entire group moves to the same minor version.
 
 ## Stability tiers
 

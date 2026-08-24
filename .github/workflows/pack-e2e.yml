@@ -45,6 +45,9 @@ jobs:
           pnpm build:wasm:web
           pnpm build:wasm:mp4
 
+      - name: Verify release versions and WASM artifacts
+        run: pnpm check:release-artifacts
+
       - name: Build package outputs and declarations
         run: pnpm typecheck
 

@@ -20,11 +20,17 @@ The changeset file (`.changeset/<random-name>.md`) should be committed with your
 
 ## For maintainers
 
-When changesets have accumulated on `main`, dispatching the release workflow (manual `workflow_dispatch`) opens a **"chore: version packages"** PR that:
+When changesets have accumulated on `main`, dispatch the release workflow with
+`publish` disabled. It opens a **"chore(tools): version packages"** PR that:
 
 - Bumps versions in `package.json`
-- Syncs `crates/boundsvg/Cargo.toml` version with `@boundsvg/core`
+- Syncs the four versioned Rust crate manifests, their path dependency ranges,
+  and `Cargo.lock` with `@boundsvg/core`
 - Updates `CHANGELOG.md` for each affected package
 - Removes consumed changeset files
 
-Merging that PR applies the version bumps. Publishing to npm is not yet enabled.
+Merging that PR applies the version bumps. After the version PR is merged,
+dispatch the workflow with `publish` enabled to rebuild and verify every
+artifact, then publish every package version not yet present on npm. The
+`npm-publish` environment supplies the required approval and credentials; tags
+are created separately with `pnpm changeset tag`.
