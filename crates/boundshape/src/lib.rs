@@ -1421,7 +1421,7 @@ pub fn region_to_svg(region: &Region, options: Option<&CompileGeometryOptions>) 
     )
 }
 
-/// Resolves a symbol definition for the requested output dimensions.
+/// Resolve a symbol definition for the requested output dimensions.
 ///
 /// # Errors
 ///
@@ -1773,7 +1773,7 @@ fn evaluate_geometry_node(node: &GeometryNode) -> Result<Region, ShapeError> {
     evaluate_geometry_node_with_default_fill_rule(node, None)
 }
 
-/// Validates a geometry tree before recursive processing.
+/// Validate a geometry tree before recursive processing.
 ///
 /// # Errors
 ///
