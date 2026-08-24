@@ -1004,6 +1004,78 @@ fn emits_inline_box_decorations_before_text() {
 }
 
 #[test]
+fn aligns_inline_box_decorations_with_centered_horizontal_text() {
+    let mut text_output = output("txt", 5.0, 7.0, 100.0, 40.0);
+    let mut layout = simple_text_layout("hello", 60.0, 20.0);
+    layout.inline_box_decorations = vec![crate::text::types::InlineBoxDecoration {
+        x: 4.0,
+        y: 3.0,
+        width: 12.0,
+        height: 8.0,
+        background: Some("#ff0".to_string()),
+        border_color: None,
+        border_width: None,
+        border_radius: None,
+        span_key: None,
+    }];
+    text_output.text_layout = Some(layout);
+
+    let ir = build_text_ir(
+        &json!({ "textAlign": "center" }),
+        vec![output("root", 0.0, 0.0, 200.0, 100.0), text_output],
+    );
+    let decoration = &ir["root"]["children"][0]["children"][0];
+
+    assert_eq!(
+        decoration["bbox"],
+        json!({ "x": 29.0, "y": 10.0, "w": 12.0, "h": 8.0 })
+    );
+}
+
+#[test]
+fn aligns_vertical_inline_box_decorations_from_the_right_edge() {
+    let mut text_output = output("txt", 5.0, 7.0, 50.0, 100.0);
+    let mut layout = simple_text_layout("縦", 30.0, 80.0);
+    layout.inline_box_decorations = vec![crate::text::types::InlineBoxDecoration {
+        x: 4.0,
+        y: 3.0,
+        width: 12.0,
+        height: 8.0,
+        background: Some("#ff0".to_string()),
+        border_color: None,
+        border_width: None,
+        border_radius: None,
+        span_key: None,
+    }];
+    text_output.text_layout = Some(layout);
+    let ir = build_json(
+        json!({
+            "nodeId": "root",
+            "nodeType": "canvas",
+            "children": [{
+                "nodeId": "txt",
+                "nodeType": "text",
+                "children": [],
+                "text": {
+                    "content": "縦",
+                    "fontSizePx": 16.0,
+                    "fontFamily": ["Main"],
+                    "writingMode": "vertical-rl",
+                },
+                "visual": {},
+            }],
+        }),
+        vec![output("root", 0.0, 0.0, 200.0, 120.0), text_output],
+    );
+    let decoration = &ir["root"]["children"][0]["children"][0];
+
+    assert_eq!(
+        decoration["bbox"],
+        json!({ "x": 29.0, "y": 10.0, "w": 12.0, "h": 8.0 })
+    );
+}
+
+#[test]
 fn emits_inline_rects_in_fixed_paint_order_with_fragment_animation() {
     let mut text_output = output("txt", 5.0, 7.0, 100.0, 24.0);
     let mut layout = simple_text_layout("hello", 60.0, 20.0);

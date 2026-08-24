@@ -161,10 +161,10 @@ pub(super) fn layout_horizontal_tokens(
             h: y,
         },
         chosen_font_size_px,
-        overflow: if kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else if total_count > req.max_lines.unwrap_or(total_count) {
+        overflow: if total_count > req.max_lines.unwrap_or(total_count) {
             TextOverflow::overflow("lines truncated by maxLines")
+        } else if kinsoku_unresolved {
+            TextOverflow::kinsoku_unresolved()
         } else {
             TextOverflow::none()
         },
@@ -302,10 +302,10 @@ pub(super) fn layout_vertical_tokens(
             h: max_column_height,
         },
         chosen_font_size_px,
-        overflow: if kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else if total_count > req.max_lines.unwrap_or(total_count) {
+        overflow: if total_count > req.max_lines.unwrap_or(total_count) {
             TextOverflow::overflow("columns truncated by maxLines")
+        } else if kinsoku_unresolved {
+            TextOverflow::kinsoku_unresolved()
         } else {
             TextOverflow::none()
         },

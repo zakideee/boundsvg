@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createEngineAsync, type Engine } from "@boundsvg/core";
 import { initNodeWasm } from "@boundsvg/core/node";
+import type { IRNode, IRTextNode } from "@boundsvg/core/scene";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   CJK_VARFONT_ALIAS,
@@ -12,44 +13,23 @@ import {
 } from "../src/config";
 import { presets } from "../src/presets/index";
 
-const REPRESENTATIVE_PRESETS = ["fit", "text-on-path-basics", "vertical"] as const;
+const REPRESENTATIVE_PRESETS = [
+  "fit",
+  "text-on-path-basics",
+  "vertical",
+  "vertical-rich-ellipsis",
+] as const;
 
 function font(filename: string): Uint8Array {
   return new Uint8Array(readFileSync(resolve(__dirname, "../../../fixtures/fonts", filename)));
 }
 
-function findTextNodes(node: {
-  type: string;
-  writingMode?: string;
-  lineHeightPx?: number;
-  fontSizePx?: number;
-  textLayoutKind?: string;
-  sourceText?: string;
-  textPath?: {
-    textAnchor: string;
-    pathFit: string;
-    pathOverflow: string;
-  };
-  glyphPaths?: Array<{ text: string }>;
-  children?: unknown[];
-}): Array<{
-  type: string;
-  writingMode?: string;
-  lineHeightPx?: number;
-  fontSizePx?: number;
-  textLayoutKind?: string;
-  sourceText?: string;
-  textPath?: {
-    textAnchor: string;
-    pathFit: string;
-    pathOverflow: string;
-  };
-  glyphPaths?: Array<{ text: string }>;
-  children?: unknown[];
-}> {
+function findTextNodes(node: IRNode): IRTextNode[] {
   const nodes = node.type === "text" ? [node] : [];
-  for (const child of node.children ?? []) {
-    nodes.push(...findTextNodes(child as Parameters<typeof findTextNodes>[0]));
+  if (node.type === "group") {
+    for (const child of node.children ?? []) {
+      nodes.push(...findTextNodes(child));
+    }
   }
   return nodes;
 }
@@ -163,5 +143,23 @@ describe("playground-core public preset smoke", () => {
     expect(verticalText).toBeDefined();
     expect(verticalText!.lineHeightPx).toBeGreaterThan(20);
     expect(verticalText!.lineHeightPx).toBeLessThan(60);
+  });
+
+  it("renders rich vertical overflow into two columns ending with an ellipsis", () => {
+    const textNodes = findTextNodes(
+      engine.renderToIR(presets["vertical-rich-ellipsis"].build(engine)).root,
+    );
+    const ellipsizedText = textNodes.find((node) => node.nodeId === "vertical-rich-ellipsis-text");
+
+    expect(ellipsizedText).toBeDefined();
+    expect(ellipsizedText?.writingMode).toBe("vertical-rl");
+    expect(ellipsizedText?.lines).toHaveLength(2);
+    expect(ellipsizedText?.lines.at(-1)?.text).toMatch(/…$/u);
+    expect(ellipsizedText?.lines.map((line) => line.text).join("")).toBe(
+      "縦書き東京注の省略表示を検証す…",
+    );
+    const positionedGlyphs = ellipsizedText?.lines.flatMap((line) => line.positionedGlyphs ?? []);
+    expect(positionedGlyphs?.some((glyph) => glyph.sourceRole === "rubyAnnotation")).toBe(true);
+    expect(positionedGlyphs?.find((glyph) => glyph.text === "注")?.fill).toBe("#67e8f9");
   });
 });

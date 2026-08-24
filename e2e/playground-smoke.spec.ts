@@ -84,6 +84,23 @@ test.describe("public playground smoke", () => {
     await expect(page.getByAltText("Worker PNG output")).toBeVisible({ timeout: 30_000 });
   });
 
+  test("Text Flow rendered code follows preset changes", async ({ page }) => {
+    const errors = collectPageErrors(page);
+    await page.goto("/#/text-flow");
+    await expect(page.locator(".text-flow-canvas svg").first()).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Rendered SVG", exact: true }).click();
+    const renderedSvgCode = page.locator(".preview-body .code-block");
+    const presetButton = (label: string) =>
+      page.locator('button[data-playground-locator-level="sample"]', { hasText: label });
+
+    await expect(renderedSvgCode).toContainText("flow-obstacle-left-rect");
+    await presetButton("Flow Rich, Vertical & Ruby").click();
+    await expect(renderedSvgCode).toContainText("flow-obstacle-rich-circle");
+    await presetButton("Vertical Rich Ellipsis").click();
+    await expect(renderedSvgCode).toContainText("vertical-rich-ellipsis-text");
+    expect(errors).toEqual([]);
+  });
+
   test("Transform presets expose every authored origin anchor", async ({ page }) => {
     const errors = collectPageErrors(page);
     await openRoute(page, "transform");
@@ -448,16 +465,37 @@ test.describe("mobile sample viewer", () => {
     expect(Math.abs(afterScrollY - beforeScrollY)).toBeLessThan(2);
   });
 
-  test("Text Flow samples stack vertical writing below horizontal content", async ({ page }) => {
+  test("Text Flow samples reset their state when switching presets", async ({ page }) => {
+    const errors = collectPageErrors(page);
     await page.goto("/#/text-flow");
     const flowSvg = page.locator(".text-flow-canvas svg").first();
+    const presetSelect = page.locator(".mobile-sample-select select");
+    const sceneNode = (nodeId: string) =>
+      page.locator(`[data-boundsvg-node-id="${nodeId}"]`).first();
     await expect(flowSvg).toBeVisible({ timeout: 30_000 });
     await expect(flowSvg).toHaveAttribute("width", "800");
     await expect(flowSvg).toHaveAttribute("height", "720");
+    await expect(sceneNode("flow-obstacle-left-rect")).toBeVisible();
 
-    await page.locator(".mobile-sample-select select").selectOption("flow-rich");
+    await presetSelect.selectOption("flow-rich");
     await expect(flowSvg).toHaveAttribute("width", "560");
     await expect(flowSvg).toHaveAttribute("height", "560");
+    await expect(sceneNode("flow-obstacle-rich-circle")).toBeVisible();
+    await expect(sceneNode("flow-obstacle-vertical-rect")).toBeVisible();
+    await expect(sceneNode("flow-obstacle-ruby-rect")).toBeVisible();
+
+    await presetSelect.selectOption("vertical-rich-ellipsis");
+    await expect(flowSvg).toHaveAttribute("width", "640");
+    await expect(flowSvg).toHaveAttribute("height", "360");
+    await expect(sceneNode("vertical-rich-ellipsis-text")).toBeVisible();
+    await expect(page.locator(".text-flow-reset-btn")).toHaveCount(0);
+
+    await presetSelect.selectOption("text-flow");
+    await expect(flowSvg).toHaveAttribute("width", "800");
+    await expect(flowSvg).toHaveAttribute("height", "720");
+    await expect(sceneNode("flow-obstacle-left-rect")).toBeVisible();
+    await expect(sceneNode("flow-obstacle-right-rect")).toBeVisible();
+    expect(errors).toEqual([]);
   });
 
   test("Multi-SVG Editor keeps PNG export compact without hiding its settings", async ({

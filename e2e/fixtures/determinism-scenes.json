@@ -57,6 +57,55 @@
       }
     ]
   },
+  "vertical-rich-ellipsis": {
+    "type": "Canvas",
+    "props": {
+      "width": 180,
+      "height": 160,
+      "background": "#fffaf0"
+    },
+    "children": [
+      {
+        "type": "Text",
+        "props": {
+          "font": "NotoSansJP",
+          "fontSizePx": 22,
+          "color": "#1f2937",
+          "language": "ja",
+          "writingMode": "vertical-rl",
+          "width": 120,
+          "height": 112,
+          "maxLines": 2,
+          "ellipsis": true
+        },
+        "children": [
+          "縦書き",
+          {
+            "type": "Ruby",
+            "props": {},
+            "children": [
+              "東京",
+              {
+                "type": "Rt",
+                "props": {},
+                "children": ["とうきょう"]
+              }
+            ]
+          },
+          {
+            "type": "Inline",
+            "props": {
+              "color": "#b91c1c",
+              "background": "#fee2e2",
+              "paddingInline": [2, 2]
+            },
+            "children": ["の省略表示"]
+          },
+          "を検証する長い文章です。"
+        ]
+      }
+    ]
+  },
   "fit-shrink": {
     "type": "Canvas",
     "props": {

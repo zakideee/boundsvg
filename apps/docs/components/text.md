@@ -80,14 +80,17 @@ geometry, skip-ink, animation conflicts, errors, and budgets.
 | `wrap`       | `"none" \| "word" \| "char"`         | `"char"`   | Line wrapping mode                                       |
 | `whiteSpace` | `"normal" \| "nowrap" \| "pre-wrap"` | `"normal"` | Space, newline, and wrapping policy                      |
 | `tabSize`    | `number`                             | `4`        | Spaces per tab in `pre-wrap`; must be a positive integer |
-| `maxLines`   | `number`                             | —          | Maximum number of lines (unlimited if omitted)           |
-| `ellipsis`   | `boolean`                            | `false`    | Show ellipsis on overflow (requires `maxLines`)          |
+| `maxLines`   | `number`                             | —          | Maximum lines or vertical columns (unlimited if omitted) |
+| `ellipsis`   | `boolean`                            | `false`    | End the last allowed line/column with U+2026             |
 
 > `wrap` defaults to `"char"` because the primary use case (telops — broadcast-style caption overlays) wraps CJK text per character. For English text, set `wrap="word"` explicitly.
 
 `whiteSpace="nowrap"` overrides `wrap` and keeps the paragraph on one
 line/column. `tabSize` is used only when `whiteSpace="pre-wrap"`; other
 white-space modes collapse tabs with the surrounding whitespace.
+`ellipsis` requires `maxLines` and applies to plain and rich horizontal or
+vertical text. At a rich truncation boundary, `Ruby`, `InlineBox`, and
+`InlineRect` are kept whole or dropped.
 
 ### Flow around exclusions
 

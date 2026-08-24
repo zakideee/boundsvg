@@ -28,7 +28,14 @@ export const PRESET_GROUPS: PresetGroupDef[] = [
   {
     key: "sizing-flow",
     label: "Sizing & Flow",
-    presetKeys: ["shrinkwrap", "measurements", "text-flow", "flow-rich", "bubble-flow"],
+    presetKeys: [
+      "shrinkwrap",
+      "measurements",
+      "text-flow",
+      "flow-rich",
+      "vertical-rich-ellipsis",
+      "bubble-flow",
+    ],
   },
   {
     key: "geometry",

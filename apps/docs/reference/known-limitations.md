@@ -27,6 +27,9 @@ Items here are known and triaged — please do not file bugs for them; see the
   (`textCombineUpright: "all"`) is experimental and manual-only.
 - Line breaking is greedy (first-fit). There is no paragraph-level optimal
   breaking (Knuth–Plass).
+- Ellipsis requires `maxLines` and always emits U+2026. When rich text is
+  truncated, `Ruby`, `InlineBox`, and `InlineRect` are atomic: each is kept
+  whole or removed rather than split at the truncation boundary.
 
 ### Text on a path
 

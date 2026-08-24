@@ -31,6 +31,7 @@ import { transformPreset } from "./transform";
 import { typingImeTimelinePreset } from "./typing-ime-timeline";
 import { variableFontPreset } from "./variable-font";
 import { verticalPreset } from "./vertical";
+import { verticalRichEllipsisPreset } from "./vertical-rich-ellipsis";
 import { zIndexPreset } from "./z-index";
 
 export const presets: Record<string, Preset> = {
@@ -45,6 +46,7 @@ export const presets: Record<string, Preset> = {
   "text-flow": textFlowPreset,
   "text-effects": textEffectsPreset,
   "flow-rich": flowRichPreset,
+  "vertical-rich-ellipsis": verticalRichEllipsisPreset,
   "bubble-flow": bubbleFlowPreset,
   shrinkwrap: shrinkwrapPreset,
   measurements: measurementsPreset,

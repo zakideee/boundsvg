@@ -721,6 +721,45 @@ mod span_parity {
         assert!(result.bbox.w <= 80.0 + 0.01);
     }
 
+    #[test]
+    fn vertical_rich_text_applies_ellipsis_on_max_lines_overflow() {
+        use crate::text::types::{RichTextNodeInput, WritingMode};
+
+        let reg = test_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &reg,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let nodes = vec![RichTextNodeInput::Text {
+            text: "あいうえおかきくけこさしすせそ".to_string(),
+        }];
+        let mut rich_req = req("", None);
+        rich_req.rich_text = Some(&nodes);
+        rich_req.writing_mode = WritingMode::VerticalRl;
+        rich_req.max_width = 80.0;
+        rich_req.max_height = Some(80.0);
+        rich_req.max_lines = Some(2);
+        rich_req.ellipsis = true;
+
+        let result = layout_text(&rich_req, &font_ctx).expect("vertical rich layout");
+
+        assert!(result.lines.len() <= 2, "must fit in maxLines");
+        assert!(
+            result
+                .lines
+                .last()
+                .expect("last column")
+                .text
+                .ends_with('\u{2026}')
+        );
+        assert!(result.bbox.w <= rich_req.max_width + 0.01);
+        assert!(result.bbox.h <= rich_req.max_height.expect("max height") + 0.01);
+    }
+
     /// richText letterSpacing must match plain: per-grapheme token shaping
     /// previously dropped ALL inter-character tracking on the rich path.
     #[test]

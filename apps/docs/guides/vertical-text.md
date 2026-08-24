@@ -33,6 +33,34 @@ Both `fit="shrink"` and `fit="grow"` use vertical-specific binary search:
 
 - Fit condition: `columns × lineHeightPx ≤ maxWidth` AND `max column height ≤ maxHeight`
 
+### Ellipsis in Vertical Mode
+
+Set `maxLines` and `ellipsis` together to end the last allowed column with
+U+2026 when content overflows. This works for plain text and rich children such
+as `Inline`, `Ruby`, `InlineBox`, and `InlineRect`.
+
+```tsx
+<Text
+  font="NotoSansJP"
+  fontSizePx={24}
+  writingMode="vertical-rl"
+  width={120}
+  height={160}
+  maxLines={2}
+  ellipsis
+>
+  縦書きの
+  <Ruby>
+    東京<Rt>とうきょう</Rt>
+  </Ruby>
+  <Inline color="#b91c1c">省略表示を確認する長い文章</Inline>
+</Text>
+```
+
+`height` limits the inline extent of each column; `width` and `maxLines` limit
+the block extent and number of columns. Rich atomic children are kept whole or
+dropped at the truncation boundary.
+
 ## Japanese Kinsoku (Line Breaking Rules)
 
 Kinsoku (禁則) processing prevents typographically incorrect line breaks in Japanese text. Set `language="ja"` to enable it.

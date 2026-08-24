@@ -13,6 +13,13 @@
     "animatedWebpSha256": "68638e6e4e69a28e08b60272ca521fe31adc3d41db0b37f6fe940fb816364c63",
     "animatedGifSha256": "0c823801ce5e4148df0b7ed014d8ff7c72987f81610d169f28bffbc9f5f317cc"
   },
+  "vertical-rich-ellipsis": {
+    "svgSha256": "1da2455b6cb4e77267abea8d28efb68a317c74aa05e64c53ceeffc3b5342cbf0",
+    "pngSha256": "5b7579c77b2c97174be2b430c9719a01024489c4f3452d2380705aaf902c71dc",
+    "webpSha256": "d8ed9d9dbf3ffbe8d245d60a5b9e1ca3238c64540f3ffc7d9c08a91ba1e59bc0",
+    "animatedWebpSha256": "aae2dd6ad8e0024db5fa775a15992cb47cc791f235179a8532a66339fef17608",
+    "animatedGifSha256": "bb7a98fc7bfecd3dd088ce394d85a01e879bd684e056a3049cd38ec033858f30"
+  },
   "fit-shrink": {
     "svgSha256": "b371b23033542d1a7378bba2e452e9115b609c87e072d8b94c3f8213f84fd66d",
     "pngSha256": "c32cbf8b06040c66e66a8e25c9eeb5a89f87cca8e45e69cfb29ee8b4a81d4020",

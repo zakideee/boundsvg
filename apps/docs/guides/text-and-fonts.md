@@ -540,7 +540,9 @@ Binary search for the largest font size that fits, growing beyond the initial si
 
 ## Ellipsis
 
-Ellipsis truncates text with `…` (U+2026) when it exceeds `maxLines`. Both single-line and multi-line ellipsis are supported.
+Ellipsis truncates text with `…` (U+2026) when it exceeds `maxLines`. Plain and
+rich text support both single-line and multi-line ellipsis in horizontal and
+vertical writing modes.
 
 ```tsx
 <Text font="NotoSansJP" fontSizePx={16} maxLines={1} ellipsis>
@@ -548,9 +550,18 @@ Ellipsis truncates text with `…` (U+2026) when it exceeds `maxLines`. Both sin
 </Text>
 ```
 
-For multi-line ellipsis, the first `maxLines - 1` lines are kept intact and ellipsis is applied to the last allowed line.
+For multi-line ellipsis, the first `maxLines - 1` lines or columns are kept and
+the last allowed one ends with the ellipsis. Horizontal candidates must fit
+the line width. Vertical candidates must fit the column height, total block
+width, and column count.
 
-The algorithm removes grapheme clusters from the end one at a time, appending `…` until the text fits. If 32 removals don't achieve fit, `overflow.type = "cannot_fit"`.
+Rich text truncates ordinary spans at grapheme boundaries. `Ruby`,
+`InlineBox`, and `InlineRect` are kept whole or dropped; decorated spans are
+rebuilt for the retained content. The ellipsis inherits the last retained
+text style, and Japanese tail-prohibition rules can move the boundary backward.
+Prefix selection uses a bounded binary search. With `fit="shrink"` or
+`fit="grow"`, font-size selection finishes before the ellipsis prefix is
+searched.
 
 ## Color Format
 

@@ -759,14 +759,20 @@ fn fit_rich_text(
         req.max_font_size_px.unwrap_or(req.font_size_px * 4.0)
     };
     let mut best: Option<TextLayoutResult> = None;
+    let defer_ellipsis = req.ellipsis && req.max_lines.is_some();
+    let unellipsized_request = defer_ellipsis.then(|| TextLayoutRequest {
+        ellipsis: false,
+        ..req.clone()
+    });
+    let fit_request = unellipsized_request.as_ref().unwrap_or(req);
 
     for _ in 0..iterations {
         if hi - lo < epsilon {
             break;
         }
         let mid = (lo + hi) * 0.5;
-        let candidate = layout_rich_text_at_font_size(req, font_ctx, mid)?;
-        let fits = rich_text_fits(req, &candidate);
+        let candidate = layout_rich_text_at_font_size(fit_request, font_ctx, mid)?;
+        let fits = rich_text_fits_constraints(req, &candidate);
         if fits {
             best = Some(candidate.clone());
             lo = mid;
@@ -775,15 +781,32 @@ fn fit_rich_text(
         }
     }
 
-    best.or_else(|| layout_rich_text_at_font_size(req, font_ctx, lo))
+    let result = best.or_else(|| layout_rich_text_at_font_size(fit_request, font_ctx, lo))?;
+    if defer_ellipsis && !rich_text_fits_constraints(req, &result) {
+        return apply_rich_ellipsis(req, font_ctx, result.chosen_font_size_px).or(Some(result));
+    }
+    Some(result)
 }
 
-fn rich_text_fits(req: &TextLayoutRequest, result: &TextLayoutResult) -> bool {
-    if result.bbox.w > req.max_width + 0.001 {
+const RICH_TEXT_CONSTRAINT_TOLERANCE_PX: f64 = 0.001;
+const HORIZONTAL_RICH_ELLIPSIS_TOLERANCE_PX: f64 = 0.01;
+
+fn rich_text_fits_constraints(req: &TextLayoutRequest, result: &TextLayoutResult) -> bool {
+    if !rich_text_fits_geometry(req, result) {
+        return false;
+    }
+    matches!(
+        result.overflow.overflow_type.as_str(),
+        "none" | "kinsoku_unresolved"
+    )
+}
+
+fn rich_text_fits_geometry(req: &TextLayoutRequest, result: &TextLayoutResult) -> bool {
+    if result.bbox.w > req.max_width + RICH_TEXT_CONSTRAINT_TOLERANCE_PX {
         return false;
     }
     if let Some(max_h) = req.max_height {
-        if result.bbox.h > max_h + 0.001 {
+        if result.bbox.h > max_h + RICH_TEXT_CONSTRAINT_TOLERANCE_PX {
             return false;
         }
     }
@@ -792,7 +815,21 @@ fn rich_text_fits(req: &TextLayoutRequest, result: &TextLayoutResult) -> bool {
             return false;
         }
     }
-    result.overflow.overflow_type == "none"
+    true
+}
+
+fn rich_text_requires_ellipsis(req: &TextLayoutRequest, result: &TextLayoutResult) -> bool {
+    result.overflow.overflow_type == "overflow"
+        || (req.is_vertical() && !rich_text_fits_geometry(req, result))
+}
+
+fn rich_ellipsis_candidate_fits(req: &TextLayoutRequest, result: &TextLayoutResult) -> bool {
+    if req.is_vertical() {
+        return rich_text_fits_constraints(req, result);
+    }
+    let max_width = req.max_width.max(1.0);
+    result.lines.len() <= req.max_lines.unwrap_or(result.lines.len())
+        && result.bbox.w <= max_width + HORIZONTAL_RICH_ELLIPSIS_TOLERANCE_PX
 }
 
 fn layout_rich_text_at_font_size(
@@ -823,13 +860,19 @@ fn layout_rich_text_at_font_size(
         });
     }
     if req.is_vertical() {
-        layout_vertical_tokens(
+        let result = layout_vertical_tokens(
             req,
             &prepared.tokens,
             &prepared.decoration_spans,
             chosen_font_size_px,
             prepared.warnings,
-        )
+        )?;
+        if req.ellipsis && req.max_lines.is_some() && rich_text_requires_ellipsis(req, &result) {
+            if let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px) {
+                return Some(ellipsized);
+            }
+        }
+        Some(result)
     } else {
         let result = layout_horizontal_tokens(
             req,
@@ -839,9 +882,7 @@ fn layout_rich_text_at_font_size(
             prepared.warnings,
         )?;
         // maxLines + ellipsis: relayout with truncated inline nodes.
-        // (Vertical rich content still truncates without an ellipsis —
-        // known residual, same as the vertical inline paths.)
-        if req.ellipsis && req.max_lines.is_some() && result.overflow.overflow_type != "none" {
+        if req.ellipsis && req.max_lines.is_some() && rich_text_requires_ellipsis(req, &result) {
             if let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px) {
                 return Some(ellipsized);
             }
@@ -853,21 +894,31 @@ fn layout_rich_text_at_font_size(
 /// Apply ellipsis to rich text by relayout: truncate the flattened inline
 /// nodes at grapheme granularity (ruby and inline boxes are atomic — kept
 /// whole or dropped), append "…" styled as the last kept segment, and
-/// binary-search the largest kept prefix that fits within `maxLines`.
+/// binary-search the largest kept prefix that fits within the horizontal line
+/// or vertical column constraints.
 fn apply_rich_ellipsis(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     chosen_font_size_px: f64,
 ) -> Option<TextLayoutResult> {
-    let max_lines = req.max_lines?;
+    apply_rich_ellipsis_with_probe_observer(req, font_ctx, chosen_font_size_px, &mut || {})
+}
+
+fn apply_rich_ellipsis_with_probe_observer(
+    req: &TextLayoutRequest,
+    font_ctx: &FontContext<'_>,
+    chosen_font_size_px: f64,
+    on_probe: &mut impl FnMut(),
+) -> Option<TextLayoutResult> {
+    req.max_lines?;
     let (inline_nodes, default_style, _) = build_inline_nodes(req, font_ctx, chosen_font_size_px);
     let total = count_inline_graphemes(&inline_nodes);
     if total == 0 {
         return None;
     }
 
-    let max_width = req.max_width.max(1.0);
-    let probe = |keep: usize| -> Option<TextLayoutResult> {
+    let mut probe = |keep: usize| -> Option<TextLayoutResult> {
+        on_probe();
         let (mut truncated, _consumed) = truncate_inline_nodes(&inline_nodes, keep);
         let ellipsis_style =
             last_segment_style(&truncated).unwrap_or_else(|| default_style.clone());
@@ -889,17 +940,25 @@ fn apply_rich_ellipsis(
             ellipsis: false,
             ..req.clone()
         };
-        layout_horizontal_tokens(
-            &probe_req,
-            &tokens,
-            &decoration_spans,
-            chosen_font_size_px,
-            Vec::new(),
-        )
+        if req.is_vertical() {
+            layout_vertical_tokens(
+                &probe_req,
+                &tokens,
+                &decoration_spans,
+                chosen_font_size_px,
+                Vec::new(),
+            )
+        } else {
+            layout_horizontal_tokens(
+                &probe_req,
+                &tokens,
+                &decoration_spans,
+                chosen_font_size_px,
+                Vec::new(),
+            )
+        }
     };
-    let fits = |result: &TextLayoutResult| {
-        result.lines.len() <= max_lines && result.bbox.w <= max_width + 0.01
-    };
+    let fits = |result: &TextLayoutResult| rich_ellipsis_candidate_fits(req, result);
 
     // Binary search the largest keep count whose relayout fits. Keeping
     // everything is known not to fit (the caller checked overflow).
@@ -944,6 +1003,20 @@ fn apply_rich_ellipsis(
 
     result.overflow = TextOverflow::overflow("ellipsis applied");
     Some(result)
+}
+
+/// Extra probes allowed for fallback and kinsoku boundary adjustment.
+#[cfg(test)]
+const RICH_ELLIPSIS_PROBE_OVERHEAD: usize = 3;
+
+#[cfg(test)]
+fn rich_ellipsis_probe_limit(unit_count: usize) -> usize {
+    let binary_search_steps = if unit_count <= 1 {
+        0
+    } else {
+        usize::BITS as usize - (unit_count - 1).leading_zeros() as usize
+    };
+    binary_search_steps + RICH_ELLIPSIS_PROBE_OVERHEAD
 }
 
 /// Count the grapheme budget of inline nodes: segment text by graphemes,
@@ -3832,6 +3905,433 @@ mod tests {
     }
 
     #[test]
+    fn horizontal_rich_ellipsis_retains_subpixel_fit_tolerance() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let rich_nodes = vec![RichTextNodeInput::Text {
+            text: "境界".to_string(),
+        }];
+        let request = TextLayoutRequest {
+            rich_text: Some(&rich_nodes),
+            max_width: 200.0,
+            max_lines: Some(1),
+            ..test_request()
+        };
+        let result = layout_rich_text(&request, &font_ctx).expect("horizontal rich layout");
+
+        assert!(rich_ellipsis_candidate_fits(
+            &TextLayoutRequest {
+                max_width: result.bbox.w - 0.005,
+                ..request.clone()
+            },
+            &result,
+        ));
+        assert!(!rich_ellipsis_candidate_fits(
+            &TextLayoutRequest {
+                max_width: result.bbox.w - 0.02,
+                ..request.clone()
+            },
+            &result,
+        ));
+
+        let mut subpixel_result = result.clone();
+        subpixel_result.bbox.w = 0.75;
+        assert!(rich_ellipsis_candidate_fits(
+            &TextLayoutRequest {
+                max_width: 0.25,
+                ..request
+            },
+            &subpixel_result,
+        ));
+    }
+
+    #[test]
+    fn vertical_rich_ellipsis_ends_the_last_column_and_inherits_style() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let rich_nodes = vec![
+            RichTextNodeInput::Span {
+                text: "青".to_string(),
+                style: test_style(20.0, "#2563eb"),
+            },
+            RichTextNodeInput::Span {
+                text: "赤赤赤赤赤赤赤赤赤赤".to_string(),
+                style: test_style(20.0, "#dc2626"),
+            },
+        ];
+        let request = TextLayoutRequest {
+            rich_text: Some(&rich_nodes),
+            font_size_px: 20.0,
+            max_width: 120.0,
+            max_height: Some(72.0),
+            max_lines: Some(2),
+            ellipsis: true,
+            writing_mode: WritingMode::VerticalRl,
+            ..test_request()
+        };
+
+        let result = layout_rich_text(&request, &font_ctx).expect("vertical rich ellipsis");
+
+        assert_eq!(result.lines.len(), 2);
+        assert!(
+            result
+                .lines
+                .last()
+                .expect("last column")
+                .text
+                .ends_with('\u{2026}')
+        );
+        let ellipsis = result
+            .lines
+            .iter()
+            .flat_map(|line| line.positioned_glyphs.as_deref().unwrap_or_default().iter())
+            .find(|glyph| glyph.text == "\u{2026}")
+            .expect("ellipsis glyph");
+        assert_eq!(ellipsis.fill.as_deref(), Some("#dc2626"));
+        assert_eq!(result.overflow.overflow_type, "overflow");
+        assert!(result.bbox.w <= request.max_width + 0.01);
+        assert!(result.bbox.h <= request.max_height.expect("max height") + 0.01);
+    }
+
+    #[test]
+    fn rich_ellipsis_keeps_ruby_inline_box_and_inline_rect_atomic() {
+        let ruby = RichInlineNode::Ruby(RichRuby {
+            ruby_position: RubyPosition::Over,
+            ruby_align: RubyAlign::Center,
+            ruby_gap_px: 0.0,
+            ruby_offset_px: 0.0,
+            ruby_line_sizing: RubyLineSizing::Stable,
+            base: vec![RichSegment {
+                text: "東京".to_string(),
+                style: test_resolved_style(16.0),
+                combine: false,
+                decoration_runs: Vec::new(),
+            }],
+            rt_levels: vec![vec![RichSegment {
+                text: "とうきょう".to_string(),
+                style: test_resolved_style(8.0),
+                combine: false,
+                decoration_runs: Vec::new(),
+            }]],
+        });
+        let inline_box = RichInlineNode::InlineBox(RichInlineBox {
+            children: vec![RichInlineNode::Segment(RichSegment {
+                text: "囲み".to_string(),
+                style: test_resolved_style(16.0),
+                combine: false,
+                decoration_runs: Vec::new(),
+            })],
+            padding_inline: [2.0, 2.0],
+            border_width: 1.0,
+            background: Some("#eeeeee".to_string()),
+            border_color: None,
+            border_radius: None,
+            span_key: None,
+        });
+        let inline_rect = RichInlineNode::InlineRect(RichInlineRect {
+            input: InlineRectInput {
+                fragment_id: "marker".to_string(),
+                inline_size_px: 8.0,
+                block_size_px: None,
+                advance_px: Some(8.0),
+                block_align: None,
+                color: "#16a34a".to_string(),
+                border_radius_px: None,
+                opacity: None,
+                paint_order: None,
+            },
+            style: test_resolved_style(16.0),
+        });
+
+        assert!(
+            truncate_inline_nodes(std::slice::from_ref(&ruby), 1)
+                .0
+                .is_empty()
+        );
+        assert!(matches!(
+            truncate_inline_nodes(std::slice::from_ref(&ruby), 2)
+                .0
+                .as_slice(),
+            [RichInlineNode::Ruby(_)]
+        ));
+        assert!(matches!(
+            truncate_inline_nodes(std::slice::from_ref(&inline_box), 1)
+                .0
+                .as_slice(),
+            [RichInlineNode::InlineBox(_)]
+        ));
+        assert!(matches!(
+            truncate_inline_nodes(std::slice::from_ref(&inline_rect), 1)
+                .0
+                .as_slice(),
+            [RichInlineNode::InlineRect(_)]
+        ));
+    }
+
+    #[test]
+    fn vertical_rich_ellipsis_rebuilds_decorations_and_respects_kinsoku() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let decorated_nodes = vec![RichTextNodeInput::DecoratedSpan {
+            style: test_style(20.0, "#111111"),
+            children: vec![RichTextNodeInput::Text {
+                text: "装飾付き縦書きテキスト".to_string(),
+            }],
+            padding_inline: Some([2.0, 2.0]),
+            background: Some("#fef3c7".to_string()),
+            border_color: Some("#f59e0b".to_string()),
+            border_width: Some(1.0),
+            border_radius: Some([3.0, 3.0, 3.0, 3.0]),
+            span_key: Some("highlight".to_string()),
+        }];
+        let decorated_request = TextLayoutRequest {
+            rich_text: Some(&decorated_nodes),
+            font_size_px: 20.0,
+            max_width: 80.0,
+            max_height: Some(68.0),
+            max_lines: Some(1),
+            ellipsis: true,
+            writing_mode: WritingMode::VerticalRl,
+            ..test_request()
+        };
+        let decorated =
+            layout_rich_text(&decorated_request, &font_ctx).expect("decorated ellipsis");
+        assert!(decorated.lines[0].text.ends_with('\u{2026}'));
+        assert!(decorated.inline_box_decorations.iter().any(|decoration| {
+            decoration.span_key.as_deref() == Some("highlight")
+                && decoration.background.as_deref() == Some("#fef3c7")
+        }));
+
+        let kinsoku_nodes = vec![RichTextNodeInput::Text {
+            text: "天地（玄黄宇宙洪荒".to_string(),
+        }];
+        let mut observed_backoff = false;
+        for max_height in 60..=100 {
+            let request = TextLayoutRequest {
+                rich_text: Some(&kinsoku_nodes),
+                font_size_px: 20.0,
+                max_width: 80.0,
+                max_height: Some(f64::from(max_height)),
+                max_lines: Some(1),
+                ellipsis: true,
+                language: Language::Ja,
+                writing_mode: WritingMode::VerticalRl,
+                ..test_request()
+            };
+            let result = layout_rich_text(&request, &font_ctx).expect("kinsoku ellipsis");
+            let text = &result.lines[0].text;
+            assert!(!text.ends_with("（\u{2026}"));
+            if text == "天地\u{2026}" {
+                observed_backoff = true;
+            }
+        }
+        assert!(observed_backoff, "expected a tail-prohibition backoff case");
+    }
+
+    #[test]
+    fn vertical_rich_ellipsis_handles_shrink_and_grow_fallbacks() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let rich_nodes = vec![RichTextNodeInput::Text {
+            text: "天地玄黄宇宙洪荒日月盈昃辰宿列張".to_string(),
+        }];
+
+        for fit in [FitMode::Shrink, FitMode::Grow] {
+            let request = TextLayoutRequest {
+                rich_text: Some(&rich_nodes),
+                font_size_px: if fit == FitMode::Shrink { 24.0 } else { 8.0 },
+                min_font_size_px: Some(12.0),
+                max_font_size_px: Some(24.0),
+                max_width: 80.0,
+                max_height: Some(48.0),
+                max_lines: Some(1),
+                ellipsis: true,
+                fit,
+                writing_mode: WritingMode::VerticalRl,
+                ..test_request()
+            };
+            let result = layout_rich_text(&request, &font_ctx).expect("fit ellipsis");
+            assert_eq!(result.lines.len(), 1);
+            assert!(result.lines[0].text.ends_with('\u{2026}'));
+            assert!(result.bbox.h <= request.max_height.expect("max height") + 0.01);
+        }
+    }
+
+    #[test]
+    fn horizontal_rich_ellipsis_handles_shrink_and_grow_fallbacks() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let rich_nodes = vec![RichTextNodeInput::Text {
+            text: "天地玄黄宇宙洪荒日月盈昃辰宿列張".to_string(),
+        }];
+
+        for fit in [FitMode::Shrink, FitMode::Grow] {
+            let request = TextLayoutRequest {
+                rich_text: Some(&rich_nodes),
+                font_size_px: if fit == FitMode::Shrink { 24.0 } else { 8.0 },
+                min_font_size_px: Some(12.0),
+                max_font_size_px: Some(24.0),
+                max_width: 80.0,
+                max_lines: Some(1),
+                ellipsis: true,
+                fit,
+                ..test_request()
+            };
+            let result = layout_rich_text(&request, &font_ctx).expect("fit ellipsis");
+            assert_eq!(result.lines.len(), 1);
+            assert!(result.lines[0].text.ends_with('\u{2026}'));
+            assert!(result.bbox.w <= request.max_width + 0.01);
+        }
+    }
+
+    #[test]
+    fn vertical_rich_non_overflow_output_is_independent_of_ellipsis() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let rich_nodes = vec![RichTextNodeInput::Text {
+            text: "縦書".to_string(),
+        }];
+        let base_request = TextLayoutRequest {
+            rich_text: Some(&rich_nodes),
+            font_size_px: 20.0,
+            max_width: 120.0,
+            max_height: Some(160.0),
+            max_lines: Some(2),
+            writing_mode: WritingMode::VerticalRl,
+            ..test_request()
+        };
+        let without = layout_rich_text(&base_request, &font_ctx).expect("plain rich layout");
+        let with = layout_rich_text(
+            &TextLayoutRequest {
+                ellipsis: true,
+                ..base_request.clone()
+            },
+            &font_ctx,
+        )
+        .expect("non-overflow ellipsis layout");
+
+        assert_eq!(without.lines.len(), with.lines.len());
+        assert_eq!(without.lines[0].text, with.lines[0].text);
+        assert!((without.bbox.w - with.bbox.w).abs() < 1e-9);
+        assert!((without.bbox.h - with.bbox.h).abs() < 1e-9);
+        assert_eq!(with.overflow.overflow_type, "none");
+    }
+
+    #[test]
+    fn rich_ellipsis_probe_count_is_logarithmically_bounded() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let ruby = RichTextNodeInput::Ruby {
+            ruby_position: Some("over".to_string()),
+            ruby_align: Some("center".to_string()),
+            ruby_gap_px: None,
+            ruby_offset_px: None,
+            ruby_line_sizing: None,
+            style: test_style(16.0, "#111111"),
+            base: vec![RichTextNodeInput::Text {
+                text: "東".to_string(),
+            }],
+            rt: vec![RichTextNodeInput::Text {
+                text: "とう".to_string(),
+            }],
+            rt_levels: Vec::new(),
+        };
+        let inline_box = RichTextNodeInput::InlineBox {
+            style: test_style(16.0, "#111111"),
+            children: vec![RichTextNodeInput::Text {
+                text: "箱".to_string(),
+            }],
+            padding_inline: None,
+            background: None,
+            border_color: None,
+            border_width: None,
+            border_radius: None,
+            span_key: None,
+        };
+
+        assert_eq!(rich_ellipsis_probe_limit(64), 9);
+        assert_eq!(rich_ellipsis_probe_limit(256), 11);
+        assert_eq!(rich_ellipsis_probe_limit(1024), 13);
+
+        for unit_count in [64usize, 256, 1024] {
+            let cases = [
+                vec![RichTextNodeInput::Text {
+                    text: "縦".repeat(unit_count),
+                }],
+                vec![ruby.clone(); unit_count],
+                vec![inline_box.clone(); unit_count],
+            ];
+            for rich_nodes in &cases {
+                let request = TextLayoutRequest {
+                    rich_text: Some(rich_nodes),
+                    font_size_px: 16.0,
+                    max_width: 80.0,
+                    max_height: Some(48.0),
+                    max_lines: Some(1),
+                    ellipsis: true,
+                    writing_mode: WritingMode::VerticalRl,
+                    ..test_request()
+                };
+                let mut probe_count = 0;
+                apply_rich_ellipsis_with_probe_observer(&request, &font_ctx, 16.0, &mut || {
+                    probe_count += 1;
+                })
+                .expect("ellipsis probe result");
+                assert!(probe_count <= rich_ellipsis_probe_limit(unit_count));
+            }
+        }
+    }
+
+    #[test]
     fn inline_language_overrides_paragraph_kinsoku_in_both_writing_modes() {
         let registry = test_font_registry();
         let families = vec!["NotoSansJP".to_string()];
@@ -4013,6 +4513,215 @@ mod tests {
                     .map(|line| line.text.as_str())
                     .collect::<Vec<_>>(),
                 vec!["。。"; 6]
+            );
+        }
+    }
+
+    #[test]
+    fn rich_ellipsis_preserves_kinsoku_diagnostic_without_constraint_overflow() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let rich_nodes = vec![RichTextNodeInput::Span {
+            text: "。".repeat(12),
+            style: test_style(20.0, "#dc2626"),
+        }];
+
+        for writing_mode in [WritingMode::HorizontalTb, WritingMode::VerticalRl] {
+            for fit in [FitMode::None, FitMode::Shrink] {
+                let request = TextLayoutRequest {
+                    rich_text: Some(&rich_nodes),
+                    font_size_px: 20.0,
+                    line_height: Some(1.2),
+                    max_width: if writing_mode == WritingMode::HorizontalTb {
+                        40.0
+                    } else {
+                        300.0
+                    },
+                    max_height: Some(if writing_mode == WritingMode::HorizontalTb {
+                        300.0
+                    } else {
+                        40.0
+                    }),
+                    max_lines: Some(6),
+                    wrap: WrapMode::Char,
+                    fit,
+                    ellipsis: true,
+                    language: Language::Ja,
+                    writing_mode,
+                    ..test_request()
+                };
+                let result = layout_rich_text(&request, &font_ctx).expect("rich kinsoku layout");
+
+                assert_eq!(result.overflow.overflow_type, "kinsoku_unresolved");
+                assert_eq!(
+                    result
+                        .lines
+                        .iter()
+                        .map(|line| line.text.as_str())
+                        .collect::<String>(),
+                    "。".repeat(12)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn plain_and_rich_fit_share_kinsoku_constraint_semantics() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let source_text = "。".repeat(12);
+        let rich_nodes = vec![RichTextNodeInput::Text {
+            text: source_text.clone(),
+        }];
+
+        for writing_mode in [WritingMode::HorizontalTb, WritingMode::VerticalRl] {
+            for fit in [FitMode::Shrink, FitMode::Grow] {
+                let base_request = TextLayoutRequest {
+                    text: &source_text,
+                    font_size_px: 20.0,
+                    max_font_size_px: Some(32.0),
+                    max_width: if writing_mode == WritingMode::HorizontalTb {
+                        40.0
+                    } else {
+                        300.0
+                    },
+                    max_height: Some(if writing_mode == WritingMode::HorizontalTb {
+                        300.0
+                    } else {
+                        40.0
+                    }),
+                    max_lines: Some(6),
+                    wrap: WrapMode::Char,
+                    fit,
+                    ellipsis: true,
+                    language: Language::Ja,
+                    writing_mode,
+                    ..test_request()
+                };
+                let plain = crate::text::engine::layout_text(&base_request, &font_ctx)
+                    .expect("plain kinsoku fit");
+                let rich = layout_rich_text(
+                    &TextLayoutRequest {
+                        text: "",
+                        rich_text: Some(&rich_nodes),
+                        ..base_request.clone()
+                    },
+                    &font_ctx,
+                )
+                .expect("rich kinsoku fit");
+
+                for result in [&plain, &rich] {
+                    assert_eq!(result.overflow.overflow_type, "kinsoku_unresolved");
+                    assert_eq!(
+                        result
+                            .lines
+                            .iter()
+                            .map(|line| line.text.as_str())
+                            .collect::<String>(),
+                        source_text
+                    );
+                    assert!(
+                        !result
+                            .lines
+                            .iter()
+                            .any(|line| line.text.contains('\u{2026}'))
+                    );
+                    assert!(result.bbox.w <= base_request.max_width + 0.001);
+                    assert!(result.bbox.h <= base_request.max_height.expect("max height") + 0.001);
+                }
+                assert_eq!(plain.lines.len(), rich.lines.len());
+            }
+        }
+    }
+
+    #[test]
+    fn rich_ellipsis_distinguishes_kinsoku_from_max_lines_overflow() {
+        let registry = test_font_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let source_text = "。".repeat(12);
+        let rich_nodes = vec![RichTextNodeInput::Span {
+            text: source_text.clone(),
+            style: test_style(20.0, "#dc2626"),
+        }];
+
+        for writing_mode in [WritingMode::HorizontalTb, WritingMode::VerticalRl] {
+            let base_request = TextLayoutRequest {
+                rich_text: Some(&rich_nodes),
+                font_size_px: 20.0,
+                line_height: Some(1.2),
+                max_width: if writing_mode == WritingMode::HorizontalTb {
+                    40.0
+                } else {
+                    300.0
+                },
+                max_height: Some(if writing_mode == WritingMode::HorizontalTb {
+                    300.0
+                } else {
+                    40.0
+                }),
+                max_lines: Some(5),
+                wrap: WrapMode::Char,
+                ellipsis: true,
+                language: Language::Ja,
+                writing_mode,
+                ..test_request()
+            };
+
+            let ellipsized = layout_rich_text(&base_request, &font_ctx).expect("rich ellipsis");
+            assert_eq!(ellipsized.lines.len(), 5);
+            assert!(
+                ellipsized
+                    .lines
+                    .last()
+                    .expect("last line or column")
+                    .text
+                    .ends_with('\u{2026}')
+            );
+            assert_eq!(ellipsized.overflow.overflow_type, "overflow");
+
+            let shrunk = layout_rich_text(
+                &TextLayoutRequest {
+                    fit: FitMode::Shrink,
+                    ..base_request.clone()
+                },
+                &font_ctx,
+            )
+            .expect("rich shrink fit");
+            assert!(shrunk.chosen_font_size_px < base_request.font_size_px);
+            assert_eq!(
+                shrunk
+                    .lines
+                    .iter()
+                    .map(|line| line.text.as_str())
+                    .collect::<String>(),
+                source_text
+            );
+            assert!(
+                !shrunk
+                    .lines
+                    .iter()
+                    .any(|line| line.text.contains('\u{2026}'))
             );
         }
     }

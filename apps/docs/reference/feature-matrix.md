@@ -18,7 +18,7 @@ may change in any minor release), **Not supported** (documented gap).
 | Vertical writing (`vertical-rl`, UTR #50, vert/vkna)    | Supported     | `textOrientation: "sideways"` not implemented                                                                                        |
 | Ruby annotations (`Ruby`/`Rt`)                          | Supported     | Multiple `Rt` levels, tunable `rubyGapPx`/`rubyOffsetPx`; `inter-character` falls back with warning; long-ruby overhang is warned    |
 | Tate-chu-yoko (`textCombineUpright: "all"`)             | Experimental  | Manual only; no automatic TCY grouping                                                                                               |
-| Auto-fit (`fit: shrink/grow`), ellipsis, max lines      | Supported     | Horizontal and vertical                                                                                                              |
+| Auto-fit (`fit: shrink/grow`), ellipsis, max lines      | Supported     | Plain and rich text in horizontal and vertical writing                                                                               |
 | Variable fonts (`fontVariationSettings`)                | Supported     |                                                                                                                                      |
 | Font fallback chains                                    | Supported     | Alias-driven, per-character glyph availability                                                                                       |
 | WOFF2 / TTF / OTF input                                 | Supported     | WOFF2 decoded at registration                                                                                                        |

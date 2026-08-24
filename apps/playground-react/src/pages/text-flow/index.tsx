@@ -1,4 +1,4 @@
-import type { DebugOverlayPart, VNode } from "@boundsvg/react";
+import type { DebugOverlayPart, Engine, VNode } from "@boundsvg/react";
 import { useBoundSvg } from "@boundsvg/react/provider";
 import Prism from "prismjs";
 import "prismjs/components/prism-markup";
@@ -7,6 +7,10 @@ import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
 import { useCallback, useMemo, useState, useTransition } from "react";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
+import {
+  buildVerticalRichEllipsisVNode,
+  verticalRichEllipsisPresetMetadata,
+} from "../../../../playground-shared/vertical-rich-ellipsis-preset.js";
 import { BBoxOverlayField, Section } from "../../components/fields";
 import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspect } from "../../hooks/use-svg-inspect";
@@ -20,9 +24,10 @@ import {
   INITIAL_FLOW_OBSTACLES,
   INITIAL_FLOW_RICH_OBSTACLES,
 } from "./obstacle-types";
+import { StaticFlowCanvas } from "./StaticFlowCanvas";
 import { buildFlowRichVNode, buildTextFlowVNode } from "./vnode-builders";
 
-type FlowPreset = "text-flow" | "flow-rich";
+type FlowPreset = "text-flow" | "flow-rich" | typeof verticalRichEllipsisPresetMetadata.key;
 type ViewTab = "preview" | "svg" | "jsx" | "component";
 type CodeLayout = "tab" | "panel";
 
@@ -39,7 +44,23 @@ const PRESETS: { key: FlowPreset; label: string; description: string }[] = [
     description:
       "Rich text and ruby share the top row; vertical-rl columns use the full bottom row. Drag obstacles to reflow.",
   },
+  verticalRichEllipsisPresetMetadata,
 ];
+
+function buildInitialPresetVNode(preset: FlowPreset, engine: Engine): VNode {
+  switch (preset) {
+    case "text-flow":
+      return buildTextFlowVNode(engine, INITIAL_FLOW_OBSTACLES);
+    case "flow-rich":
+      return buildFlowRichVNode(engine, INITIAL_FLOW_RICH_OBSTACLES);
+    case "vertical-rich-ellipsis":
+      return buildVerticalRichEllipsisVNode();
+    default: {
+      const exhaustivePreset: never = preset;
+      return exhaustivePreset;
+    }
+  }
+}
 
 function FlowPresetControl({
   mobileViewer,
@@ -84,6 +105,55 @@ function FlowPresetControl({
   );
 }
 
+function FlowPresetCanvas({
+  preset,
+  debugOverlayParts,
+  onVNodeChange,
+}: {
+  preset: FlowPreset;
+  debugOverlayParts: readonly DebugOverlayPart[];
+  onVNodeChange: (vnode: VNode | null) => void;
+}) {
+  switch (preset) {
+    case "text-flow":
+      return (
+        <FlowCanvas
+          key="text-flow"
+          initialObstacles={INITIAL_FLOW_OBSTACLES}
+          hitTest={hitTestFlowObstacles}
+          applyDrag={applyFlowDrag}
+          buildVNode={buildTextFlowVNode}
+          debugOverlayParts={debugOverlayParts}
+          onVNodeChange={onVNodeChange}
+        />
+      );
+    case "flow-rich":
+      return (
+        <FlowCanvas
+          key="flow-rich"
+          initialObstacles={INITIAL_FLOW_RICH_OBSTACLES}
+          hitTest={hitTestFlowRichObstacles}
+          applyDrag={applyFlowRichDrag}
+          buildVNode={buildFlowRichVNode}
+          debugOverlayParts={debugOverlayParts}
+          onVNodeChange={onVNodeChange}
+        />
+      );
+    case "vertical-rich-ellipsis":
+      return (
+        <StaticFlowCanvas
+          buildVNode={buildVerticalRichEllipsisVNode}
+          debugOverlayParts={debugOverlayParts}
+          onVNodeChange={onVNodeChange}
+        />
+      );
+    default: {
+      const exhaustivePreset: never = preset;
+      return exhaustivePreset;
+    }
+  }
+}
+
 export function TextFlowPage() {
   const { engine, status } = useBoundSvg();
   const mobileViewer = useMobileViewer();
@@ -92,14 +162,26 @@ export function TextFlowPage() {
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
   const [codeLayout, setCodeLayout] = useState<CodeLayout>("tab");
   useResetPreviewForMobile(mobileViewer, setViewTab, setCodeLayout);
-  const [currentVNode, setCurrentVNode] = useState<VNode | null>(null);
+  const [latestPresetVNode, setLatestPresetVNode] = useState<{
+    preset: FlowPreset;
+    vnode: VNode | null;
+  } | null>(null);
   const [, startTransition] = useTransition();
 
   const activePreset = PRESETS.find((presetOption) => presetOption.key === preset) ?? PRESETS[0];
 
-  const handleVNodeChange = useCallback((vnode: VNode | null) => {
-    setCurrentVNode(vnode);
-  }, []);
+  const initialPresetVNode = useMemo(
+    () => (engine ? buildInitialPresetVNode(preset, engine) : null),
+    [engine, preset],
+  );
+  const currentVNode =
+    engine && latestPresetVNode?.preset === preset ? latestPresetVNode.vnode : initialPresetVNode;
+  const handleVNodeChange = useCallback(
+    (vnode: VNode | null) => {
+      setLatestPresetVNode({ preset, vnode });
+    },
+    [preset],
+  );
 
   const showCode = viewTab !== "preview" && viewTab !== "svg";
   const activeCodeTab: "svg" | "jsx" | "component" =
@@ -226,28 +308,11 @@ export function TextFlowPage() {
               dangerouslySetInnerHTML={{ __html: highlightedRenderedSvg }}
             />
           ) : (
-            <>
-              {preset === "text-flow" && (
-                <FlowCanvas
-                  initialObstacles={INITIAL_FLOW_OBSTACLES}
-                  hitTest={hitTestFlowObstacles}
-                  applyDrag={applyFlowDrag}
-                  buildVNode={buildTextFlowVNode}
-                  debugOverlayParts={debugOverlayParts}
-                  onVNodeChange={handleVNodeChange}
-                />
-              )}
-              {preset === "flow-rich" && (
-                <FlowCanvas
-                  initialObstacles={INITIAL_FLOW_RICH_OBSTACLES}
-                  hitTest={hitTestFlowRichObstacles}
-                  applyDrag={applyFlowRichDrag}
-                  buildVNode={buildFlowRichVNode}
-                  debugOverlayParts={debugOverlayParts}
-                  onVNodeChange={handleVNodeChange}
-                />
-              )}
-            </>
+            <FlowPresetCanvas
+              preset={preset}
+              debugOverlayParts={debugOverlayParts}
+              onVNodeChange={handleVNodeChange}
+            />
           )}
         </div>
 

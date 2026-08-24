@@ -38,6 +38,33 @@ export const DETERMINISM_SCENES: Record<string, VNode> = {
     ),
   ),
 
+  "vertical-rich-ellipsis": createElement(
+    "Canvas",
+    { width: 180, height: 160, background: "#fffaf0" },
+    createElement(
+      "Text",
+      {
+        font: "NotoSansJP",
+        fontSizePx: 22,
+        color: "#1f2937",
+        language: "ja",
+        writingMode: "vertical-rl",
+        width: 120,
+        height: 112,
+        maxLines: 2,
+        ellipsis: true,
+      },
+      "縦書き",
+      createElement("Ruby", {}, "東京", createElement("Rt", {}, "とうきょう")),
+      createElement(
+        "Inline",
+        { color: "#b91c1c", background: "#fee2e2", paddingInline: [2, 2] },
+        "の省略表示",
+      ),
+      "を検証する長い文章です。",
+    ),
+  ),
+
   "fit-shrink": createElement(
     "Canvas",
     { width: 320, height: 120, background: "#ffffff" },
