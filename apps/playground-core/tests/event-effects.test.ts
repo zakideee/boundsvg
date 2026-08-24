@@ -1,8 +1,59 @@
+import { collectInspectionBBoxes } from "@boundsvg/core/inspect";
+import type { IR } from "@boundsvg/core/scene";
 import { describe, expect, it } from "vitest";
 import {
+  buildNodeBBoxMap,
   isTransformBoxAxisAligned,
   resolveInspectOverlayParts,
 } from "../../playground-shared/event-effects.js";
+
+describe("buildNodeBBoxMap", () => {
+  it("preserves transformed wrapper geometry when a leaf shares its node id", () => {
+    const ir: IR = {
+      width: 100,
+      height: 80,
+      drawOrder: ["transformed"],
+      warnings: [],
+      root: {
+        type: "group",
+        nodeId: "auto:0",
+        bbox: { x: 0, y: 0, w: 100, h: 80 },
+        children: [
+          {
+            type: "group",
+            nodeId: "transformed",
+            bbox: { x: 10, y: 20, w: 40, h: 24 },
+            transform: { translateX: 5, translateY: 7, originX: 20, originY: 12 },
+            children: [
+              {
+                type: "rect",
+                nodeId: "transformed",
+                bbox: { x: 10, y: 20, w: 40, h: 24 },
+                borderRadius: 6,
+                fill: "#0f172a",
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const matchingEntries = collectInspectionBBoxes(ir).filter(
+      (bbox) => bbox.nodeId === "transformed",
+    );
+    expect(matchingEntries.map((bbox) => bbox.type)).toEqual(["group", "rect"]);
+    expect(matchingEntries[0]?.hasOwnTransform).toBe(true);
+    expect(matchingEntries[1]?.hasOwnTransform).toBe(false);
+
+    const merged = buildNodeBBoxMap(ir).get("transformed");
+    expect(merged?.hasOwnTransform).toBe(true);
+    expect(merged?.origin).toEqual(matchingEntries[0]?.origin);
+    expect(merged?.transformBox).toEqual(matchingEntries[0]?.transformBox);
+    expect(merged?.visualBBox).toEqual(matchingEntries[0]?.visualBBox);
+    expect(merged?.rx).toBe(6);
+    expect(merged?.semantics?.kind).toBe("Box");
+  });
+});
 
 describe("resolveInspectOverlayParts", () => {
   it("returns all overlay parts for all mode with origin", () => {

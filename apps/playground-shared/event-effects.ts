@@ -58,6 +58,7 @@ const LAYOUT_COLOR = "#94a3b8";
 const TRANSFORM_COLOR = "#22d3ee";
 const VISUAL_COLOR = "#f472b6";
 const ORIGIN_COLOR = "#f59e0b";
+const ORIGIN_HALO_COLOR = "#0f172a";
 const HANDLE_FILL = "#0f172a";
 
 /** Events that trigger a brief flash effect (discrete events only). */
@@ -168,7 +169,7 @@ export function buildNodeBBoxMap(ir: IR): Map<string, NodeBBox> {
   const semanticsMap = collectNodeSemantics(ir.root);
   const map = new Map<string, NodeBBox>();
   for (const bbox of inspectionBBoxes) {
-    map.set(bbox.nodeId, {
+    const nextBBox: NodeBBox = {
       semantics: semanticsMap.get(bbox.nodeId),
       x: bbox.x,
       y: bbox.y,
@@ -184,9 +185,18 @@ export function buildNodeBBoxMap(ir: IR): Map<string, NodeBBox> {
       visualBBox: { ...bbox.visualBBox },
       origin: bbox.origin ? { ...bbox.origin } : null,
       hasOwnTransform: bbox.hasOwnTransform,
-    });
+    };
+    const existingBBox = map.get(bbox.nodeId);
+    map.set(
+      bbox.nodeId,
+      existingBBox === undefined ? nextBBox : mergeNodeBBox(existingBBox, nextBBox),
+    );
   }
   return map;
+}
+
+function mergeNodeBBox(existingBBox: NodeBBox, nextBBox: NodeBBox): NodeBBox {
+  return existingBBox.hasOwnTransform && !nextBBox.hasOwnTransform ? existingBBox : nextBBox;
 }
 
 function collectBorderRadiusMap(node: IRNode): Map<string, number> {
@@ -811,31 +821,44 @@ export class EventEffectOverlay {
 
   private createOriginMarker(origin: OverlayPoint): SVGElement {
     const group = document.createElementNS(SVG_NS, "g");
-    const hLine = document.createElementNS(SVG_NS, "line");
-    hLine.setAttribute("x1", String(origin.x - 6));
-    hLine.setAttribute("y1", String(origin.y));
-    hLine.setAttribute("x2", String(origin.x + 6));
-    hLine.setAttribute("y2", String(origin.y));
-    hLine.setAttribute("stroke", ORIGIN_COLOR);
-    hLine.setAttribute("stroke-width", "2");
-    hLine.setAttribute("vector-effect", "non-scaling-stroke");
-    const vLine = document.createElementNS(SVG_NS, "line");
-    vLine.setAttribute("x1", String(origin.x));
-    vLine.setAttribute("y1", String(origin.y - 6));
-    vLine.setAttribute("x2", String(origin.x));
-    vLine.setAttribute("y2", String(origin.y + 6));
-    vLine.setAttribute("stroke", ORIGIN_COLOR);
-    vLine.setAttribute("stroke-width", "2");
-    vLine.setAttribute("vector-effect", "non-scaling-stroke");
+    this.appendOriginMarkerLayer(group, origin, ORIGIN_HALO_COLOR, 5, 4);
+    this.appendOriginMarkerLayer(group, origin, ORIGIN_COLOR, 2, 2.5);
+    return group;
+  }
+
+  private appendOriginMarkerLayer(
+    group: SVGElement,
+    origin: OverlayPoint,
+    color: string,
+    strokeWidth: number,
+    dotRadius: number,
+  ): void {
+    const horizontalLine = document.createElementNS(SVG_NS, "line");
+    horizontalLine.setAttribute("x1", String(origin.x - 6));
+    horizontalLine.setAttribute("y1", String(origin.y));
+    horizontalLine.setAttribute("x2", String(origin.x + 6));
+    horizontalLine.setAttribute("y2", String(origin.y));
+    horizontalLine.setAttribute("stroke", color);
+    horizontalLine.setAttribute("stroke-width", String(strokeWidth));
+    horizontalLine.setAttribute("stroke-linecap", "round");
+    horizontalLine.setAttribute("vector-effect", "non-scaling-stroke");
+    const verticalLine = document.createElementNS(SVG_NS, "line");
+    verticalLine.setAttribute("x1", String(origin.x));
+    verticalLine.setAttribute("y1", String(origin.y - 6));
+    verticalLine.setAttribute("x2", String(origin.x));
+    verticalLine.setAttribute("y2", String(origin.y + 6));
+    verticalLine.setAttribute("stroke", color);
+    verticalLine.setAttribute("stroke-width", String(strokeWidth));
+    verticalLine.setAttribute("stroke-linecap", "round");
+    verticalLine.setAttribute("vector-effect", "non-scaling-stroke");
     const dot = document.createElementNS(SVG_NS, "circle");
     dot.setAttribute("cx", String(origin.x));
     dot.setAttribute("cy", String(origin.y));
-    dot.setAttribute("r", "2.5");
-    dot.setAttribute("fill", ORIGIN_COLOR);
-    group.appendChild(hLine);
-    group.appendChild(vLine);
+    dot.setAttribute("r", String(dotRadius));
+    dot.setAttribute("fill", color);
+    group.appendChild(horizontalLine);
+    group.appendChild(verticalLine);
     group.appendChild(dot);
-    return group;
   }
 
   private createHandleGroup(bbox: NodeBBox): SVGElement {
