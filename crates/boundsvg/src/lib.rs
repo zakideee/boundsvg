@@ -1069,13 +1069,15 @@ pub fn compile_shape_paths(json_input: &str) -> Result<String, JsValue> {
 ///
 /// # Errors
 ///
-/// Returns `JsValue` if the input JSON is invalid or serialization fails.
+/// Returns `JsValue` if the input JSON is invalid, symbol resolution fails,
+/// the resolved geometry exceeds its depth limit, or serialization fails.
 #[wasm_bindgen]
 pub fn resolve_symbol_geometry(json_input: &str) -> Result<String, JsValue> {
     catch_unwind_to_js(AssertUnwindSafe(|| {
         let input: ResolveSymbolGeometryInput = serde_json::from_str(json_input)
             .map_err(|e| JsValue::from_str(&format!("Invalid symbol resolve input: {e}")))?;
-        let geometry = boundshape::resolve_symbol_geometry(&input.definition, &input.options);
+        let geometry = boundshape::resolve_symbol_geometry(&input.definition, &input.options)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         serde_json::to_string(&geometry)
             .map_err(|e| JsValue::from_str(&format!("Failed to serialize symbol geometry: {e}")))
     }))

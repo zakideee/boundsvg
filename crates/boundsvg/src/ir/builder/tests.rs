@@ -6,7 +6,10 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
+use boundshape::MAX_GEOMETRY_TREE_DEPTH;
+
 use super::build_ir;
+use crate::error::EngineError;
 use crate::layout::types::{LayoutNodeInput, LayoutNodeOutput, TextLayoutOutput};
 use crate::text::types::{
     Line, TextBBox, TextDecorationFragment, TextDecorationLine, TextDecorationPaintPath,
@@ -1335,6 +1338,84 @@ fn build_shape_ir(visual: &Value) -> Result<Value, crate::error::EngineError> {
         ]),
     )?;
     Ok(serde_json::to_value(&ir).expect("IR should serialize"))
+}
+
+fn nested_geometry(depth: usize, leaf_id: Option<&str>) -> Value {
+    let mut root = json!({
+        "kind": "path",
+        "d": "M0 0 H10 V10 H0 Z",
+    });
+    if let Some(node_id) = leaf_id {
+        root["nodeId"] = json!(node_id);
+    }
+    for _ in 0..depth {
+        root = json!({
+            "kind": "transform",
+            "transform": {},
+            "child": root,
+        });
+    }
+    json!({
+        "viewBox": { "width": 10.0, "height": 10.0 },
+        "root": root,
+    })
+}
+
+fn build_symbol_ir(symbol_definition: &Value) -> Result<Value, EngineError> {
+    let root = parse_node(json!({
+        "nodeId": "root",
+        "nodeType": "canvas",
+        "children": [{
+            "nodeId": "sym",
+            "nodeType": "symbol",
+            "children": [],
+            "visual": { "symbolDefinition": symbol_definition },
+        }],
+    }));
+    let ir = build_ir(
+        &root,
+        &outputs_map(vec![
+            output("root", 0.0, 0.0, 100.0, 100.0),
+            output("sym", 0.0, 0.0, 20.0, 10.0),
+        ]),
+    )?;
+    Ok(serde_json::to_value(&ir).expect("IR should serialize"))
+}
+
+#[test]
+fn reports_geometry_depth_errors_before_shape_compilation() {
+    let error = build_shape_ir(&json!({
+        "shapeGeometry": nested_geometry(MAX_GEOMETRY_TREE_DEPTH + 1, None),
+    }))
+    .expect_err("over-depth geometry should fail");
+    assert!(matches!(
+        error,
+        EngineError::Structured { code, stage, node_id, .. }
+            if code == "SHAPE_GEOMETRY_MAX_DEPTH"
+                && stage.as_deref() == Some("validate")
+                && node_id.as_deref() == Some("shp")
+    ));
+}
+
+#[test]
+fn reports_depth_added_while_resolving_elastic_symbols() {
+    let error = build_symbol_ir(&json!({
+        "geometry": nested_geometry(MAX_GEOMETRY_TREE_DEPTH, Some("elastic")),
+        "elasticSegments": [{
+            "nodeId": "elastic",
+            "axis": "x",
+            "role": "stretch",
+            "frame": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        }],
+    }))
+    .expect_err("resolved over-depth geometry should fail");
+    assert!(matches!(
+        error,
+        EngineError::Structured { code, stage, node_id, .. }
+            if code == "SHAPE_GEOMETRY_MAX_DEPTH"
+                && stage.as_deref() == Some("validate")
+                && node_id.as_deref() == Some("sym")
+    ));
 }
 
 #[test]

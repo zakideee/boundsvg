@@ -105,6 +105,17 @@ supported props and error codes.
 - Layout is flexbox + CSS Grid via Taffy. There is no block/inline flow
   layout; `Box` is a flex column internally.
 
+## Shape geometry
+
+- Authored `GeometryNode` trees accept nodes through depth 48 (root depth 0).
+  Deeper inline, registered, symbol, hit-test, compile, or flow-exclusion
+  inputs fail with `SHAPE_GEOMETRY_MAX_DEPTH` before bridge serialization.
+  This is a process-safety boundary, not a rendering approximation.
+- Elastic symbol resolution applies the same limit to the resolved tree.
+  Matching `fixed-end` segments and positive-frame `stretch` segments can add
+  a transform wrapper when the target size changes, so authored elastic
+  symbols must leave one depth level of headroom for each such wrapper.
+
 ## Embedded content
 
 - **`<text>` inside `<Svg>`-embedded markup is re-shaped by the viewer /

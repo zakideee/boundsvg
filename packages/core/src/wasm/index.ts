@@ -4,6 +4,11 @@ import { DEFAULT_FONT_WEIGHT } from "../font/types.js";
 import type { LayeredCompositionValidationResult } from "../layered-svg.js";
 import type { ComputeLayoutTransportFn } from "../layout/backend.js";
 import type { ResolvedRasterScale } from "../render-capabilities.js";
+import {
+  assertGeometryTreeDepth,
+  assertResolvedSymbolGeometryDepth,
+  MAX_GEOMETRY_TREE_DEPTH,
+} from "../shape/geometry-depth.js";
 import type {
   CompiledShapePathPart,
   Contour,
@@ -238,40 +243,66 @@ function isGeometryViewBox(value: unknown): value is GeometryDoc["viewBox"] {
   return typeof width === "number" && typeof height === "number";
 }
 
-function isGeometryNode(value: unknown): boolean {
-  if (!isObjectLike(value)) {
+type UnknownGeometryDepthFrame = {
+  node: unknown;
+  depth: number;
+};
+
+const geometryBooleanOps = new Set(["union", "subtract", "intersect", "xor"]);
+
+function pushGeometryArrayChildren(
+  children: unknown,
+  depth: number,
+  pending: UnknownGeometryDepthFrame[],
+): boolean {
+  if (!Array.isArray(children)) {
     return false;
   }
-  const kind = getStringProperty(value, "kind");
-  if (!kind) {
-    return false;
+  for (const child of children) {
+    pending.push({ node: child, depth: depth + 1 });
   }
+  return true;
+}
+
+function pushGeometryNodeChildren(
+  node: object,
+  depth: number,
+  pending: UnknownGeometryDepthFrame[],
+): boolean {
+  const kind = getStringProperty(node, "kind");
   switch (kind) {
     case "path":
-      return typeof getStringProperty(value, "d") === "string";
-    case "group": {
-      const children = Reflect.get(value, "children");
-      return Array.isArray(children) && children.every(isGeometryNode);
-    }
+      return typeof getStringProperty(node, "d") === "string";
+    case "group":
+      return pushGeometryArrayChildren(Reflect.get(node, "children"), depth, pending);
     case "transform":
+      if (!isObjectLike(Reflect.get(node, "transform"))) {
+        return false;
+      }
+      pending.push({ node: Reflect.get(node, "child"), depth: depth + 1 });
+      return true;
+    case "boolean":
       return (
-        isObjectLike(Reflect.get(value, "transform")) && isGeometryNode(Reflect.get(value, "child"))
+        geometryBooleanOps.has(getStringProperty(node, "op") ?? "") &&
+        pushGeometryArrayChildren(Reflect.get(node, "children"), depth, pending)
       );
-    case "boolean": {
-      const operation = getStringProperty(value, "op");
-      const children = Reflect.get(value, "children");
-      return (
-        (operation === "union" ||
-          operation === "subtract" ||
-          operation === "intersect" ||
-          operation === "xor") &&
-        Array.isArray(children) &&
-        children.every(isGeometryNode)
-      );
-    }
     default:
       return false;
   }
+}
+
+function isGeometryNode(value: unknown): boolean {
+  const pending: UnknownGeometryDepthFrame[] = [{ node: value, depth: 0 }];
+  while (pending.length > 0) {
+    const frame = pending.pop();
+    if (!frame || !isObjectLike(frame.node) || frame.depth > MAX_GEOMETRY_TREE_DEPTH) {
+      return false;
+    }
+    if (!pushGeometryNodeChildren(frame.node, frame.depth, pending)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isGeometryDoc(value: unknown): value is GeometryDoc {
@@ -670,6 +701,7 @@ export function isShapeWasmAvailable(): boolean {
 }
 
 export function wasmCompileShapeSvg(geometry: GeometryDoc, options?: ShapeCompileOptions): string {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.compile_shape_svg !== "function") {
     throw new FatalError(
@@ -694,6 +726,7 @@ export function wasmHitTestShapeParts(
   point: { x: number; y: number },
   options?: GeometryHitTestOptions,
 ): GeometryPartHit[] {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.hit_test_shape_parts !== "function") {
     throw new FatalError(
@@ -711,6 +744,7 @@ export function wasmCompileShapePaths(
   geometry: GeometryDoc,
   options?: ShapeCompileOptions,
 ): CompiledShapePathPart[] {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.compile_shape_paths !== "function") {
     throw new FatalError(
@@ -748,6 +782,7 @@ export function wasmResolveSymbolGeometry(
   definition: SymbolDefinition,
   options: ShapeSymbolResolutionOptions,
 ): GeometryDoc {
+  assertResolvedSymbolGeometryDepth(definition, options);
   const wasm = getWasm();
   if (typeof wasm.resolve_symbol_geometry !== "function") {
     throw new FatalError(
@@ -771,6 +806,7 @@ export function wasmResolveSymbolGeometry(
 }
 
 export function wasmEvaluateShapeParts(geometry: GeometryDoc): GeometryPart[] {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.evaluate_shape_parts !== "function") {
     throw new FatalError(
@@ -784,6 +820,7 @@ export function wasmEvaluateShapeParts(geometry: GeometryDoc): GeometryPart[] {
 }
 
 export function wasmEvaluateShapeRegion(geometry: GeometryDoc): Region {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.evaluate_shape_region !== "function") {
     throw new FatalError(
@@ -825,6 +862,8 @@ export function wasmRenderShapeRegionSvg(region: Region, options?: ShapeCompileO
 }
 
 export function wasmDivideShapeRegions(lhs: GeometryDoc, rhs: GeometryDoc): DivideRegions {
+  assertGeometryTreeDepth(lhs);
+  assertGeometryTreeDepth(rhs);
   const wasm = getWasm();
   if (typeof wasm.divide_shape_regions !== "function") {
     throw new FatalError(
@@ -851,6 +890,8 @@ export function wasmComputeShapeIntersections(
   lhs: GeometryDoc,
   rhs: GeometryDoc,
 ): GeometryIntersection[] {
+  assertGeometryTreeDepth(lhs);
+  assertGeometryTreeDepth(rhs);
   const wasm = getWasm();
   if (typeof wasm.compute_shape_intersections !== "function") {
     throw new FatalError(

@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use boundshape::{
     CompileGeometryOptions, GeometryDoc, GeometryNode, GeometryPaint, GeometryPreserveAspectRatio,
-    GeometryViewport, SymbolResolutionOptions, Transform2D,
+    GeometryViewport, ShapeError, SymbolResolutionOptions, Transform2D,
 };
 
 use super::gradient::{is_supported_gradient_function, parse_gradient_for_box};
@@ -1207,10 +1207,7 @@ fn shape_node_label(node_id: &str, is_symbol: bool) -> String {
     }
 }
 
-fn assert_unique_addressable_part_ids(
-    geometry: &GeometryDoc,
-    node_label: &str,
-) -> Result<(), EngineError> {
+fn validate_shape_geometry(geometry: &GeometryDoc, node_label: &str) -> Result<(), EngineError> {
     fn visit(
         node: &GeometryNode,
         next_part_index: &mut usize,
@@ -1239,6 +1236,15 @@ fn assert_unique_addressable_part_ids(
             }
         }
     }
+
+    boundshape::validate_geometry_tree_depth(&geometry.root).map_err(|error| {
+        EngineError::Structured {
+            code: "SHAPE_GEOMETRY_MAX_DEPTH".to_string(),
+            message: error.to_string(),
+            stage: Some("validate".to_string()),
+            node_id: Some(node_label.to_string()),
+        }
+    })?;
 
     let mut next_part_index = 0;
     let mut seen = HashSet::new();
@@ -1273,14 +1279,27 @@ fn resolve_shape_geometry(context: &ShapeChildContext) -> Result<GeometryDoc, En
                 },
             });
         };
-        assert_unique_addressable_part_ids(&symbol.geometry, &label)?;
-        Ok(boundshape::resolve_symbol_geometry(
+        validate_shape_geometry(&symbol.geometry, &label)?;
+        boundshape::resolve_symbol_geometry(
             symbol,
             &SymbolResolutionOptions {
                 width: context.bbox.w,
                 height: context.bbox.h,
             },
-        ))
+        )
+        .map_err(|error| {
+            let (code, stage) = if error == ShapeError::GeometryDepthLimit {
+                ("SHAPE_GEOMETRY_MAX_DEPTH", "validate")
+            } else {
+                ("SHAPE_COMPILE_FAILED", "ir")
+            };
+            EngineError::Structured {
+                code: code.to_string(),
+                message: error.to_string(),
+                stage: Some(stage.to_string()),
+                node_id: Some(label),
+            }
+        })
     } else {
         let Some(geometry) = visual.shape_geometry.as_ref() else {
             return Err(match visual.shape_geometry_id.as_deref() {
@@ -1298,7 +1317,7 @@ fn resolve_shape_geometry(context: &ShapeChildContext) -> Result<GeometryDoc, En
                 },
             });
         };
-        assert_unique_addressable_part_ids(geometry, &label)?;
+        validate_shape_geometry(geometry, &label)?;
         Ok(geometry.clone())
     }
 }
