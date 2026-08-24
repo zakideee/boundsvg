@@ -48,6 +48,13 @@
     "animatedWebpSha256": "c5bb4719b5e1b276bb691e768bff407601f186cd95aa6372ab01c989b94197fb",
     "animatedGifSha256": "2a6137d8ef265e27d482e03d27d012b926a3d84364e1c508ad91bd3797768490"
   },
+  "centered-column-intrinsic-text": {
+    "svgSha256": "d78aa1fba41ab3eb4005330376861b20e888a3f5ce03400a4c98bafb37687fab",
+    "pngSha256": "dbf939e14318c6d4dd9f6fb2c6e0bedc89cf8ab992397b43fd9d44c569f18025",
+    "webpSha256": "0fcdaf732a8f8aadd7d68704e6a7694728ebae1eaa979d2468ede67428a38613",
+    "animatedWebpSha256": "914dd81ea29bb75f3a744e8f7d2f6c38331b1628f35d695154dbf55d8fb602fb",
+    "animatedGifSha256": "96670db966c9990004662db418f9d58eda6507cf9522d5a2e26d274d757a2281"
+  },
   "fallback-mixed-script": {
     "svgSha256": "8d416975d33fcd4c7844b2f2a7847a9e4a609635fb2b12c30e64c56b14c23a86",
     "pngSha256": "45913b86c6e19cae65d684971350cdf1f2fc6b0b169af5ae4f8093b41c0116d5",

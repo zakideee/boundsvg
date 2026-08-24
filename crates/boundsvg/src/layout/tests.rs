@@ -52,6 +52,66 @@ fn plain_text_input(content: &str, font_size_px: f64, wrap: &str) -> TextInput {
     }
 }
 
+fn centered_column_text_input() -> LayoutInput {
+    let text_node = |node_id: &str, content: &str| LayoutNodeInput {
+        node_id: node_id.into(),
+        node_type: "text".into(),
+        authored_id: true,
+        style: TaffyStyleInput::default(),
+        children: vec![],
+        text: Some(plain_text_input(content, 13.0, "char")),
+        text_path: None,
+        image: None,
+        visual: None,
+    };
+
+    LayoutInput {
+        root: LayoutNodeInput {
+            node_id: "canvas".into(),
+            node_type: "canvas".into(),
+            authored_id: true,
+            style: TaffyStyleInput {
+                width: Some(160.0),
+                height: Some(120.0),
+                ..Default::default()
+            },
+            children: vec![LayoutNodeInput {
+                node_id: "column".into(),
+                node_type: "flex".into(),
+                authored_id: true,
+                style: TaffyStyleInput {
+                    flex_direction: Some("column".into()),
+                    justify_content: Some("center".into()),
+                    align_items: Some("center".into()),
+                    width: Some(160.0),
+                    height: Some(120.0),
+                    padding: Some([12.0, 12.0, 12.0, 12.0]),
+                    gap: Some(4.0),
+                    ..Default::default()
+                },
+                children: vec![
+                    text_node("t1", "Same transform,"),
+                    text_node("t2", "every node type."),
+                ],
+                text: None,
+                text_path: None,
+                image: None,
+                visual: None,
+            }],
+            text: None,
+            text_path: None,
+            image: None,
+            visual: None,
+        },
+        fonts: vec![FontInput {
+            alias: "NotoSansJP".into(),
+            weight: 400,
+            style: FontStyle::Normal,
+            data: test_font_data(),
+        }],
+    }
+}
+
 fn nested_layout_input(depth: usize) -> LayoutInput {
     let mut child = LayoutNodeInput {
         node_id: format!("box-{depth}"),
@@ -1024,6 +1084,53 @@ fn test_preferred_frame_does_not_clamp_min_content_queries() {
         measure_min_content(true, false),
         "vertical min-content height must ignore preferredFrame.h"
     );
+}
+
+#[test]
+fn centered_column_text_uses_intrinsic_width_and_resolved_height() {
+    let output = compute_full_layout(&centered_column_text_input()).expect("layout should succeed");
+    let first = output
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "t1")
+        .expect("first text layout");
+    let second = output
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "t2")
+        .expect("second text layout");
+    let first_text = first.text_layout.as_ref().expect("first text result");
+    let second_text = second.text_layout.as_ref().expect("second text result");
+
+    assert_eq!(first_text.lines.as_ref().map(Vec::len), Some(1));
+    assert_eq!(second_text.lines.as_ref().map(Vec::len), Some(1));
+    assert!(
+        (f64::from(first.width) - first_text.measured_width).abs() < 1.0,
+        "first layout width={} measured width={} bbox={:?}",
+        first.width,
+        first_text.measured_width,
+        first_text.bbox
+    );
+    assert!(
+        (f64::from(second.width) - second_text.measured_width).abs() < 1.0,
+        "second layout width={} measured width={} bbox={:?}",
+        second.width,
+        second_text.measured_width,
+        second_text.bbox
+    );
+    assert!(
+        (f64::from(first.height) - first_text.measured_height).abs() < 1.0,
+        "first layout height={} measured height={}",
+        first.height,
+        first_text.measured_height
+    );
+    assert!(
+        (f64::from(second.height) - second_text.measured_height).abs() < 1.0,
+        "second layout height={} measured height={}",
+        second.height,
+        second_text.measured_height
+    );
+    assert!(first.y + first.height <= second.y);
 }
 
 #[test]

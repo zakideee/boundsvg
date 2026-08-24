@@ -270,6 +270,50 @@
       }
     ]
   },
+  "centered-column-intrinsic-text": {
+    "type": "Canvas",
+    "props": {
+      "width": 160,
+      "height": 120,
+      "background": "#111827"
+    },
+    "children": [
+      {
+        "type": "Flex",
+        "props": {
+          "direction": "column",
+          "justifyContent": "center",
+          "alignItems": "center",
+          "width": 160,
+          "height": 120,
+          "padding": 12,
+          "gap": 4
+        },
+        "children": [
+          {
+            "type": "Text",
+            "props": {
+              "id": "t1",
+              "font": "NotoSansJP",
+              "fontSizePx": 13,
+              "color": "#cbd5e1"
+            },
+            "children": ["Same transform,"]
+          },
+          {
+            "type": "Text",
+            "props": {
+              "id": "t2",
+              "font": "NotoSansJP",
+              "fontSizePx": 13,
+              "color": "#cbd5e1"
+            },
+            "children": ["every node type."]
+          }
+        ]
+      }
+    ]
+  },
   "fallback-mixed-script": {
     "type": "Canvas",
     "props": {

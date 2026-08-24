@@ -150,6 +150,33 @@ export const DETERMINISM_SCENES: Record<string, VNode> = {
     ),
   ),
 
+  "centered-column-intrinsic-text": createElement(
+    "Canvas",
+    { width: 160, height: 120, background: "#111827" },
+    createElement(
+      "Flex",
+      {
+        direction: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        width: 160,
+        height: 120,
+        padding: 12,
+        gap: 4,
+      },
+      createElement(
+        "Text",
+        { id: "t1", font: "NotoSansJP", fontSizePx: 13, color: "#cbd5e1" },
+        "Same transform,",
+      ),
+      createElement(
+        "Text",
+        { id: "t2", font: "NotoSansJP", fontSizePx: 13, color: "#cbd5e1" },
+        "every node type.",
+      ),
+    ),
+  ),
+
   "fallback-mixed-script": createElement(
     "Canvas",
     { width: 420, height: 100, background: "#ffffff" },
