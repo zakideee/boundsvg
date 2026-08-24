@@ -1057,6 +1057,7 @@ fn test_preferred_frame_does_not_clamp_min_content_queries() {
         };
         let mut measure_cache = HashMap::new();
         let mut measure_cache_hits = 0;
+        let mut shrink_to_fit_widths = HashMap::new();
         let mut shaped_cache = HashMap::new();
         let mut text_results = HashMap::new();
 
@@ -1068,6 +1069,7 @@ fn test_preferred_frame_does_not_clamp_min_content_queries() {
             available_space,
             &mut measure_cache,
             &mut measure_cache_hits,
+            &mut shrink_to_fit_widths,
             &mut shaped_cache,
             NodeId::new(1),
             &mut text_results,

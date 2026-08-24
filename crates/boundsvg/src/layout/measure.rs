@@ -30,6 +30,8 @@ pub(super) struct MeasureContext<'a> {
     pub(super) measure_cache:
         HashMap<u64, (Size<f32>, Option<crate::text::types::TextLayoutResult>)>,
     pub(super) measure_cache_hits: usize,
+    /// Widths returned to Taffy for a later shrink-to-fit feedback measure.
+    pub(super) shrink_to_fit_widths: HashMap<NodeId, f32>,
     /// Width-independent shaped paragraph cache.
     /// Key excludes `max_width`, `max_height`, `max_lines`, fit, ellipsis, `font_size`.
     pub(super) shaped_cache: HashMap<u64, crate::text::paragraph::ShapedParagraph>,
@@ -37,17 +39,48 @@ pub(super) struct MeasureContext<'a> {
     pub(super) text_results: HashMap<NodeId, crate::text::types::TextLayoutResult>,
 }
 
-// Taffy measures in f32 while boundtext accumulates advances in f64. Expanding
-// a horizontal width constraint by one f32 ULP makes a reported intrinsic size
-// idempotent when Taffy feeds it back into a final measure call.
-fn expanded_horizontal_width_px(value: f32) -> f64 {
-    if value == 0.0 {
-        return f64::from(f32::from_bits(1));
+// Taffy measures in f32 while boundtext accumulates advances in f64. Round
+// intrinsic answers outward, then reserve one guard ULP only when Taffy feeds
+// a measured shrink-to-fit width back into the text engine.
+fn ceil_nonnegative_f32(value: f64) -> f32 {
+    let rounded = value as f32;
+    if value > 0.0 && rounded.is_finite() && f64::from(rounded) < value {
+        return f32::from_bits(rounded.to_bits() + 1);
     }
-    if value.is_finite() && value > 0.0 && value < f32::MAX {
+    rounded
+}
+
+fn horizontal_constraint_px(value: f32, is_shrink_to_fit_feedback: bool) -> f64 {
+    if is_shrink_to_fit_feedback && value > 0.0 && value.is_finite() {
         return f64::from(f32::from_bits(value.to_bits() + 1));
     }
     f64::from(value)
+}
+
+fn measured_width_px(value: f64, max_width: f32, is_intrinsic_width: bool) -> f32 {
+    let measured = if is_intrinsic_width {
+        ceil_nonnegative_f32(value)
+    } else {
+        value as f32
+    };
+    measured.min(max_width)
+}
+
+fn record_shrink_to_fit_width(
+    shrink_to_fit_widths: &mut HashMap<NodeId, f32>,
+    node_id: NodeId,
+    max_width: f32,
+    size: Size<f32>,
+    text_result: &TextLayoutResult,
+    is_feedback_candidate: bool,
+) {
+    if is_feedback_candidate
+        && text_result.lines.len() == 1
+        && text_result.overflow.overflow_type == "none"
+        && size.width < max_width
+    {
+        shrink_to_fit_widths.insert(node_id, size.width);
+    }
 }
 
 fn slice_text_by_byte_range(text: &str, start: usize, end: usize) -> String {
@@ -172,7 +205,7 @@ fn measure_intrinsic_inline_sizes(
 fn build_horizontal_fallback_text_result(
     text_input: &TextInput,
     glyphs: &[shaping::GlyphInfo],
-    max_width: f32,
+    max_width: f64,
     primary_alias: &str,
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
@@ -180,7 +213,7 @@ fn build_horizontal_fallback_text_result(
     let line_metrics =
         resolve_text_input_line_metrics(text_input, font_registry, fallback_registry);
     let line_height_px = line_metrics.line_height_px;
-    let effective_max_w = expanded_horizontal_width_px(max_width);
+    let effective_max_w = max_width;
     let mut line_ranges: Vec<(usize, usize, f64)> = Vec::new();
     let mut line_start = 0usize;
     let mut cur_w = 0.0;
@@ -421,6 +454,7 @@ impl MeasureContext<'_> {
         text_input: &TextInput,
         max_width: f32,
         max_height: f32,
+        is_shrink_to_fit_feedback: bool,
     ) -> u64 {
         let mut hasher = DefaultHasher::new();
         text_input.content.hash(&mut hasher);
@@ -471,6 +505,7 @@ impl MeasureContext<'_> {
         // Hash constraints
         max_width.to_bits().hash(&mut hasher);
         max_height.to_bits().hash(&mut hasher);
+        is_shrink_to_fit_feedback.hash(&mut hasher);
         hasher.finish()
     }
 
@@ -701,6 +736,7 @@ pub(super) fn measure_text_node(
     available_space: Size<AvailableSpace>,
     measure_cache: &mut HashMap<u64, (Size<f32>, Option<crate::text::types::TextLayoutResult>)>,
     measure_cache_hits: &mut usize,
+    shrink_to_fit_widths: &mut HashMap<NodeId, f32>,
     shaped_cache: &mut HashMap<u64, crate::text::paragraph::ShapedParagraph>,
     node_id: NodeId,
     text_results: &mut HashMap<NodeId, crate::text::types::TextLayoutResult>,
@@ -712,6 +748,9 @@ pub(super) fn measure_text_node(
         && matches!(available_space.width, AvailableSpace::MaxContent);
     let height_is_min_content = known_dimensions.height.is_none()
         && matches!(available_space.height, AvailableSpace::MinContent);
+    let is_feedback_candidate = !is_vertical
+        && known_dimensions.width.is_none()
+        && matches!(available_space.width, AvailableSpace::Definite(_));
 
     let mut max_width = known_dimensions
         .width
@@ -757,18 +796,35 @@ pub(super) fn measure_text_node(
             measure_intrinsic_inline_sizes(text_input, font_registry, fallback_registry)
         {
             if width_is_min_content {
-                max_width = intrinsic.min_content_inline_size as f32;
+                max_width = ceil_nonnegative_f32(intrinsic.min_content_inline_size);
             } else if width_is_max_content && max_width >= f32::MAX {
-                max_width = intrinsic.max_content_inline_size as f32;
+                max_width = ceil_nonnegative_f32(intrinsic.max_content_inline_size);
             }
         }
     }
+    let is_shrink_to_fit_feedback = shrink_to_fit_widths
+        .get(&node_id)
+        .is_some_and(|feedback_width| feedback_width.to_bits() == max_width.to_bits());
+    let horizontal_max_width = horizontal_constraint_px(max_width, is_shrink_to_fit_feedback);
 
     // Check measure cache (width-dependent)
-    let cache_key = MeasureContext::measure_cache_key(text_input, max_width, max_height);
+    let cache_key = MeasureContext::measure_cache_key(
+        text_input,
+        max_width,
+        max_height,
+        is_shrink_to_fit_feedback,
+    );
     if let Some(cached) = measure_cache.get(&cache_key) {
         *measure_cache_hits += 1;
         if let Some(ref tr) = cached.1 {
+            record_shrink_to_fit_width(
+                shrink_to_fit_widths,
+                node_id,
+                max_width,
+                cached.0,
+                tr,
+                is_feedback_candidate,
+            );
             text_results.insert(node_id, tr.clone());
         }
         return cached.0;
@@ -777,19 +833,27 @@ pub(super) fn measure_text_node(
     if text_input.flow.is_some() && max_width < f32::MAX && max_height < f32::MAX {
         if let Ok(rust_result) = crate::flow::layout_resolved_text_flow(
             text_input,
-            if is_vertical {
-                f64::from(max_width)
-            } else {
-                expanded_horizontal_width_px(max_width)
-            },
+            horizontal_max_width,
             f64::from(max_height),
             font_registry,
             fallback_registry,
         ) {
             let size = Size {
-                width: rust_result.bbox.w as f32,
+                width: measured_width_px(
+                    rust_result.bbox.w,
+                    max_width,
+                    width_is_min_content || width_is_max_content,
+                ),
                 height: rust_result.bbox.h as f32,
             };
+            record_shrink_to_fit_width(
+                shrink_to_fit_widths,
+                node_id,
+                max_width,
+                size,
+                &rust_result,
+                is_feedback_candidate,
+            );
             if measure_cache.len() >= MEASURE_CACHE_MAX {
                 measure_cache.clear();
             }
@@ -897,7 +961,7 @@ pub(super) fn measure_text_node(
                 text_input.font_size_px,
                 line_height_px,
                 line_metrics.baseline_offset_px,
-                expanded_horizontal_width_px(max_width),
+                horizontal_max_width,
                 effective_wrap,
                 force_newline_breaks,
             );
@@ -943,7 +1007,7 @@ pub(super) fn measure_text_node(
                 line_height_px,
                 text_input.font_size_px,
                 break_result.kinsoku_unresolved,
-                Some(expanded_horizontal_width_px(max_width)),
+                Some(horizontal_max_width),
                 if max_height < f32::MAX {
                     Some(f64::from(max_height))
                 } else {
@@ -953,9 +1017,21 @@ pub(super) fn measure_text_node(
             );
 
             let size = Size {
-                width: (rust_result.bbox.w as f32).min(max_width),
+                width: measured_width_px(
+                    rust_result.bbox.w,
+                    max_width,
+                    width_is_min_content || width_is_max_content,
+                ),
                 height: rust_result.bbox.h as f32,
             };
+            record_shrink_to_fit_width(
+                shrink_to_fit_widths,
+                node_id,
+                max_width,
+                size,
+                &rust_result,
+                is_feedback_candidate,
+            );
 
             if measure_cache.len() >= MEASURE_CACHE_MAX {
                 measure_cache.clear();
@@ -999,7 +1075,7 @@ pub(super) fn measure_text_node(
             max_width: if is_vertical {
                 f64::from(max_width)
             } else {
-                expanded_horizontal_width_px(max_width)
+                horizontal_max_width
             },
             max_height: if max_height < f32::MAX {
                 Some(f64::from(max_height))
@@ -1057,9 +1133,21 @@ pub(super) fn measure_text_node(
         };
         if let Some(rust_result) = rust_result {
             let size = Size {
-                width: (rust_result.bbox.w as f32).min(max_width),
+                width: measured_width_px(
+                    rust_result.bbox.w,
+                    max_width,
+                    width_is_min_content || width_is_max_content,
+                ),
                 height: rust_result.bbox.h as f32,
             };
+            record_shrink_to_fit_width(
+                shrink_to_fit_widths,
+                node_id,
+                max_width,
+                size,
+                &rust_result,
+                is_feedback_candidate,
+            );
 
             if measure_cache.len() >= MEASURE_CACHE_MAX {
                 measure_cache.clear();
@@ -1139,16 +1227,28 @@ pub(super) fn measure_text_node(
             build_horizontal_fallback_text_result(
                 text_input,
                 &shaped.glyphs,
-                max_width,
+                horizontal_max_width,
                 primary_alias,
                 font_registry,
                 fallback_registry,
             )
         };
         let size = Size {
-            width: (rust_result.bbox.w as f32).min(max_width),
+            width: measured_width_px(
+                rust_result.bbox.w,
+                max_width,
+                width_is_min_content || width_is_max_content,
+            ),
             height: rust_result.bbox.h as f32,
         };
+        record_shrink_to_fit_width(
+            shrink_to_fit_widths,
+            node_id,
+            max_width,
+            size,
+            &rust_result,
+            is_feedback_candidate,
+        );
         if measure_cache.len() >= MEASURE_CACHE_MAX {
             measure_cache.clear();
         }
@@ -1167,26 +1267,24 @@ pub(super) fn measure_text_node(
 
 #[cfg(test)]
 mod text_constraint_tests {
-    use super::expanded_horizontal_width_px;
+    use super::{ceil_nonnegative_f32, horizontal_constraint_px, measured_width_px};
 
     #[test]
-    fn expands_finite_constraints_without_changing_sentinels() {
-        let smallest_positive = f64::from(f32::from_bits(1));
-        assert_eq!(expanded_horizontal_width_px(0.0), smallest_positive);
-        assert_eq!(expanded_horizontal_width_px(-0.0), smallest_positive);
+    fn rounds_only_intrinsic_widths_up_to_the_next_f32() {
+        let lower = 100.0_f32;
+        let intrinsic_width = f64::from(lower) + f64::from(f32::EPSILON);
+        let upper = f32::from_bits(lower.to_bits() + 1);
 
-        let finite_constraint = 100.0_f32;
+        assert_eq!(ceil_nonnegative_f32(intrinsic_width), upper);
+        assert_eq!(horizontal_constraint_px(upper, false), f64::from(upper));
         assert_eq!(
-            expanded_horizontal_width_px(finite_constraint),
-            f64::from(f32::from_bits(finite_constraint.to_bits() + 1))
+            horizontal_constraint_px(upper, true),
+            f64::from(f32::from_bits(upper.to_bits() + 1))
         );
-        assert_eq!(expanded_horizontal_width_px(f32::MAX), f64::from(f32::MAX));
-        assert_eq!(expanded_horizontal_width_px(f32::INFINITY), f64::INFINITY);
-        assert_eq!(
-            expanded_horizontal_width_px(f32::NEG_INFINITY),
-            f64::NEG_INFINITY
-        );
-        assert_eq!(expanded_horizontal_width_px(-1.0), -1.0);
-        assert!(expanded_horizontal_width_px(f32::NAN).is_nan());
+        assert_eq!(measured_width_px(intrinsic_width, upper, true), upper);
+        assert_eq!(measured_width_px(intrinsic_width, lower, false), lower);
+        assert_eq!(ceil_nonnegative_f32(0.0), 0.0);
+        assert_eq!(ceil_nonnegative_f32(f64::INFINITY), f32::INFINITY);
+        assert!(ceil_nonnegative_f32(f64::NAN).is_nan());
     }
 }

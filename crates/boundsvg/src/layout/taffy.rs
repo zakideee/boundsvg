@@ -55,6 +55,7 @@ pub(super) fn compute_layout_core(
                     available_space,
                     &mut context.measure_cache,
                     &mut context.measure_cache_hits,
+                    &mut context.shrink_to_fit_widths,
                     &mut context.shaped_cache,
                     node_id,
                     &mut context.text_results,

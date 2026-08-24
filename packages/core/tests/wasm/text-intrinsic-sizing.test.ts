@@ -20,6 +20,7 @@ function findTextNodeById(node: IRNode, nodeId: string): IRNode | undefined {
 
 type SingleTextSceneOptions = {
   alignItems?: "start" | "center" | "end" | "stretch";
+  availableWidth?: number;
   content?: string;
   direction?: "row" | "column";
   explicitWidth?: number;
@@ -30,18 +31,19 @@ type SingleTextSceneOptions = {
 function renderSingleText(engine: Engine, options: SingleTextSceneOptions = {}): IRNode {
   const content = options.content ?? "Same transform,";
   const textChild = options.rich ? createElement("Inline", {}, content) : content;
+  const containerWidth = options.availableWidth ?? 160;
   const scene = createElement(
     "Canvas",
-    { width: 160, height: 120 },
+    { width: containerWidth, height: 120 },
     createElement(
       "Flex",
       {
         direction: options.direction ?? "column",
         justifyContent: "center",
         alignItems: options.alignItems ?? "center",
-        width: 160,
+        width: containerWidth,
         height: 120,
-        padding: 12,
+        padding: options.availableWidth === undefined ? 12 : 0,
       },
       createElement(
         "Text",
@@ -60,6 +62,15 @@ function renderSingleText(engine: Engine, options: SingleTextSceneOptions = {}):
   const textNode = findTextNodeById(engine.renderToIR(scene).root, "subject");
   expect(textNode).toBeDefined();
   return textNode!;
+}
+
+function nextDownF32(value: number): number {
+  const rounded = Math.fround(value);
+  const view = new DataView(new ArrayBuffer(4));
+  view.setFloat32(0, rounded);
+  const bits = view.getUint32(0);
+  view.setUint32(0, rounded >= value ? bits - 1 : bits);
+  return view.getFloat32(0);
 }
 
 function expectResolvedHeightMatchesLayout(textNode: IRNode): void {
@@ -168,5 +179,28 @@ describe("Text intrinsic sizing in Flex", () => {
 
     expect((textNode.lines?.length ?? 0) > 1).toBe(true);
     expectResolvedHeightMatchesLayout(textNode);
+  });
+
+  it.each([
+    { constraint: "explicit width", option: "explicitWidth" as const },
+    { constraint: "available width", option: "availableWidth" as const },
+    { constraint: "preferredFrame", option: "preferredWidth" as const },
+  ])("does not relax $constraint at an f32 boundary", ({ option }) => {
+    for (const hasRichContent of [false, true]) {
+      const natural = renderSingleText(engine, { rich: hasRichContent });
+      const naturalAdvance = natural.lines?.[0]?.width;
+      expect(naturalAdvance).toBeDefined();
+      const constrainedWidth = nextDownF32(naturalAdvance!);
+      expect(constrainedWidth).toBeLessThan(naturalAdvance!);
+
+      const constrained = renderSingleText(engine, {
+        rich: hasRichContent,
+        [option]: constrainedWidth,
+      });
+
+      expect((constrained.lines?.length ?? 0) > 1).toBe(true);
+      expect(constrained.lines?.every((line) => line.width <= constrainedWidth)).toBe(true);
+      expectResolvedHeightMatchesLayout(constrained);
+    }
   });
 });
