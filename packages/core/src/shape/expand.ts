@@ -1,6 +1,7 @@
 import { FatalError } from "../errors.js";
 import type { VNode, VNodeFor } from "../vnode/types.js";
 import { wasmCompileShapePaths } from "../wasm/index.js";
+import { assertGeometryTreeDepth } from "./geometry-depth.js";
 import type {
   CompiledShapePathPart,
   GeometryDoc,
@@ -160,7 +161,8 @@ function shapeNodeLabel(node: VNode): string {
   return `<${node.type}>`;
 }
 
-function assertUniqueAddressablePartIds(geometry: GeometryDoc, nodeId: string): void {
+function assertValidShapeGeometry(geometry: GeometryDoc, nodeId: string): void {
+  assertGeometryTreeDepth(geometry, nodeId);
   const seenPartIds = new Set<string>();
   let nextPartIndex = 0;
   const visit = (geometryNode: GeometryNode): void => {
@@ -197,7 +199,7 @@ function resolveGeometry(node: VNodeFor<"Shape">, registry: ShapeRegistry): Geom
   const { geometry: inlineGeometry, geometryId } = node.props;
   const nodeId = shapeNodeLabel(node);
   if (inlineGeometry) {
-    assertUniqueAddressablePartIds(inlineGeometry, nodeId);
+    assertValidShapeGeometry(inlineGeometry, nodeId);
     return inlineGeometry;
   }
   if (!geometryId) {
@@ -215,7 +217,7 @@ function resolveGeometry(node: VNodeFor<"Shape">, registry: ShapeRegistry): Geom
       { stage: "validate", nodeId },
     );
   }
-  assertUniqueAddressablePartIds(geometry, nodeId);
+  assertValidShapeGeometry(geometry, nodeId);
   return geometry;
 }
 
@@ -223,7 +225,7 @@ function resolveSymbol(node: VNodeFor<"Symbol">, registry: ShapeRegistry): Symbo
   const { symbol: inlineSymbol, symbolId } = node.props;
   const nodeId = shapeNodeLabel(node);
   if (inlineSymbol) {
-    assertUniqueAddressablePartIds(inlineSymbol.geometry, nodeId);
+    assertValidShapeGeometry(inlineSymbol.geometry, nodeId);
     return inlineSymbol;
   }
   if (!symbolId) {
@@ -241,6 +243,6 @@ function resolveSymbol(node: VNodeFor<"Symbol">, registry: ShapeRegistry): Symbo
       { stage: "validate", nodeId },
     );
   }
-  assertUniqueAddressablePartIds(symbol.geometry, nodeId);
+  assertValidShapeGeometry(symbol.geometry, nodeId);
   return symbol;
 }
