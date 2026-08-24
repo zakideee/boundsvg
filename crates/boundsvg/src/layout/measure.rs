@@ -37,6 +37,19 @@ pub(super) struct MeasureContext<'a> {
     pub(super) text_results: HashMap<NodeId, crate::text::types::TextLayoutResult>,
 }
 
+// Taffy measures in f32 while boundtext accumulates advances in f64. Expanding
+// a horizontal width constraint by one f32 ULP makes a reported intrinsic size
+// idempotent when Taffy feeds it back into a final measure call.
+fn expanded_horizontal_width_px(value: f32) -> f64 {
+    if value == 0.0 {
+        return f64::from(f32::from_bits(1));
+    }
+    if value.is_finite() && value > 0.0 && value < f32::MAX {
+        return f64::from(f32::from_bits(value.to_bits() + 1));
+    }
+    f64::from(value)
+}
+
 fn slice_text_by_byte_range(text: &str, start: usize, end: usize) -> String {
     if start > end || end > text.len() {
         return String::new();
@@ -167,7 +180,7 @@ fn build_horizontal_fallback_text_result(
     let line_metrics =
         resolve_text_input_line_metrics(text_input, font_registry, fallback_registry);
     let line_height_px = line_metrics.line_height_px;
-    let effective_max_w = f64::from(max_width);
+    let effective_max_w = expanded_horizontal_width_px(max_width);
     let mut line_ranges: Vec<(usize, usize, f64)> = Vec::new();
     let mut line_start = 0usize;
     let mut cur_w = 0.0;
@@ -764,7 +777,11 @@ pub(super) fn measure_text_node(
     if text_input.flow.is_some() && max_width < f32::MAX && max_height < f32::MAX {
         if let Ok(rust_result) = crate::flow::layout_resolved_text_flow(
             text_input,
-            f64::from(max_width),
+            if is_vertical {
+                f64::from(max_width)
+            } else {
+                expanded_horizontal_width_px(max_width)
+            },
             f64::from(max_height),
             font_registry,
             fallback_registry,
@@ -880,7 +897,7 @@ pub(super) fn measure_text_node(
                 text_input.font_size_px,
                 line_height_px,
                 line_metrics.baseline_offset_px,
-                f64::from(max_width),
+                expanded_horizontal_width_px(max_width),
                 effective_wrap,
                 force_newline_breaks,
             );
@@ -926,7 +943,7 @@ pub(super) fn measure_text_node(
                 line_height_px,
                 text_input.font_size_px,
                 break_result.kinsoku_unresolved,
-                Some(f64::from(max_width)),
+                Some(expanded_horizontal_width_px(max_width)),
                 if max_height < f32::MAX {
                     Some(f64::from(max_height))
                 } else {
@@ -979,7 +996,11 @@ pub(super) fn measure_text_node(
             line_height_px: text_input.line_height_px,
             letter_spacing_px: text_input.letter_spacing_px.unwrap_or(0.0),
             text_indent: text_input.text_indent,
-            max_width: f64::from(max_width),
+            max_width: if is_vertical {
+                f64::from(max_width)
+            } else {
+                expanded_horizontal_width_px(max_width)
+            },
             max_height: if max_height < f32::MAX {
                 Some(f64::from(max_height))
             } else {
@@ -1142,4 +1163,30 @@ pub(super) fn measure_text_node(
     measure_cache.insert(cache_key, (result, None));
 
     result
+}
+
+#[cfg(test)]
+mod text_constraint_tests {
+    use super::expanded_horizontal_width_px;
+
+    #[test]
+    fn expands_finite_constraints_without_changing_sentinels() {
+        let smallest_positive = f64::from(f32::from_bits(1));
+        assert_eq!(expanded_horizontal_width_px(0.0), smallest_positive);
+        assert_eq!(expanded_horizontal_width_px(-0.0), smallest_positive);
+
+        let finite_constraint = 100.0_f32;
+        assert_eq!(
+            expanded_horizontal_width_px(finite_constraint),
+            f64::from(f32::from_bits(finite_constraint.to_bits() + 1))
+        );
+        assert_eq!(expanded_horizontal_width_px(f32::MAX), f64::from(f32::MAX));
+        assert_eq!(expanded_horizontal_width_px(f32::INFINITY), f64::INFINITY);
+        assert_eq!(
+            expanded_horizontal_width_px(f32::NEG_INFINITY),
+            f64::NEG_INFINITY
+        );
+        assert_eq!(expanded_horizontal_width_px(-1.0), -1.0);
+        assert!(expanded_horizontal_width_px(f32::NAN).is_nan());
+    }
 }
