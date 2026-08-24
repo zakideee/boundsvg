@@ -83,6 +83,26 @@ test.describe("public playground smoke", () => {
     await expect(page.getByText("PNG Output", { exact: true })).toBeVisible();
     await expect(page.getByAltText("Worker PNG output")).toBeVisible({ timeout: 30_000 });
   });
+
+  test("Transform presets expose every authored origin anchor", async ({ page }) => {
+    const errors = collectPageErrors(page);
+    await openRoute(page, "transform");
+    const presetSelect = page.locator("#transform-preset");
+    const originMarkers = page.locator('main svg circle[fill="#f59e0b"][r="2.5"]');
+    const expectedOrigins = [
+      ["translate-only", 1],
+      ["rotate-with-origin", 1],
+      ["scale-negative", 1],
+      ["nested-transform", 2],
+      ["all-node-types", 7],
+    ] as const;
+
+    for (const [preset, originCount] of expectedOrigins) {
+      await presetSelect.selectOption(preset);
+      await expect(originMarkers).toHaveCount(originCount);
+    }
+    expect(errors).toEqual([]);
+  });
 });
 
 test.describe("mobile sample viewer", () => {
