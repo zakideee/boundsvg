@@ -229,6 +229,7 @@ export function TextFlowPage() {
             <>
               {preset === "text-flow" && (
                 <FlowCanvas
+                  key="text-flow"
                   initialObstacles={INITIAL_FLOW_OBSTACLES}
                   hitTest={hitTestFlowObstacles}
                   applyDrag={applyFlowDrag}
@@ -239,6 +240,7 @@ export function TextFlowPage() {
               )}
               {preset === "flow-rich" && (
                 <FlowCanvas
+                  key="flow-rich"
                   initialObstacles={INITIAL_FLOW_RICH_OBSTACLES}
                   hitTest={hitTestFlowRichObstacles}
                   applyDrag={applyFlowRichDrag}
