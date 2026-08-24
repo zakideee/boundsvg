@@ -7,7 +7,10 @@
 //! partitioning, associativity, and `divide_regions` consistency. Areas are
 //! measured by an independent flatten + shoelace helper defined in this file.
 
-use std::f64::consts::{PI, TAU};
+use std::{
+    f64::consts::{PI, TAU},
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use boundshape::{
     BooleanOp, Contour, CurveSegment, GeometryDoc, GeometryNode, GeometryViewBox, Point2D, Region,
@@ -25,39 +28,28 @@ use proptest::test_runner::TestCaseError;
 //     Reproduced for every generated shape, so P4 covers the full domain.
 //     Pinned: f1_self_union_square_preserves_area_repro.
 //
-// F2 — booleans over cubic (ellipse) boundaries intermittently return wrong
-//     regions: an empty union of overlapping inputs, a union carrying only
-//     one input's contour, and subtract+intersect both empty for a non-empty
-//     lhs — all order-dependent. These wrong-result signatures cannot be
-//     distinguished from genuine property violations, so cubic operands are
-//     excluded from the result-correctness properties P3/P5/P6/P7
-//     (polygon-only operands); cubics remain exercised by P1/P2/P8 and the
-//     area-helper unit tests, with the empty-union and BooleanTopology
-//     rejection helpers as a second line of defense.
+// F2 — resolved failure history: booleans over cubic (ellipse) boundaries
+//     intermittently returned wrong regions, including empty or partial
+//     unions and order-dependent subtract/intersect results. P3/P5/P6/P7 now
+//     keep cubic operands in their full-domain regression coverage.
 //     Pinned: f2_containing_cubic_union_is_non_empty_repro,
 //     f2_overlapping_cubic_union_is_order_stable_repro.
 //
-// F3 — intermittent, order-dependent BooleanTopology failures: union(A, B)
-//     can succeed while union(B, A) fails.
+// F3 — resolved failure history: intermittent, order-dependent
+//     BooleanTopology failures where union(A, B) succeeded while union(B, A)
+//     failed.
 //     Pinned: f3_union_order_does_not_change_topology_result_repro.
 //
-// F4 — boolean evaluation could crash the process with a stack overflow:
-//     intersect(xor(A, B), C) where xor(A, B) yields two contours meeting
-//     tangentially overflowed even a 1 GiB thread stack (suspected mutual
-//     recursion normalize_region -> resolve_contour_topology ->
-//     trace_self_intersecting_contour -> trace_edges_to_region). Rounding
-//     the intermediate xor output to 2 decimals hides the crash, so the
-//     exact tangency coordinates matter. P1/P2/P8 run the kernel in an
-//     isolated subprocess to keep crash regressions contained.
+// F4 — resolved failure history: boolean evaluation could crash with a stack
+//     overflow for intersect(xor(A, B), C) when the xor contours met
+//     tangentially. The exact fixture remains pinned and P1/P2/P8 now execute
+//     in process so a recurrence fails the property binary directly.
 //     Pinned: fixtures/stack_overflow_boolean.json via
 //     f4_stack_overflow_fixture_returns_instead_of_crashing_repro.
 //
-// F5 — the xor area identity (xor = union − intersect, by area) failed for
-//     roughly 1 in a few thousand random transformed polygon pairs: xor
-//     contours pinch at every boundary crossing, which the edge tracer did
-//     not always survive. The subtract+intersect partition of the lhs stayed
-//     correct in every observed case, so the partition property remains
-//     active.
+// F5 — resolved failure history: the xor area identity
+//     (xor = union − intersect, by area) failed for transformed polygon pairs
+//     whose xor contours pinched at boundary crossings.
 //     Pinned: f5_xor_identity_matches_union_minus_intersect_repro.
 //
 // F6 — the canonical union output was not operand-order-stable: one pair
@@ -89,7 +81,7 @@ use proptest::test_runner::TestCaseError;
 //     returned both endpoints instead of their single center crossing. The
 //     kernel now uses symmetric perpendicular distances for collinearity and
 //     a dimensionless direction guard only before division. P9 adds cubic
-//     ellipses and crash isolation to the exact operand-order checks.
+//     ellipses to the in-process exact operand-order checks.
 //
 // F9 — line/curve projection compared a squared line length with a pixel
 //     epsilon, so true intersections disappeared below a 0.01 px line length.
@@ -451,13 +443,6 @@ fn arb_shape_node() -> BoxedStrategy<GeometryNode> {
     with_optional_transform(prop_oneof![arb_radial_polygon(), arb_ellipse()].boxed())
 }
 
-/// Polygon-only domain retained for the faster in-process algebraic checks.
-/// Cubic ellipses and transforms participate in the full-domain properties,
-/// including the subprocess-isolated exact commutativity check in P9.
-fn arb_polygon_shape_node() -> BoxedStrategy<GeometryNode> {
-    with_optional_transform(arb_radial_polygon())
-}
-
 fn arb_boolean_op() -> BoxedStrategy<BooleanOp> {
     prop_oneof![
         Just(BooleanOp::Union),
@@ -506,6 +491,68 @@ fn configured_cases() -> u32 {
         .unwrap_or(PROPTEST_CASES_DEFAULT)
 }
 
+struct PropertyStats {
+    name: &'static str,
+    attempts: AtomicU32,
+    successful: AtomicU32,
+    topology_rejects: AtomicU32,
+    empty_union_rejects: AtomicU32,
+}
+
+impl PropertyStats {
+    const fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            attempts: AtomicU32::new(0),
+            successful: AtomicU32::new(0),
+            topology_rejects: AtomicU32::new(0),
+            empty_union_rejects: AtomicU32::new(0),
+        }
+    }
+
+    fn record_attempt(&self) {
+        self.attempts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_topology_reject(&self) {
+        self.topology_rejects.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_empty_union_reject(&self) {
+        self.empty_union_rejects.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_success(&self) {
+        let successful = self.successful.fetch_add(1, Ordering::Relaxed) + 1;
+        if successful != configured_cases() {
+            return;
+        }
+        let attempts = self.attempts.load(Ordering::Relaxed);
+        let topology_rejects = self.topology_rejects.load(Ordering::Relaxed);
+        let empty_union_rejects = self.empty_union_rejects.load(Ordering::Relaxed);
+        let topology_reject_rate = if attempts == 0 {
+            0.0
+        } else {
+            f64::from(topology_rejects) / f64::from(attempts)
+        };
+        eprintln!(
+            "property-stats name={} successful={} topology-rejects={} empty-union-rejects={} attempts={} topology-reject-rate={:.4}",
+            self.name,
+            successful,
+            topology_rejects,
+            empty_union_rejects,
+            attempts,
+            topology_reject_rate,
+        );
+    }
+}
+
+static P3_STATS: PropertyStats = PropertyStats::new("P3 commutativity");
+static P5_STATS: PropertyStats = PropertyStats::new("P5 monotonicity");
+static P6_PARTITION_STATS: PropertyStats = PropertyStats::new("P6 partition");
+static P6_XOR_STATS: PropertyStats = PropertyStats::new("P6 xor");
+static P7_STATS: PropertyStats = PropertyStats::new("P7 associativity");
+
 fn require_region(doc: &GeometryDoc, label: &str) -> Result<Region, TestCaseError> {
     evaluate_geometry(doc)
         .map_err(|error| TestCaseError::fail(format!("{label} failed to evaluate: {error}")))
@@ -518,22 +565,34 @@ fn require_area(doc: &GeometryDoc, label: &str) -> Result<f64, TestCaseError> {
 /// Evaluates a boolean document for area-focused properties. Topology errors
 /// are rejected because those properties compare successful regions rather
 /// than error classification.
-fn region_or_reject_topology(doc: &GeometryDoc, label: &str) -> Result<Region, TestCaseError> {
+fn region_or_reject_topology(
+    doc: &GeometryDoc,
+    label: &str,
+    property_stats: &PropertyStats,
+) -> Result<Region, TestCaseError> {
     match evaluate_geometry(doc) {
         Ok(region) => Ok(region),
-        Err(ShapeError::BooleanTopology) => Err(TestCaseError::reject(format!(
-            "{label} hit BooleanTopology"
-        ))),
+        Err(ShapeError::BooleanTopology) => {
+            property_stats.record_topology_reject();
+            Err(TestCaseError::reject(format!(
+                "{label} hit BooleanTopology"
+            )))
+        }
         Err(error) => Err(TestCaseError::fail(format!(
             "{label} failed to evaluate: {error}"
         ))),
     }
 }
 
-/// Rejects the test case when a union of non-empty inputs came back empty.
-fn reject_empty_union(union_region: &Region, label: &str) -> Result<(), TestCaseError> {
+/// Fails the property when a union of non-empty inputs comes back empty.
+fn require_non_empty_union(
+    union_region: &Region,
+    label: &str,
+    property_stats: &PropertyStats,
+) -> Result<(), TestCaseError> {
     if union_region.contours.is_empty() {
-        return Err(TestCaseError::reject(format!(
+        property_stats.record_empty_union_reject();
+        return Err(TestCaseError::fail(format!(
             "{label} returned an empty region for non-empty inputs"
         )));
     }
@@ -541,133 +600,14 @@ fn reject_empty_union(union_region: &Region, label: &str) -> Result<(), TestCase
 }
 
 // ---------------------------------------------------------------------------
-// Crash-isolated evaluation
+// In-process evaluation
 // ---------------------------------------------------------------------------
 
-/// Env var carrying the JSON document for `subprocess_eval_helper`.
-const SUBPROCESS_DOC_ENV: &str = "BOUNDSHAPE_SUBPROCESS_DOC_JSON";
-
-/// Env var carrying the JSON shape pair for `subprocess_divide_helper`.
-const SUBPROCESS_DIVIDE_ENV: &str = "BOUNDSHAPE_SUBPROCESS_DIVIDE_JSON";
-
-/// Env var carrying the JSON shape pair for `subprocess_commutative_helper`.
-const SUBPROCESS_COMMUTATIVE_ENV: &str = "BOUNDSHAPE_SUBPROCESS_COMMUTATIVE_JSON";
-
-/// Marker prefix for outcome lines printed by the subprocess helpers.
-const SUBPROCESS_OUTCOME_PREFIX: &str = "SUBPROCESS_EVAL ";
-
-/// Spawns this test binary filtered to one ignored helper test, passing the
-/// payload through an env var, and collects the helper's outcome lines. A
-/// subprocess that dies before producing the expected outcomes hit a process
-/// abort or stack overflow and rejects the test case.
-fn run_subprocess_helper(
-    helper_test_name: &str,
-    payload_env_name: &str,
-    payload_json: String,
-    expected_outcome_count: usize,
-) -> Result<Vec<String>, TestCaseError> {
-    let current_exe = std::env::current_exe()
-        .map_err(|error| TestCaseError::fail(format!("failed to locate test binary: {error}")))?;
-    let output = std::process::Command::new(current_exe)
-        .args([
-            helper_test_name,
-            "--exact",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .env(payload_env_name, payload_json)
-        .output()
-        .map_err(|error| TestCaseError::fail(format!("failed to spawn subprocess: {error}")))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let outcomes: Vec<String> = stdout
-        .lines()
-        .filter_map(|line| {
-            // The first outcome can share a line with libtest's own
-            // "test <helper name> ... " progress output, so the marker is
-            // searched anywhere in the line, not just at the start.
-            line.find(SUBPROCESS_OUTCOME_PREFIX).map(|marker_start| {
-                line[marker_start + SUBPROCESS_OUTCOME_PREFIX.len()..].to_string()
-            })
-        })
-        .collect();
-    if outcomes.len() != expected_outcome_count {
-        return Err(TestCaseError::reject(format!(
-            "subprocess crashed (status {:?})",
-            output.status.code()
-        )));
+fn evaluation_outcome(doc: &GeometryDoc) -> String {
+    match evaluate_geometry(doc) {
+        Ok(region) => format!("OK {}", region_to_path(&region)),
+        Err(error) => format!("ERR {error}"),
     }
-    Ok(outcomes)
-}
-
-fn panic_payload_message(panic_payload: &(dyn std::any::Any + Send)) -> String {
-    panic_payload
-        .downcast_ref::<&str>()
-        .map(|text| (*text).to_string())
-        .or_else(|| panic_payload.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "opaque panic payload".to_string())
-}
-
-/// Subprocess entry point used by P1/P2 to isolate kernel crashes. It
-/// evaluates the document passed through the environment twice and prints one
-/// outcome line per evaluation. Ignored in normal runs — it only does work
-/// when spawned by `evaluate_twice_in_subprocess`.
-#[test]
-#[ignore = "subprocess helper for this test binary; spawned by P1/P2 for crash isolation"]
-fn subprocess_eval_helper() {
-    let Ok(doc_json) = std::env::var(SUBPROCESS_DOC_ENV) else {
-        return;
-    };
-    let doc: GeometryDoc = serde_json::from_str(&doc_json).expect("subprocess doc should parse");
-    for _ in 0..2 {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            evaluate_geometry(&doc).map(|region| region_to_path(&region))
-        }));
-        let formatted = match outcome {
-            Ok(Ok(path)) => format!("OK {path}"),
-            Ok(Err(error)) => format!("ERR {error}"),
-            Err(panic_payload) => {
-                let message = panic_payload_message(panic_payload.as_ref());
-                format!("PANIC {message}")
-            }
-        };
-        println!("{SUBPROCESS_OUTCOME_PREFIX}{formatted}");
-    }
-}
-
-/// Runs `evaluate_geometry` twice in an isolated subprocess and returns the
-/// two outcome strings ("OK <path>", "ERR <error>", or "PANIC <message>").
-fn evaluate_twice_in_subprocess(doc: &GeometryDoc) -> Result<Vec<String>, TestCaseError> {
-    let doc_json = serde_json::to_string(doc)
-        .map_err(|error| TestCaseError::fail(format!("failed to serialize doc: {error}")))?;
-    run_subprocess_helper("subprocess_eval_helper", SUBPROCESS_DOC_ENV, doc_json, 2)
-}
-
-/// Subprocess entry point used by P9 to isolate curve-kernel crashes while
-/// comparing both operand orders of every commutative operation.
-#[test]
-#[ignore = "subprocess helper for this test binary; spawned by P9 for crash isolation"]
-fn subprocess_commutative_helper() {
-    let Ok(shapes_json) = std::env::var(SUBPROCESS_COMMUTATIVE_ENV) else {
-        return;
-    };
-    let (shape_a, shape_b): (GeometryNode, GeometryNode) =
-        serde_json::from_str(&shapes_json).expect("subprocess shapes should parse");
-    let verdict = catch_commutative_verdict(|| commutative_consistency_verdict(&shape_a, &shape_b));
-    println!("{SUBPROCESS_OUTCOME_PREFIX}{verdict}");
-}
-
-fn catch_commutative_verdict(task: impl FnOnce() -> String) -> String {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(task)) {
-        Ok(verdict) => verdict,
-        Err(panic_payload) => format!("PANIC {}", panic_payload_message(panic_payload.as_ref())),
-    }
-}
-
-#[test]
-fn commutative_subprocess_panic_becomes_a_failure_verdict() {
-    let verdict = catch_commutative_verdict(|| panic!("commutative panic fixture"));
-    assert_eq!(verdict, "PANIC commutative panic fixture");
 }
 
 fn commutative_consistency_verdict(shape_a: &GeometryNode, shape_b: &GeometryNode) -> String {
@@ -706,41 +646,9 @@ fn commutative_consistency_verdict(shape_a: &GeometryNode, shape_b: &GeometryNod
     "PASS".to_string()
 }
 
-fn commutative_verdict_in_subprocess(
-    shape_a: &GeometryNode,
-    shape_b: &GeometryNode,
-) -> Result<String, TestCaseError> {
-    let shapes_json = serde_json::to_string(&(shape_a, shape_b))
-        .map_err(|error| TestCaseError::fail(format!("failed to serialize shapes: {error}")))?;
-    let outcomes = run_subprocess_helper(
-        "subprocess_commutative_helper",
-        SUBPROCESS_COMMUTATIVE_ENV,
-        shapes_json,
-        1,
-    )?;
-    Ok(outcomes[0].clone())
-}
-
-/// Subprocess entry point used by P8 to isolate kernel crashes. It runs the
-/// divide-vs-standalone consistency check on the shape pair passed through
-/// the environment and prints one verdict line. Ignored in normal runs — it
-/// only does work when spawned by `divide_verdict_in_subprocess`.
-#[test]
-#[ignore = "subprocess helper for this test binary; spawned by P8 for crash isolation"]
-fn subprocess_divide_helper() {
-    let Ok(shapes_json) = std::env::var(SUBPROCESS_DIVIDE_ENV) else {
-        return;
-    };
-    let (shape_a, shape_b): (GeometryNode, GeometryNode) =
-        serde_json::from_str(&shapes_json).expect("subprocess shapes should parse");
-    let verdict = divide_consistency_verdict(shape_a, shape_b);
-    println!("{SUBPROCESS_OUTCOME_PREFIX}{verdict}");
-}
-
 /// Compares `divide_regions` against the standalone Subtract/Intersect
 /// evaluations and returns "PASS" or a single-line "FAIL <detail>" verdict.
-/// Runs inside `subprocess_divide_helper`.
-fn divide_consistency_verdict(shape_a: GeometryNode, shape_b: GeometryNode) -> String {
+fn divide_consistency_verdict(shape_a: &GeometryNode, shape_b: &GeometryNode) -> String {
     let lhs_region = match evaluate_geometry(&geometry_doc(shape_a.clone())) {
         Ok(region) => region,
         Err(error) => return format!("FAIL lhs shape failed to evaluate: {error}"),
@@ -755,8 +663,11 @@ fn divide_consistency_verdict(shape_a: GeometryNode, shape_b: GeometryNode) -> S
         shape_a.clone(),
         shape_b.clone(),
     ));
-    let intersect_result =
-        evaluate_geometry(&binary_boolean_doc(BooleanOp::Intersect, shape_a, shape_b));
+    let intersect_result = evaluate_geometry(&binary_boolean_doc(
+        BooleanOp::Intersect,
+        shape_a.clone(),
+        shape_b.clone(),
+    ));
     match divided {
         Ok(divided_regions) => match (subtract_result, intersect_result) {
             (Ok(subtract_region), Ok(intersect_region)) => {
@@ -791,23 +702,6 @@ fn divide_consistency_verdict(shape_a: GeometryNode, shape_b: GeometryNode) -> S
             }
         }
     }
-}
-
-/// Runs the P8 consistency check in an isolated subprocess and returns its
-/// verdict string.
-fn divide_verdict_in_subprocess(
-    shape_a: &GeometryNode,
-    shape_b: &GeometryNode,
-) -> Result<String, TestCaseError> {
-    let shapes_json = serde_json::to_string(&(shape_a, shape_b))
-        .map_err(|error| TestCaseError::fail(format!("failed to serialize shapes: {error}")))?;
-    let outcomes = run_subprocess_helper(
-        "subprocess_divide_helper",
-        SUBPROCESS_DIVIDE_ENV,
-        shapes_json,
-        1,
-    )?;
-    Ok(outcomes.into_iter().next().unwrap_or_default())
 }
 
 /// Deterministic regression for the former stack-overflow input.
@@ -1063,9 +957,9 @@ fn f4_stack_overflow_fixture_returns_instead_of_crashing_repro() {
     let doc: GeometryDoc =
         serde_json::from_str(include_str!("fixtures/stack_overflow_boolean.json"))
             .expect("fixture should parse");
-    let outcomes = evaluate_twice_in_subprocess(&doc)
-        .expect("stack overflow fixture should return an Ok/Err/PANIC outcome");
-    assert_eq!(outcomes.len(), 2);
+    let first = evaluation_outcome(&doc);
+    let second = evaluation_outcome(&doc);
+    assert_eq!(first, second);
 }
 
 #[test]
@@ -1189,35 +1083,29 @@ proptest! {
     })]
 
     // P1: evaluation must return Ok/Err for any generated document; a panic
-    // is a failure. Evaluation runs in a subprocess so stack-overflow
-    // regressions reject the case instead of killing the whole test binary.
+    // or stack overflow fails the property binary.
     #[test]
     fn p1_evaluate_geometry_never_panics(doc in arb_composed_doc()) {
-        let outcomes = evaluate_twice_in_subprocess(&doc)?;
-        for outcome in &outcomes {
-            prop_assert!(
-                !outcome.starts_with("PANIC"),
-                "evaluation panicked: {outcome}"
-            );
-        }
+        let _ = evaluate_geometry(&doc);
     }
 
     // P2: repeated evaluation is byte-for-byte deterministic (canonical path
-    // for Ok, error display for Err). Runs in a subprocess — see P1.
+    // for Ok, error display for Err).
     #[test]
     fn p2_evaluation_is_deterministic(doc in arb_composed_doc()) {
-        let outcomes = evaluate_twice_in_subprocess(&doc)?;
-        prop_assert_eq!(&outcomes[0], &outcomes[1]);
+        let first = evaluation_outcome(&doc);
+        let second = evaluation_outcome(&doc);
+        prop_assert_eq!(first, second);
     }
 
-    // P3: fast in-process polygon detector for operand-order stability on
-    // canonical paths and topology errors. P9 extends this through subprocess
-    // isolation to the full shape domain.
+    // P3: in-process full-domain detector for operand-order stability on
+    // canonical paths and topology errors.
     #[test]
     fn p3_commutative_boolean_ops_are_order_stable(
-        shape_a in arb_polygon_shape_node(),
-        shape_b in arb_polygon_shape_node(),
+        shape_a in arb_shape_node(),
+        shape_b in arb_shape_node(),
     ) {
+        P3_STATS.record_attempt();
         for op in [BooleanOp::Union, BooleanOp::Intersect, BooleanOp::Xor] {
             let forward = evaluate_geometry(&binary_boolean_doc(
                 op,
@@ -1260,6 +1148,7 @@ proptest! {
                 }
             }
         }
+        P3_STATS.record_success();
     }
 
     // P4: union of a shape with itself preserves the shape's area.
@@ -1280,19 +1169,22 @@ proptest! {
     // the smaller input.
     #[test]
     fn p5_union_and_intersect_areas_are_monotonic(
-        shape_a in arb_polygon_shape_node(),
-        shape_b in arb_polygon_shape_node(),
+        shape_a in arb_shape_node(),
+        shape_b in arb_shape_node(),
     ) {
+        P5_STATS.record_attempt();
         let area_a = require_area(&geometry_doc(shape_a.clone()), "lhs shape")?;
         let area_b = require_area(&geometry_doc(shape_b.clone()), "rhs shape")?;
         let union_region = region_or_reject_topology(
             &binary_boolean_doc(BooleanOp::Union, shape_a.clone(), shape_b.clone()),
             "union",
+            &P5_STATS,
         )?;
-        reject_empty_union(&union_region, "union")?;
+        require_non_empty_union(&union_region, "union", &P5_STATS)?;
         let intersect_region = region_or_reject_topology(
             &binary_boolean_doc(BooleanOp::Intersect, shape_a, shape_b),
             "intersect",
+            &P5_STATS,
         )?;
         let union_area = region_area(&union_region);
         let intersect_area = region_area(&intersect_region);
@@ -1307,22 +1199,26 @@ proptest! {
                 <= smaller_input_area + area_epsilon(intersect_area, smaller_input_area),
             "intersect area {intersect_area} > min input area {smaller_input_area}"
         );
+        P5_STATS.record_success();
     }
 
     // P6 (partition half): subtract and intersect partition the lhs area.
     #[test]
     fn p6_subtract_intersect_partition_lhs_area(
-        shape_a in arb_polygon_shape_node(),
-        shape_b in arb_polygon_shape_node(),
+        shape_a in arb_shape_node(),
+        shape_b in arb_shape_node(),
     ) {
+        P6_PARTITION_STATS.record_attempt();
         let area_a = require_area(&geometry_doc(shape_a.clone()), "lhs shape")?;
         let subtract_region = region_or_reject_topology(
             &binary_boolean_doc(BooleanOp::Subtract, shape_a.clone(), shape_b.clone()),
             "subtract",
+            &P6_PARTITION_STATS,
         )?;
         let intersect_region = region_or_reject_topology(
             &binary_boolean_doc(BooleanOp::Intersect, shape_a, shape_b),
             "intersect",
+            &P6_PARTITION_STATS,
         )?;
         let subtract_area = region_area(&subtract_region);
         let intersect_area = region_area(&intersect_region);
@@ -1330,26 +1226,31 @@ proptest! {
             areas_close(subtract_area + intersect_area, area_a),
             "subtract {subtract_area} + intersect {intersect_area} != lhs area {area_a}"
         );
+        P6_PARTITION_STATS.record_success();
     }
 
     // P6 (xor half): xor equals union minus intersect by area.
     #[test]
     fn p6_xor_identity_matches_union_minus_intersect(
-        shape_a in arb_polygon_shape_node(),
-        shape_b in arb_polygon_shape_node(),
+        shape_a in arb_shape_node(),
+        shape_b in arb_shape_node(),
     ) {
+        P6_XOR_STATS.record_attempt();
         let union_region = region_or_reject_topology(
             &binary_boolean_doc(BooleanOp::Union, shape_a.clone(), shape_b.clone()),
             "union",
+            &P6_XOR_STATS,
         )?;
-        reject_empty_union(&union_region, "union")?;
+        require_non_empty_union(&union_region, "union", &P6_XOR_STATS)?;
         let intersect_region = region_or_reject_topology(
             &binary_boolean_doc(BooleanOp::Intersect, shape_a.clone(), shape_b.clone()),
             "intersect",
+            &P6_XOR_STATS,
         )?;
         let xor_region = region_or_reject_topology(
             &binary_boolean_doc(BooleanOp::Xor, shape_a, shape_b),
             "xor",
+            &P6_XOR_STATS,
         )?;
         let union_area = region_area(&union_region);
         let intersect_area = region_area(&intersect_region);
@@ -1358,15 +1259,17 @@ proptest! {
             areas_close(xor_area, union_area - intersect_area),
             "xor {xor_area} != union {union_area} - intersect {intersect_area}"
         );
+        P6_XOR_STATS.record_success();
     }
 
     // P7: union is associative up to the area tolerance.
     #[test]
     fn p7_union_is_associative_by_area(
-        shape_a in arb_polygon_shape_node(),
-        shape_b in arb_polygon_shape_node(),
-        shape_c in arb_polygon_shape_node(),
+        shape_a in arb_shape_node(),
+        shape_b in arb_shape_node(),
+        shape_c in arb_shape_node(),
     ) {
+        P7_STATS.record_attempt();
         let left_doc = geometry_doc(boolean_node(
             BooleanOp::Union,
             vec![
@@ -1378,39 +1281,40 @@ proptest! {
             BooleanOp::Union,
             vec![shape_a, boolean_node(BooleanOp::Union, vec![shape_b, shape_c])],
         ));
-        let left_region = region_or_reject_topology(&left_doc, "union(union(A,B),C)")?;
-        reject_empty_union(&left_region, "union(union(A,B),C)")?;
-        let right_region = region_or_reject_topology(&right_doc, "union(A,union(B,C))")?;
-        reject_empty_union(&right_region, "union(A,union(B,C))")?;
+        let left_region =
+            region_or_reject_topology(&left_doc, "union(union(A,B),C)", &P7_STATS)?;
+        require_non_empty_union(&left_region, "union(union(A,B),C)", &P7_STATS)?;
+        let right_region =
+            region_or_reject_topology(&right_doc, "union(A,union(B,C))", &P7_STATS)?;
+        require_non_empty_union(&right_region, "union(A,union(B,C))", &P7_STATS)?;
         let left_area = region_area(&left_region);
         let right_area = region_area(&right_region);
         prop_assert!(
             areas_close(left_area, right_area),
             "associativity mismatch: {left_area} vs {right_area}"
         );
+        P7_STATS.record_success();
     }
 
     // P8: divide_regions returns exactly the standalone Subtract/Intersect
-    // evaluations. The check runs in a subprocess so stack-overflow
-    // regressions reject the case instead of killing the whole test binary.
+    // evaluations.
     #[test]
     fn p8_divide_regions_matches_standalone_ops(
         shape_a in arb_shape_node(),
         shape_b in arb_shape_node(),
     ) {
-        let verdict = divide_verdict_in_subprocess(&shape_a, &shape_b)?;
+        let verdict = divide_consistency_verdict(&shape_a, &shape_b);
         prop_assert!(verdict == "PASS", "divide consistency failed: {verdict}");
     }
 
     // P9: curve and polygon operands must preserve the exact path/error when
-    // any commutative operation swaps its operands. Evaluation is isolated so
-    // known stack-overflow cases reject instead of aborting the property run.
+    // any commutative operation swaps its operands.
     #[test]
     fn p9_commutative_ops_are_order_stable_for_full_shape_domain(
         shape_a in arb_shape_node(),
         shape_b in arb_shape_node(),
     ) {
-        let verdict = commutative_verdict_in_subprocess(&shape_a, &shape_b)?;
+        let verdict = commutative_consistency_verdict(&shape_a, &shape_b);
         prop_assert!(verdict == "PASS", "commutative consistency failed: {verdict}");
     }
 }
