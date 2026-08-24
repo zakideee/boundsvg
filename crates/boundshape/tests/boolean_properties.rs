@@ -584,7 +584,7 @@ fn region_or_reject_topology(
     }
 }
 
-/// Fails the property when a union of non-empty inputs comes back empty.
+/// Fail the property when a union of non-empty inputs comes back empty.
 fn require_non_empty_union(
     union_region: &Region,
     label: &str,
