@@ -29,9 +29,44 @@ Set `writingMode="vertical-rl"` on the `<Text>` component for vertical text. Cha
 
 ### Fit in Vertical Mode
 
-Both `fit="shrink"` and `fit="grow"` use vertical-specific binary search:
+Vertical `fit="shrink"` and `fit="grow"` use the same fit contract as
+horizontal text:
 
 - Fit condition: `columns × lineHeightPx ≤ maxWidth` AND `max column height ≤ maxHeight`
+- Content and geometry that are both monotone-certified use binary refinement
+- Negative tracking/proportional metrics and topology-changing flow exclusions
+  use a descending exact grid bounded by `fitMaxProbes`
+- The complete source is fitted before any ellipsis is applied
+- `fontSizePx` and `letterSpacingPx` scale together; explicit `lineHeightPx`
+  remains absolute
+
+### Rich Ellipsis in Vertical Mode
+
+`maxLines` counts columns in `vertical-rl`. With `ellipsis`, plain text,
+`Inline`, `Ruby`, atomic `InlineBox`/`InlineRect`, and nested decoration use the
+same longest-legal-prefix planner as horizontal and exclusion-flow layout.
+
+```tsx
+<Text
+  font="NotoSansJP"
+  fontSizePx={24}
+  writingMode="vertical-rl"
+  language="ja"
+  wrap="char"
+  maxLines={3}
+  ellipsis
+>
+  縦組みの<Inline color="#0ea5e9">リッチ</Inline>文章は
+  <Ruby>
+    境界<Rt fontSizePx={10}>きょうかい</Rt>
+  </Ruby>
+  を保って最長の合法な接頭辞を表示します。
+</Text>
+```
+
+The marker is synthetic and source-less. It inherits the first omitted
+effective text style and fragmentable decoration but is never placed inside
+an omitted ruby or atomic inline background.
 
 ## Japanese Kinsoku (Line Breaking Rules)
 

@@ -44,6 +44,17 @@ fetches the upstream font into a temporary directory only and does not leave a c
 
 Per-font license files are colocated in this directory (`*-LICENSE-OFL.txt`).
 
+### Self-authored shaping fixture
+
+`ContextualArabicTest.ttf` is a tiny repository-authored fixture with distinct
+Arabic `init`, `medi`, and `fina` substitutions plus an `A` + ellipsis test
+ligature used to prove synthetic-marker run isolation. It contains no third-party
+outlines. Regenerate it deterministically with:
+
+```bash
+python3 scripts/generate-contextual-arabic-test-font.py
+```
+
 ## Subset Details
 
 The Japanese fonts are subsetted to reduce file size (the upstream files run from 3.8 MB to 36 MB). The code fonts are included as-is with their full glyph set.

@@ -80,14 +80,28 @@ geometry, skip-ink, animation conflicts, errors, and budgets.
 | `wrap`       | `"none" \| "word" \| "char"`         | `"char"`   | Line wrapping mode                                       |
 | `whiteSpace` | `"normal" \| "nowrap" \| "pre-wrap"` | `"normal"` | Space, newline, and wrapping policy                      |
 | `tabSize`    | `number`                             | `4`        | Spaces per tab in `pre-wrap`; must be a positive integer |
-| `maxLines`   | `number`                             | —          | Maximum number of lines (unlimited if omitted)           |
-| `ellipsis`   | `boolean`                            | `false`    | Show ellipsis on overflow (requires `maxLines`)          |
+| `maxLines`   | `number`                             | —          | Maximum lines or vertical columns (unlimited if omitted) |
+| `ellipsis`   | `boolean`                            | `false`    | Show U+2026 on overflow (requires `maxLines`)            |
 
 > `wrap` defaults to `"char"` because the primary use case (telops — broadcast-style caption overlays) wraps CJK text per character. For English text, set `wrap="word"` explicitly.
 
 `whiteSpace="nowrap"` overrides `wrap` and keeps the paragraph on one
 line/column. `tabSize` is used only when `whiteSpace="pre-wrap"`; other
 white-space modes collapse tabs with the surrounding whitespace.
+
+Ellipsis uses one contract for plain text, spans, recursive rich text, flow
+exclusions, and both writing modes. It evaluates legal authored prefixes from
+longest to shortest and re-shapes each candidate at end-of-text. A cut never
+splits an extended grapheme cluster, `Ruby`, `InlineBox`, `InlineRect`, or a
+text-combine unit, and it respects the active UAX #14 and Japanese kinsoku
+boundaries. U+2026 is synthetic: `sourceText` and source units retain the full
+authored input, while `displayText` contains only the selected prefix and
+marker. The marker inherits the first omitted text style and fragmentable
+decoration, but never an omitted atomic background or ruby annotation style.
+Nested fragmentable decorations retain every outer/inner owner when they wrap
+or cross exclusion regions. Paint-only `Inline` boundaries keep contextual
+shaping; if one indivisible cluster crosses the boundary, its source-start
+style paints that cluster.
 
 ### Flow around exclusions
 
@@ -197,15 +211,33 @@ text, accessibility content, a source range, or a UnitMap unit. A single
 
 ### Fit (Auto Font Size)
 
-| Prop                  | Type                           | Default          | Description                    |
-| --------------------- | ------------------------------ | ---------------- | ------------------------------ |
-| `fit`                 | `"none" \| "shrink" \| "grow"` | `"none"`         | Auto font-size adjustment mode |
-| `minFontSizePx`       | `number`                       | `8`              | Minimum font size for shrink   |
-| `shrinkEpsilonPx`     | `number`                       | `0.25`           | Shrink convergence threshold   |
-| `shrinkMaxIterations` | `number`                       | `12`             | Max shrink iterations          |
-| `maxFontSizePx`       | `number`                       | `fontSizePx * 4` | Maximum font size for grow     |
-| `growEpsilonPx`       | `number`                       | `0.25`           | Grow convergence threshold     |
-| `growMaxIterations`   | `number`                       | `12`             | Max grow iterations            |
+| Prop                  | Type                           | Default          | Description                               |
+| --------------------- | ------------------------------ | ---------------- | ----------------------------------------- |
+| `fit`                 | `"none" \| "shrink" \| "grow"` | `"none"`         | Auto font-size adjustment mode            |
+| `minFontSizePx`       | `number`                       | `8`              | Minimum font size for shrink              |
+| `shrinkEpsilonPx`     | `number`                       | `0.25`           | Shrink convergence or exact-grid step     |
+| `shrinkMaxIterations` | `number`                       | `12`             | Max certified shrink refinements          |
+| `maxFontSizePx`       | `number`                       | `fontSizePx * 4` | Maximum font size for grow                |
+| `growEpsilonPx`       | `number`                       | `0.25`           | Grow convergence or exact-grid step       |
+| `growMaxIterations`   | `number`                       | `12`             | Max certified grow refinements            |
+| `fitMaxProbes`        | `number`                       | `4096`           | Exact-grid work limit for uncertified fit |
+
+Fit selects a size against the complete authored document with ellipsis off;
+`fontSizePx` and `letterSpacingPx` scale by the same candidate ratio. An
+explicit `lineHeightPx` stays absolute, while proportional `lineHeight`
+follows the selected size. Only then can ellipsis project the display at that
+size. Binary refinement is used only when both content and geometry are
+monotone-certified. Negative tracking/proportional metrics or flow geometry
+that can change topology use a descending exact grid and return the largest
+fitting grid size. `fitMaxProbes` must be a positive integer and is capped at
+65,536; it does not replace the existing `*MaxIterations` fields.
+
+An overflowing ellipsis projection is limited to 1,024 exact candidate
+layouts. Resource exhaustion throws a structured `FatalError` instead of
+returning approximate or partial output: `TEXT_ELLIPSIS_CANDIDATE_LIMIT`,
+`TEXT_FIT_PROBE_LIMIT`, `TEXT_REGION_QUERY_LIMIT`, or
+`TEXT_REGION_INTERVAL_LIMIT`. A document that fits without ellipsis does not
+spend the ellipsis candidate budget.
 
 ### Stroke
 

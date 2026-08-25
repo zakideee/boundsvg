@@ -18,7 +18,7 @@ may change in any minor release), **Not supported** (documented gap).
 | Vertical writing (`vertical-rl`, UTR #50, vert/vkna)    | Supported     | `textOrientation: "sideways"` not implemented                                                                                        |
 | Ruby annotations (`Ruby`/`Rt`)                          | Supported     | Multiple `Rt` levels, tunable `rubyGapPx`/`rubyOffsetPx`; `inter-character` falls back with warning; long-ruby overhang is warned    |
 | Tate-chu-yoko (`textCombineUpright: "all"`)             | Experimental  | Manual only; no automatic TCY grouping                                                                                               |
-| Auto-fit (`fit: shrink/grow`), ellipsis, max lines      | Supported     | Horizontal and vertical                                                                                                              |
+| Auto-fit (`fit: shrink/grow`), ellipsis, max lines      | Supported     | Shared horizontal/vertical and normal/flow contract; exact rich-prefix projection; deterministic work limits                         |
 | Variable fonts (`fontVariationSettings`)                | Supported     |                                                                                                                                      |
 | Font fallback chains                                    | Supported     | Alias-driven, per-character glyph availability                                                                                       |
 | WOFF2 / TTF / OTF input                                 | Supported     | WOFF2 decoded at registration                                                                                                        |
@@ -27,7 +27,7 @@ may change in any minor release), **Not supported** (documented gap).
 | Text decoration                                         | Supported     | Solid/double/dotted/dashed/wavy filled geometry on `Text`/rich ranges; horizontal/vertical and outline-aware `skipInk`               |
 | Inline rectangles (`InlineRect`)                        | Supported     | Atomic caret/paint primitive with zero or non-zero advance and optional opacity/transform animation                                  |
 | Text on a path (`TextOnPath`)                           | Supported     | Strings/nested `Inline`; mixed paint, curved decoration/skipInk, open/closed path, fit/ellipsis, decoration-free unit animation      |
-| Text flow around exclusions                             | Experimental  | `layoutTextFlowWithExclusions`, shrinkwrap APIs                                                                                      |
+| Text flow around exclusions                             | Experimental  | Logical-axis region provider; content/geometry-aware exact-grid fit; deterministic query/interval budgets                            |
 | Letter spacing                                          | Supported     |                                                                                                                                      |
 | Color emoji (COLR/CBDT/sbix)                            | Not supported | Font-level color emoji not rendered                                                                                                  |
 | Emoji cluster detection                                 | Experimental  | `splitEmojiClusters`/`isEmojiCluster` — foundation for opt-in asset packs; no bundled artwork, render-time compositing not yet wired |

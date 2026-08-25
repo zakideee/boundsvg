@@ -513,10 +513,15 @@ complete shape and margin types.
 
 ### `fit="shrink"`
 
-Binary search for the largest font size that fits within constraints.
+Select the largest font size that fits within constraints.
 
 - Range: `minFontSizePx` (default 8) → `fontSizePx`
-- Convergence: within `shrinkEpsilonPx` (default 0.25px) or `shrinkMaxIterations` (default 12)
+- Content and geometry that are both monotone-certified use
+  `shrinkEpsilonPx` (default 0.25px) and `shrinkMaxIterations` (default 12) for
+  binary refinement
+- Negative tracking/proportional metrics and topology-changing exclusion flow
+  use `shrinkEpsilonPx` as an exact-grid step and `fitMaxProbes` (default
+  4,096; hard maximum 65,536) as the work limit
 - If minimum font size still overflows: `overflow.type = "cannot_fit"`
 
 ```tsx
@@ -527,10 +532,12 @@ Binary search for the largest font size that fits within constraints.
 
 ### `fit="grow"`
 
-Binary search for the largest font size that fits, growing beyond the initial size.
+Select the largest fitting size above the initial size.
 
 - Range: `fontSizePx` → `maxFontSizePx` (default `fontSizePx * 4`)
-- Same convergence parameters as shrink (`growEpsilonPx`, `growMaxIterations`)
+- Certified layout uses `growEpsilonPx` and `growMaxIterations`; uncertified
+  content or geometry uses `growEpsilonPx` as its exact-grid step and the same
+  `fitMaxProbes` budget
 
 ```tsx
 <Text font="NotoSansJP" fontSizePx={12} fit="grow" maxFontSizePx={72}>
@@ -538,9 +545,19 @@ Binary search for the largest font size that fits, growing beyond the initial si
 </Text>
 ```
 
+Fit always measures the complete authored text with ellipsis disabled.
+Ellipsis, when requested, is applied only after the font size is selected, so
+truncation cannot make fit choose a larger size. If an exact grid would exceed
+its configured limit, rendering fails with `TEXT_FIT_PROBE_LIMIT` instead of
+returning an unproven smaller size. Candidate scaling applies equally to
+`fontSizePx` and `letterSpacingPx`; explicit `lineHeightPx` remains absolute,
+while proportional `lineHeight` follows the selected font size.
+
 ## Ellipsis
 
-Ellipsis truncates text with `…` (U+2026) when it exceeds `maxLines`. Both single-line and multi-line ellipsis are supported.
+Ellipsis projects text with `…` (U+2026) when it exceeds `maxLines`. It uses
+the same planner for horizontal and vertical text, normal rich text, and rich
+flow around exclusions.
 
 ```tsx
 <Text font="NotoSansJP" fontSizePx={16} maxLines={1} ellipsis>
@@ -548,9 +565,31 @@ Ellipsis truncates text with `…` (U+2026) when it exceeds `maxLines`. Both sin
 </Text>
 ```
 
-For multi-line ellipsis, the first `maxLines - 1` lines are kept intact and ellipsis is applied to the last allowed line.
+The planner evaluates legal authored prefixes from longest to shortest and
+chooses the first exact re-layout that satisfies every width, height,
+line/column, and region constraint. Prefix length is not assumed to be
+monotone with shaped width: ligatures and contextual forms are re-shaped at
+the new end of text. Boundaries preserve extended grapheme clusters, atomic
+`Ruby`/`InlineBox`/`InlineRect`/text-combine items, UAX #14 opportunities, and
+the active kinsoku profile. Negative tracking and mixed metrics are measured,
+not estimated.
 
-The algorithm removes grapheme clusters from the end one at a time, appending `…` until the text fits. If 32 removals don't achieve fit, `overflow.type = "cannot_fit"`.
+The marker is a synthetic run with no source range or UnitMap unit. It uses
+the first omitted item's effective text style and fragmentable decoration;
+output and recoverable warnings from the omitted suffix are discarded. If the
+marker itself emits a warning, that warning belongs to the selected output.
+If the marker cannot fit, display ink is empty while source/accessibility text
+remains complete. Nested decorated spans stay fragmentable across normal
+lines, vertical columns, and exclusion regions, with every outer and inner
+owner preserved. Paint-only Inline boundaries share one shaping run; an
+indivisible cluster crossing such a boundary uses its source-start paint.
+
+After the complete document is proven to overflow, at most 1,024 exact
+candidate layouts are allowed. A larger maximum candidate set fails with
+`TEXT_ELLIPSIS_CANDIDATE_LIMIT` before candidate or output materialization.
+Flow operations also fail deterministically at 65,536 distinct region queries
+or 262,144 returned intervals (`TEXT_REGION_QUERY_LIMIT` and
+`TEXT_REGION_INTERVAL_LIMIT`).
 
 ## Color Format
 

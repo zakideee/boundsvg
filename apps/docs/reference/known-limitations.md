@@ -11,7 +11,8 @@ Items here are known and triaged — please do not file bugs for them; see the
 ## Text
 
 - **Bidi / RTL is not supported.** Arabic, Hebrew, and other RTL scripts
-  shape but are not reordered. This remains an explicit current non-goal.
+  shape contextually in logical source order but are not visually reordered.
+  This remains an explicit current non-goal.
 - **Color emoji is not yet supported.** Emoji render as monochrome outlines
   or missing-glyph markers depending on the font. An asset-injection
   mechanism is planned.
@@ -27,6 +28,13 @@ Items here are known and triaged — please do not file bugs for them; see the
   (`textCombineUpright: "all"`) is experimental and manual-only.
 - Line breaking is greedy (first-fit). There is no paragraph-level optimal
   breaking (Knuth–Plass).
+- **Exact ellipsis and uncertified fit have deterministic work limits.** Once a
+  complete document is known to overflow, ellipsis accepts at most 1,024
+  possible exact candidate layouts. Fit with uncertified content or geometry
+  defaults to 4,096 grid probes and is capped at 65,536; flow is also capped at
+  65,536 distinct region queries and 262,144 returned intervals. Exceeding a
+  limit is a typed fatal error with no approximate or partial output. A
+  non-overflowing document bypasses the ellipsis candidate limit.
 
 ### Text on a path
 

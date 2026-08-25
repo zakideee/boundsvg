@@ -1,0 +1,31 @@
+---
+"@boundsvg/core": minor
+"@boundsvg/react": minor
+---
+
+**Output-affecting:** Use one authoritative text-layout contract for horizontal and vertical
+plain/rich text, exclusion flow, shrink/grow fit, and `maxLines` ellipsis. Ellipsis now selects the
+longest exact legal prefix without splitting grapheme clusters or atomic rich items, re-shapes
+contextual text at the retained end, preserves source/style/decoration identity, and excludes output
+and warnings owned only by the omitted suffix.
+
+Ordinary spans now use the canonical rich planner. Paint-only boundaries keep
+one shaping run (an indivisible cross-boundary cluster uses its source-start
+paint), and nested decorated spans remain fragmentable with all owner keys in
+normal and exclusion-flow output. Fit scales font size and letter spacing
+together; explicit pixel line height remains absolute.
+
+Add the positive-integer `fitMaxProbes` Text prop for deterministic exact-grid
+fit when content (including negative tracking) or flow geometry is not
+monotone-certified. Exact ellipsis, fit, and geometry work now fail with
+structured resource-limit errors instead of returning approximate or partial
+output. The bundled WASM DTO schema advances to 26 and must be rebuilt with the
+matching `@boundsvg/core` package.
+
+**Breaking (Rust):** `boundtext::layout_text` and `layout_text_with_unit_metadata` now return
+`Result<_, TextLayoutError>`, and the physical `FlowRegionSource` trait is replaced by the fallible
+logical-axis `RegionProvider` contract. Rust callers must migrate `Option` handling and provider
+implementations as documented in `crates/boundtext/README.md`.
+`FlowLayoutResult` also adds `inline_box_decorations`; direct struct constructors must initialize
+or forward that field. Shrinkwrap resource failures now keep their structured text error codes
+through the WASM bridge.

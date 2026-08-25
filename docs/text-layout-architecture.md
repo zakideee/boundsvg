@@ -43,7 +43,7 @@ The structural rules are:
   boundaries.
 - `Ruby`, `InlineBox`, `InlineRect`, and text-combine units are atomic.
 - A nested decorated span keeps its owner identity across every emitted
-  fragment.
+  fragment, including fragments split by exclusion regions.
 - Paint-only boundaries do not split a shaping run.
 - An atomic item's children never leak output, warnings, or decoration after
   that item is omitted.
@@ -70,10 +70,13 @@ Line breaking consumes logical inline intervals in logical block bands.
 Horizontal and vertical writing share the same planner state; an axis strategy
 maps logical coordinates to physical coordinates only at placement time.
 
-Region input is one of:
-
-- an infallible inline `Rect` fast path for ordinary rectangular text; or
-- a fallible, normalized, memoized provider for exclusion flow.
+Every exclusion-flow input uses a fallible, normalized, memoized
+`RegionProvider`. A provider with no exclusions may declare
+`FitSearchKind::CertifiedMonotone`; providers with topology-changing geometry
+use the conservative `Uncertified` default. Provider certification is only
+one half of fit certification: negative tracking or negative proportional
+line/ruby metrics force exact-grid evaluation even for rectangular geometry.
+Ordinary non-flow text does not query geometry.
 
 A provider query is a pure function of the normalized geometry, logical band,
 minimum inline extent, and writing mode. Returned intervals are finite,
@@ -116,6 +119,13 @@ monotone in prefix length. An optimization may skip candidates only when a
 conservative bound proves that every skipped candidate is impossible; a
 last-visible-line heuristic is not a proof.
 
+After the complete document is proven to overflow, the authoritative API
+preflights the maximum exact work before shaping a candidate. One projection
+may require at most 1,024 exact candidate layouts, including the marker-only
+probe and the final empty-display projection when the marker does not fit. A
+larger legal candidate set fails with `TEXT_ELLIPSIS_CANDIDATE_LIMIT` and no
+partial output. A complete document that fits bypasses this ellipsis budget.
+
 If the marker alone does not fit, display ink is empty. Authored source and
 source units are still retained.
 
@@ -142,9 +152,14 @@ The result projection is:
 
 No UnitMap unit is invented for the marker.
 
+When one shaping cluster crosses a paint-only source boundary, the cluster is
+painted with the effective paint style of its source-start grapheme. This is a
+deterministic ownership rule for indivisible ligatures/contextual clusters; it
+does not split or duplicate the shaped glyph.
+
 ## Diagnostics and materialization
 
-Each validation or layout evaluation writes to an isolated diagnostic ledger.
+Each validation or layout evaluation builds an isolated diagnostic set.
 Diagnostic ownership is one of:
 
 - global input;
@@ -153,11 +168,13 @@ Diagnostic ownership is one of:
 - final layout.
 
 Rejected ellipsis candidates and rejected fit probes are discarded with their
-entire ledgers. Only the selected evaluation is committed. A deterministic key
-deduplicates committed diagnostics, which are sorted by source order,
-synthetic order, code, and stable detail. This ensures that omitted authored
-items do not emit recoverable warnings while the selected synthetic marker can
-emit its own warning.
+entire diagnostic sets. Only the selected evaluation is committed. Missing
+glyph diagnostics are grouped deterministically by font alias; authored-node
+diagnostics follow normalized authored traversal order after that group. An
+atomic node stores the diagnostics of its complete subtree, while a
+fragmentable decorated span retains the ownership of each child diagnostic.
+This ensures that omitted authored items do not emit recoverable warnings
+while the selected synthetic marker can emit its own warning.
 
 Complete-input fatal validation is not filtered by display selection. An
 invalid authored input remains invalid even when the invalid item would have
@@ -173,20 +190,31 @@ The planner selects its search algorithm from a proof, not from an assumption:
 - A certified monotone predicate uses endpoint checks and binary search.
   `*MaxIterations` limits binary refinement and `*EpsilonPx` is its convergence
   tolerance.
-- An uncertified predicate, including exclusion-flow topology, uses a
-  descending deterministic grid whose step is `*EpsilonPx`. It returns the
-  largest fitting grid candidate. Both range endpoints are included.
+- An uncertified predicate, including negative tracking/proportional metrics
+  or exclusion-flow topology, uses a descending deterministic grid whose step
+  is `*EpsilonPx`. It returns the largest fitting grid candidate. Both range
+  endpoints are included; shrink is anchored at the authored upper endpoint
+  and grow at the configured maximum.
 
 `fitMaxProbes` is an additive public work limit for an exact-grid search. It
 does not replace or reinterpret `*MaxIterations`. If the complete grid exceeds
 the configured or hard deterministic probe budget, layout fails with
 `TEXT_FIT_PROBE_LIMIT`; it does not return an unproven smaller size.
+The default exact-grid limit is 4,096 probes and the hard maximum is 65,536.
+`fitMaxProbes` must be a positive integer; values above the hard maximum are
+clamped to that maximum.
 
-Shrink evaluates the authored size first and clamps to the minimum with
-`cannot_fit` when even the minimum fails. Grow requires the authored size to
-fit and otherwise reports the existing failure. The existing
+Certified shrink may infer `cannot_fit` from a failing minimum endpoint.
+Uncertified shrink evaluates the complete bounded grid and reports
+`cannot_fit` only when no candidate fits; a failing minimum does not exclude a
+larger fit island. Grow requires the authored size to fit before considering
+any larger island and otherwise reports the existing failure. The existing
 `chosenFontSizePx` and `overflow` fields remain the result contract; no
 parallel fit-status DTO is introduced.
+
+Fit scales `fontSizePx` and `letterSpacingPx` by the same candidate ratio for
+plain, span, and rich inputs. An explicit `lineHeightPx` remains an absolute
+pixel value; proportional `lineHeight` follows the candidate font size.
 
 ## Failure and resource contract
 
@@ -195,6 +223,22 @@ errors. There is no approximate or partial text output. Numeric limits are
 calibrated with public adversarial benchmarks in the same output-affecting
 change that enables them; an unexplained constant is not a contract.
 
+The limits enforced per authoritative operation are:
+
+| Resource                                 |                                 Limit | Fatal code                      |
+| ---------------------------------------- | ------------------------------------: | ------------------------------- |
+| Recursive rich-text container depth      |                                    48 | `RICH_TEXT_MAX_DEPTH`           |
+| Authored inline rectangles per text node |                                 4,096 | `INLINE_RECT_COMPLEXITY_LIMIT`  |
+| Exact ellipsis candidate layouts         |                                 1,024 | `TEXT_ELLIPSIS_CANDIDATE_LIMIT` |
+| Exact-grid fit probes                    | 4,096 by default; 65,536 hard maximum | `TEXT_FIT_PROBE_LIMIT`          |
+| Distinct region queries                  |                                65,536 | `TEXT_REGION_QUERY_LIMIT`       |
+| Cumulative returned intervals            |                               262,144 | `TEXT_REGION_INTERVAL_LIMIT`    |
+
+Non-finite, negative, overlapping, out-of-frame, or otherwise invalid provider
+queries and intervals fail with `TEXT_REGION_PROVIDER_INVALID`. Region-query
+and interval accounting occurs after per-layout memoization, so identical
+queries consume one entry.
+
 The public input variables are:
 
 - `B`: normalized UTF-8 bytes;
@@ -202,7 +246,7 @@ The public input variables are:
 - `R`: resolved shaping/paint/decoration runs;
 - `D`: maximum rich nesting depth;
 - `S`: legal source boundaries;
-- `G`: shaped glyphs;
+- `G`: glyphs in the complete-document shape;
 - `A`: atomic inline items;
 - `C`: ellipsis candidates actually evaluated;
 - `F`: fit probes;
@@ -217,26 +261,67 @@ With `T(p, K, E, Q, Z)` denoting one exact layout of a prefix of length `p`,
 the conservative worst case is:
 
 ```text
-time  = O(B + N + R + K log K + F*T(S,K,E,Q,Z) + sum(T(p_i,K,E,Q,Z)) + O_g + O_d + O_r)
-space = O(B + N + R + G + K + Z + O_g + O_d + O_r)
+time  = O(B + N + R + (G+S) log G + (S+A)*D + K log K + F*T(S,K,E,Q,Z) + sum(T(p_i,K,E,Q,Z)) + O_g + O_d + O_r)
+space = O(B + N + R + (S+A)*D + K + Q + Z + O_g + O_d + O_r)
 ```
 
-The sum covers all evaluated ellipsis candidates and is quadratic in source
-length when no safe pruning or reusable checkpoint applies. Benchmarks must
-therefore report candidate, fit-probe, region-query, returned-interval,
-shaped-glyph, and materialization counters in addition to time and memory.
+The `(G+S) log G` term covers deterministic logical-source indexing and lookup
+of whole-run glyph clusters, including descending RTL-backend cluster order.
+The `(S+A)*D` term is the complete fragmentable-decoration ancestry carried by
+text tokens and zero-source atomic items (with public rich depth capped at
+48). `Q+Z` is the memoized region-query cache and its returned intervals. `T`
+includes the same indexing and ancestry work for the candidate it shapes. The
+sum covers all evaluated ellipsis candidates and is quadratic in source length
+when no safe pruning or reusable checkpoint applies. The public hard limits
+bound `D`, inline-rectangle contribution to `A`, `C`, `F`, `Q`, and `Z`.
+`B`, `N`, `R`, `S`, `G`, and the selected output remain explicit input/output
+size terms rather than being hidden behind a wall-clock cutoff.
+
+`cargo bench -p boundtext --bench text_layout_adversarial --features phase-trace`
+prints one JSON record per adversarial scenario. A reference Linux run on
+2026-08-25 produced:
+
+| Scenario                         | Time (µs) | VmHWM (KiB) | Candidates | Fit probes | Region queries | Shape calls / glyphs | Materialized lines / glyphs |
+| -------------------------------- | --------: | ----------: | ---------: | ---------: | -------------: | -------------------: | --------------------------: |
+| `exact-ellipsis-256`             |   244,847 |       6,132 |        255 |          0 |              0 |         512 / 33,407 |                       1 / 2 |
+| `ellipsis-candidate-budget-1024` |       921 |       6,488 |          0 |          0 |              0 |            1 / 1,025 |                       0 / 0 |
+| `exact-exclusion-fit-65`         |    45,847 |       6,488 |         85 |         65 |            122 |         236 / 10,926 |                      2 / 12 |
+| `default-exact-fit-budget-4096`  | 1,739,867 |       6,488 |          0 |      4,096 |          4,096 |      4,097 / 409,700 |                       1 / 1 |
+| `content-exact-fit-209-grid`     |       412 |       6,488 |          0 |         75 |              0 |              76 / 76 |                       1 / 1 |
+
+Elapsed time and process high-water memory are observational rather than
+portable pass/fail thresholds. Counter assertions are the deterministic
+performance contract and demonstrate that budget rejection performs no exact
+candidate or output materialization work.
 
 ## Public and Rust migration
 
 - JSX and `RichTextNode` stay source-compatible.
-- TypeScript and the WASM request schema add only `fitMaxProbes`.
+- TypeScript and the WASM request schema add only `fitMaxProbes`; the bundled
+  schema handshake advances from 25 to 26.
 - `boundtext::layout_text` and its metadata variant return
   `Result<TextLayoutResult, TextLayoutError>` instead of `Option`. Rust callers
   migrate `Some/None` handling to `Ok/Err`; existing `.expect(...)` callers
   continue to compile.
+- Direct `TextLayoutRequest` and `FlowLayoutRequest` struct literals add
+  `fit_max_probes`. Exhaustive error matches add `InvalidFitStep` and
+  `FitProbeLimit`; ordinary and flow fit can both take the exact-grid path
+  when content is not monotone-certified.
+- Direct Rust layout and flow calls now enforce rich depth and inline-rectangle
+  limits before recursive preparation or provider queries. Exhaustive error
+  matches add `RichTextDepthLimit` and `InlineRectLimit`.
 - The two-method physical `FlowRegionSource` trait is replaced by the
   logical-axis, fallible `RegionProvider` contract. Implementors normalize and
   validate returned intervals or return a typed provider error.
+- Ordinary `TextSpanInput` requests now adapt to the canonical rich planner;
+  authored paint boundaries remain available on positioned glyphs but no
+  longer reset shaping. Text-on-path retains its separately prepared shaping
+  run/paint-range adapter.
+- `FlowLayoutResult` adds `inline_box_decorations`; consumers that construct
+  this public struct add an empty vector for plain flow or forward the
+  materialized rich-flow decorations.
+- Shrinkwrap adapters preserve `BoundtextError` resource codes through the
+  structured WASM error envelope instead of flattening them to strings.
 - The bundled WASM ABI is updated with TypeScript bridge types in the same
   change. The ABI is internal and versions must not be mixed.
 
@@ -247,13 +332,11 @@ perform a version bump.
 
 ## Rollback units
 
-Implementation is divided so each completed commit is green and bisectable:
+The implementation is rollbackable in three green responsibility units:
 
-1. Contract tests and canonical document/source identities, with unchanged
-   non-overflow output.
-2. Typed errors, authoritative measurement, and removal of the orchestration
-   fallback.
-3. Logical regions and the rectangular fast path.
-4. Unified exact ellipsis selection and synthetic projection.
-5. Certified fit search and probe budgeting.
-6. WASM/TypeScript surfaces, mirrored demos, docs, changeset, and benchmarks.
+1. The canonical planner, typed failures, logical provider, exact selection,
+   fit budgets, synchronized Rust/TypeScript/WASM contract, tests, fixtures,
+   and adversarial benchmark.
+2. The semantically mirrored Core/React demo and template-switch regression.
+3. User docs, feature/limitation tables, migration notes, and the
+   output-affecting changeset.
