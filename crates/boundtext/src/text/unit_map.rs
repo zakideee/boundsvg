@@ -93,7 +93,7 @@ pub struct TextUnitMap {
 }
 
 /// Canonical authored unit retained independently from the selected display
-/// projection. This is internal transport for omitted-unit materialization;
+/// projection. This is engine transport for omitted-unit materialization;
 /// callers must treat its ordering and IDs as implementation details.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]

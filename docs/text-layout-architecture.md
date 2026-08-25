@@ -32,8 +32,8 @@ document before planning. Every authored item has independent identities for:
 - decoration owner; and
 - diagnostic owner.
 
-Internal node and boundary IDs are deterministic for one normalized input but
-are not public stable IDs. Source order is not inferred from source offsets:
+Node and boundary IDs are deterministic for one normalized input but are not
+public stable IDs. Source order is not inferred from source offsets:
 multiple zero-source items may occupy distinct authored positions at the same
 offset.
 
@@ -323,7 +323,8 @@ candidate or output materialization work.
 - Shrinkwrap adapters preserve `BoundtextError` resource codes through the
   structured WASM error envelope instead of flattening them to strings.
 - The bundled WASM ABI is updated with TypeScript bridge types in the same
-  change. The ABI is internal and versions must not be mixed.
+  change. It is not a public compatibility boundary, and versions must not be
+  mixed.
 
 These Rust changes are breaking for the `0.x` crates and require a minor
 release migration note. The TypeScript addition is non-breaking. Rendered

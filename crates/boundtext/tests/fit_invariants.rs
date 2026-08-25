@@ -195,7 +195,11 @@ fn exhaustive_largest_fitting_size(font_context: &FontContext<'_>) -> f64 {
         let is_fit = layout_result.overflow.overflow_type == "none"
             && layout_result.lines.len() <= 1
             && layout_result.bbox.w <= candidate_request.max_width + 0.001
-            && layout_result.bbox.h <= candidate_request.max_height.unwrap() + 0.001;
+            && layout_result.bbox.h
+                <= candidate_request
+                    .max_height
+                    .expect("the fixture defines a height constraint")
+                    + 0.001;
         if is_fit {
             largest = Some(font_size_px);
         }

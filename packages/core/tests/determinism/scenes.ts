@@ -38,6 +38,58 @@ export const DETERMINISM_SCENES: Record<string, VNode> = {
     ),
   ),
 
+  "vertical-rich-ellipsis": createElement(
+    "Canvas",
+    { width: 280, height: 280, background: "#111827" },
+    createElement(
+      "Text",
+      {
+        id: "vertical-rich-ellipsis",
+        font: "NotoSansJP",
+        fontSizePx: 24,
+        color: "#e2e8f0",
+        writingMode: "vertical-rl",
+        language: "ja",
+        wrap: "char",
+        lineHeight: 1.3,
+        maxLines: 3,
+        ellipsis: true,
+        width: 240,
+        height: 240,
+      },
+      "縦組みの",
+      createElement("Inline", { color: "#7dd3fc", fontWeight: 700 }, "リッチ"),
+      "文章は",
+      createElement(
+        "Ruby",
+        { rubyPosition: "over", rubyAlign: "center" },
+        "境界",
+        createElement("Rt", { fontSizePx: 10, lineHeight: 1, color: "#fda4af" }, "きょうかい"),
+      ),
+      "と",
+      createElement(
+        "InlineBox",
+        {
+          background: "#164e63",
+          paddingInline: [4, 4],
+          borderRadius: 4,
+          color: "#a5f3fc",
+        },
+        "原子",
+      ),
+      "を保ち、",
+      createElement(
+        "Inline",
+        {
+          color: "#fde68a",
+          textDecoration: { line: "underline", color: "#f59e0b", thicknessPx: 2 },
+        },
+        createElement("Inline", { fontWeight: 700 }, "最長の合法な接頭辞を選びます。"),
+        "省略された末尾は表示されません。",
+      ),
+    ),
+  ),
+
   "fit-shrink": createElement(
     "Canvas",
     { width: 320, height: 120, background: "#ffffff" },
