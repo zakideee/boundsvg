@@ -33,7 +33,7 @@ use line_layout::{
 use line_layout::{effective_line_width, layout_horizontal_tokens, layout_vertical_tokens};
 use prepare::{
     build_default_style, collect_notdef_warnings_from_tokens, collect_owned_warnings,
-    expand_tabs_in_nodes, flatten_rich_nodes_with_warnings,
+    expand_tabs_in_nodes, flatten_rich_nodes_with_warnings, selected_font_size_scale,
 };
 
 /// Maximum nesting depth for `InlineBox` (outer + 2 nested).
@@ -440,7 +440,7 @@ fn build_normalized_inline_nodes(
             rich_nodes,
             &default_style,
             &mut inline_nodes,
-            chosen_font_size_px / req.font_size_px,
+            selected_font_size_scale(req.font_size_px, chosen_font_size_px),
             &mut flatten_warnings,
         );
     } else if !req.text.is_empty() {
@@ -9094,6 +9094,14 @@ mod tests {
 
         assert_eq!(legal_prefixes.len(), 1_025);
         assert_eq!(counters.ellipsis_word_boundary_preparations, 1);
+    }
+
+    #[test]
+    fn selected_font_size_scale_rejects_non_finite_or_zero_authored_sizes() {
+        assert_eq!(selected_font_size_scale(20.0, 10.0), 0.5);
+        assert_eq!(selected_font_size_scale(0.0, 10.0), 1.0);
+        assert_eq!(selected_font_size_scale(f64::NAN, 10.0), 1.0);
+        assert_eq!(selected_font_size_scale(20.0, f64::INFINITY), 1.0);
     }
 
     #[test]

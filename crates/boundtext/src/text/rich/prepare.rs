@@ -28,7 +28,7 @@ pub(super) fn prepare_rich_text(
             rich_nodes,
             &default_style,
             &mut inline_nodes,
-            chosen_font_size_px / req.font_size_px,
+            selected_font_size_scale(req.font_size_px, chosen_font_size_px),
             &mut flatten_warnings,
         );
     } else if !req.text.is_empty() {
@@ -221,11 +221,7 @@ pub(super) fn build_default_style(
     default_font_style: &FontStyle,
     chosen_font_size_px: f64,
 ) -> ResolvedStyle {
-    let scale = if req.font_size_px > 0.0 {
-        chosen_font_size_px / req.font_size_px
-    } else {
-        1.0
-    };
+    let scale = selected_font_size_scale(req.font_size_px, chosen_font_size_px);
     ResolvedStyle {
         font_families: if default_font_families.is_empty() {
             vec!["default".to_string()]
@@ -246,6 +242,21 @@ pub(super) fn build_default_style(
         font_feature_settings: format_css_font_feature_settings(&req.font_feature_settings),
         text_orientation: req.text_orientation,
         text_decoration: None,
+    }
+}
+
+/// Return a finite proportional scale for a settled fit size.
+pub(super) fn selected_font_size_scale(
+    authored_font_size_px: f64,
+    chosen_font_size_px: f64,
+) -> f64 {
+    if authored_font_size_px.is_finite()
+        && authored_font_size_px > 0.0
+        && chosen_font_size_px.is_finite()
+    {
+        chosen_font_size_px / authored_font_size_px
+    } else {
+        1.0
     }
 }
 
