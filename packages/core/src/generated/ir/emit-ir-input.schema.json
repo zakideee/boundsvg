@@ -1658,7 +1658,7 @@
           "minimum": 0
         },
         "sourceStart": {
-          "description": "Grapheme range in the logical base text. Unlike `cluster_*`, these\noffsets remain stable across rich-text runs. Ruby annotations point to\nthe range of the base text they annotate.",
+          "description": "Grapheme range in the logical base text, stable for selection across\nrich-text runs. `cluster_*` uses shaping UTF-8 byte offsets instead;\nruby annotations point to the base-text range they annotate.",
           "type": [
             "integer",
             "null"

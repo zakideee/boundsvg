@@ -13,7 +13,9 @@ Ordinary spans now use the canonical rich planner. Paint-only boundaries keep
 one shaping run (an indivisible cross-boundary cluster uses its source-start
 paint), and nested decorated spans remain fragmentable with all owner keys in
 normal and exclusion-flow output. Fit scales font size and letter spacing
-together; explicit pixel line height remains absolute.
+together; explicit pixel line height remains absolute. Positioned glyph
+`clusterStart` / `clusterEnd` values for ordinary spans are now document-global
+UTF-8 byte offsets instead of run-local offsets.
 
 Add the positive-integer `fitMaxProbes` Text prop for deterministic exact-grid
 fit when content (including negative tracking) or flow geometry is not

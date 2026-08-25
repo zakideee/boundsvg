@@ -332,9 +332,9 @@ pub struct PositionedGlyph {
     pub text: String,
     pub cluster_start: u32,
     pub cluster_end: u32,
-    /// Grapheme range in the logical base text. Unlike `cluster_*`, these
-    /// offsets remain stable across rich-text runs. Ruby annotations point to
-    /// the range of the base text they annotate.
+    /// Grapheme range in the logical base text, stable for selection across
+    /// rich-text runs. `cluster_*` uses shaping UTF-8 byte offsets instead;
+    /// ruby annotations point to the base-text range they annotate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_start: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]

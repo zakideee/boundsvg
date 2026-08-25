@@ -412,9 +412,9 @@ export interface PositionedGlyph {
   clusterStart: number;
   clusterEnd: number;
   /**
-   * Grapheme range in the logical base text. Unlike `cluster_*`, these
-   * offsets remain stable across rich-text runs. Ruby annotations point to
-   * the range of the base text they annotate.
+   * Grapheme range in the logical base text, stable for selection across
+   * rich-text runs. `cluster_*` uses shaping UTF-8 byte offsets instead;
+   * ruby annotations point to the base-text range they annotate.
    */
   sourceStart?: number;
   sourceEnd?: number;
