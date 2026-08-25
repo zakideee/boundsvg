@@ -46,7 +46,20 @@ pub(super) fn resolve_line_height(
     resolve_line_metrics(req, font_ctx, font_size_px).line_height_px
 }
 
+pub(super) fn fit_scale(req: &TextLayoutRequest<'_>, font_size_px: f64) -> f64 {
+    if req.font_size_px > 0.0 {
+        font_size_px / req.font_size_px
+    } else {
+        1.0
+    }
+}
+
+pub(crate) fn scaled_letter_spacing(req: &TextLayoutRequest<'_>, font_size_px: f64) -> f64 {
+    req.letter_spacing_px * fit_scale(req, font_size_px)
+}
+
 /// Check if text fits within the given constraints (horizontal).
+#[cfg(test)]
 pub(super) fn text_fits(
     lines: &[Line],
     max_width: f64,
@@ -222,7 +235,7 @@ pub(super) fn measure_fits_at_size(
         font_ctx,
         req.text,
         font_size_px,
-        req.letter_spacing_px,
+        scaled_letter_spacing(req, font_size_px),
         shape_options,
     )?;
     let measure = measure_break_fit(
@@ -253,7 +266,7 @@ pub(super) fn layout_at_size(
         font_ctx,
         req.text,
         font_size_px,
-        req.letter_spacing_px,
+        scaled_letter_spacing(req, font_size_px),
         shape_options,
     )?;
     let mut break_result = break_lines_internal(

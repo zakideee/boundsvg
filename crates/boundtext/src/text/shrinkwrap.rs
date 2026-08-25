@@ -91,7 +91,7 @@ fn layout_text_at_inline_size(
             ..req.clone()
         }
     };
-    layout_text(&candidate_req, font_ctx)
+    layout_text(&candidate_req, font_ctx).ok()
 }
 
 /// Shrinkwrap a horizontal span/rich-text request using the full text engine.

@@ -71,6 +71,7 @@ fn text_request(text: &str) -> TextLayoutRequest<'_> {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     }
 }
 

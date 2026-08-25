@@ -10,8 +10,8 @@ use crate::text::types::{
 };
 
 use super::{
-    FlowFragment, FlowFragmentStyle, FlowLayoutRequest, FlowMeasure, FlowRegionSource,
-    FlowTextSpan, measure_flow_inline_with_styles, measure_flow_vertical_inline_with_styles,
+    FlowFragment, FlowFragmentStyle, FlowLayoutRequest, FlowMeasure, FlowTextSpan, RegionProvider,
+    measure_flow_inline_with_styles, measure_flow_vertical_inline_with_styles,
 };
 
 // ---------------------------------------------------------------------------
@@ -305,9 +305,9 @@ pub(super) fn default_alphabetic_baseline_offset_px(
 pub(super) fn measure_inline_flow_at_font_size(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl FlowRegionSource,
+    regions_source: &impl RegionProvider,
     chosen_font_size_px: f64,
-) -> FlowMeasure {
+) -> Result<FlowMeasure, crate::BoundtextError> {
     let (_, text_spans, _, shaped_runs) =
         prepare_inline_flow_inputs(req, font_ctx, chosen_font_size_px);
     let min_region_extent = req.min_region_width.unwrap_or(chosen_font_size_px);

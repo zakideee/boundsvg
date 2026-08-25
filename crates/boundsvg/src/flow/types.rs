@@ -97,6 +97,7 @@ pub(crate) struct TextFlowWithExclusionsInput {
     pub max_font_size_px: Option<f64>,
     pub fit_epsilon_px: Option<f64>,
     pub fit_max_iterations: Option<usize>,
+    pub fit_max_probes: Option<usize>,
     pub spans: Option<Vec<FlowTextSpanDto>>,
     pub rich_text: Option<Vec<RichTextNodeInput>>,
     pub writing_mode: Option<String>,

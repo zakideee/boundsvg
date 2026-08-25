@@ -320,7 +320,7 @@ fn shape_text(
 /// synthetic marker. Tracking is restored once at the run boundary so the
 /// display advance matches ordinary adjacent clusters without allowing the
 /// marker to participate in the prefix's shaping context.
-fn shape_horizontal_candidate(
+pub(crate) fn shape_horizontal_candidate(
     font_ctx: &FontContext<'_>,
     prefix: &str,
     font_size_px: f64,
@@ -358,8 +358,8 @@ fn total_vertical_advance(glyphs: &[GlyphInfo]) -> f64 {
 
 /// Shape text and return its total advance in pixels.
 ///
-/// Used by the flow-layout ellipsis path to verify that `prefix + "…"` fits
-/// within the region after the binary search produces an approximate candidate.
+/// Used by flow layout and exact-prefix tests to measure a projected
+/// `prefix + "…"` candidate.
 /// When `vertical` is true, sums vertical advances (`y_advance` with `x_advance`
 /// fallback) instead of horizontal `x_advance`.
 #[must_use]
@@ -400,9 +400,9 @@ pub fn shape_ellipsis_advance_with_options(
 
 /// Apply ellipsis truncation to a single line that overflows.
 ///
-/// Uses binary search on grapheme count to find the maximum `keep` value
-/// where `prefix + "…"` fits within `max_width`, then refines the boundary
-/// with a `REFINE_WINDOW`-wide linear scan. Shaping count is O(log N + `REFINE_WINDOW`).
+/// Evaluates legal grapheme prefixes in descending source order and chooses
+/// the first exact fit. It deliberately assumes no monotonic relationship
+/// between prefix length and shaped advance.
 /// When a kinsoku profile is given, the truncation point backs up past
 /// tail-prohibited characters (e.g. "（" must not precede "…").
 ///
@@ -434,6 +434,7 @@ pub fn apply_ellipsis(
 }
 
 #[must_use]
+#[cfg(test)]
 pub(crate) fn apply_ellipsis_with_unit_metadata(
     text: &str,
     max_width: f64,
@@ -488,6 +489,8 @@ fn apply_ellipsis_internal(
     let selected = super::ellipsis_plan::select_longest_fitting(
         legal_candidates,
         |keep| {
+            #[cfg(any(test, feature = "phase-trace"))]
+            crate::phase_trace::record_ellipsis_candidate();
             let prefix = graphemes[..keep].concat();
             let glyphs = shape_horizontal_candidate(
                 font_ctx,
@@ -553,6 +556,7 @@ pub fn apply_multiline_ellipsis(
 }
 
 #[must_use]
+#[cfg(test)]
 pub(crate) fn apply_multiline_ellipsis_with_unit_metadata(
     lines: &[Line],
     max_lines: usize,
@@ -1106,8 +1110,8 @@ mod tests {
         );
     }
 
-    /// Text with 40+ graphemes: binary search ellipsis must find a valid
-    /// truncation, not fall back to "…" alone (the old 32-iter limit would fail here).
+    /// Text with 40+ graphemes must find a valid exact prefix rather than
+    /// materializing the marker alone.
     #[test]
     fn test_ellipsis_over_32_graphemes() {
         let reg = test_registry();

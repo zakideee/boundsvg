@@ -707,6 +707,37 @@ describe("WASM protocol decoders", () => {
     handle.dispose();
   });
 
+  it("preserves a structured fatal text error thrown by WASM", () => {
+    const handle = new WasmEngineHandle({
+      layout_text_flow_with_exclusions: () => {
+        throw JSON.stringify({
+          code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
+          message: "exact candidate budget exceeded",
+          stage: "text",
+        });
+      },
+      free: () => undefined,
+    } as unknown as WasmEngineInstance);
+
+    expect(() =>
+      handle.layoutTextFlowWithExclusions({
+        text: "A",
+        fontFamily: "Fixture",
+        fontSizePx: 16,
+        flowBox: { x: 0, y: 0, width: 100, height: 40 },
+        exclusions: [],
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        name: "FatalError",
+        code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
+        message: "exact candidate budget exceeded",
+        stage: "text",
+      }),
+    );
+    handle.dispose();
+  });
+
   it("rejects invalid measurement optional fields, array elements, and nested enums", () => {
     expectCode(
       () => decodeTextFlowResult(JSON.stringify({ lines: [null], exhausted: false })),

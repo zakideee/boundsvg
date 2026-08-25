@@ -479,6 +479,7 @@ mod span_parity {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         }
     }
 
@@ -1134,6 +1135,7 @@ fn char_wrap_breaks_by_character() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
     let result = layout_text(&req, &font_ctx).expect("layout");
     let lines: Vec<&str> = result.lines.iter().map(|l| l.text.as_str()).collect();
@@ -1199,6 +1201,7 @@ fn rich_decorated_span_produces_decorations() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
     let result = layout_text(&req, &font_ctx).expect("layout");
     assert!(
@@ -1260,6 +1263,7 @@ mod unit_metadata_parity {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         }
     }
 
@@ -1385,5 +1389,76 @@ mod unit_metadata_parity {
             ..request("装飾付きインライン")
         };
         assert_layout_unchanged(&rich_request, &font_ctx);
+    }
+}
+
+mod fit_projection_work {
+    use crate::font::{FontContext, FontRegistry, FontStyle};
+    use crate::phase_trace::{reset_work, snapshot_work};
+    use crate::text::engine::layout_text;
+    use crate::text::types::{
+        FitMode, Language, TextLayoutRequest, TextOrientation, WhiteSpaceMode, WrapMode,
+        WritingMode,
+    };
+
+    #[test]
+    fn ellipsis_reuses_the_complete_documents_selected_fit_size() {
+        let font_bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"
+        ))
+        .expect("test font");
+        let mut registry = FontRegistry::new();
+        registry
+            .register(font_bytes, "NotoSansJP".to_string(), 400, FontStyle::Normal)
+            .expect("register test font");
+        let families = vec!["NotoSansJP".to_string()];
+        let font_context = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let request = TextLayoutRequest {
+            text: "あいうえお",
+            spans: None,
+            rich_text: None,
+            font_size_px: 16.0,
+            line_height: None,
+            line_height_px: None,
+            letter_spacing_px: -1.0,
+            text_indent: None,
+            max_width: 16.0,
+            max_height: None,
+            wrap: WrapMode::Char,
+            white_space: WhiteSpaceMode::Normal,
+            tab_size: 4,
+            fit: FitMode::Shrink,
+            max_lines: Some(1),
+            ellipsis: true,
+            language: Language::Ja,
+            writing_mode: WritingMode::HorizontalTb,
+            text_orientation: TextOrientation::Mixed,
+            uax14_breaks: None,
+            hanging_punctuation: false,
+            font_variation_settings: Vec::new(),
+            font_feature_settings: Vec::new(),
+            min_font_size_px: Some(12.0),
+            shrink_epsilon_px: Some(2.0),
+            shrink_max_iterations: Some(12),
+            max_font_size_px: None,
+            grow_epsilon_px: None,
+            grow_max_iterations: None,
+            fit_max_probes: Some(3),
+        };
+
+        reset_work();
+        let result = layout_text(&request, &font_context).expect("fitted ellipsis layout");
+        let counters = snapshot_work();
+
+        assert_eq!(result.chosen_font_size_px, 12.0);
+        assert_eq!(counters.fit_probes, 3);
+        assert!(counters.ellipsis_candidates > 0);
     }
 }

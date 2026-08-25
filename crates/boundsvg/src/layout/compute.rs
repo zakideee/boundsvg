@@ -73,6 +73,7 @@ fn compute_layout_inner_combined(
         shrink_to_fit_widths: HashMap::new(),
         shaped_cache: HashMap::new(),
         text_results: HashMap::new(),
+        text_errors: HashMap::new(),
     };
     compute_layout_core(input, context)
 }
@@ -93,6 +94,7 @@ fn compute_layout_inner(
         shrink_to_fit_widths: HashMap::new(),
         shaped_cache: HashMap::new(),
         text_results: HashMap::new(),
+        text_errors: HashMap::new(),
     };
     compute_layout_core(input, context)
 }

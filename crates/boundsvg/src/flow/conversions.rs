@@ -9,7 +9,7 @@ use crate::text::shrinkwrap;
 use crate::text::types::TextWarning;
 
 // ---------------------------------------------------------------------------
-// ExclusionRegionSource — bridges flow_geometry to FlowRegionSource
+// ExclusionRegionSource — bridges flow_geometry to RegionProvider
 // ---------------------------------------------------------------------------
 
 pub(super) struct ExclusionRegionSource<'a> {
@@ -17,25 +17,56 @@ pub(super) struct ExclusionRegionSource<'a> {
     pub exclusions: &'a [geometry::FlowExclusionShape],
 }
 
-impl bt_flow::FlowRegionSource for ExclusionRegionSource<'_> {
-    fn line_regions(&self, band_top: f64, band_bottom: f64, min_width: f64) -> Vec<(f64, f64)> {
-        geometry::compute_line_regions(
-            self.flow_box,
-            self.exclusions,
-            band_top,
-            band_bottom,
-            min_width,
-        )
-        .iter()
-        .map(|r| (r.x, r.width))
-        .collect()
+impl bt_flow::RegionProvider for ExclusionRegionSource<'_> {
+    fn regions(
+        &self,
+        query: bt_flow::RegionQuery,
+    ) -> Result<Vec<bt_flow::FlowRegion>, boundtext::BoundtextError> {
+        let regions = match query.writing_mode {
+            crate::text::types::WritingMode::HorizontalTb => {
+                let band_top = self.flow_box.y + query.cross_start_px;
+                let band_bottom = self.flow_box.y + query.cross_end_px;
+                geometry::compute_line_regions(
+                    self.flow_box,
+                    self.exclusions,
+                    band_top,
+                    band_bottom,
+                    query.min_inline_size_px,
+                )
+                .iter()
+                .map(|region| bt_flow::FlowRegion {
+                    inline_start_px: region.x,
+                    inline_size_px: region.width,
+                })
+                .collect()
+            }
+            crate::text::types::WritingMode::VerticalRl => {
+                let right = self.flow_box.x + self.flow_box.width - query.cross_start_px;
+                let left = self.flow_box.x + self.flow_box.width - query.cross_end_px;
+                geometry::compute_column_regions(
+                    self.flow_box,
+                    self.exclusions,
+                    left,
+                    right,
+                    query.min_inline_size_px,
+                )
+                .iter()
+                .map(|region| bt_flow::FlowRegion {
+                    inline_start_px: region.y,
+                    inline_size_px: region.height,
+                })
+                .collect()
+            }
+        };
+        Ok(regions)
     }
 
-    fn column_regions(&self, left: f64, right: f64, min_height: f64) -> Vec<(f64, f64)> {
-        geometry::compute_column_regions(self.flow_box, self.exclusions, left, right, min_height)
-            .iter()
-            .map(|r| (r.y, r.height))
-            .collect()
+    fn fit_search_kind(&self) -> bt_flow::FitSearchKind {
+        if self.exclusions.is_empty() {
+            bt_flow::FitSearchKind::CertifiedMonotone
+        } else {
+            bt_flow::FitSearchKind::Uncertified
+        }
     }
 }
 

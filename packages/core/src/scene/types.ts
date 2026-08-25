@@ -270,6 +270,7 @@ export type TextSceneNode = PositionProps &
     maxFontSizePx?: number;
     growEpsilonPx?: number;
     growMaxIterations?: number;
+    fitMaxProbes?: number;
     // Box model
     padding?: Spacing;
     margin?: Spacing;

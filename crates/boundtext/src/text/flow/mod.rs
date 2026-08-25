@@ -1,9 +1,13 @@
 //! Text flow layout engine.
 //!
 //! Provides variable-width text flow with optional obstacle avoidance via the
-//! [`FlowRegionSource`] trait. The geometry computation (SVG paths, circles,
+//! [`RegionProvider`] trait. The geometry computation (SVG paths, circles,
 //! etc.) is handled by the consumer -- this module only deals with text.
 
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+
+use crate::BoundtextError;
 use crate::font::FontContext;
 use crate::font::line_metrics::{LineMetrics, resolve_line_metrics_for_style};
 use crate::font::shaping::{
@@ -14,24 +18,19 @@ use crate::text::inline_runs;
 use crate::text::paragraph::{self, BreakCursor};
 use crate::text::rich;
 use crate::text::types::{
-    InlineRectBlockSizeInput, InlineRectFragment, Language, Line, PositionedGlyph,
-    RichTextNodeInput, TextBBox, TextLayoutResult, TextOrientation, TextOverflow, TextSpanInput,
-    TextWarning, WhiteSpaceMode, WrapMode, WritingMode, build_notdef_warnings,
-    collect_notdef_from_glyphs,
+    InlineBoxDecoration, InlineRectBlockSizeInput, InlineRectFragment, Language, Line,
+    PositionedGlyph, RichTextNodeInput, RichTextResourceViolation, TextBBox, TextLayoutResult,
+    TextOrientation, TextOverflow, TextSpanInput, TextWarning, WhiteSpaceMode, WrapMode,
+    WritingMode, build_notdef_warnings, collect_notdef_from_glyphs, validate_rich_text_resources,
 };
 use crate::text::vertical;
 
-mod ellipsis_ops;
 mod fit;
 mod inline;
 
-use ellipsis_ops::{
-    apply_ellipsis_horizontal, apply_ellipsis_inline, apply_ellipsis_vertical,
-    apply_ellipsis_vertical_inline,
-};
 pub(crate) use fit::{
     DEFAULT_FIT_EPSILON, DEFAULT_FIT_MAX_ITERATIONS, DEFAULT_GROW_MULTIPLIER,
-    DEFAULT_MIN_FONT_SIZE, fit_grow_with, fit_shrink_with,
+    DEFAULT_MIN_FONT_SIZE, ensure_grid_budget, fit_grow_with, fit_shrink_with,
 };
 use fit::{flow_fit_grow, flow_fit_grow_vertical, flow_fit_shrink, flow_fit_shrink_vertical};
 pub use inline::{build_flow_rich_text_inputs, build_inline_runs_inputs};
@@ -86,26 +85,216 @@ pub(super) fn resolve_flow_baseline_offset_px(
 }
 
 // ---------------------------------------------------------------------------
-// FlowRegionSource trait
+// RegionProvider trait
 // ---------------------------------------------------------------------------
 
-/// Abstracts geometry computation for flow layout.
-///
-/// Consumers implement this trait to provide free regions within a bounding
-/// box, taking into account obstacles (exclusions). The flow layout engine
-/// calls these methods to determine where text can be placed.
-pub trait FlowRegionSource {
-    /// Compute free horizontal regions within the band `[band_top, band_bottom)`.
-    ///
-    /// Returns a list of `(x, width)` pairs representing contiguous free spans
-    /// where text may be placed. Regions narrower than `min_width` are excluded.
-    fn line_regions(&self, band_top: f64, band_bottom: f64, min_width: f64) -> Vec<(f64, f64)>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FitSearchKind {
+    CertifiedMonotone,
+    Uncertified,
+}
 
-    /// Compute free vertical regions within the column `[left, right)`.
+/// A writing-mode-independent request for usable inline-axis regions.
+///
+/// Cross-axis values are logical offsets from the flow frame's block-start
+/// edge. Returned inline positions use the layout coordinate system.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionQuery {
+    pub writing_mode: WritingMode,
+    pub cross_start_px: f64,
+    pub cross_end_px: f64,
+    pub min_inline_size_px: f64,
+}
+
+/// One usable inline-axis interval returned by a [`RegionProvider`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlowRegion {
+    pub inline_start_px: f64,
+    pub inline_size_px: f64,
+}
+
+/// Abstracts deterministic geometry computation for flow layout.
+///
+/// Implementors return every usable interval for a complete query or a typed
+/// error. The engine validates and sorts all intervals before consuming them.
+pub trait RegionProvider {
+    /// Return every usable logical inline interval for `query`.
     ///
-    /// Returns a list of `(y, height)` pairs representing contiguous free spans
-    /// where text may be placed. Regions shorter than `min_height` are excluded.
-    fn column_regions(&self, left: f64, right: f64, min_height: f64) -> Vec<(f64, f64)>;
+    /// # Errors
+    ///
+    /// Returns a typed error when geometry cannot answer the complete query.
+    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, crate::BoundtextError>;
+
+    /// Declares whether font-size fit is proven monotone for this provider.
+    /// The conservative default requires an exact descending grid.
+    fn fit_search_kind(&self) -> FitSearchKind {
+        FitSearchKind::Uncertified
+    }
+}
+
+/// Maximum number of distinct geometry queries in one public flow layout.
+pub const MAX_REGION_QUERIES: usize = 65_536;
+/// Maximum cumulative number of intervals returned by distinct queries in
+/// one public flow layout.
+pub const MAX_RETURNED_REGIONS: usize = 262_144;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct RegionQueryKey {
+    writing_mode: u8,
+    cross_start_bits: u64,
+    cross_end_bits: u64,
+    min_inline_size_bits: u64,
+}
+
+impl From<RegionQuery> for RegionQueryKey {
+    fn from(query: RegionQuery) -> Self {
+        Self {
+            writing_mode: match query.writing_mode {
+                WritingMode::HorizontalTb => 0,
+                WritingMode::VerticalRl => 1,
+            },
+            cross_start_bits: query.cross_start_px.to_bits(),
+            cross_end_bits: query.cross_end_px.to_bits(),
+            min_inline_size_bits: query.min_inline_size_px.to_bits(),
+        }
+    }
+}
+
+/// Per-layout deterministic cache and budget around an arbitrary provider.
+struct BudgetedRegionProvider<'a, P> {
+    source: &'a P,
+    cache: RefCell<BTreeMap<RegionQueryKey, Result<Vec<FlowRegion>, BoundtextError>>>,
+    returned_region_count: Cell<usize>,
+    max_query_count: usize,
+    max_returned_regions: usize,
+}
+
+impl<'a, P> BudgetedRegionProvider<'a, P> {
+    fn new(source: &'a P) -> Self {
+        Self {
+            source,
+            cache: RefCell::new(BTreeMap::new()),
+            returned_region_count: Cell::new(0),
+            max_query_count: MAX_REGION_QUERIES,
+            max_returned_regions: MAX_RETURNED_REGIONS,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_limits(source: &'a P, max_query_count: usize, max_returned_regions: usize) -> Self {
+        Self {
+            source,
+            cache: RefCell::new(BTreeMap::new()),
+            returned_region_count: Cell::new(0),
+            max_query_count,
+            max_returned_regions,
+        }
+    }
+}
+
+impl<P: RegionProvider> RegionProvider for BudgetedRegionProvider<'_, P> {
+    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, BoundtextError> {
+        let key = RegionQueryKey::from(query);
+        if let Some(cached) = self.cache.borrow().get(&key) {
+            return cached.clone();
+        }
+        if self.cache.borrow().len() >= self.max_query_count {
+            return Err(BoundtextError::RegionQueryLimit {
+                limit: self.max_query_count,
+            });
+        }
+
+        let mut response = self.source.regions(query);
+        #[cfg(any(test, feature = "phase-trace"))]
+        crate::phase_trace::record_region_query(response.as_ref().map_or(0, std::vec::Vec::len));
+        if let Ok(regions) = &response {
+            let required = self
+                .returned_region_count
+                .get()
+                .saturating_add(regions.len());
+            if required > self.max_returned_regions {
+                response = Err(BoundtextError::RegionIntervalLimit {
+                    required,
+                    limit: self.max_returned_regions,
+                });
+            } else {
+                self.returned_region_count.set(required);
+            }
+        }
+        self.cache.borrow_mut().insert(key, response.clone());
+        response
+    }
+
+    fn fit_search_kind(&self) -> FitSearchKind {
+        self.source.fit_search_kind()
+    }
+}
+
+#[cfg(test)]
+mod region_budget_tests {
+    use super::*;
+
+    struct CountingProvider {
+        calls: Cell<usize>,
+        returned_regions: usize,
+    }
+
+    impl RegionProvider for CountingProvider {
+        fn regions(&self, _query: RegionQuery) -> Result<Vec<FlowRegion>, BoundtextError> {
+            self.calls.set(self.calls.get() + 1);
+            Ok((0..self.returned_regions)
+                .map(|index| FlowRegion {
+                    inline_start_px: index as f64,
+                    inline_size_px: 1.0,
+                })
+                .collect())
+        }
+    }
+
+    fn query(cross_start_px: f64) -> RegionQuery {
+        RegionQuery {
+            writing_mode: WritingMode::HorizontalTb,
+            cross_start_px,
+            cross_end_px: cross_start_px + 1.0,
+            min_inline_size_px: 0.0,
+        }
+    }
+
+    #[test]
+    fn identical_queries_are_memoized_before_budget_accounting() {
+        let source = CountingProvider {
+            calls: Cell::new(0),
+            returned_regions: 1,
+        };
+        let provider = BudgetedRegionProvider::with_limits(&source, 2, 2);
+
+        provider.regions(query(0.0)).expect("first query");
+        provider.regions(query(0.0)).expect("memoized query");
+        provider.regions(query(1.0)).expect("second distinct query");
+        let error = provider
+            .regions(query(2.0))
+            .expect_err("third distinct query exceeds the budget");
+
+        assert_eq!(source.calls.get(), 2);
+        assert_eq!(error, BoundtextError::RegionQueryLimit { limit: 2 });
+    }
+
+    #[test]
+    fn interval_exhaustion_is_cached_as_a_typed_failure() {
+        let source = CountingProvider {
+            calls: Cell::new(0),
+            returned_regions: 2,
+        };
+        let provider = BudgetedRegionProvider::with_limits(&source, 2, 1);
+
+        let expected = BoundtextError::RegionIntervalLimit {
+            required: 2,
+            limit: 1,
+        };
+        assert_eq!(provider.regions(query(0.0)), Err(expected.clone()));
+        assert_eq!(provider.regions(query(0.0)), Err(expected));
+        assert_eq!(source.calls.get(), 1);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +311,99 @@ pub struct FlowBounds {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+}
+
+pub(crate) fn query_regions(
+    region_provider: &impl RegionProvider,
+    writing_mode: WritingMode,
+    flow_bounds: &FlowBounds,
+    physical_cross_start_px: f64,
+    physical_cross_end_px: f64,
+    min_inline_size_px: f64,
+) -> Result<Vec<(f64, f64)>, crate::BoundtextError> {
+    if !flow_bounds.x.is_finite()
+        || !flow_bounds.y.is_finite()
+        || !flow_bounds.width.is_finite()
+        || !flow_bounds.height.is_finite()
+        || flow_bounds.width < 0.0
+        || flow_bounds.height < 0.0
+        || !physical_cross_start_px.is_finite()
+        || !physical_cross_end_px.is_finite()
+        || physical_cross_end_px < physical_cross_start_px
+        || !min_inline_size_px.is_finite()
+        || min_inline_size_px < 0.0
+    {
+        return Err(crate::BoundtextError::InvalidRegionQuery(
+            "flow bounds, cross-axis bounds, and minimum inline size must be finite and ordered"
+                .to_string(),
+        ));
+    }
+    let (cross_start_px, cross_end_px) = match writing_mode {
+        WritingMode::HorizontalTb => (
+            physical_cross_start_px - flow_bounds.y,
+            physical_cross_end_px - flow_bounds.y,
+        ),
+        WritingMode::VerticalRl => (
+            flow_bounds.x + flow_bounds.width - physical_cross_end_px,
+            flow_bounds.x + flow_bounds.width - physical_cross_start_px,
+        ),
+    };
+    let query = RegionQuery {
+        writing_mode,
+        cross_start_px,
+        cross_end_px,
+        min_inline_size_px,
+    };
+    let mut regions = region_provider.regions(query)?;
+    let (inline_frame_start, inline_frame_end) = match writing_mode {
+        WritingMode::HorizontalTb => (flow_bounds.x, flow_bounds.x + flow_bounds.width),
+        WritingMode::VerticalRl => (flow_bounds.y, flow_bounds.y + flow_bounds.height),
+    };
+    for (index, region) in regions.iter().enumerate() {
+        if !region.inline_start_px.is_finite() || !region.inline_size_px.is_finite() {
+            return Err(crate::BoundtextError::InvalidFlowRegion {
+                index,
+                reason: "inline start and size must be finite".to_string(),
+            });
+        }
+        if region.inline_size_px < min_inline_size_px {
+            return Err(crate::BoundtextError::InvalidFlowRegion {
+                index,
+                reason: format!(
+                    "inline size {} is below the requested minimum {}",
+                    region.inline_size_px, min_inline_size_px
+                ),
+            });
+        }
+        let region_end = region.inline_start_px + region.inline_size_px;
+        if !region_end.is_finite()
+            || region.inline_start_px < inline_frame_start - INLINE_CONTAINMENT_EPSILON
+            || region_end > inline_frame_end + INLINE_CONTAINMENT_EPSILON
+        {
+            return Err(crate::BoundtextError::InvalidFlowRegion {
+                index,
+                reason: "region must be clipped to the flow frame's inline axis".to_string(),
+            });
+        }
+    }
+    regions.sort_by(|left, right| {
+        left.inline_start_px
+            .total_cmp(&right.inline_start_px)
+            .then_with(|| left.inline_size_px.total_cmp(&right.inline_size_px))
+    });
+    for index in 1..regions.len() {
+        let previous_end = regions[index - 1].inline_start_px + regions[index - 1].inline_size_px;
+        if previous_end > regions[index].inline_start_px + INLINE_CONTAINMENT_EPSILON {
+            return Err(crate::BoundtextError::InvalidFlowRegion {
+                index,
+                reason: "regions must not overlap".to_string(),
+            });
+        }
+    }
+    Ok(regions
+        .into_iter()
+        .map(|region| (region.inline_start_px, region.inline_size_px))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +520,8 @@ pub struct FlowLayoutResult {
     pub overflow_reason: Option<FlowOverflowReason>,
     pub chosen_font_size_px: Option<f64>,
     pub warnings: Vec<TextWarning>,
+    /// Materialized rich inline-box/decorated-span fragments in flow-space.
+    pub inline_box_decorations: Vec<InlineBoxDecoration>,
 }
 
 /// Lightweight measurement result from the flow band loop.
@@ -311,6 +595,7 @@ pub struct FlowLayoutRequest<'a> {
     pub max_font_size_px: Option<f64>,
     pub fit_epsilon_px: Option<f64>,
     pub fit_max_iterations: Option<usize>,
+    pub fit_max_probes: Option<usize>,
     /// Shape options for the base (non-span) path.
     pub shape_options: ShapeOptions,
 }
@@ -399,7 +684,7 @@ struct BandLoopResult {
 /// Shared band-loop driver for both measure and layout paths.
 ///
 /// Iterates horizontal line bands top-to-bottom, computes free regions per band
-/// via `FlowRegionSource`, and calls `layout_next_flow_line` to fill regions
+/// via `RegionProvider`, and calls `layout_next_flow_line` to fill regions
 /// with text. The `on_flow_line` closure is invoked for each text-producing
 /// visual line.
 fn run_flow_loop(
@@ -407,7 +692,7 @@ fn run_flow_loop(
     font_size_px: f64,
     line_height_px: f64,
     fb: &FlowBounds,
-    regions_source: &impl FlowRegionSource,
+    regions_source: &impl RegionProvider,
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -418,7 +703,7 @@ fn run_flow_loop(
         &paragraph::LayoutLine,
         &paragraph::ShapedParagraph,
     ),
-) -> BandLoopResult {
+) -> Result<BandLoopResult, crate::BoundtextError> {
     let mut cursor = BreakCursor::new();
     let mut band_index = 0usize;
     let mut emitted_line_count = 0usize;
@@ -441,7 +726,14 @@ fn run_flow_loop(
             break BandLoopOutcome::MaxLinesReached;
         }
 
-        let regions = regions_source.line_regions(line_top, line_bottom, min_region_width);
+        let regions = query_regions(
+            regions_source,
+            WritingMode::HorizontalTb,
+            fb,
+            line_top,
+            line_bottom,
+            min_region_width,
+        )?;
         if regions.is_empty() {
             band_index += 1;
             continue;
@@ -467,11 +759,11 @@ fn run_flow_loop(
         band_index += 1;
     };
 
-    BandLoopResult {
+    Ok(BandLoopResult {
         outcome,
         emitted_line_count,
         text_exhausted: !cursor.has_remaining(pp),
-    }
+    })
 }
 
 /// Actual cross size of an inline (spans) flow line.
@@ -645,16 +937,20 @@ fn resolve_outcome(result: &BandLoopResult) -> (bool, Option<FlowOverflowReason>
 /// Measure flow layout without producing fragments or allocating text strings.
 ///
 /// Returns line count, exhaustion state, and overflow reason.
+///
+/// # Errors
+///
+/// Returns a typed provider, query-validation, or region-budget error.
 pub fn measure_flow(
     pp: &paragraph::ShapedParagraph,
     font_size_px: f64,
     line_height_px: f64,
     fb: &FlowBounds,
-    regions_source: &impl FlowRegionSource,
+    regions_source: &impl RegionProvider,
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> FlowMeasure {
+) -> Result<FlowMeasure, crate::BoundtextError> {
     let mut contained = true;
     let loop_result = run_flow_loop(
         pp,
@@ -668,28 +964,32 @@ pub fn measure_flow(
         |_, _, regions, line, _| {
             contained &= paragraph_line_is_contained(line, regions);
         },
-    );
+    )?;
 
     let (exhausted, overflow_reason) = resolve_outcome(&loop_result);
-    FlowMeasure {
+    Ok(FlowMeasure {
         used_line_count: loop_result.emitted_line_count,
         exhausted,
         contained,
         overflow_reason,
-    }
+    })
 }
 
 /// Vertical measure: column loop without fragment/string production.
+///
+/// # Errors
+///
+/// Returns a typed provider, query-validation, or region-budget error.
 pub fn measure_flow_vertical(
     pp: &paragraph::ShapedParagraph,
     font_size_px: f64,
     column_width: f64,
     fb: &FlowBounds,
-    regions_source: &impl FlowRegionSource,
+    regions_source: &impl RegionProvider,
     min_region_height: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> FlowMeasure {
+) -> Result<FlowMeasure, crate::BoundtextError> {
     let mut cursor = BreakCursor::new();
     let mut column_index = 0usize;
     let mut emitted = 0usize;
@@ -707,7 +1007,14 @@ pub fn measure_flow_vertical(
             break BandLoopOutcome::MaxLinesReached;
         }
 
-        let regions = regions_source.column_regions(column_left, column_right, min_region_height);
+        let regions = query_regions(
+            regions_source,
+            WritingMode::VerticalRl,
+            fb,
+            column_left,
+            column_right,
+            min_region_height,
+        )?;
         if regions.is_empty() {
             column_index += 1;
             continue;
@@ -740,16 +1047,20 @@ pub fn measure_flow_vertical(
         emitted_line_count: emitted,
         text_exhausted,
     });
-    FlowMeasure {
+    Ok(FlowMeasure {
         used_line_count: emitted,
         exhausted,
         contained,
         overflow_reason,
-    }
+    })
 }
 
 /// Style-aware horizontal measurement used when fit/shrinkwrap must match
 /// final mixed-size line boxes exactly.
+///
+/// # Errors
+///
+/// Returns a typed provider, query-validation, or region-budget error.
 pub fn measure_flow_inline_with_styles(
     shaped_runs: &inline_runs::ShapedInlineRuns,
     text_spans: &[crate::text::types::TextSpanInput],
@@ -759,11 +1070,11 @@ pub fn measure_flow_inline_with_styles(
     line_height: Option<f64>,
     explicit_line_height_px: Option<f64>,
     fb: &FlowBounds,
-    regions_source: &impl FlowRegionSource,
+    regions_source: &impl RegionProvider,
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> FlowMeasure {
+) -> Result<FlowMeasure, crate::BoundtextError> {
     let grapheme_count = shaped_runs.graphemes.len();
     let mut cursor = BreakCursor::new();
     let mut emitted = 0usize;
@@ -793,11 +1104,14 @@ pub fn measure_flow_inline_with_styles(
             shaped_runs.segments.len() + shaped_runs.ruby_annotations.len() + 2;
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
-            let regions = regions_source.line_regions(
+            let regions = query_regions(
+                regions_source,
+                WritingMode::HorizontalTb,
+                fb,
                 line_top,
                 line_top + probe_cross_size,
                 min_region_width,
-            );
+            )?;
             if regions.is_empty() {
                 measured_cross_size = None;
                 break;
@@ -836,8 +1150,14 @@ pub fn measure_flow_inline_with_styles(
             measured_cross_size = Some(actual_cross_size);
             measured_contained = paragraph_line_is_contained(&vline, &regions);
             let next_cross_size = probe_cross_size.max(actual_cross_size);
-            let expanded =
-                regions_source.line_regions(line_top, line_top + next_cross_size, min_region_width);
+            let expanded = query_regions(
+                regions_source,
+                WritingMode::HorizontalTb,
+                fb,
+                line_top,
+                line_top + next_cross_size,
+                min_region_width,
+            )?;
             if regions_approx_eq(&regions, &expanded) {
                 break;
             }
@@ -868,16 +1188,20 @@ pub fn measure_flow_inline_with_styles(
         emitted_line_count: emitted,
         text_exhausted,
     });
-    FlowMeasure {
+    Ok(FlowMeasure {
         used_line_count: emitted,
         exhausted,
         contained,
         overflow_reason,
-    }
+    })
 }
 
 /// Style-aware vertical measurement used when fit/shrinkwrap must match final
 /// mixed-size column boxes exactly.
+///
+/// # Errors
+///
+/// Returns a typed provider, query-validation, or region-budget error.
 pub fn measure_flow_vertical_inline_with_styles(
     shaped_runs: &inline_runs::ShapedInlineRuns,
     text_spans: &[crate::text::types::TextSpanInput],
@@ -887,11 +1211,11 @@ pub fn measure_flow_vertical_inline_with_styles(
     line_height: Option<f64>,
     explicit_line_height_px: Option<f64>,
     fb: &FlowBounds,
-    regions_source: &impl FlowRegionSource,
+    regions_source: &impl RegionProvider,
     min_region_height: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> FlowMeasure {
+) -> Result<FlowMeasure, crate::BoundtextError> {
     let grapheme_count = shaped_runs.graphemes.len();
     let mut cursor = BreakCursor::new();
     let mut emitted = 0usize;
@@ -919,8 +1243,14 @@ pub fn measure_flow_vertical_inline_with_styles(
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
             let probe_left = column_right - probe_cross_size;
-            let regions =
-                regions_source.column_regions(probe_left, column_right, min_region_height);
+            let regions = query_regions(
+                regions_source,
+                WritingMode::VerticalRl,
+                fb,
+                probe_left,
+                column_right,
+                min_region_height,
+            )?;
             if regions.is_empty() {
                 measured_cross_size = None;
                 break;
@@ -959,11 +1289,14 @@ pub fn measure_flow_vertical_inline_with_styles(
             measured_cross_size = Some(actual_cross_size);
             measured_contained = paragraph_line_is_contained(&vline, &regions);
             let next_cross_size = probe_cross_size.max(actual_cross_size);
-            let expanded = regions_source.column_regions(
+            let expanded = query_regions(
+                regions_source,
+                WritingMode::VerticalRl,
+                fb,
                 column_right - next_cross_size,
                 column_right,
                 min_region_height,
-            );
+            )?;
             if regions_approx_eq(&regions, &expanded) {
                 break;
             }
@@ -994,12 +1327,12 @@ pub fn measure_flow_vertical_inline_with_styles(
         emitted_line_count: emitted,
         text_exhausted,
     });
-    FlowMeasure {
+    Ok(FlowMeasure {
         used_line_count: emitted,
         exhausted,
         contained,
         overflow_reason,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1368,17 +1701,66 @@ fn layout_flow_simple_vertical(
 pub fn layout_flow_with_regions(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl FlowRegionSource,
-) -> Result<FlowLayoutResult, String> {
+    regions_source: &impl RegionProvider,
+) -> Result<FlowLayoutResult, BoundtextError> {
+    validate_flow_request_resources(req)?;
+    let budgeted_regions = BudgetedRegionProvider::new(regions_source);
+    let result = layout_flow_with_regions_budgeted(req, font_ctx, &budgeted_regions)?;
+    record_flow_materialization(&result);
+    Ok(result)
+}
+
+fn layout_flow_with_regions_budgeted(
+    req: &FlowLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    regions_source: &impl RegionProvider,
+) -> Result<FlowLayoutResult, BoundtextError> {
     let has_spans = req.spans.is_some_and(|spans| !spans.is_empty());
     let has_rich_text = req.rich_text.is_some_and(|nodes| !nodes.is_empty());
 
     if has_spans && has_rich_text {
-        return Err("spans and richText are mutually exclusive".to_string());
+        return Err(BoundtextError::FlowLayout(
+            "spans and richText are mutually exclusive".to_string(),
+        ));
     }
 
     if has_rich_text {
         return rich::layout_rich_flow_with_regions(req, font_ctx, regions_source);
+    }
+
+    // Ellipsis and fit operate on the canonical rich document for every
+    // public input shape. Promoting legacy plain/spans inputs here prevents
+    // this diagnostics API from retaining second truncation and fit engines
+    // beside the resolved render path.
+    if req.ellipsis || req.fit.is_some() {
+        let mut canonical_req = req.clone();
+        let canonical_nodes = if let Some(flow_spans) = req.spans.filter(|spans| !spans.is_empty())
+        {
+            let (text_spans, _) = build_inline_runs_inputs(
+                flow_spans,
+                font_ctx,
+                req.font_size_px,
+                req.letter_spacing_px,
+                req.language,
+                req.text_orientation,
+                &req.shape_options,
+            );
+            build_flow_rich_text_inputs(
+                flow_spans,
+                &text_spans,
+                req.line_height,
+                req.line_height_px,
+            )
+        } else {
+            vec![RichTextNodeInput::Text {
+                text: req.text.to_string(),
+            }]
+        };
+
+        canonical_req.text = "";
+        canonical_req.spans = None;
+        canonical_req.rich_text = Some(&canonical_nodes);
+        return rich::layout_rich_flow_with_regions(&canonical_req, font_ctx, regions_source);
     }
 
     // Dispatch to vertical + inline runs path
@@ -1404,10 +1786,10 @@ pub fn layout_flow_with_regions(
         .resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style)
         .is_none()
     {
-        return Err(format!(
+        return Err(BoundtextError::FlowLayout(format!(
             "Font not found: family={:?}, weight={}, style={:?}",
             font_ctx.families, font_ctx.weight, font_ctx.style
-        ));
+        )));
     }
 
     let pp = paragraph::shape_paragraph_with_options(
@@ -1421,7 +1803,9 @@ pub fn layout_flow_with_regions(
         req.letter_spacing_px,
         true,
     )
-    .ok_or_else(|| "Failed to prepare paragraph: shaping failed".to_string())?;
+    .ok_or_else(|| {
+        BoundtextError::FlowLayout("Failed to prepare paragraph: shaping failed".to_string())
+    })?;
 
     let min_region_width_fixed = req.min_region_width;
     let fb = &req.flow_bounds;
@@ -1438,6 +1822,7 @@ pub fn layout_flow_with_regions(
                 min_size,
                 epsilon,
                 max_iter,
+                req.fit_max_probes,
                 |candidate| {
                     resolve_flow_line_height_px(
                         font_ctx,
@@ -1465,6 +1850,7 @@ pub fn layout_flow_with_regions(
                 max_size,
                 epsilon,
                 max_iter,
+                req.fit_max_probes,
                 |candidate| {
                     resolve_flow_line_height_px(
                         font_ctx,
@@ -1480,8 +1866,8 @@ pub fn layout_flow_with_regions(
                 req.wrap,
             )
         }
-        _ => (req.font_size_px, None),
-    };
+        _ => Ok((req.font_size_px, None)),
+    }?;
 
     let line_height_px = resolve_flow_line_height_px(
         font_ctx,
@@ -1545,21 +1931,9 @@ pub fn layout_flow_with_regions(
                 cross_size: line_height_px,
             });
         },
-    );
+    )?;
 
     let (exhausted, overflow_reason) = resolve_outcome(&loop_result);
-
-    // Ellipsis post-processing
-    if req.ellipsis && !exhausted && !flow_lines.is_empty() {
-        apply_ellipsis_horizontal(
-            &mut flow_lines,
-            &pp,
-            font_ctx,
-            settled_font_size,
-            req.letter_spacing_px,
-            &req.shape_options,
-        );
-    }
 
     Ok(FlowLayoutResult {
         lines: flow_lines,
@@ -1568,6 +1942,7 @@ pub fn layout_flow_with_regions(
         overflow_reason: fit_overflow.or(overflow_reason),
         chosen_font_size_px,
         warnings: build_notdef_warnings(&paragraph::collect_notdef_chars(&pp)),
+        inline_box_decorations: Vec::new(),
     })
 }
 
@@ -1585,8 +1960,83 @@ pub fn layout_flow_with_regions(
 pub fn layout_resolved_flow_with_regions(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl FlowRegionSource,
-) -> Result<TextLayoutResult, String> {
+    regions_source: &impl RegionProvider,
+) -> Result<TextLayoutResult, BoundtextError> {
+    validate_flow_request_resources(req)?;
+    let budgeted_regions = BudgetedRegionProvider::new(regions_source);
+    let result = layout_resolved_flow_with_regions_budgeted(req, font_ctx, &budgeted_regions)?;
+    record_resolved_flow_materialization(&result);
+    Ok(result)
+}
+
+fn record_flow_materialization(result: &FlowLayoutResult) {
+    #[cfg(any(test, feature = "phase-trace"))]
+    {
+        let glyph_count = result
+            .lines
+            .iter()
+            .flat_map(|line| &line.fragments)
+            .map(|fragment| fragment.positioned_glyphs.len())
+            .sum();
+        let inline_rect_count = result
+            .lines
+            .iter()
+            .flat_map(|line| &line.fragments)
+            .map(|fragment| fragment.inline_rects.len())
+            .sum();
+        crate::phase_trace::record_materialization(
+            result.lines.len(),
+            glyph_count,
+            result.inline_box_decorations.len(),
+            inline_rect_count,
+        );
+    }
+    #[cfg(not(any(test, feature = "phase-trace")))]
+    let _ = result;
+}
+
+fn validate_flow_request_resources(req: &FlowLayoutRequest<'_>) -> Result<(), BoundtextError> {
+    let Some(nodes) = req.rich_text else {
+        return Ok(());
+    };
+    validate_rich_text_resources(nodes).map_err(|violation| match violation {
+        RichTextResourceViolation::Depth { actual, limit } => {
+            BoundtextError::RichTextDepthLimit { actual, limit }
+        }
+        RichTextResourceViolation::InlineRects { required, limit } => {
+            BoundtextError::InlineRectLimit { required, limit }
+        }
+    })
+}
+
+fn record_resolved_flow_materialization(result: &TextLayoutResult) {
+    #[cfg(any(test, feature = "phase-trace"))]
+    {
+        let glyph_count = result
+            .lines
+            .iter()
+            .map(|line| {
+                line.positioned_glyphs
+                    .as_ref()
+                    .map_or(line.glyphs.len(), std::vec::Vec::len)
+            })
+            .sum();
+        crate::phase_trace::record_materialization(
+            result.lines.len(),
+            glyph_count,
+            result.inline_box_decorations.len() + result.text_decorations.len(),
+            result.inline_rects.len(),
+        );
+    }
+    #[cfg(not(any(test, feature = "phase-trace")))]
+    let _ = result;
+}
+
+fn layout_resolved_flow_with_regions_budgeted(
+    req: &FlowLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    regions_source: &impl RegionProvider,
+) -> Result<TextLayoutResult, BoundtextError> {
     let mut resolved_req = req.clone();
     let resolved_spans;
     let resolved_rich_text;
@@ -1626,6 +2076,11 @@ pub fn layout_resolved_flow_with_regions(
     let is_vertical = req.writing_mode == WritingMode::VerticalRl;
     let mut lines = Vec::with_capacity(flow_result.lines.len());
     let mut inline_rects = Vec::new();
+    let mut inline_box_decorations = flow_result.inline_box_decorations;
+    for decoration in &mut inline_box_decorations {
+        decoration.x -= req.flow_bounds.x;
+        decoration.y -= req.flow_bounds.y;
+    }
 
     for flow_line in flow_result.lines {
         let line_cross_size = flow_line.cross_size;
@@ -1725,7 +2180,7 @@ pub fn layout_resolved_flow_with_regions(
         display_text: None,
         unit_map: None,
         warnings: flow_result.warnings,
-        inline_box_decorations: Vec::new(),
+        inline_box_decorations,
         text_decorations: Vec::new(),
         inline_rects,
     };
@@ -1742,17 +2197,17 @@ pub fn layout_resolved_flow_with_regions(
 fn layout_flow_vertical(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl FlowRegionSource,
-) -> Result<FlowLayoutResult, String> {
+    regions_source: &impl RegionProvider,
+) -> Result<FlowLayoutResult, BoundtextError> {
     if font_ctx
         .registry
         .resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style)
         .is_none()
     {
-        return Err(format!(
+        return Err(BoundtextError::FlowLayout(format!(
             "Font not found: family={:?}, weight={}, style={:?}",
             font_ctx.families, font_ctx.weight, font_ctx.style
-        ));
+        )));
     }
 
     let pp = paragraph::shape_paragraph_with_options(
@@ -1766,7 +2221,9 @@ fn layout_flow_vertical(
         req.letter_spacing_px,
         true,
     )
-    .ok_or_else(|| "Failed to prepare paragraph: shaping failed".to_string())?;
+    .ok_or_else(|| {
+        BoundtextError::FlowLayout("Failed to prepare paragraph: shaping failed".to_string())
+    })?;
 
     let min_region_height_fixed = req.min_region_width;
     let fb = &req.flow_bounds;
@@ -1783,6 +2240,7 @@ fn layout_flow_vertical(
                 min_size,
                 epsilon,
                 max_iter,
+                req.fit_max_probes,
                 |candidate| {
                     resolve_flow_line_height_px(
                         font_ctx,
@@ -1810,6 +2268,7 @@ fn layout_flow_vertical(
                 max_size,
                 epsilon,
                 max_iter,
+                req.fit_max_probes,
                 |candidate| {
                     resolve_flow_line_height_px(
                         font_ctx,
@@ -1825,8 +2284,8 @@ fn layout_flow_vertical(
                 req.wrap,
             )
         }
-        _ => (req.font_size_px, None),
-    };
+        _ => Ok((req.font_size_px, None)),
+    }?;
 
     let column_width = resolve_flow_line_height_px(
         font_ctx,
@@ -1859,7 +2318,14 @@ fn layout_flow_vertical(
             break BandLoopOutcome::MaxLinesReached;
         }
 
-        let regions = regions_source.column_regions(column_left, column_right, min_region_height);
+        let regions = query_regions(
+            regions_source,
+            WritingMode::VerticalRl,
+            fb,
+            column_left,
+            column_right,
+            min_region_height,
+        )?;
         if regions.is_empty() {
             column_index += 1;
             continue;
@@ -1924,18 +2390,6 @@ fn layout_flow_vertical(
     };
     let (exhausted, overflow_reason) = resolve_outcome(&loop_result);
 
-    // Vertical ellipsis
-    if req.ellipsis && !exhausted && !flow_lines.is_empty() {
-        apply_ellipsis_vertical(
-            &mut flow_lines,
-            &pp,
-            font_ctx,
-            settled_font_size,
-            req.letter_spacing_px,
-            &req.shape_options,
-        );
-    }
-
     Ok(FlowLayoutResult {
         lines: flow_lines,
         exhausted,
@@ -1943,6 +2397,7 @@ fn layout_flow_vertical(
         overflow_reason: fit_overflow.or(overflow_reason),
         chosen_font_size_px,
         warnings: build_notdef_warnings(&paragraph::collect_notdef_chars(&pp)),
+        inline_box_decorations: Vec::new(),
     })
 }
 
@@ -1950,23 +2405,28 @@ fn layout_flow_vertical(
 // Inline runs flow layout (horizontal)
 // ---------------------------------------------------------------------------
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "inline flow keeps Result parity with the public flow dispatch paths"
-)]
 fn layout_flow_inline(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl FlowRegionSource,
-) -> Result<FlowLayoutResult, String> {
+    regions_source: &impl RegionProvider,
+) -> Result<FlowLayoutResult, BoundtextError> {
     let (settled_font_size, fit_overflow) = match req.fit {
         Some("shrink") => {
             let min_size = req.min_font_size_px.unwrap_or(DEFAULT_MIN_FONT_SIZE);
             let epsilon = req.fit_epsilon_px.unwrap_or(DEFAULT_FIT_EPSILON);
             let max_iter = req.fit_max_iterations.unwrap_or(DEFAULT_FIT_MAX_ITERATIONS);
-            fit_shrink_with(req.font_size_px, min_size, epsilon, max_iter, |candidate| {
-                measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate).fits()
-            })
+            fit_shrink_with(
+                req.font_size_px,
+                min_size,
+                epsilon,
+                max_iter,
+                regions_source.fit_search_kind(),
+                req.fit_max_probes,
+                |candidate| {
+                    measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate)
+                        .map(|measure| measure.fits())
+                },
+            )
         }
         Some("grow") => {
             let max_size = req
@@ -1974,12 +2434,21 @@ fn layout_flow_inline(
                 .unwrap_or(req.font_size_px * DEFAULT_GROW_MULTIPLIER);
             let epsilon = req.fit_epsilon_px.unwrap_or(DEFAULT_FIT_EPSILON);
             let max_iter = req.fit_max_iterations.unwrap_or(DEFAULT_FIT_MAX_ITERATIONS);
-            fit_grow_with(req.font_size_px, max_size, epsilon, max_iter, |candidate| {
-                measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate).fits()
-            })
+            fit_grow_with(
+                req.font_size_px,
+                max_size,
+                epsilon,
+                max_iter,
+                regions_source.fit_search_kind(),
+                req.fit_max_probes,
+                |candidate| {
+                    measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate)
+                        .map(|measure| measure.fits())
+                },
+            )
         }
-        _ => (req.font_size_px, None),
-    };
+        _ => Ok((req.font_size_px, None)),
+    }?;
 
     let (_scaled_spans, text_spans, _ruby_info, shaped_runs) =
         prepare_inline_flow_inputs(req, font_ctx, settled_font_size);
@@ -2029,11 +2498,14 @@ fn layout_flow_inline(
             shaped_runs.segments.len() + shaped_runs.ruby_annotations.len() + 2;
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
-            let regions = regions_source.line_regions(
+            let regions = query_regions(
+                regions_source,
+                WritingMode::HorizontalTb,
+                fb,
                 line_top,
                 line_top + probe_cross_size,
                 min_region_width,
-            );
+            )?;
             if regions.is_empty() {
                 resolved_line = None;
                 break;
@@ -2074,8 +2546,14 @@ fn layout_flow_inline(
             }
             resolved_line = Some((line_fragments, line_cross_size));
             let next_cross_size = probe_cross_size.max(line_cross_size);
-            let expanded =
-                regions_source.line_regions(line_top, line_top + next_cross_size, min_region_width);
+            let expanded = query_regions(
+                regions_source,
+                WritingMode::HorizontalTb,
+                fb,
+                line_top,
+                line_top + next_cross_size,
+                min_region_width,
+            )?;
             if regions_approx_eq(&regions, &expanded) {
                 break;
             }
@@ -2118,10 +2596,6 @@ fn layout_flow_inline(
     };
     let (exhausted, overflow_reason) = resolve_outcome(&loop_result);
 
-    if req.ellipsis && !exhausted && !flow_lines.is_empty() {
-        apply_ellipsis_inline(&mut flow_lines, &shaped_runs, &text_spans, font_ctx);
-    }
-
     Ok(FlowLayoutResult {
         lines: flow_lines,
         exhausted,
@@ -2129,6 +2603,7 @@ fn layout_flow_inline(
         overflow_reason: fit_overflow.or(overflow_reason),
         chosen_font_size_px,
         warnings: build_notdef_warnings(&shaped_runs.notdef_infos),
+        inline_box_decorations: Vec::new(),
     })
 }
 
@@ -2136,23 +2611,28 @@ fn layout_flow_inline(
 // Vertical + inline runs flow layout
 // ---------------------------------------------------------------------------
 
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "vertical inline flow keeps Result parity with the public flow dispatch paths"
-)]
 fn layout_flow_vertical_inline(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl FlowRegionSource,
-) -> Result<FlowLayoutResult, String> {
+    regions_source: &impl RegionProvider,
+) -> Result<FlowLayoutResult, BoundtextError> {
     let (settled_font_size, fit_overflow) = match req.fit {
         Some("shrink") => {
             let min_size = req.min_font_size_px.unwrap_or(DEFAULT_MIN_FONT_SIZE);
             let epsilon = req.fit_epsilon_px.unwrap_or(DEFAULT_FIT_EPSILON);
             let max_iter = req.fit_max_iterations.unwrap_or(DEFAULT_FIT_MAX_ITERATIONS);
-            fit_shrink_with(req.font_size_px, min_size, epsilon, max_iter, |candidate| {
-                measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate).fits()
-            })
+            fit_shrink_with(
+                req.font_size_px,
+                min_size,
+                epsilon,
+                max_iter,
+                regions_source.fit_search_kind(),
+                req.fit_max_probes,
+                |candidate| {
+                    measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate)
+                        .map(|measure| measure.fits())
+                },
+            )
         }
         Some("grow") => {
             let max_size = req
@@ -2160,12 +2640,21 @@ fn layout_flow_vertical_inline(
                 .unwrap_or(req.font_size_px * DEFAULT_GROW_MULTIPLIER);
             let epsilon = req.fit_epsilon_px.unwrap_or(DEFAULT_FIT_EPSILON);
             let max_iter = req.fit_max_iterations.unwrap_or(DEFAULT_FIT_MAX_ITERATIONS);
-            fit_grow_with(req.font_size_px, max_size, epsilon, max_iter, |candidate| {
-                measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate).fits()
-            })
+            fit_grow_with(
+                req.font_size_px,
+                max_size,
+                epsilon,
+                max_iter,
+                regions_source.fit_search_kind(),
+                req.fit_max_probes,
+                |candidate| {
+                    measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate)
+                        .map(|measure| measure.fits())
+                },
+            )
         }
-        _ => (req.font_size_px, None),
-    };
+        _ => Ok((req.font_size_px, None)),
+    }?;
 
     let (_scaled_spans, text_spans, _ruby_info, shaped_runs) =
         prepare_inline_flow_inputs(req, font_ctx, settled_font_size);
@@ -2211,8 +2700,14 @@ fn layout_flow_vertical_inline(
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
             let probe_left = column_right - probe_cross_size;
-            let regions =
-                regions_source.column_regions(probe_left, column_right, min_region_height);
+            let regions = query_regions(
+                regions_source,
+                WritingMode::VerticalRl,
+                fb,
+                probe_left,
+                column_right,
+                min_region_height,
+            )?;
             if regions.is_empty() {
                 resolved_column = None;
                 break;
@@ -2263,11 +2758,14 @@ fn layout_flow_vertical_inline(
             }
             resolved_column = Some((line_fragments, line_cross_size));
             let next_cross_size = probe_cross_size.max(line_cross_size);
-            let expanded = regions_source.column_regions(
+            let expanded = query_regions(
+                regions_source,
+                WritingMode::VerticalRl,
+                fb,
                 column_right - next_cross_size,
                 column_right,
                 min_region_height,
-            );
+            )?;
             if regions_approx_eq(&regions, &expanded) {
                 break;
             }
@@ -2305,23 +2803,6 @@ fn layout_flow_vertical_inline(
     };
     let (exhausted, overflow_reason) = resolve_outcome(&loop_result);
 
-    // Vertical ellipsis for inline runs
-    if req.ellipsis && !exhausted && !flow_lines.is_empty() {
-        let language = match req.language {
-            Language::Ja => Some("ja"),
-            Language::En => Some("en"),
-            Language::Auto => None,
-        };
-        apply_ellipsis_vertical_inline(
-            &mut flow_lines,
-            &shaped_runs,
-            &text_spans,
-            font_ctx,
-            language,
-            req.text_orientation,
-        );
-    }
-
     Ok(FlowLayoutResult {
         lines: flow_lines,
         exhausted,
@@ -2329,5 +2810,6 @@ fn layout_flow_vertical_inline(
         overflow_reason: fit_overflow.or(overflow_reason),
         chosen_font_size_px,
         warnings: build_notdef_warnings(&shaped_runs.notdef_infos),
+        inline_box_decorations: Vec::new(),
     })
 }

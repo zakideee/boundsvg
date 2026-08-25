@@ -19,7 +19,7 @@ use boundtext::text::types::{
 };
 
 const FONT_SIZE_PX: f64 = 48.0;
-const MAX_WIDTH: f64 = 400.0;
+const MAX_WIDTH: f64 = 430.0;
 const TEXT: &str = "The quick brown fox jumps over the lazy dog";
 
 fn variable_font_registry() -> FontRegistry {
@@ -77,6 +77,7 @@ fn ellipsis_request(variations: Vec<VariationSetting>) -> TextLayoutRequest<'sta
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     }
 }
 

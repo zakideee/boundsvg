@@ -1513,6 +1513,7 @@ export class Engine {
     if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
+    this.assertWasmFontAliasesRegistered(vnode);
 
     return computeLayout(vnode, {
       computeLayoutFn: this.options.computeLayoutFn,
@@ -1986,6 +1987,28 @@ export class Engine {
     visit(vnode, { depth: 0, siblingIndex: 0 });
   }
 
+  /** Reject unresolved authored aliases before the authoritative Rust layout can fail generically. */
+  private assertWasmFontAliasesRegistered(vnode: VNode): void {
+    const visit = (node: VNode, position: NodePosition): void => {
+      const { id: nodeId } = generateNodeId(node, position);
+      if (node.type === "Text" || node.type === "TextOnPath") {
+        const fontUsage = collectTextFontAliases(node);
+        if (fontUsage.hasText || node.type === "TextOnPath") {
+          this.assertFontAliasesRegistered(fontUsage.aliases, nodeId);
+        }
+        return;
+      }
+      let siblingIndex = 0;
+      for (const child of node.children) {
+        if (typeof child !== "string") {
+          visit(child, { depth: position.depth + 1, siblingIndex, parentNodeId: nodeId });
+          siblingIndex += 1;
+        }
+      }
+    };
+    visit(vnode, { depth: 0, siblingIndex: 0 });
+  }
+
   private compileWithWasmBackend(
     vnode: VNode,
     compileOpts?: CompileOptions,
@@ -1996,6 +2019,7 @@ export class Engine {
     },
   ): CompiledScene {
     const renderToIrFn = this.requireWasmBackendFn(this.options.renderToIrFn, "renderToIrFn");
+    this.assertWasmFontAliasesRegistered(vnode);
     let envelopeJson: string;
     try {
       envelopeJson = renderToIrFn(
@@ -2057,6 +2081,7 @@ export class Engine {
     if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
+    this.assertWasmFontAliasesRegistered(vnode);
     let envelopeJson: string;
     try {
       envelopeJson = renderToSvgFn(

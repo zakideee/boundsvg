@@ -978,7 +978,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 25;
+pub const WASM_SCHEMA_VERSION: u32 = 26;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -1672,8 +1672,9 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let input: flow::TextFlowWithExclusionsInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid exclusion flow input: {e}")))?;
-            let result = flow::layout_text_flow_with_exclusions(&input, &self.registry)
-                .map_err(|e| JsValue::from_str(&e))?;
+            let result = flow::layout_text_flow_with_exclusions(&input, &self.registry).map_err(
+                |error| render_error_envelope(error.code(), &error.to_string(), Some("text"), None),
+            )?;
             serde_json::to_string(&result).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize exclusion flow result: {e}"))
             })
@@ -1705,8 +1706,9 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let input: flow::ShrinkwrapTextInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap input: {e}")))?;
-            let result =
-                flow::shrinkwrap_text(&input, &self.registry).map_err(|e| JsValue::from_str(&e))?;
+            let result = flow::shrinkwrap_text(&input, &self.registry).map_err(|error| {
+                render_error_envelope(error.code(), &error.to_string(), Some("text"), None)
+            })?;
             serde_json::to_string(&result).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize shrinkwrap result: {e}"))
             })
@@ -1723,8 +1725,9 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let input: flow::ShrinkwrapFlowInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap flow input: {e}")))?;
-            let result =
-                flow::shrinkwrap_flow(&input, &self.registry).map_err(|e| JsValue::from_str(&e))?;
+            let result = flow::shrinkwrap_flow(&input, &self.registry).map_err(|error| {
+                render_error_envelope(error.code(), &error.to_string(), Some("text"), None)
+            })?;
             serde_json::to_string(&result).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize shrinkwrap flow result: {e}"))
             })

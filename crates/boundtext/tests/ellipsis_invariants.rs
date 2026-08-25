@@ -9,13 +9,16 @@
 // `allow-*-in-tests` config apply to helper functions in this file.
 #![cfg(test)]
 
+use boundtext::TextLayoutError;
 use boundtext::font::shaping::{ShapeOptions, VariationSetting, shape_with_fallback_and_options};
 use boundtext::font::{FontContext, FontRegistry, FontStyle};
 use boundtext::text::ellipsis::apply_ellipsis;
 use boundtext::text::engine::layout_text_with_unit_metadata;
 use boundtext::text::types::{
-    FitMode, InlineRectInput, Language, RichTextNodeInput, RichTextStyleInput, TextLayoutRequest,
-    TextOrientation, TextSpanInput, WhiteSpaceMode, WrapMode, WritingMode,
+    FitMode, InlineRectInput, Language, MAX_INLINE_RECTS, MAX_RICH_TEXT_DEPTH, RichTextNodeInput,
+    RichTextStyleInput, TextDecorationInput, TextDecorationLine, TextDecorationSkipInk,
+    TextDecorationStyle, TextLayoutRequest, TextOrientation, TextSpanInput, WhiteSpaceMode,
+    WrapMode, WritingMode,
 };
 
 fn registry(alias: &str, path: &str) -> FontRegistry {
@@ -65,6 +68,7 @@ fn layout_request(text: &str, max_width: f64) -> TextLayoutRequest<'_> {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     }
 }
 
@@ -181,6 +185,51 @@ fn marker_that_cannot_fit_produces_zero_ink_and_retains_source() {
 }
 
 #[test]
+fn overflowing_ellipsis_rejects_an_unbounded_exact_candidate_set() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let source = "あ".repeat(1_025);
+    let request = layout_request(&source, 1.0);
+
+    let error = layout_text_with_unit_metadata(&request, &font_context)
+        .expect_err("candidate budget must fail before projection");
+    assert_eq!(
+        error,
+        TextLayoutError::EllipsisCandidateLimit {
+            required: 1_026,
+            limit: 1_024,
+        }
+    );
+}
+
+#[test]
+fn a_large_non_overflowing_document_does_not_spend_the_ellipsis_budget() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let source = "あ".repeat(1_025);
+    let request = layout_request(&source, 1_000_000.0);
+
+    let result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("a complete fitting document needs no candidate search");
+    assert_eq!(result.overflow.overflow_type, "none");
+    assert_eq!(result.display_text, None);
+}
+
+#[test]
 fn vertical_ellipsis_uses_the_same_source_projection() {
     let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
     let families = vec!["JP".to_string()];
@@ -215,6 +264,429 @@ fn vertical_ellipsis_uses_the_same_source_projection() {
     assert_eq!(marker.source_start, None);
     assert_eq!(marker.source_end, None);
     assert_eq!(marker.source_role, None);
+}
+
+#[test]
+fn ellipsis_never_splits_an_extended_grapheme_cluster() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let source = "A\u{0301}B👨‍👩‍👧‍👦C";
+    let source_graphemes = boundtext::text::grapheme::grapheme_split(source);
+
+    for max_width in (8..96).step_by(4) {
+        let request = layout_request(source, f64::from(max_width));
+        let result = layout_text_with_unit_metadata(&request, &font_context)
+            .expect("combining-sequence ellipsis layout");
+        let Some(display) = result.display_text.as_deref() else {
+            continue;
+        };
+        let Some(prefix) = display.strip_suffix('\u{2026}') else {
+            continue;
+        };
+        assert!(
+            (0..=source_graphemes.len()).any(|keep| source_graphemes[..keep].concat() == prefix),
+            "display prefix {prefix:?} is not an EGC prefix of {source:?}"
+        );
+    }
+}
+
+#[test]
+fn ligature_prefix_is_reshaped_as_end_of_text() {
+    let font_registry = registry("VF", "Inter-Variable.ttf");
+    let families = vec!["VF".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let source = "office office";
+    let mut selected = None;
+    for max_width in (32..160).step_by(2) {
+        let mut request = layout_request(source, f64::from(max_width));
+        request.language = Language::En;
+        let result = layout_text_with_unit_metadata(&request, &font_context)
+            .expect("ligature ellipsis layout");
+        let Some(prefix) = result
+            .display_text
+            .as_deref()
+            .and_then(|display| display.strip_suffix('\u{2026}'))
+        else {
+            continue;
+        };
+        if matches!(prefix, "of" | "off") {
+            selected = Some((prefix.to_string(), result));
+            break;
+        }
+    }
+    let (prefix, result) = selected.expect("fixture must cut inside the original ffi ligature");
+    let expected = shape_with_fallback_and_options(
+        &font_context,
+        &prefix,
+        24.0,
+        0.0,
+        &ShapeOptions::default(),
+    );
+    let actual_ids = result
+        .lines
+        .iter()
+        .filter_map(|line| line.positioned_glyphs.as_deref())
+        .flatten()
+        .filter(|glyph| glyph.synthetic_kind.is_none())
+        .map(|glyph| glyph.glyph_id)
+        .collect::<Vec<_>>();
+    let mut expected_glyphs = expected.glyphs;
+    expected_glyphs.sort_by_key(|glyph| glyph.cluster);
+    let expected_ids = expected_glyphs
+        .iter()
+        .map(|glyph| glyph.glyph_id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(actual_ids, expected_ids);
+}
+
+#[test]
+fn arabic_prefix_recomputes_its_contextual_end_form() {
+    let font_registry = registry("Arabic", "ContextualArabicTest.ttf");
+    let families = vec!["Arabic".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let source = "ببببب";
+    let request = layout_request(source, 58.0);
+    let result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("Arabic contextual ellipsis layout");
+    let prefix = result
+        .display_text
+        .as_deref()
+        .and_then(|display| display.strip_suffix('\u{2026}'))
+        .expect("truncated Arabic prefix");
+    assert_eq!(prefix, "ببب");
+
+    let expected =
+        shape_with_fallback_and_options(&font_context, prefix, 24.0, 0.0, &ShapeOptions::default());
+    let mut expected_glyphs = expected.glyphs;
+    expected_glyphs.sort_by_key(|glyph| glyph.cluster);
+    let expected_ids = expected_glyphs
+        .iter()
+        .map(|glyph| glyph.glyph_id)
+        .collect::<Vec<_>>();
+    let actual_ids = result
+        .lines
+        .iter()
+        .filter_map(|line| line.positioned_glyphs.as_deref())
+        .flatten()
+        .filter(|glyph| glyph.synthetic_kind.is_none())
+        .map(|glyph| glyph.glyph_id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(actual_ids, expected_ids);
+    assert!(
+        expected_ids.contains(&6),
+        "the retained prefix must use the fixture's final-form glyph"
+    );
+}
+
+#[test]
+fn synthetic_marker_is_shaped_in_an_isolated_run() {
+    let font_registry = registry("Context", "ContextualArabicTest.ttf");
+    let families = vec!["Context".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let mut request = layout_request("AAAA", 31.0);
+    request.language = Language::En;
+
+    let result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("synthetic marker isolation layout");
+    assert_eq!(result.display_text.as_deref(), Some("A\u{2026}"));
+
+    let glyphs = result
+        .lines
+        .iter()
+        .filter_map(|line| line.positioned_glyphs.as_deref())
+        .flatten()
+        .collect::<Vec<_>>();
+    let authored_a =
+        shape_with_fallback_and_options(&font_context, "A", 24.0, 0.0, &ShapeOptions::default());
+    let marker = shape_with_fallback_and_options(
+        &font_context,
+        "\u{2026}",
+        24.0,
+        0.0,
+        &ShapeOptions::default(),
+    );
+
+    assert_eq!(glyphs.len(), 2, "A + ellipsis ligature must not form");
+    assert_eq!(glyphs[0].glyph_id, authored_a.glyphs[0].glyph_id);
+    assert_eq!(glyphs[1].glyph_id, marker.glyphs[0].glyph_id);
+    assert_eq!(glyphs[0].synthetic_kind, None);
+    assert_eq!(glyphs[1].synthetic_kind.as_deref(), Some("ellipsis"));
+    assert_eq!(glyphs[1].source_start, None);
+    assert_eq!(glyphs[1].source_end, None);
+}
+
+#[test]
+fn paint_and_line_box_boundaries_preserve_arabic_contextual_shaping() {
+    let font_registry = registry("Arabic", "ContextualArabicTest.ttf");
+    let families = vec!["Arabic".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let mut red_style = rich_style(24.0, "#ff0000");
+    red_style.font_family = families.clone();
+    red_style.language = Some("ar".to_string());
+    let mut blue_style = red_style.clone();
+    blue_style.color = Some("#0000ff".to_string());
+    blue_style.line_height_px = Some(40.0);
+    let rich_text = vec![
+        RichTextNodeInput::Span {
+            text: "بب".to_string(),
+            style: red_style,
+        },
+        RichTextNodeInput::DecoratedSpan {
+            style: blue_style,
+            children: vec![RichTextNodeInput::Text {
+                text: "بب".to_string(),
+            }],
+            padding_inline: None,
+            background: Some("#eeeeff".to_string()),
+            border_color: None,
+            border_width: None,
+            border_radius: None,
+            span_key: Some("arabic-context".to_string()),
+        },
+    ];
+    let mut request = layout_request("", 1_000.0);
+    request.rich_text = Some(&rich_text);
+    request.max_lines = None;
+    request.ellipsis = false;
+    request.language = Language::Auto;
+
+    let result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("paint-separated Arabic layout");
+    let actual = result
+        .lines
+        .iter()
+        .filter_map(|line| line.positioned_glyphs.as_deref())
+        .flatten()
+        .collect::<Vec<_>>();
+    let expected =
+        shape_with_fallback_and_options(&font_context, "بببب", 24.0, 0.0, &ShapeOptions::default());
+    let mut expected_glyphs = expected.glyphs;
+    expected_glyphs.sort_by_key(|glyph| glyph.cluster);
+
+    assert_eq!(
+        actual
+            .iter()
+            .map(|glyph| glyph.glyph_id)
+            .collect::<Vec<_>>(),
+        expected_glyphs
+            .iter()
+            .map(|glyph| glyph.glyph_id)
+            .collect::<Vec<_>>()
+    );
+    assert!(actual.iter().all(|glyph| {
+        if glyph.source_start.unwrap_or_default() < 2 {
+            glyph.fill.as_deref() == Some("#ff0000")
+        } else {
+            glyph.fill.as_deref() == Some("#0000ff")
+        }
+    }));
+    assert!(
+        result
+            .inline_box_decorations
+            .iter()
+            .any(|decoration| { decoration.span_key.as_deref() == Some("arabic-context") })
+    );
+}
+
+#[test]
+fn ruby_keeps_global_base_identity_and_local_annotation_decoration_identity() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let ruby_style = rich_style(24.0, "#111111");
+    let mut annotation_style = rich_style(12.0, "#111111");
+    annotation_style.text_decoration = Some(TextDecorationInput {
+        line: vec![TextDecorationLine::Overline],
+        color: "#3b82f6".to_string(),
+        style: TextDecorationStyle::Solid,
+        thickness_px: None,
+        offset_px: 0.0,
+        skip_ink: TextDecorationSkipInk::None,
+    });
+    let rich_text = vec![
+        RichTextNodeInput::Text {
+            text: "AB".to_string(),
+        },
+        RichTextNodeInput::Ruby {
+            ruby_position: Some("over".to_string()),
+            ruby_align: Some("center".to_string()),
+            ruby_gap_px: None,
+            ruby_offset_px: None,
+            ruby_line_sizing: None,
+            style: ruby_style,
+            base: vec![RichTextNodeInput::Text {
+                text: "漢".to_string(),
+            }],
+            rt: vec![RichTextNodeInput::Span {
+                text: "かん".to_string(),
+                style: annotation_style,
+            }],
+            rt_levels: Vec::new(),
+        },
+    ];
+    let mut request = layout_request("", 1_000.0);
+    request.rich_text = Some(&rich_text);
+    request.max_lines = None;
+    request.ellipsis = false;
+
+    let result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("ruby decoration projection layout");
+    let annotation_glyphs = result
+        .lines
+        .iter()
+        .filter_map(|line| line.positioned_glyphs.as_deref())
+        .flatten()
+        .filter(|glyph| glyph.source_role.as_deref() == Some("rubyAnnotation"))
+        .collect::<Vec<_>>();
+
+    assert!(!annotation_glyphs.is_empty());
+    assert!(annotation_glyphs.iter().all(|glyph| {
+        glyph.source_start == Some(2)
+            && glyph.source_end == Some(3)
+            && glyph.decoration_source_start.is_some_and(|start| start < 2)
+            && glyph.decoration_source_end.is_some_and(|end| end <= 2)
+    }));
+    assert!(result.text_decorations.iter().any(|fragment| {
+        fragment.line == TextDecorationLine::Overline
+            && fragment.source_start == 0
+            && fragment.source_end == 2
+            && !fragment.paths.is_empty()
+    }));
+}
+
+#[test]
+fn word_ellipsis_honors_supplied_uax14_boundaries() {
+    let font_registry = registry("VF", "Inter-Variable.ttf");
+    let families = vec!["VF".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let supplied_breaks = [3_usize];
+    let mut request = layout_request("abcdef", 75.0);
+    request.language = Language::En;
+    request.wrap = WrapMode::Word;
+    request.uax14_breaks = Some(&supplied_breaks);
+    let result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("supplied UAX #14 ellipsis layout");
+
+    assert_eq!(result.display_text.as_deref(), Some("abc\u{2026}"));
+}
+
+#[test]
+fn vertical_rich_shrink_selects_size_from_the_complete_document() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = vec![RichTextNodeInput::Text {
+        text: "あいうえおかきくけこさしすせそ".to_string(),
+    }];
+    let mut request = layout_request("", 200.0);
+    request.rich_text = Some(&rich_text);
+    request.writing_mode = WritingMode::VerticalRl;
+    request.max_height = Some(60.0);
+    request.fit = FitMode::Shrink;
+    request.min_font_size_px = Some(20.0);
+
+    request.ellipsis = false;
+    let complete = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("complete-document shrink layout");
+    request.ellipsis = true;
+    let projected =
+        layout_text_with_unit_metadata(&request, &font_context).expect("projected shrink layout");
+
+    assert_eq!(projected.chosen_font_size_px, complete.chosen_font_size_px);
+    assert_eq!(projected.chosen_font_size_px, 20.0);
+    assert!(
+        projected
+            .display_text
+            .as_deref()
+            .is_some_and(|text| text.ends_with('\u{2026}'))
+    );
+}
+
+#[test]
+fn grow_rejects_the_complete_document_before_applying_ellipsis() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = vec![RichTextNodeInput::Text {
+        text: "あいうえおかきくけこさしすせそ".to_string(),
+    }];
+    let mut request = layout_request("", 72.0);
+    request.rich_text = Some(&rich_text);
+    request.fit = FitMode::Grow;
+    request.max_font_size_px = Some(48.0);
+
+    request.ellipsis = false;
+    let complete = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("complete-document grow rejection");
+    request.ellipsis = true;
+    let projected = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("post-grow ellipsis projection");
+
+    assert_eq!(complete.chosen_font_size_px, request.font_size_px);
+    assert_eq!(projected.chosen_font_size_px, complete.chosen_font_size_px);
+    assert!(
+        projected
+            .display_text
+            .as_deref()
+            .is_some_and(|text| text.ends_with('\u{2026}'))
+    );
 }
 
 #[test]
@@ -267,18 +739,94 @@ fn span_ellipsis_uses_the_first_omitted_style_and_synthetic_identity() {
         .flatten()
         .find(|glyph| glyph.synthetic_kind.as_deref() == Some("ellipsis"))
         .expect("synthetic span ellipsis glyph");
-    let marker_fragment = result
-        .lines
-        .iter()
-        .filter_map(|line| line.fragments.as_deref())
-        .flatten()
-        .find(|fragment| fragment.text.contains('\u{2026}'))
-        .expect("ellipsis run fragment");
-    assert_eq!(marker_fragment.style.font_size_px, 32.0);
-    assert_eq!(marker_fragment.style.color.as_deref(), Some("#0000ff"));
+    assert_eq!(marker.font_size_px, Some(32.0));
+    assert_eq!(marker.fill.as_deref(), Some("#0000ff"));
     assert_eq!(marker.source_start, None);
     assert_eq!(marker.source_end, None);
     assert_eq!(marker.source_role, None);
+}
+
+#[test]
+fn mixed_metrics_and_negative_tracking_choose_the_longest_exact_prefix() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let mut large = rich_style(34.0, "#ff0000");
+    large.letter_spacing_px = Some(-5.0);
+    let mut small = rich_style(18.0, "#0000ff");
+    small.letter_spacing_px = Some(-2.0);
+    let authored = [("AVAV", large), ("あいうえお", small)];
+    let rich_text = authored
+        .iter()
+        .map(|(text, style)| RichTextNodeInput::Span {
+            text: (*text).to_string(),
+            style: style.clone(),
+        })
+        .collect::<Vec<_>>();
+    let source = authored.iter().map(|(text, _)| *text).collect::<String>();
+    let mut request = layout_request("", 94.0);
+    request.rich_text = Some(&rich_text);
+    request.language = Language::En;
+    let selected = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("mixed-metric ellipsis layout");
+    let selected_prefix = selected
+        .display_text
+        .as_deref()
+        .and_then(|display| display.strip_suffix('\u{2026}'))
+        .expect("ellipsis display prefix");
+
+    let grapheme_runs = authored
+        .iter()
+        .map(|(text, _)| boundtext::text::grapheme::grapheme_split(text))
+        .collect::<Vec<_>>();
+    let total = grapheme_runs.iter().map(Vec::len).sum::<usize>();
+    let mut longest_fitting = None;
+    for keep in (0..total).rev() {
+        let mut remaining = keep;
+        let mut candidate_nodes = Vec::new();
+        let mut omitted_style = None;
+        for ((_, style), graphemes) in authored.iter().zip(&grapheme_runs) {
+            let take = remaining.min(graphemes.len());
+            if take > 0 {
+                candidate_nodes.push(RichTextNodeInput::Span {
+                    text: graphemes[..take].concat(),
+                    style: style.clone(),
+                });
+            }
+            remaining -= take;
+            if take < graphemes.len() {
+                omitted_style = Some(style.clone());
+                break;
+            }
+        }
+        candidate_nodes.push(RichTextNodeInput::Span {
+            text: "\u{2026}".to_string(),
+            style: omitted_style.expect("candidate omits one authored grapheme"),
+        });
+        let mut candidate_request = layout_request("", request.max_width);
+        candidate_request.rich_text = Some(&candidate_nodes);
+        candidate_request.ellipsis = false;
+        candidate_request.language = Language::En;
+        let candidate = layout_text_with_unit_metadata(&candidate_request, &font_context)
+            .expect("exact candidate layout");
+        if candidate.overflow.overflow_type == "none" && candidate.lines.len() <= 1 {
+            longest_fitting = Some(keep);
+            break;
+        }
+    }
+
+    let selected_keep = boundtext::text::grapheme::grapheme_split(selected_prefix).len();
+    assert_eq!(
+        selected_keep,
+        longest_fitting.expect("a legal candidate fits")
+    );
+    assert!(source.starts_with(selected_prefix));
 }
 
 fn rich_style(font_size_px: f64, color: &str) -> RichTextStyleInput {
@@ -298,6 +846,151 @@ fn rich_style(font_size_px: f64, color: &str) -> RichTextStyleInput {
         font_feature_settings: None,
         text_orientation: None,
         text_decoration: None,
+    }
+}
+
+fn nested_decorated_resource_input(depth: usize) -> Vec<RichTextNodeInput> {
+    let mut node = RichTextNodeInput::Text {
+        text: "guard".to_string(),
+    };
+    for index in 0..depth {
+        node = RichTextNodeInput::DecoratedSpan {
+            style: rich_style(16.0, "#111111"),
+            children: vec![node],
+            padding_inline: None,
+            background: None,
+            border_color: None,
+            border_width: None,
+            border_radius: None,
+            span_key: Some(format!("depth-{index}")),
+        };
+    }
+    vec![node]
+}
+
+#[test]
+fn authoritative_layout_rejects_over_depth_rich_input_before_shaping() {
+    let font_registry = FontRegistry::new();
+    let families = vec!["missing".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = nested_decorated_resource_input(MAX_RICH_TEXT_DEPTH + 1);
+    let mut request = layout_request("", 100.0);
+    request.rich_text = Some(&rich_text);
+
+    assert_eq!(
+        layout_text_with_unit_metadata(&request, &font_context)
+            .expect_err("over-depth input must fail before recursive flattening"),
+        TextLayoutError::RichTextDepthLimit {
+            actual: MAX_RICH_TEXT_DEPTH + 1,
+            limit: MAX_RICH_TEXT_DEPTH,
+        }
+    );
+}
+
+#[test]
+fn authoritative_layout_rejects_inline_rect_resource_exhaustion_before_shaping() {
+    let font_registry = FontRegistry::new();
+    let families = vec!["missing".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = (0..=MAX_INLINE_RECTS)
+        .map(|index| RichTextNodeInput::InlineRect {
+            rect: InlineRectInput {
+                fragment_id: format!("rect-{index}"),
+                inline_size_px: 1.0,
+                block_size_px: None,
+                advance_px: None,
+                block_align: None,
+                color: "#111111".to_string(),
+                border_radius_px: None,
+                opacity: None,
+                paint_order: None,
+            },
+        })
+        .collect::<Vec<_>>();
+    let mut request = layout_request("", 100.0);
+    request.rich_text = Some(&rich_text);
+
+    assert_eq!(
+        layout_text_with_unit_metadata(&request, &font_context)
+            .expect_err("inline-rect exhaustion must fail before materialization"),
+        TextLayoutError::InlineRectLimit {
+            required: MAX_INLINE_RECTS + 1,
+            limit: MAX_INLINE_RECTS,
+        }
+    );
+}
+
+#[test]
+fn nested_decorated_spans_fragment_without_losing_either_owner() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = vec![RichTextNodeInput::DecoratedSpan {
+        style: rich_style(24.0, "#111111"),
+        children: vec![RichTextNodeInput::DecoratedSpan {
+            style: rich_style(24.0, "#222222"),
+            children: vec![RichTextNodeInput::Text {
+                text: "あいうえおかきくけこ".to_string(),
+            }],
+            padding_inline: Some([2.0, 2.0]),
+            background: Some("#ffeeaa".to_string()),
+            border_color: Some("#aa7700".to_string()),
+            border_width: Some(1.0),
+            border_radius: Some([3.0; 4]),
+            span_key: Some("inner".to_string()),
+        }],
+        padding_inline: Some([3.0, 3.0]),
+        background: Some("#ddeeff".to_string()),
+        border_color: Some("#225588".to_string()),
+        border_width: Some(1.0),
+        border_radius: Some([4.0; 4]),
+        span_key: Some("outer".to_string()),
+    }];
+    let mut request = layout_request("", 58.0);
+    request.rich_text = Some(&rich_text);
+    request.max_lines = None;
+    request.ellipsis = false;
+
+    let result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("nested fragmentable decoration layout");
+    let outer_fragments = result
+        .inline_box_decorations
+        .iter()
+        .filter(|decoration| decoration.span_key.as_deref() == Some("outer"))
+        .count();
+    let inner_fragments = result
+        .inline_box_decorations
+        .iter()
+        .filter(|decoration| decoration.span_key.as_deref() == Some("inner"))
+        .count();
+
+    assert!(
+        result.lines.len() >= 2,
+        "the nested span must remain wrappable"
+    );
+    assert!(outer_fragments >= 2, "outer owner must fragment per line");
+    assert!(inner_fragments >= 2, "inner owner must fragment per line");
+    for owner_pair in result.inline_box_decorations.chunks_exact(2) {
+        assert_eq!(owner_pair[0].span_key.as_deref(), Some("outer"));
+        assert_eq!(owner_pair[1].span_key.as_deref(), Some("inner"));
     }
 }
 
@@ -379,7 +1072,7 @@ fn rich_ellipsis_omits_atomic_output_and_diagnostics_as_a_unit() {
                 text: "東京".to_string(),
             }],
             rt: vec![RichTextNodeInput::Text {
-                text: missing.to_string(),
+                text: missing.repeat(4),
             }],
             rt_levels: Vec::new(),
         },
@@ -435,13 +1128,113 @@ fn rich_ellipsis_omits_atomic_output_and_diagnostics_as_a_unit() {
             .all(|rect| rect.fragment_id != "omitted-rect")
     );
     assert!(
+        result.warnings.iter().all(|warning| {
+            warning.code != "LONG_RUBY_ANNOTATION" && !warning.message.contains("10FFFF")
+        }),
+        "omitted atomic descendants must not commit owned warnings: {:?}",
+        result.warnings
+    );
+}
+
+#[test]
+fn rich_ellipsis_commits_warning_owned_by_a_retained_atomic_node() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = vec![
+        RichTextNodeInput::Ruby {
+            ruby_position: Some("over".to_string()),
+            ruby_align: Some("center".to_string()),
+            ruby_gap_px: None,
+            ruby_offset_px: None,
+            ruby_line_sizing: None,
+            style: rich_style(24.0, "#222222"),
+            base: vec![RichTextNodeInput::Text {
+                text: "A".to_string(),
+            }],
+            rt: vec![RichTextNodeInput::Span {
+                text: "AAAA".to_string(),
+                style: rich_style(8.0, "#444444"),
+            }],
+            rt_levels: Vec::new(),
+        },
+        RichTextNodeInput::Text {
+            text: "BBBBBBBBBBBB".to_string(),
+        },
+    ];
+    let mut request = layout_request("", 80.0);
+    request.language = Language::En;
+    request.rich_text = Some(&rich_text);
+
+    let result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("retained ruby warning ellipsis layout");
+
+    assert!(
+        result
+            .display_text
+            .as_deref()
+            .is_some_and(|display| display.starts_with('A') && display.ends_with('\u{2026}')),
+        "the warning-owning ruby must be retained: {:?}",
+        result.display_text
+    );
+    assert!(
         result
             .warnings
             .iter()
-            .all(|warning| !warning.message.contains("10FFFF")),
-        "omitted atomic descendants must not commit missing-glyph warnings: {:?}",
+            .any(|warning| warning.code == "LONG_RUBY_ANNOTATION"),
+        "a warning owned by the retained atomic node must be committed: {:?}",
         result.warnings
     );
+}
+
+#[test]
+fn synthetic_marker_diagnostics_are_committed() {
+    let mut font_registry = FontRegistry::new();
+    font_registry
+        .register(
+            std::fs::read(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../vendor/ttf-parser/tests/fonts/demo.ttf"
+            ))
+            .expect("single-glyph fixture font"),
+            "OnlyA".to_string(),
+            400,
+            FontStyle::Normal,
+        )
+        .expect("register single-glyph fixture font");
+    let families = vec!["OnlyA".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let request = layout_request("AAAAAAAAAAAAAAAA", 40.0);
+    let result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("synthetic missing-glyph marker layout");
+
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.message.contains("U+2026")),
+        "the selected synthetic marker must retain its own warning: {:?}",
+        result.warnings
+    );
+    assert!(result.lines.iter().any(|line| {
+        line.positioned_glyphs.as_deref().is_some_and(|glyphs| {
+            glyphs
+                .iter()
+                .any(|glyph| glyph.synthetic_kind.as_deref() == Some("ellipsis"))
+        })
+    }));
 }
 
 #[test]

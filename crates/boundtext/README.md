@@ -13,8 +13,8 @@ Scope: LTR only. Bidi and RTL reordering are not implemented, and the only line-
 - **Line breaking** — UAX#14 break opportunities, word/char/none wrap modes
 - **Japanese kinsoku (禁則処理)** — JLREQ/JIS X 4051-informed line-break prohibition (head-prohibit, tail-prohibit, non-breaking pairs), enabled by `language: Ja`. A fixed `JaTypesettingV1` profile, not a conformance claim
 - **Vertical writing** — `vertical-rl` with UTR#50 character orientation, OpenType `vert`/`vkna`/`vkrn` features, column-based layout
-- **Fit (shrink/grow)** — Binary search to find the largest font size that fits within bounds
-- **Ellipsis** — Grapheme-cluster-based truncation with `…`
+- **Fit (shrink/grow)** — Certified binary refinement or bounded exact-grid search
+- **Ellipsis** — Exact longest-legal-prefix projection with synthetic `…`
 - **Rich text** — Mixed-style inline spans, ruby annotations (furigana)
 - **Glyph outline extraction** — SVG path data from font glyph outlines
 - **Variable fonts** — Variation axis support (e.g. `wght`)
@@ -77,6 +77,12 @@ for glyph in &glyphs {
 | `bbox`                | Bounding box `{ x, y, w, h }`                              |
 | `overflow`            | `none` / `overflow` / `kinsoku_unresolved` / `cannot_fit`  |
 
+`layout_text` and `layout_text_with_unit_metadata` return
+`Result<TextLayoutResult, TextLayoutError>`. Preparation failure and
+deterministic rich-depth, inline-rectangle, and ellipsis-budget exhaustion are
+fatal; no partial result is returned. Rich resource validation happens before
+recursive preparation.
+
 ### Shaping & Measurement
 
 - Shaping produces **glyph ID + advance + offsets** via rustybuzz (HarfBuzz-compatible)
@@ -88,19 +94,16 @@ for glyph in &glyphs {
 
 **Wrap modes:**
 
-| Mode   | Behavior                                     |
-| ------ | -------------------------------------------- |
-| `Char` | Break at any character boundary              |
-| `Word` | Break at whitespace, CJK boundaries, hyphens |
-| `None` | No wrapping (explicit newlines only)         |
+| Mode   | Behavior                                        |
+| ------ | ----------------------------------------------- |
+| `Char` | Break at any extended grapheme-cluster boundary |
+| `Word` | Break at whitespace, CJK boundaries, hyphens    |
+| `None` | No wrapping (explicit newlines only)            |
 
-**Word boundary rules (wrap=Word):**
-
-1. After ASCII whitespace (U+0020, U+0009)
-2. Before/after CJK characters (Unified Ideographs, Hiragana, Katakana) — subject to kinsoku rules
-3. After hyphens (U+002D, U+2010)
-
-> `Word` mode still breaks CJK text at character boundaries, matching CSS `word-break: normal`.
+`Word` mode consumes UAX #14 opportunities computed for the normalized source
+or explicitly supplied by the caller. Japanese kinsoku can reject an otherwise
+available UAX boundary. `Char` and `None` still preserve extended grapheme
+clusters.
 
 ### Japanese Kinsoku (禁則処理)
 
@@ -143,22 +146,59 @@ profile. They live in a stricter table that is not yet selectable:
 
 ### Fit (Shrink / Grow)
 
-Binary search to find the optimal font size within bounds:
+Fit always evaluates the complete authored document with ellipsis disabled.
+A fit predicate uses endpoint checks and binary refinement only when both its
+content metrics and (for flow) its provider are certified monotone. Negative
+tracking or negative proportional line/ruby metrics invalidate the content
+certificate even in ordinary rectangular layout. The conservative path uses
+a descending exact grid and returns the largest fitting grid size:
 
-| Mode   | Search range                                     | Convergence                 |
-| ------ | ------------------------------------------------ | --------------------------- |
-| Shrink | `min_font_size_px` (default 8) → `font_size_px`  | ε=0.25px, max 12 iterations |
-| Grow   | `font_size_px` → `max_font_size_px` (default 4×) | Same convergence criteria   |
+| Mode   | Search range                                     | Default step / refinement |
+| ------ | ------------------------------------------------ | ------------------------- |
+| Shrink | `min_font_size_px` (default 8) → `font_size_px`  | 0.25 px / 12 iterations   |
+| Grow   | `font_size_px` → `max_font_size_px` (default 4×) | 0.25 px / 12 iterations   |
 
-Vertical text uses dedicated fit functions that check both column count and column height.
+`TextLayoutRequest::fit_max_probes` and
+`FlowLayoutRequest::fit_max_probes` limit uncertified exact-grid work. The
+default is 4,096 and the hard maximum is 65,536. A grid that exceeds the limit
+returns `TextLayoutError::FitProbeLimit` or `BoundtextError::FitProbeLimit`
+instead of an approximate size. Vertical text uses the same policy and checks
+both column count and column height.
+
+Candidate scaling applies uniformly to `font_size_px` and
+`letter_spacing_px`. An explicit `line_height_px` remains absolute, while a
+proportional `line_height` follows the candidate font size.
 
 ### Ellipsis
 
-When `ellipsis=true` and text overflows:
+When `ellipsis=true` and the complete text exceeds `max_lines`, plain, span,
+recursive rich, horizontal, vertical, and region-flow inputs are projected by
+one policy:
 
-1. Binary-search the largest grapheme count whose text plus `…` (U+2026) fits
-2. Refine the boundary with a small linear scan
-3. If even a single cluster with `…` overflows → `overflow = cannot_fit`
+1. Enumerate authored prefixes that respect extended grapheme clusters,
+   atomic rich items, whitespace, UAX #14, and kinsoku.
+2. Evaluate prefixes from longest to shortest without assuming shaped width is
+   monotone in source length.
+3. Re-shape the retained prefix at end-of-text and shape U+2026 as a separate
+   synthetic run.
+4. Commit only the first exact layout that satisfies all active constraints.
+
+The marker has no authored source range. Omitted output and warnings are
+discarded; marker warnings are retained. If the marker cannot fit, display ink
+is empty while source metadata remains complete. At most 1,024 exact candidate
+layouts are admitted after overflow is established; a larger maximum set
+returns `TextLayoutError::EllipsisCandidateLimit` or
+`BoundtextError::EllipsisCandidateLimit` before candidate materialization.
+
+### Exclusion regions
+
+Flow consumers implement one logical-axis `RegionProvider::regions` method.
+The engine memoizes identical `RegionQuery` values and validates that returned
+`FlowRegion` intervals are finite, non-negative, clipped, ordered, and
+non-overlapping. One operation permits at most 65,536 distinct queries and
+262,144 cumulative returned intervals. Provider invalidity or budget
+exhaustion is a typed `BoundtextError`; it is never interpreted as an empty
+region or a rejected fit/ellipsis candidate.
 
 ### Vertical Writing (vertical-rl)
 
@@ -173,11 +213,45 @@ When `ellipsis=true` and text overflows:
 - **Inline spans** (`TextSpanInput`): Per-span font family, weight, style, size, color, letter spacing
 - **Ruby annotations** (`RichTextNodeInput::Ruby`): Base text with `<rt>` annotation, configurable position and alignment
 
+Ordinary spans adapt to the same rich planner as recursive rich text. Adjacent
+paint-only changes (color, strokes, shadows, or decoration) do not reset
+shaping; an indivisible cluster crossing such a boundary uses the paint of its
+source-start grapheme. Nested `DecoratedSpan` nodes remain fragmentable in
+normal and exclusion-flow layout, and every emitted fragment retains each
+outer/inner `span_key` owner.
+
 ## Relationship to boundsvg
 
 boundtext is extracted from [boundsvg](https://github.com/zakideee/boundsvg) and currently lives in the same monorepo as a Cargo workspace member. boundsvg depends on boundtext for all text layout.
 
 boundtext is published on [crates.io](https://crates.io/crates/boundtext) and may eventually move to its own repository as external consumers emerge.
+
+### Migration from the previous Rust contract
+
+- Replace `Option` handling around `layout_text` and
+  `layout_text_with_unit_metadata` with `Result` handling. Existing
+  `.expect(...)` call sites continue to work; pattern matches change from
+  `Some`/`None` to `Ok`/`Err`.
+- Exhaustive matches over `TextLayoutError` / `BoundtextError` must handle
+  `InvalidFitStep`, `FitProbeLimit`, `RichTextDepthLimit`, and
+  `InlineRectLimit`. Direct layout and flow callers receive resource failures
+  before shaping or querying exclusion geometry.
+- Initialize `TextLayoutRequest::fit_max_probes` and
+  `FlowLayoutRequest::fit_max_probes` in direct Rust struct literals. Use
+  `None` for the 4,096-probe default or `Some(limit)` for a smaller explicit
+  work budget; the hard maximum is 65,536.
+- Replace the physical two-method `FlowRegionSource` implementation with
+  `RegionProvider`. Return `Result<Vec<FlowRegion>, BoundtextError>` from the
+  logical `RegionQuery`; implement `fit_search_kind` only when monotonicity is
+  actually proven.
+- Add `inline_box_decorations: Vec<InlineBoxDecoration>` when constructing a
+  `FlowLayoutResult`. Plain flow uses an empty vector; rich flow forwards the
+  materialized normal/region fragments.
+- If you relied on a `TextSpanInput` boundary resetting kerning or contextual
+  shaping, add an actual shaping-style difference. Paint-only boundaries now
+  preserve one shaping run by contract.
+
+These are breaking changes for the `0.x` Rust crate contract.
 
 ## Known Limitations
 

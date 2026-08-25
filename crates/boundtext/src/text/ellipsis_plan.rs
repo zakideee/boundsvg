@@ -1,3 +1,8 @@
+/// Maximum exact prefix layouts that one authoritative ellipsis projection
+/// may require. The limit is checked before candidate materialization so a
+/// rejected operation cannot leak partial output or diagnostics.
+pub(crate) const MAX_ELLIPSIS_CANDIDATES: usize = 1_024;
+
 /// Evaluate legal prefix candidates in descending logical order and return the
 /// first exact fit. No monotonicity is assumed: a shorter failure cannot prune
 /// any untested candidate.
@@ -13,6 +18,25 @@ pub(crate) fn select_longest_fitting<T>(
         }
     }
     None
+}
+
+/// Fallible counterpart used when candidate layout depends on an external
+/// geometry provider. Provider/resource failures abort the complete search;
+/// they are never interpreted as a rejected prefix.
+pub(crate) fn try_select_longest_fitting<T, E>(
+    candidates: impl DoubleEndedIterator<Item = usize>,
+    mut probe: impl FnMut(usize) -> Result<Option<T>, E>,
+    mut fits: impl FnMut(&T) -> bool,
+) -> Result<Option<(usize, T)>, E> {
+    for candidate_prefix in candidates.rev() {
+        let Some(candidate) = probe(candidate_prefix)? else {
+            return Ok(None);
+        };
+        if fits(&candidate) {
+            return Ok(Some((candidate_prefix, candidate)));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

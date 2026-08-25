@@ -215,13 +215,13 @@ describe("semantic mapping ledgers", () => {
         (fieldCount, nodeLedger) => fieldCount + Object.keys(nodeLedger).length,
         0,
       ),
-    ).toBe(683);
+    ).toBe(684);
     expect(
       Object.values(SCENE_TO_WASM_MAPPING).reduce(
         (fieldCount, nodeLedger) => fieldCount + Object.keys(nodeLedger).length,
         0,
       ),
-    ).toBe(709);
+    ).toBe(710);
     expect(Object.keys(RUST_IR_TO_PUBLIC_IR_MAPPING)).toHaveLength(8);
     expect(
       Object.values(RUST_IR_TO_PUBLIC_IR_MAPPING).reduce(

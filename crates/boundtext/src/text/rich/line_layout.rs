@@ -378,7 +378,7 @@ pub(super) fn resolve_fragment_border_radius(
     }
 }
 
-fn resolve_fragment_border_radius_vertical(
+pub(super) fn resolve_fragment_border_radius_vertical(
     radius: Option<[f64; 4]>,
     is_first: bool,
     is_last: bool,
@@ -412,16 +412,59 @@ pub(super) fn effective_line_width(
     let mut width = if start == 0 { indent } else { 0.0 };
     for index in start..end {
         let token = &tokens[index];
-        width += token.advance;
-        width += token.decoration_start_advance;
-        if token.decoration_span_id.is_some()
-            && (index + 1 == end
-                || tokens[index + 1].decoration_span_id != token.decoration_span_id)
-        {
-            width += token.decoration_end_advance;
+        width += super::token_decoration_start_advance(token) + token.advance;
+        for membership in &token.decoration_memberships {
+            if index + 1 == end
+                || !super::token_has_decoration_span(&tokens[index + 1], membership.span_id)
+            {
+                width += membership.end_advance;
+            }
         }
     }
     width
+}
+
+#[derive(Debug)]
+struct ActiveDecoration {
+    span_id: u32,
+    start: f64,
+}
+
+fn common_decoration_prefix(
+    active: &[ActiveDecoration],
+    memberships: &[super::DecorationMembership],
+) -> usize {
+    active
+        .iter()
+        .zip(memberships)
+        .take_while(|(open, current)| open.span_id == current.span_id)
+        .count()
+}
+
+fn close_decoration(
+    output: &mut Vec<LineInlineBoxDecoration>,
+    coordinate: &mut f64,
+    active: &ActiveDecoration,
+    previous_token: &LayoutToken,
+    cross_size: f64,
+    decoration_spans: &[DecorationSpanMeta],
+) {
+    let end_advance = super::token_decoration_membership(previous_token, active.span_id)
+        .map_or(0.0, |membership| membership.end_advance);
+    let meta = &decoration_spans[active.span_id as usize];
+    output.push(LineInlineBoxDecoration {
+        offset: active.start,
+        advance: *coordinate + end_advance - active.start,
+        cross_size,
+        cross_offset: 0.0,
+        background: meta.background.clone(),
+        border_color: meta.border_color.clone(),
+        border_width: (meta.border_width > 0.0).then_some(meta.border_width),
+        border_radius: meta.border_radius,
+        span_id: Some(active.span_id),
+        span_key: meta.span_key.clone(),
+    });
+    *coordinate += end_advance;
 }
 
 fn assemble_empty_line(newline_token: &LayoutToken, indent: f64) -> LayoutLine {
@@ -676,53 +719,36 @@ pub(super) fn assemble_horizontal_line(
         .fold(0.0_f64, f64::max);
     let cross_size = reference_offset + after_reference;
     let mut glyphs = Vec::new();
-    let mut decorations = Vec::new();
+    let mut span_decorations = Vec::new();
+    let mut atomic_decorations = Vec::new();
     let mut inline_rects = Vec::new();
     let mut x = indent;
     let mut text = String::new();
-    // Track current decoration span group
-    let mut span_group_start_x = None;
-    let mut span_group_id = None;
+    let mut active_decorations: Vec<ActiveDecoration> = Vec::new();
 
     for (index, token) in tokens.iter().enumerate() {
-        // Detect decoration span group boundaries
-        let token_span = token.decoration_span_id;
-
-        // Close previous span group if ID changes
-        if span_group_id.is_some() && span_group_id != token_span {
-            let end_advance = tokens[index - 1].decoration_end_advance;
-            if let Some(span_id) = span_group_id
-                && let Some(start_x) = span_group_start_x
-            {
-                let meta = &decoration_spans[span_id as usize];
-                decorations.push(LineInlineBoxDecoration {
-                    offset: start_x,
-                    advance: x + end_advance - start_x,
+        let common_prefix =
+            common_decoration_prefix(&active_decorations, &token.decoration_memberships);
+        if index > 0 {
+            for active in active_decorations[common_prefix..].iter().rev() {
+                close_decoration(
+                    &mut span_decorations,
+                    &mut x,
+                    active,
+                    &tokens[index - 1],
                     cross_size,
-                    cross_offset: 0.0,
-                    background: meta.background.clone(),
-                    border_color: meta.border_color.clone(),
-                    border_width: if meta.border_width > 0.0 {
-                        Some(meta.border_width)
-                    } else {
-                        None
-                    },
-                    border_radius: meta.border_radius,
-                    span_id: Some(span_id),
-                    span_key: meta.span_key.clone(),
-                });
+                    decoration_spans,
+                );
             }
-            x += end_advance;
-            span_group_start_x = None;
-            span_group_id = None;
         }
+        active_decorations.truncate(common_prefix);
 
-        x += token.decoration_start_advance;
-
-        // Open new span group
-        if token_span.is_some() && span_group_id.is_none() {
-            span_group_id = token_span;
-            span_group_start_x = Some(x - token.decoration_start_advance);
+        for membership in &token.decoration_memberships[common_prefix..] {
+            active_decorations.push(ActiveDecoration {
+                span_id: membership.span_id,
+                start: x,
+            });
+            x += membership.start_advance;
         }
 
         let mut token_glyphs = token.glyphs.clone();
@@ -732,7 +758,7 @@ pub(super) fn assemble_horizontal_line(
 
         // InlineBox decorations (atomic)
         if let Some(ref decoration) = token.inline_box_decoration {
-            decorations.push(LineInlineBoxDecoration {
+            atomic_decorations.push(LineInlineBoxDecoration {
                 offset: x,
                 advance: decoration.total_advance,
                 cross_size: decoration.cross_size,
@@ -747,7 +773,7 @@ pub(super) fn assemble_horizontal_line(
         }
         // Nested InlineBox decorations (z-order: inner overlays outer)
         for decoration in &token.nested_decorations {
-            decorations.push(LineInlineBoxDecoration {
+            atomic_decorations.push(LineInlineBoxDecoration {
                 offset: x + decoration.offset,
                 advance: decoration.decoration.total_advance,
                 cross_size: decoration.decoration.cross_size,
@@ -770,30 +796,20 @@ pub(super) fn assemble_horizontal_line(
         text.push_str(&token.text);
     }
 
-    // Close final span group if still open.
-    // span_group_id is only set while iterating tokens, so tokens is non-empty.
-    if let Some(span_id) = span_group_id
-        && let Some(start_x) = span_group_start_x
-        && let Some(last_token) = tokens.last()
-    {
-        let meta = &decoration_spans[span_id as usize];
-        decorations.push(LineInlineBoxDecoration {
-            offset: start_x,
-            advance: x + last_token.decoration_end_advance - start_x,
-            cross_size,
-            cross_offset: 0.0,
-            background: meta.background.clone(),
-            border_color: meta.border_color.clone(),
-            border_width: if meta.border_width > 0.0 {
-                Some(meta.border_width)
-            } else {
-                None
-            },
-            border_radius: meta.border_radius,
-            span_id: Some(span_id),
-            span_key: meta.span_key.clone(),
-        });
+    if let Some(last_token) = tokens.last() {
+        for active in active_decorations.iter().rev() {
+            close_decoration(
+                &mut span_decorations,
+                &mut x,
+                active,
+                last_token,
+                cross_size,
+                decoration_spans,
+            );
+        }
     }
+    span_decorations.sort_by_key(|decoration| decoration.span_id);
+    span_decorations.extend(atomic_decorations);
 
     LayoutLine {
         text,
@@ -801,7 +817,7 @@ pub(super) fn assemble_horizontal_line(
         cross_size,
         reference_offset,
         glyphs,
-        decorations,
+        decorations: span_decorations,
         inline_rects,
         kinsoku_unresolved: false,
     }
@@ -821,48 +837,36 @@ pub(super) fn assemble_vertical_line(
         .map(|t| t.cross_size - t.reference_offset)
         .fold(0.0_f64, f64::max);
     let mut glyphs = Vec::new();
-    let mut decorations = Vec::new();
+    let mut span_decorations = Vec::new();
+    let mut atomic_decorations = Vec::new();
     let mut inline_rects = Vec::new();
     let mut y = indent;
     let mut text = String::new();
-    let mut span_group_start_y = None;
-    let mut span_group_id = None;
+    let mut active_decorations: Vec<ActiveDecoration> = Vec::new();
 
     for (index, token) in tokens.iter().enumerate() {
-        let token_span = token.decoration_span_id;
-        if span_group_id.is_some() && span_group_id != token_span {
-            let end_advance = tokens[index - 1].decoration_end_advance;
-            if let Some(span_id) = span_group_id
-                && let Some(start_y) = span_group_start_y
-            {
-                let meta = &decoration_spans[span_id as usize];
-                decorations.push(LineInlineBoxDecoration {
-                    offset: start_y,
-                    advance: y + end_advance - start_y,
-                    cross_size: reference_offset + after_reference,
-                    cross_offset: 0.0,
-                    background: meta.background.clone(),
-                    border_color: meta.border_color.clone(),
-                    border_width: if meta.border_width > 0.0 {
-                        Some(meta.border_width)
-                    } else {
-                        None
-                    },
-                    border_radius: meta.border_radius,
-                    span_id: Some(span_id),
-                    span_key: meta.span_key.clone(),
-                });
+        let common_prefix =
+            common_decoration_prefix(&active_decorations, &token.decoration_memberships);
+        if index > 0 {
+            for active in active_decorations[common_prefix..].iter().rev() {
+                close_decoration(
+                    &mut span_decorations,
+                    &mut y,
+                    active,
+                    &tokens[index - 1],
+                    reference_offset + after_reference,
+                    decoration_spans,
+                );
             }
-            y += end_advance;
-            span_group_start_y = None;
-            span_group_id = None;
         }
+        active_decorations.truncate(common_prefix);
 
-        y += token.decoration_start_advance;
-
-        if token_span.is_some() && span_group_id.is_none() {
-            span_group_id = token_span;
-            span_group_start_y = Some(y - token.decoration_start_advance);
+        for membership in &token.decoration_memberships[common_prefix..] {
+            active_decorations.push(ActiveDecoration {
+                span_id: membership.span_id,
+                start: y,
+            });
+            y += membership.start_advance;
         }
 
         let x_shift = reference_offset - token.reference_offset;
@@ -872,7 +876,7 @@ pub(super) fn assemble_vertical_line(
         glyphs.extend(token_glyphs);
 
         if let Some(ref decoration) = token.inline_box_decoration {
-            decorations.push(LineInlineBoxDecoration {
+            atomic_decorations.push(LineInlineBoxDecoration {
                 offset: y,
                 advance: decoration.total_advance,
                 cross_size: decoration.cross_size,
@@ -887,7 +891,7 @@ pub(super) fn assemble_vertical_line(
         }
         // Nested InlineBox decorations
         for decoration in &token.nested_decorations {
-            decorations.push(LineInlineBoxDecoration {
+            atomic_decorations.push(LineInlineBoxDecoration {
                 offset: y + decoration.offset,
                 advance: decoration.decoration.total_advance,
                 cross_size: decoration.decoration.cross_size,
@@ -910,29 +914,20 @@ pub(super) fn assemble_vertical_line(
         text.push_str(&token.text);
     }
 
-    // span_group_id is only set while iterating tokens, so tokens is non-empty.
-    if let Some(span_id) = span_group_id
-        && let Some(start_y) = span_group_start_y
-        && let Some(last_token) = tokens.last()
-    {
-        let meta = &decoration_spans[span_id as usize];
-        decorations.push(LineInlineBoxDecoration {
-            offset: start_y,
-            advance: y + last_token.decoration_end_advance - start_y,
-            cross_size: reference_offset + after_reference,
-            cross_offset: 0.0,
-            background: meta.background.clone(),
-            border_color: meta.border_color.clone(),
-            border_width: if meta.border_width > 0.0 {
-                Some(meta.border_width)
-            } else {
-                None
-            },
-            border_radius: meta.border_radius,
-            span_id: Some(span_id),
-            span_key: meta.span_key.clone(),
-        });
+    if let Some(last_token) = tokens.last() {
+        for active in active_decorations.iter().rev() {
+            close_decoration(
+                &mut span_decorations,
+                &mut y,
+                active,
+                last_token,
+                reference_offset + after_reference,
+                decoration_spans,
+            );
+        }
     }
+    span_decorations.sort_by_key(|decoration| decoration.span_id);
+    span_decorations.extend(atomic_decorations);
 
     LayoutLine {
         text,
@@ -940,7 +935,7 @@ pub(super) fn assemble_vertical_line(
         cross_size: reference_offset + after_reference,
         reference_offset,
         glyphs,
-        decorations,
+        decorations: span_decorations,
         inline_rects,
         kinsoku_unresolved: false,
     }

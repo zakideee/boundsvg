@@ -195,6 +195,24 @@ fn resolved_styles_have_equal_layout(left: &ResolvedStyle, right: &ResolvedStyle
         && left.text_orientation == right.text_orientation
 }
 
+/// Equality for one `HarfBuzz` shaping run. Paint fields are deliberately not
+/// included; the glyph cluster that starts at a paint boundary keeps the
+/// paint of its source-start grapheme after the shared run is distributed.
+pub(super) fn resolved_styles_have_equal_shaping(
+    left: &ResolvedStyle,
+    right: &ResolvedStyle,
+) -> bool {
+    left.font_families == right.font_families
+        && left.font_weight == right.font_weight
+        && left.font_style == right.font_style
+        && left.font_size_px == right.font_size_px
+        && left.letter_spacing_px == right.letter_spacing_px
+        && left.language == right.language
+        && left.font_variation_settings == right.font_variation_settings
+        && left.font_feature_settings == right.font_feature_settings
+        && left.text_orientation == right.text_orientation
+}
+
 pub(super) fn build_default_style(
     req: &TextLayoutRequest,
     default_font_families: &[String],
@@ -534,6 +552,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
                 flatten_ruby_segments(base, &ruby_style, &mut base_nodes, scale);
                 let rt_level_nodes = flatten_ruby_levels(rt, rt_levels, &ruby_style, scale);
                 if !base_nodes.is_empty() && !rt_level_nodes.is_empty() {
+                    let warning_start = warnings.len();
                     for rt_nodes in &rt_level_nodes {
                         push_long_ruby_annotation_warning(&base_nodes, rt_nodes, warnings);
                     }
@@ -549,6 +568,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
                         ruby_line_sizing: resolve_ruby_line_sizing(ruby_line_sizing.as_deref()),
                         base: base_nodes,
                         rt_levels: rt_level_nodes,
+                        warnings: warnings[warning_start..].to_vec(),
                     }));
                 }
             }
@@ -564,6 +584,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
             } => {
                 let box_style = resolve_style(style, current_style, scale);
                 let mut child_nodes = Vec::new();
+                let warning_start = warnings.len();
                 flatten_inline_box_children(
                     children,
                     &box_style,
@@ -580,6 +601,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
                     border_color: border_color.clone(),
                     border_radius: *border_radius,
                     span_key: span_key.clone(),
+                    warnings: warnings[warning_start..].to_vec(),
                 }));
             }
             RichTextNodeInput::InlineRect { rect } => {
@@ -682,6 +704,7 @@ fn flatten_inline_box_children(
                 flatten_ruby_segments(base, &ruby_style, &mut base_nodes, scale);
                 let rt_level_nodes = flatten_ruby_levels(rt, rt_levels, &ruby_style, scale);
                 if !base_nodes.is_empty() && !rt_level_nodes.is_empty() {
+                    let warning_start = warnings.len();
                     for rt_nodes in &rt_level_nodes {
                         push_long_ruby_annotation_warning(&base_nodes, rt_nodes, warnings);
                     }
@@ -697,6 +720,7 @@ fn flatten_inline_box_children(
                         ruby_line_sizing: resolve_ruby_line_sizing(ruby_line_sizing.as_deref()),
                         base: base_nodes,
                         rt_levels: rt_level_nodes,
+                        warnings: warnings[warning_start..].to_vec(),
                     }));
                 }
             }
@@ -722,6 +746,7 @@ fn flatten_inline_box_children(
                 } else {
                     let box_style = resolve_style(style, current_style, scale);
                     let mut child_nodes = Vec::new();
+                    let warning_start = warnings.len();
                     flatten_inline_box_children(
                         children,
                         &box_style,
@@ -738,6 +763,7 @@ fn flatten_inline_box_children(
                         border_color: border_color.clone(),
                         border_radius: *border_radius,
                         span_key: span_key.clone(),
+                        warnings: warnings[warning_start..].to_vec(),
                     }));
                 }
             }
@@ -781,8 +807,8 @@ fn flatten_inline_box_children(
 }
 
 /// Flatten `DecoratedSpan` children.
-/// Ruby and `InlineBox` are allowed. Nested `DecoratedSpan` is represented as an
-/// atomic child decoration when embedded inside another `DecoratedSpan`.
+/// Ruby and `InlineBox` retain their atomic semantics. Nested `DecoratedSpan`
+/// nodes remain fragmentable and carry their complete decoration ancestry.
 ///
 /// The match body is identical to `flatten_rich_nodes_with_warnings`; this
 /// function exists to keep call-site semantics clear.
@@ -951,4 +977,30 @@ pub(super) fn collect_notdef_warnings_from_tokens(tokens: &[LayoutToken]) -> Vec
         ));
     }
     crate::text::types::build_notdef_warnings(&all_notdef)
+}
+
+/// Collect recoverable diagnostics from the authored nodes retained by one
+/// canonical display projection.
+///
+/// Ruby and inline boxes are atomic. An inline box stores the diagnostics of
+/// its complete subtree, so the collector deliberately does not descend into
+/// its children and cannot duplicate nested warnings. Decorated spans remain
+/// fragmentable and are traversed in authored order.
+pub(super) fn collect_owned_warnings(nodes: &[RichInlineNode]) -> Vec<TextWarning> {
+    fn append(nodes: &[RichInlineNode], output: &mut Vec<TextWarning>) {
+        for node in nodes {
+            match node {
+                RichInlineNode::Segment(_) | RichInlineNode::InlineRect(_) => {}
+                RichInlineNode::Ruby(ruby) => output.extend(ruby.warnings.iter().cloned()),
+                RichInlineNode::InlineBox(inline_box) => {
+                    output.extend(inline_box.warnings.iter().cloned());
+                }
+                RichInlineNode::DecoratedSpan(span) => append(&span.children, output),
+            }
+        }
+    }
+
+    let mut warnings = Vec::new();
+    append(nodes, &mut warnings);
+    warnings
 }

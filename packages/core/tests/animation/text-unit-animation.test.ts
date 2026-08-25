@@ -224,20 +224,16 @@ describe("Text animateUnits", () => {
     const plain = findText(plainIr.root, "fit-units");
 
     expect(animated.fontSizePx).toBe(plain.fontSizePx);
-    expect(animated.lines.map(({ positionedGlyphs: _positionedGlyphs, ...line }) => line)).toEqual(
-      plain.lines,
-    );
+    expect(animated.lines).toEqual(plain.lines);
     for (const [lineIndex, animatedLine] of animated.lines.entries()) {
       const plainLine = plain.lines[lineIndex];
-      expect(animatedLine.positionedGlyphs).toHaveLength(plainLine?.glyphs.length ?? 0);
+      expect(animatedLine.positionedGlyphs).toHaveLength(plainLine?.positionedGlyphs?.length ?? 0);
       for (const [glyphIndex, positionedGlyph] of (animatedLine.positionedGlyphs ?? []).entries()) {
-        const plainGlyph = plainLine?.glyphs[glyphIndex];
+        const plainGlyph = plainLine?.positionedGlyphs?.[glyphIndex];
         if (!plainGlyph) {
           throw new TypeError(`Missing plain glyph ${lineIndex}:${glyphIndex}`);
         }
-        const { cluster, ...plainShaping } = plainGlyph;
-        expect(positionedGlyph).toMatchObject(plainShaping);
-        expect(positionedGlyph.clusterStart).toBe(cluster);
+        expect(positionedGlyph).toEqual(plainGlyph);
       }
     }
     expect(animated.bbox).toEqual(plain.bbox);

@@ -40,6 +40,7 @@ fn plain_text_input(content: &str, font_size_px: f64, wrap: &str) -> TextInput {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
         ellipsis: None,
         hanging_punctuation: None,
         font_variation_settings: None,
@@ -279,11 +280,18 @@ fn rich_base_decoration_wire_input(range_count: usize, animate_units: bool) -> L
                 "text": {
                     "content": "x".repeat(range_count),
                     "fontSizePx": 16.0,
+                    "fontFamily": ["NotoSansJP"],
                     "richText": rich_text
                 },
                 "visual": visual
             }]
-        }
+        },
+        "fonts": [{
+            "alias": "NotoSansJP",
+            "weight": 400,
+            "style": "normal",
+            "data": test_font_data()
+        }]
     }))
     .expect("rich decoration wire input")
 }
@@ -820,7 +828,7 @@ fn text_unit_map_supports_ruby_multiline_ellipsis() {
 }
 
 #[test]
-fn text_unit_map_reports_unavailable_text_layout() {
+fn text_measurement_fails_before_unit_map_materialization() {
     let mut input = text_unit_layout_input(
         "missing font",
         120.0,
@@ -837,12 +845,50 @@ fn text_unit_map_reports_unavailable_text_layout() {
             node_id,
             ..
         } => {
-            assert_eq!(code, "TEXT_UNIT_MAP_UNAVAILABLE");
+            assert_eq!(code, "TEXT_NO_LAYOUT");
             assert_eq!(stage.as_deref(), Some("text"));
             assert_eq!(node_id.as_deref(), Some("unit-text"));
         }
         other => panic!("expected structured unit-map error, got {other:?}"),
     }
+}
+
+#[test]
+fn text_measurement_surfaces_the_ellipsis_candidate_limit() {
+    let source = "あ".repeat(1_025);
+    let mut input = text_unit_layout_input(
+        &source,
+        1.0,
+        None,
+        crate::text::unit_map::TextUnitKind::Cluster,
+        crate::text::unit_map::TextUnitRubyMode::WithBase,
+    );
+    let text = input.root.children[0].text.as_mut().expect("text input");
+    text.max_lines = Some(1);
+    text.ellipsis = Some(true);
+
+    let error = compute_full_layout(&input).expect_err("exact projection must be bounded");
+    assert_structured_error_code(error, "TEXT_ELLIPSIS_CANDIDATE_LIMIT");
+}
+
+#[test]
+fn ordinary_text_measurement_surfaces_the_content_fit_probe_limit() {
+    let mut input = text_unit_layout_input(
+        "negative tracking fit",
+        120.0,
+        None,
+        crate::text::unit_map::TextUnitKind::Cluster,
+        crate::text::unit_map::TextUnitRubyMode::WithBase,
+    );
+    let text = input.root.children[0].text.as_mut().expect("text input");
+    text.letter_spacing_px = Some(-1.0);
+    text.fit = Some("shrink".to_string());
+    text.min_font_size_px = Some(8.0);
+    text.shrink_epsilon_px = Some(0.25);
+    text.fit_max_probes = Some(1);
+
+    let error = compute_full_layout(&input).expect_err("ordinary exact fit must be bounded");
+    assert_structured_error_code(error, "TEXT_FIT_PROBE_LIMIT");
 }
 
 #[test]
@@ -1078,6 +1124,7 @@ fn test_preferred_frame_does_not_clamp_min_content_queries() {
             NodeId::new(1),
             &mut text_results,
         )
+        .expect("text measurement")
     }
 
     assert_eq!(
@@ -1445,6 +1492,7 @@ fn test_layout_with_text_measure() {
                     max_font_size_px: None,
                     grow_epsilon_px: None,
                     grow_max_iterations: None,
+                    fit_max_probes: None,
                     ellipsis: None,
                     hanging_punctuation: None,
                     font_variation_settings: None,
@@ -1552,6 +1600,7 @@ fn test_layout_with_rich_text_fallback_produces_complete_text_layout() {
                     max_font_size_px: None,
                     grow_epsilon_px: None,
                     grow_max_iterations: None,
+                    fit_max_probes: None,
                     ellipsis: None,
                     hanging_punctuation: None,
                     font_variation_settings: None,
@@ -1677,6 +1726,7 @@ fn measure_call_count_is_bounded() {
                         max_font_size_px: None,
                         grow_epsilon_px: None,
                         grow_max_iterations: None,
+                        fit_max_probes: None,
                         ellipsis: None,
                         hanging_punctuation: None,
                         font_variation_settings: None,
@@ -1722,6 +1772,7 @@ fn measure_call_count_is_bounded() {
                         max_font_size_px: None,
                         grow_epsilon_px: None,
                         grow_max_iterations: None,
+                        fit_max_probes: None,
                         ellipsis: None,
                         hanging_punctuation: None,
                         font_variation_settings: None,
@@ -1767,6 +1818,7 @@ fn measure_call_count_is_bounded() {
                         max_font_size_px: None,
                         grow_epsilon_px: None,
                         grow_max_iterations: None,
+                        fit_max_probes: None,
                         ellipsis: None,
                         hanging_punctuation: None,
                         font_variation_settings: None,
@@ -1863,6 +1915,7 @@ fn test_layout_multiline_text_measure() {
                     max_font_size_px: None,
                     grow_epsilon_px: None,
                     grow_max_iterations: None,
+                    fit_max_probes: None,
                     ellipsis: None,
                     hanging_punctuation: None,
                     font_variation_settings: None,

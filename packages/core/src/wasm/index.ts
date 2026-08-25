@@ -47,7 +47,7 @@ let wasmModule: WasmModule | null = null;
  * `crates/boundsvg/src/lib.rs`; both sides change in the same commit.
  * Bump whenever a WASM-boundary DTO shape or export signature changes.
  */
-export const EXPECTED_WASM_SCHEMA_VERSION = 25;
+export const EXPECTED_WASM_SCHEMA_VERSION = 26;
 
 function assertWasmSchemaVersion(preloaded: WasmModule): void {
   const readSchemaVersion = preloaded.wasm_schema_version;
@@ -147,6 +147,30 @@ function parseWasmJson<T>(
     throw new FatalError(code, message, { stage: "wasm" });
   }
   return parsed;
+}
+
+function wrapWasmStructuredTextError(error: unknown): FatalError {
+  if (error instanceof FatalError) {
+    return error;
+  }
+  const text =
+    typeof error === "string" ? error : String((error as { message?: unknown })?.message ?? error);
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (isObjectLike(parsed)) {
+      const code = getStringProperty(parsed, "code");
+      const message = getStringProperty(parsed, "message");
+      const stage = getStringProperty(parsed, "stage");
+      if (code !== undefined && message !== undefined) {
+        return new FatalError(code, message, {
+          stage: stage ?? "text",
+        });
+      }
+    }
+  } catch {
+    // Preserve legacy unstructured WASM failures under one stable fatal code.
+  }
+  return new FatalError("TEXT_LAYOUT_FAILED", text, { stage: "text" });
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -1838,8 +1862,12 @@ export class WasmEngineHandle {
         { stage: "wasm" },
       );
     }
-    const json = this.instance.layout_text_flow_with_exclusions(JSON.stringify(input));
-    return decodeTextFlowWithExclusionsResult(json);
+    try {
+      const json = this.instance.layout_text_flow_with_exclusions(JSON.stringify(input));
+      return decodeTextFlowWithExclusionsResult(json);
+    } catch (error) {
+      throw wrapWasmStructuredTextError(error);
+    }
   }
 
   measureTextBlock(input: MeasureTextBlockInput): MeasureTextBlockResult {
@@ -2040,6 +2068,8 @@ export type TextFlowWithExclusionsInput = {
   maxFontSizePx?: number;
   fitEpsilonPx?: number;
   fitMaxIterations?: number;
+  /** Maximum exact-grid probes when content or flow geometry is not monotone-certified. */
+  fitMaxProbes?: number;
   spans?: TextMeasureSpan[];
   richText?: RichTextNode[];
   writingMode?: "horizontal-tb" | "vertical-rl";

@@ -99,9 +99,10 @@ pub(crate) fn measure_text_block(
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
-        let result = crate::text::engine::layout_text(&req, &font_ctx)
-            .ok_or_else(|| "Failed to layout vertical text for measurement".to_string())?;
+        let result =
+            crate::text::engine::layout_text(&req, &font_ctx).map_err(|error| error.to_string())?;
         return Ok(MeasureTextBlockResult {
             line_count: result.lines.len(),
             used_width: result.bbox.w,
@@ -157,6 +158,7 @@ pub(crate) fn measure_text_block(
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
         let result = crate::text::engine::measure_text_lines(&req, &font_ctx)
             .ok_or_else(|| "Failed to layout fallback text for measurement".to_string())?;

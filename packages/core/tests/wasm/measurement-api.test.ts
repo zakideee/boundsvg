@@ -71,6 +71,51 @@ describe("Measurement WASM APIs", () => {
     expect(loose.lines).toBeUndefined();
   });
 
+  it("surfaces deterministic exact-search limits as typed fatal errors", () => {
+    expect(() =>
+      engine.layoutTextFlowWithExclusions({
+        text: "あ".repeat(1_025),
+        fontFamily: "NotoSansJP",
+        fontSizePx: 24,
+        language: "ja",
+        wrap: "char",
+        flowBox: { x: 0, y: 0, width: 72, height: 200 },
+        exclusions: [],
+        maxLines: 1,
+        ellipsis: true,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        name: "FatalError",
+        code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
+        stage: "text",
+      }),
+    );
+
+    expect(() =>
+      engine.layoutTextFlowWithExclusions({
+        text: "あいうえおかきくけこ",
+        fontFamily: "NotoSansJP",
+        fontSizePx: 32,
+        language: "ja",
+        wrap: "char",
+        flowBox: { x: 0, y: 0, width: 96, height: 72 },
+        exclusions: [{ kind: "rect", x: 40, y: 0, width: 16, height: 32 }],
+        maxLines: 2,
+        fit: "shrink",
+        minFontSizePx: 16,
+        fitEpsilonPx: 0.25,
+        fitMaxProbes: 1,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        name: "FatalError",
+        code: "TEXT_FIT_PROBE_LIMIT",
+        stage: "text",
+      }),
+    );
+  });
+
   it("keeps flow whitespace defaults compatible and normalizes hard breaks", () => {
     const common = {
       text: "a\tb\r\nc",

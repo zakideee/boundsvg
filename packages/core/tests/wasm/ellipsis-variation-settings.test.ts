@@ -38,7 +38,11 @@ const ELLIPSIS_PATHS: Array<{ name: string; props: TextProps }> = [
 ];
 
 type IrNode = Record<string, unknown> & { type?: string; children?: IrNode[] };
-type IrLine = { text: string; width: number };
+type IrLine = {
+  text: string;
+  width: number;
+  positionedGlyphs?: Array<{ xAdvance: number; syntheticKind?: string }>;
+};
 
 describe("ellipsis honors fontVariationSettings", () => {
   let engine: Engine;
@@ -83,12 +87,6 @@ describe("ellipsis honors fontVariationSettings", () => {
     return (textNodes[0]?.lines ?? []) as IrLine[];
   }
 
-  /** Width of `text` laid out unconstrained — the width it will actually render at. */
-  function renderedWidth(text: string, variationSettings: string): number {
-    const [line] = linesOf({ width: 880 }, variationSettings, text);
-    return line?.width ?? Number.NaN;
-  }
-
   for (const path of ELLIPSIS_PATHS) {
     it(`${path.name}: truncation reacts to the requested weight`, () => {
       const light = linesOf(path.props, '"wght" 400');
@@ -101,18 +99,23 @@ describe("ellipsis honors fontVariationSettings", () => {
     });
   }
 
-  it("the ellipsized line's reported width matches what it renders at", () => {
-    // The shrink path re-chooses a font size, so its line is not comparable to
-    // an unconstrained render at FONT_SIZE_PX; the two fixed-size paths are.
-    for (const path of ELLIPSIS_PATHS.slice(0, 2)) {
+  it("the ellipsized line's reported width matches its materialized glyph plan", () => {
+    // The synthetic marker is intentionally shaped as an isolated run. The
+    // authoritative width is therefore the positioned plan that is emitted,
+    // not a fresh whole-string shape of `prefix + ellipsis`.
+    for (const path of ELLIPSIS_PATHS) {
       const lines = linesOf(path.props, '"wght" 900');
       const last = lines.at(-1);
       expect(last, `${path.name}: expected at least one line`).toBeDefined();
 
-      const truth = renderedWidth(last?.text ?? "", '"wght" 900');
+      const truth = last?.positionedGlyphs?.reduce((width, glyph) => width + glyph.xAdvance, 0);
+      expect(truth, `${path.name}: expected a materialized glyph plan`).toBeDefined();
+      expect(last?.positionedGlyphs?.some((glyph) => glyph.syntheticKind === "ellipsis")).toBe(
+        true,
+      );
       expect(
-        Math.abs((last?.width ?? 0) - truth),
-        `${path.name}: reported ${last?.width} but renders ${truth}`,
+        Math.abs((last?.width ?? 0) - (truth ?? Number.NaN)),
+        `${path.name}: reported ${last?.width} but materialized ${truth}`,
       ).toBeLessThan(0.5);
     }
   });

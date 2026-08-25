@@ -117,6 +117,7 @@ describe("toSceneDocument", () => {
         height: 40,
         minWidth: 120,
         maxHeight: 80,
+        fitMaxProbes: 77,
       },
       "Hello",
     );
@@ -126,12 +127,14 @@ describe("toSceneDocument", () => {
     expect(scene.height).toBe(40);
     expect(scene.minWidth).toBe(120);
     expect(scene.maxHeight).toBe(80);
+    expect(scene.fitMaxProbes).toBe(77);
 
     const restored = fromSceneDocument(scene);
     expect(restored.props.width).toBe(300);
     expect(restored.props.height).toBe(40);
     expect(restored.props.minWidth).toBe(120);
     expect(restored.props.maxHeight).toBe(80);
+    expect(restored.props.fitMaxProbes).toBe(77);
   });
 
   it("preserves Text unit animation semantics in JSON scene round-trip", () => {

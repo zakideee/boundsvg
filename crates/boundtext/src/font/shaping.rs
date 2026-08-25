@@ -236,6 +236,8 @@ fn shape_via_backend(
         &features,
         &variations,
     );
+    #[cfg(any(test, feature = "phase-trace"))]
+    crate::phase_trace::record_shaped_glyphs(raw_glyphs.len());
 
     if raw_glyphs.is_empty() {
         return Vec::new();

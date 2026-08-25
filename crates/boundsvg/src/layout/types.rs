@@ -146,6 +146,8 @@ pub struct TextInput {
     #[serde(default)]
     pub grow_max_iterations: Option<usize>,
     #[serde(default)]
+    pub fit_max_probes: Option<usize>,
+    #[serde(default)]
     pub ellipsis: Option<bool>,
     #[serde(default)]
     pub hanging_punctuation: Option<bool>,

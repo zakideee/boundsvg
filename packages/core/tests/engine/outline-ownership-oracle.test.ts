@@ -19,14 +19,14 @@ type OracleResult = {
 const expectedOracle: Record<string, OracleResult> = {
   "vertical-ruby-merged": {
     svgSha256: "dfc3551088618aeadfbf10cf0fe2d542a9c9a8f29087f98bece9e110fc17482f",
-    rootSha256: "bf6b65bc2de116f469a5fdb2f74e0a633e53447b3d01afcdb3dfe350f1edc03f",
+    rootSha256: "e12e61b981e363a79bf20d4eed9862af087b7227e50745032e30a3af30caf7b0",
     outlinesSha256: "d66146c49b76b739e82d892ceda7b3ad786a36dcd982b7400bf60a06afcda803",
     glyphPathCount: 2,
     unitSampleCount: 0,
   },
   "vertical-ruby-glyphs": {
     svgSha256: "be5a71775b4f3add9921fdf16436fbd7c49ff96aa56087d4dee12b5a6fbb7564",
-    rootSha256: "276027e4f0c8a428632f7c68758be5884b2330f231b79428bf29eff7923db38f",
+    rootSha256: "2de65b28638d9f2491906e37ca44909e5c4777cefbff3d67ba54581c257aee52",
     outlinesSha256: "112894497c1337e414a9a75582e05b350c38d5c0079218143b6b6a6b2a6c1246",
     glyphPathCount: 53,
     unitSampleCount: 0,
@@ -40,8 +40,8 @@ const expectedOracle: Record<string, OracleResult> = {
   },
   "unit-animation-glyphs": {
     svgSha256: "4271633ef521e79b97c211d22f60b8ad87fb9b547b54b83a0e01799197f07b3c",
-    rootSha256: "17cd04715a3b671a2443ab089e84bd3037f57619f5f161ea90fcff1118971412",
-    outlinesSha256: "81444bc54e08f44c1599b97d0308c4df98c047e04d70bd7312efd3f0d51927a2",
+    rootSha256: "c7864d6ce4d37e71c4e6ce370d3a20f3d789a14c24253afdf544cd7604c08a60",
+    outlinesSha256: "69798a33170cf984b178b9bb1d6b9310e309f78266215789f13230f3edd5d457",
     glyphPathCount: 48,
     unitSampleCount: 12,
   },

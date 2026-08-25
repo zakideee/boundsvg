@@ -1,10 +1,10 @@
-use super::super::ellipsis;
 use super::super::fit;
 use super::super::inline_runs;
 use super::super::rich;
 use super::super::types::{
-    FitMode, Language, TextBBox, TextLayoutRequest, TextLayoutResult, TextOrientation,
-    TextOverflow, TextSpanInput,
+    FitMode, Language, LineFragment, PositionedGlyph, RichTextResourceViolation, TextLayoutRequest,
+    TextLayoutResult, TextOrientation, TextRunStyle, TextSpanInput, text_fit_is_certified_monotone,
+    validate_rich_text_resources,
 };
 use super::super::vertical;
 use super::line_breaking::{BreakResult, break_lines_internal_with_options};
@@ -124,27 +124,31 @@ pub fn measure_text_lines(
     })
 }
 
-/// Perform full horizontal text layout: shaping → line breaking → wrap.
+/// Perform authoritative text layout for every supported text input shape.
 ///
-/// Returns `None` when the Rust Text Engine cannot handle the request
-/// (e.g. vertical mode, fit, ellipsis, inline runs), so the TS side
-/// falls back to its own `layoutText()`.
-#[must_use]
+/// # Errors
+///
+/// Returns [`crate::TextLayoutError`] when normalization, shaping, breaking,
+/// fitting, or final display projection cannot produce a complete result.
 pub fn layout_text(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     layout_text_with_options(req, font_ctx, false)
 }
 
 /// Perform text layout while retaining the synthetic positioned glyphs needed
 /// to derive stable unit metadata. Normal callers should use [`layout_text`]
 /// so ellipsis output remains byte-compatible with the legacy layout shape.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`crate::TextLayoutError`] under the same authoritative validation,
+/// fit, and projection failures as [`layout_text`].
 pub fn layout_text_with_unit_metadata(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     layout_text_with_options(req, font_ctx, true)
 }
 
@@ -152,7 +156,8 @@ fn layout_text_with_options(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     include_unit_metadata: bool,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
+    validate_layout_request_resources(req)?;
     let coalesced_spans = req
         .spans
         .filter(|_| req.rich_text.is_none())
@@ -167,7 +172,8 @@ fn layout_text_with_options(
         ..req.clone()
     });
     let layout_request = coalesced_request.as_ref().unwrap_or(req);
-    let mut result = layout_text_inner(layout_request, font_ctx, include_unit_metadata)?;
+    let mut result =
+        layout_text_inner_authoritative(layout_request, font_ctx, include_unit_metadata)?;
     let has_positioned_glyphs = result.lines.iter().any(|line| {
         line.positioned_glyphs
             .as_ref()
@@ -176,9 +182,14 @@ fn layout_text_with_options(
     if has_positioned_glyphs {
         super::super::decoration::resolve_text_decorations(req, font_ctx, &mut result);
     } else if coalesced_spans.is_some() && !result.lines.is_empty() {
-        let mut decoration_layout = layout_text_inner(layout_request, font_ctx, true)?;
+        let mut decoration_layout =
+            layout_text_inner_authoritative(layout_request, font_ctx, true)?;
         super::super::decoration::resolve_text_decorations(req, font_ctx, &mut decoration_layout);
         result.text_decorations = decoration_layout.text_decorations;
+    }
+
+    if layout_request.spans.is_some_and(|spans| !spans.is_empty()) {
+        materialize_span_fragments(layout_request, &mut result);
     }
 
     // PreWrap: convert spaces to NBSP to prevent SVG whitespace collapsing
@@ -186,7 +197,207 @@ fn layout_text_with_options(
         result.convert_spaces_to_nbsp();
     }
 
-    Some(result)
+    record_text_materialization(&result);
+
+    Ok(result)
+}
+
+fn materialize_span_fragments(req: &TextLayoutRequest<'_>, result: &mut TextLayoutResult) {
+    let Some(spans) = req.spans.filter(|spans| !spans.is_empty()) else {
+        return;
+    };
+    let mut source_end = 0_u32;
+    let span_ranges = spans
+        .iter()
+        .map(|span| {
+            let source_start = source_end;
+            source_end = source_end.saturating_add(
+                u32::try_from(super::super::grapheme::grapheme_split(&span.text).len())
+                    .unwrap_or(u32::MAX),
+            );
+            (source_start, source_end, span)
+        })
+        .collect::<Vec<_>>();
+
+    for line in &mut result.lines {
+        let Some(positioned_glyphs) = line.positioned_glyphs.as_deref() else {
+            continue;
+        };
+        if positioned_glyphs.iter().any(|glyph| {
+            glyph.source_role.as_deref() != Some("content") && glyph.synthetic_kind.is_none()
+        }) {
+            continue;
+        }
+
+        let mut fragments: Vec<LineFragment> = Vec::new();
+        let mut previous_cluster: Option<MaterializedClusterIdentity<'_>> = None;
+        let mut cluster_start_in_fragment = 0_u32;
+        for glyph in positioned_glyphs {
+            let span = glyph.source_start.and_then(|source_start| {
+                span_ranges
+                    .iter()
+                    .find(|(start, end, _)| *start <= source_start && source_start < *end)
+                    .map(|(_, _, span)| *span)
+            });
+            let style = text_run_style_for_glyph(req, result.chosen_font_size_px, glyph, span);
+            if fragments
+                .last()
+                .is_none_or(|fragment| fragment.style != style)
+            {
+                fragments.push(LineFragment {
+                    text: String::new(),
+                    glyphs: Vec::new(),
+                    width: 0.0,
+                    style,
+                });
+                previous_cluster = None;
+            }
+            let Some(fragment) = fragments.last_mut() else {
+                continue;
+            };
+            let cluster = MaterializedClusterIdentity {
+                source_start: glyph.source_start,
+                source_end: glyph.source_end,
+                cluster_start: glyph.cluster_start,
+                cluster_end: glyph.cluster_end,
+                synthetic_kind: glyph.synthetic_kind.as_deref(),
+            };
+            if previous_cluster != Some(cluster) {
+                cluster_start_in_fragment = u32::try_from(fragment.text.len()).unwrap_or(u32::MAX);
+                fragment.text.push_str(&glyph.text);
+                previous_cluster = Some(cluster);
+            }
+            fragment.glyphs.push(GlyphInfo {
+                glyph_id: glyph.glyph_id,
+                x_advance: glyph.x_advance,
+                y_advance: glyph.y_advance,
+                x_offset: glyph.x_offset,
+                y_offset: glyph.y_offset,
+                cluster: cluster_start_in_fragment,
+                font_alias: Some(glyph.font_alias.clone()),
+                font_weight: Some(glyph.font_weight),
+                font_style: Some(glyph.font_style.clone()),
+                rotation_deg: Some(glyph.rotation_deg),
+            });
+            fragment.width += if req.is_vertical() {
+                if glyph.y_advance == 0.0 {
+                    glyph.x_advance.abs()
+                } else {
+                    glyph.y_advance.abs()
+                }
+            } else {
+                glyph.x_advance
+            };
+        }
+        if !fragments.is_empty()
+            && fragments
+                .iter()
+                .map(|fragment| fragment.text.as_str())
+                .collect::<String>()
+                == line.text
+        {
+            line.fragments = Some(fragments);
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct MaterializedClusterIdentity<'a> {
+    source_start: Option<u32>,
+    source_end: Option<u32>,
+    cluster_start: u32,
+    cluster_end: u32,
+    synthetic_kind: Option<&'a str>,
+}
+
+fn text_run_style_for_glyph(
+    req: &TextLayoutRequest<'_>,
+    chosen_font_size_px: f64,
+    glyph: &PositionedGlyph,
+    span: Option<&TextSpanInput>,
+) -> TextRunStyle {
+    let authored_font_size = span.map_or(req.font_size_px, |span| span.font_size_px);
+    let resolved_font_size = glyph.font_size_px.unwrap_or(chosen_font_size_px);
+    let scale = if authored_font_size > 0.0 {
+        resolved_font_size / authored_font_size
+    } else {
+        1.0
+    };
+    let letter_spacing_px = span
+        .and_then(|span| span.letter_spacing_px)
+        .unwrap_or(req.letter_spacing_px)
+        * scale;
+    TextRunStyle {
+        font: glyph.font_alias.clone(),
+        fallback: glyph.font_fallback.clone(),
+        font_weight: glyph.font_weight,
+        font_style: glyph.font_style.clone(),
+        font_size_px: resolved_font_size,
+        letter_spacing_px,
+        text_orientation: span
+            .and_then(|span| span.text_orientation.as_deref())
+            .map(|orientation| TextOrientation::from_option(Some(orientation))),
+        font_variation_settings: glyph
+            .font_variation_settings
+            .clone()
+            .or_else(|| span.and_then(|span| span.font_variation_settings.clone())),
+        font_feature_settings: glyph
+            .font_feature_settings
+            .clone()
+            .or_else(|| span.and_then(|span| span.font_feature_settings.clone())),
+        color: glyph
+            .fill
+            .clone()
+            .or_else(|| span.and_then(|span| span.color.clone())),
+        text_strokes: glyph
+            .text_strokes
+            .clone()
+            .or_else(|| span.and_then(|span| span.text_strokes.clone())),
+        text_shadows: glyph
+            .text_shadows
+            .clone()
+            .or_else(|| span.and_then(|span| span.text_shadows.clone())),
+        language: span.and_then(|span| span.language.clone()),
+    }
+}
+
+fn validate_layout_request_resources(
+    req: &TextLayoutRequest<'_>,
+) -> Result<(), crate::TextLayoutError> {
+    let Some(nodes) = req.rich_text else {
+        return Ok(());
+    };
+    validate_rich_text_resources(nodes).map_err(|violation| match violation {
+        RichTextResourceViolation::Depth { actual, limit } => {
+            crate::TextLayoutError::RichTextDepthLimit { actual, limit }
+        }
+        RichTextResourceViolation::InlineRects { required, limit } => {
+            crate::TextLayoutError::InlineRectLimit { required, limit }
+        }
+    })
+}
+
+fn record_text_materialization(result: &TextLayoutResult) {
+    #[cfg(any(test, feature = "phase-trace"))]
+    {
+        let glyph_count = result
+            .lines
+            .iter()
+            .map(|line| {
+                line.positioned_glyphs
+                    .as_ref()
+                    .map_or(line.glyphs.len(), std::vec::Vec::len)
+            })
+            .sum();
+        crate::phase_trace::record_materialization(
+            result.lines.len(),
+            glyph_count,
+            result.inline_box_decorations.len() + result.text_decorations.len(),
+            result.inline_rects.len(),
+        );
+    }
+    #[cfg(not(any(test, feature = "phase-trace")))]
+    let _ = result;
 }
 
 fn span_matches_plain_request(
@@ -217,12 +428,142 @@ fn span_matches_plain_request(
             == req.font_feature_settings
 }
 
+fn layout_text_inner_authoritative(
+    req: &TextLayoutRequest,
+    font_ctx: &FontContext<'_>,
+    include_unit_metadata: bool,
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
+    ensure_text_fit_budget(req)?;
+    // Measure and fit the complete authored document first. Only when that
+    // complete plan overflows does any input shape enter the canonical rich
+    // projection. Resource feasibility is checked before the first exact
+    // prefix candidate is shaped.
+    if req.ellipsis && req.max_lines.is_some() {
+        let complete_request = TextLayoutRequest {
+            ellipsis: false,
+            ..req.clone()
+        };
+        let complete = layout_text_inner(&complete_request, font_ctx, include_unit_metadata)
+            .ok_or(crate::TextLayoutError::PreparationFailed)?;
+        if complete_text_plan_fits(req, &complete) {
+            return Ok(complete);
+        }
+
+        let chosen_font_size_px = complete.chosen_font_size_px;
+
+        if req.has_rich_text() {
+            ensure_ellipsis_candidate_budget(req, font_ctx)?;
+            return rich::layout_rich_text_at_selected_font_size(
+                req,
+                font_ctx,
+                chosen_font_size_px,
+            )
+            .ok_or(crate::TextLayoutError::PreparationFailed);
+        }
+        let canonical_nodes = promote_request_to_rich_nodes(req);
+        let canonical_request = TextLayoutRequest {
+            text: "",
+            spans: None,
+            rich_text: Some(&canonical_nodes),
+            ..req.clone()
+        };
+        ensure_ellipsis_candidate_budget(&canonical_request, font_ctx)?;
+        return rich::layout_rich_text_at_selected_font_size(
+            &canonical_request,
+            font_ctx,
+            chosen_font_size_px,
+        )
+        .ok_or(crate::TextLayoutError::PreparationFailed);
+    }
+
+    layout_text_inner(req, font_ctx, include_unit_metadata)
+        .ok_or(crate::TextLayoutError::PreparationFailed)
+}
+
+fn ensure_text_fit_budget(req: &TextLayoutRequest<'_>) -> Result<(), crate::TextLayoutError> {
+    if req.fit == FitMode::None || text_fit_is_certified_monotone(req) {
+        return Ok(());
+    }
+    let (lower, upper, step) = match req.fit {
+        FitMode::Shrink => (
+            req.min_font_size_px
+                .unwrap_or(8.0)
+                .max(f64::EPSILON)
+                .min(req.font_size_px),
+            req.font_size_px,
+            req.shrink_epsilon_px.unwrap_or(0.25),
+        ),
+        FitMode::Grow => (
+            req.font_size_px,
+            req.max_font_size_px
+                .unwrap_or(req.font_size_px * 4.0)
+                .max(req.font_size_px),
+            req.grow_epsilon_px.unwrap_or(0.25),
+        ),
+        FitMode::None => return Ok(()),
+    };
+    super::super::flow::ensure_grid_budget(lower, upper, step, req.fit_max_probes).map_err(
+        |error| match error {
+            crate::BoundtextError::InvalidFitStep => crate::TextLayoutError::InvalidFitStep,
+            crate::BoundtextError::FitProbeLimit { required, limit } => {
+                crate::TextLayoutError::FitProbeLimit { required, limit }
+            }
+            _ => crate::TextLayoutError::PreparationFailed,
+        },
+    )?;
+    Ok(())
+}
+
+fn ensure_ellipsis_candidate_budget(
+    req: &TextLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+) -> Result<(), crate::TextLayoutError> {
+    let required = rich::ellipsis_candidate_upper_bound(req, font_ctx);
+    let limit = super::super::ellipsis_plan::MAX_ELLIPSIS_CANDIDATES;
+    if required > limit {
+        return Err(crate::TextLayoutError::EllipsisCandidateLimit { required, limit });
+    }
+    Ok(())
+}
+
 pub(crate) fn layout_text_inner(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     include_unit_metadata: bool,
 ) -> Option<TextLayoutResult> {
-    if req.has_rich_text() || req.text_indent.unwrap_or(0.0) != 0.0 {
+    layout_text_inner_with_span_promotion(req, font_ctx, include_unit_metadata, true)
+}
+
+/// Text-on-path has already canonicalized shaping runs and paint ranges. It
+/// must retain those prepared span boundaries while obtaining the initial
+/// straight-line glyph plan.
+pub(crate) fn layout_text_inner_with_prepared_spans(
+    req: &TextLayoutRequest,
+    font_ctx: &FontContext<'_>,
+    include_unit_metadata: bool,
+) -> Option<TextLayoutResult> {
+    layout_text_inner_with_span_promotion(req, font_ctx, include_unit_metadata, false)
+}
+
+fn layout_text_inner_with_span_promotion(
+    req: &TextLayoutRequest,
+    font_ctx: &FontContext<'_>,
+    include_unit_metadata: bool,
+    promote_spans: bool,
+) -> Option<TextLayoutResult> {
+    if promote_spans
+        && !req.has_rich_text()
+        && let Some(spans) = req.spans.filter(|spans| !spans.is_empty())
+    {
+        let rich_nodes = promote_spans_to_rich_nodes(spans);
+        let rich_request = TextLayoutRequest {
+            spans: None,
+            rich_text: Some(&rich_nodes),
+            ..req.clone()
+        };
+        return rich::layout_rich_text(&rich_request, font_ctx);
+    }
+    if req.has_rich_text() || req.text_indent.unwrap_or(0.0) != 0.0 || req.fit != FitMode::None {
         return rich::layout_rich_text(req, font_ctx);
     }
 
@@ -421,55 +762,6 @@ pub(crate) fn layout_text_inner(
         &super::super::types::collect_notdef_from_glyphs(&glyphs, req.text, primary_alias),
     );
 
-    // Handle single-line ellipsis (skip when inline runs are present — TS parity)
-    if !has_runs && req.ellipsis && req.max_lines == Some(1) {
-        let ellipsis_line = apply_single_line_ellipsis(
-            req,
-            font_ctx,
-            line_height_px,
-            baseline_offset_px,
-            kinsoku_profile,
-            &shape_options,
-            include_unit_metadata,
-        );
-        if let Some(mut ellipsis_line) = ellipsis_line {
-            apply_variation_settings_to_lines(
-                std::slice::from_mut(&mut ellipsis_line),
-                &req.font_variation_settings,
-            );
-            apply_feature_settings_to_lines(
-                std::slice::from_mut(&mut ellipsis_line),
-                &req.font_feature_settings,
-            );
-            let display_text = ellipsis_line.text.clone();
-            let warnings = super::super::types::build_notdef_warnings(
-                &super::super::types::collect_notdef_from_glyphs(
-                    &ellipsis_line.glyphs,
-                    &display_text,
-                    primary_alias,
-                ),
-            );
-            return Some(TextLayoutResult {
-                bbox: TextBBox {
-                    x: 0.0,
-                    y: 0.0,
-                    w: ellipsis_line.width,
-                    h: line_height_px,
-                },
-                lines: vec![ellipsis_line],
-                chosen_font_size_px: req.font_size_px,
-                overflow: TextOverflow::overflow("ellipsis applied"),
-                source_text: Some(req.text.to_string()),
-                display_text: Some(display_text),
-                unit_map: None,
-                warnings,
-                inline_box_decorations: Vec::new(),
-                text_decorations: Vec::new(),
-                inline_rects: Vec::new(),
-            });
-        }
-    }
-
     // Break into lines
     let BreakResult {
         mut lines,
@@ -492,103 +784,6 @@ pub(crate) fn layout_text_inner(
     // Propagate variation settings to positioned glyphs (non-rich-text path)
     apply_variation_settings_to_lines(&mut lines, &req.font_variation_settings);
     apply_feature_settings_to_lines(&mut lines, &req.font_feature_settings);
-
-    // Handle multiline ellipsis (skip when inline runs are present — TS parity)
-    if !has_runs
-        && req.ellipsis
-        && let Some(max_lines) = req.max_lines.filter(|&max| max > 1 && lines.len() > max)
-    {
-        let ellipsis_lines = if include_unit_metadata {
-            ellipsis::apply_multiline_ellipsis_with_unit_metadata(
-                &lines,
-                max_lines,
-                req.max_width,
-                font_ctx,
-                req.font_size_px,
-                req.letter_spacing_px,
-                line_height_px,
-                baseline_offset_px,
-                kinsoku_profile,
-                &shape_options,
-            )
-        } else {
-            ellipsis::apply_multiline_ellipsis(
-                &lines,
-                max_lines,
-                req.max_width,
-                font_ctx,
-                req.font_size_px,
-                req.letter_spacing_px,
-                line_height_px,
-                baseline_offset_px,
-                kinsoku_profile,
-                &shape_options,
-            )
-        };
-        if let Some(mut ellipsis_lines) = ellipsis_lines {
-            apply_variation_settings_to_lines(&mut ellipsis_lines, &req.font_variation_settings);
-            apply_feature_settings_to_lines(&mut ellipsis_lines, &req.font_feature_settings);
-            let mut max_w: f64 = 0.0;
-            for l in &ellipsis_lines {
-                if l.width > max_w {
-                    max_w = l.width;
-                }
-            }
-            let display_text = ellipsis_lines
-                .iter()
-                .map(|line| line.text.as_str())
-                .collect::<String>();
-            let mut notdef_infos = Vec::new();
-            for line in &ellipsis_lines {
-                notdef_infos.extend(super::super::types::collect_notdef_from_glyphs(
-                    &line.glyphs,
-                    &line.text,
-                    primary_alias,
-                ));
-            }
-            let mut seen_notdef = std::collections::BTreeSet::new();
-            notdef_infos.retain(|info| {
-                seen_notdef.insert((info.font_alias.clone(), info.character.clone()))
-            });
-            return Some(TextLayoutResult {
-                bbox: TextBBox {
-                    x: 0.0,
-                    y: 0.0,
-                    w: max_w,
-                    h: ellipsis_lines.len() as f64 * line_height_px,
-                },
-                lines: ellipsis_lines,
-                chosen_font_size_px: req.font_size_px,
-                overflow: TextOverflow::overflow("ellipsis applied"),
-                source_text: Some(req.text.to_string()),
-                display_text: Some(display_text),
-                unit_map: None,
-                warnings: super::super::types::build_notdef_warnings(&notdef_infos),
-                inline_box_decorations: Vec::new(),
-                text_decorations: Vec::new(),
-                inline_rects: Vec::new(),
-            });
-        }
-    }
-
-    // Spans + ellipsis: relayout with truncated runs. This mirrors the
-    // plain-text ellipsis contract; it was previously silently skipped.
-    if has_runs && req.ellipsis {
-        if let Some(max) = req.max_lines {
-            let overflows = if max == 1 {
-                lines.len() > 1 || lines.first().is_some_and(|l| l.width > req.max_width)
-            } else {
-                lines.len() > max
-            };
-            if overflows {
-                if let Some(result) =
-                    apply_spans_ellipsis(req, font_ctx, max, include_unit_metadata)
-                {
-                    return Some(result);
-                }
-            }
-        }
-    }
 
     // Enforce maxLines (truncate excess lines)
     let total_line_count = lines.len();
@@ -624,152 +819,53 @@ pub(crate) fn layout_text_inner(
     ))
 }
 
-// ---------------------------------------------------------------------------
-// Spans ellipsis (relayout-based)
-// ---------------------------------------------------------------------------
-
-/// Apply ellipsis to styled spans by exact relayout. The marker is a separate
-/// synthetic run using the first omitted span's effective style.
-fn apply_spans_ellipsis(
-    req: &TextLayoutRequest,
-    font_ctx: &FontContext<'_>,
-    max_lines: usize,
-    include_unit_metadata: bool,
-) -> Option<TextLayoutResult> {
-    use super::super::grapheme::grapheme_split;
-
-    let spans = req.spans?;
-    let span_graphemes: Vec<Vec<String>> = spans.iter().map(|s| grapheme_split(&s.text)).collect();
-    let total: usize = span_graphemes.iter().map(Vec::len).sum();
-    if total == 0 {
-        return None;
-    }
-
-    let fits = |result: &TextLayoutResult| {
-        result.lines.len() <= max_lines
-            && result.lines.iter().all(|l| l.width <= req.max_width + 0.01)
-            && req
-                .max_height
-                .is_none_or(|max_height| result.bbox.h <= max_height + 0.01)
-            && result.overflow.overflow_type == "none"
-    };
-    let kinsoku_profile = get_kinsoku_profile(Some(language_to_str(req.language)));
-    let all_graphemes: Vec<&str> = span_graphemes
-        .iter()
-        .flatten()
-        .map(String::as_str)
-        .collect();
-    let legal_candidates = (0..total).filter(|keep| {
-        kinsoku_profile.is_none_or(|profile| {
-            super::super::kinsoku::is_valid_ellipsis_boundary(&all_graphemes, *keep, profile)
-        })
-    });
-    if let Some((_keep, mut result)) = super::super::ellipsis_plan::select_longest_fitting(
-        legal_candidates,
-        |keep| {
-            relayout_spans_with_ellipsis(
-                req,
-                font_ctx,
-                spans,
-                &span_graphemes,
-                keep,
-                include_unit_metadata,
-            )
-        },
-        fits,
-    ) {
-        result.overflow = TextOverflow::overflow("ellipsis applied");
-        return Some(result);
-    }
-
-    let mut empty = relayout_spans_with_ellipsis(
-        req,
-        font_ctx,
-        spans,
-        &span_graphemes,
-        0,
-        include_unit_metadata,
-    )?;
-    for line in &mut empty.lines {
-        line.text.clear();
-        line.glyphs.clear();
-        line.width = 0.0;
-        line.fragments = None;
-        line.positioned_glyphs = include_unit_metadata.then(Vec::new);
-    }
-    empty.bbox.w = 0.0;
-    empty.source_text = Some(spans.iter().map(|span| span.text.as_str()).collect());
-    empty.display_text = Some(String::new());
-    empty.warnings.clear();
-    empty.overflow = TextOverflow::overflow("ellipsis applied");
-    Some(empty)
+fn complete_text_plan_fits(req: &TextLayoutRequest<'_>, result: &TextLayoutResult) -> bool {
+    result.overflow.overflow_type == "none"
+        && result.lines.len() <= req.max_lines.unwrap_or(usize::MAX)
+        && result.bbox.w <= req.max_width + 0.001
+        && req
+            .max_height
+            .is_none_or(|max_height| result.bbox.h <= max_height + 0.001)
 }
 
-fn relayout_spans_with_ellipsis(
-    req: &TextLayoutRequest,
-    font_ctx: &FontContext<'_>,
-    spans: &[super::super::types::TextSpanInput],
-    span_graphemes: &[Vec<String>],
-    keep: usize,
-    include_unit_metadata: bool,
-) -> Option<TextLayoutResult> {
-    let mut truncated: Vec<super::super::types::TextSpanInput> = Vec::new();
-    let mut remaining = keep;
-    for (span, graphemes) in spans.iter().zip(span_graphemes) {
-        if remaining == 0 {
-            break;
-        }
-        let take = remaining.min(graphemes.len());
-        remaining -= take;
-        truncated.push(super::super::types::TextSpanInput {
-            text: graphemes[..take].concat(),
-            ..span.clone()
-        });
+fn promote_request_to_rich_nodes(
+    req: &TextLayoutRequest<'_>,
+) -> Vec<super::super::types::RichTextNodeInput> {
+    if let Some(spans) = req.spans.filter(|spans| !spans.is_empty()) {
+        promote_spans_to_rich_nodes(spans)
+    } else {
+        vec![super::super::types::RichTextNodeInput::Text {
+            text: req.text.to_string(),
+        }]
     }
-    let first_omitted_index = span_graphemes
-        .iter()
-        .scan(0usize, |cursor, graphemes| {
-            let start = *cursor;
-            *cursor += graphemes.len();
-            Some((start, *cursor))
-        })
-        .position(|(start, end)| keep >= start && keep < end)
-        .unwrap_or_else(|| spans.len().saturating_sub(1));
-    truncated.push(super::super::types::TextSpanInput {
-        text: "\u{2026}".to_string(),
-        ..spans[first_omitted_index].clone()
-    });
+}
 
-    let concatenated: String = truncated.iter().map(|s| s.text.as_str()).collect();
-    let probe = TextLayoutRequest {
-        text: concatenated.as_str(),
-        spans: Some(&truncated),
-        ellipsis: false,
-        max_lines: None,
-        ..req.clone()
-    };
-    let mut result = layout_text_inner(&probe, font_ctx, include_unit_metadata)?;
-    let marker_cluster_start =
-        u32::try_from(concatenated.len().saturating_sub("\u{2026}".len())).unwrap_or(u32::MAX);
-    for glyph in result
-        .lines
-        .iter_mut()
-        .filter_map(|line| line.positioned_glyphs.as_mut())
-        .flatten()
-    {
-        if glyph.cluster_end <= marker_cluster_start {
-            continue;
-        }
-        glyph.source_start = None;
-        glyph.source_end = None;
-        glyph.source_role = None;
-        glyph.decoration_source_start = None;
-        glyph.decoration_source_end = None;
-        glyph.synthetic_kind = Some("ellipsis".to_string());
-    }
-    result.source_text = Some(spans.iter().map(|span| span.text.as_str()).collect());
-    result.display_text = Some(concatenated);
-    Some(result)
+fn promote_spans_to_rich_nodes(
+    spans: &[TextSpanInput],
+) -> Vec<super::super::types::RichTextNodeInput> {
+    spans
+        .iter()
+        .map(|span| super::super::types::RichTextNodeInput::Span {
+            text: span.text.clone(),
+            style: super::super::types::RichTextStyleInput {
+                font_family: span.font_family.clone(),
+                font_weight: span.font_weight,
+                font_style: span.font_style.clone(),
+                font_size_px: span.font_size_px,
+                line_height: None,
+                line_height_px: None,
+                letter_spacing_px: span.letter_spacing_px,
+                language: span.language.clone(),
+                color: span.color.clone(),
+                text_strokes: span.text_strokes.clone(),
+                text_shadows: span.text_shadows.clone(),
+                font_variation_settings: span.font_variation_settings.clone(),
+                font_feature_settings: span.font_feature_settings.clone(),
+                text_orientation: span.text_orientation.clone(),
+                text_decoration: span.text_decoration.clone(),
+            },
+        })
+        .collect()
 }
 
 fn fit_shrink_for_request(
@@ -792,42 +888,6 @@ fn fit_shrink_for_request(
             req.min_font_size_px,
             req.shrink_epsilon_px,
             req.shrink_max_iterations,
-        )
-    }
-}
-
-fn apply_single_line_ellipsis(
-    req: &TextLayoutRequest,
-    font_ctx: &FontContext<'_>,
-    line_height_px: f64,
-    baseline_offset_px: f64,
-    kinsoku_profile: Option<&crate::text::kinsoku::KinsokuProfile>,
-    shape_options: &ShapeOptions,
-    include_unit_metadata: bool,
-) -> Option<crate::text::types::Line> {
-    if include_unit_metadata {
-        ellipsis::apply_ellipsis_with_unit_metadata(
-            req.text,
-            req.max_width,
-            font_ctx,
-            req.font_size_px,
-            req.letter_spacing_px,
-            line_height_px,
-            baseline_offset_px,
-            kinsoku_profile,
-            shape_options,
-        )
-    } else {
-        ellipsis::apply_ellipsis(
-            req.text,
-            req.max_width,
-            font_ctx,
-            req.font_size_px,
-            req.letter_spacing_px,
-            line_height_px,
-            baseline_offset_px,
-            kinsoku_profile,
-            shape_options,
         )
     }
 }

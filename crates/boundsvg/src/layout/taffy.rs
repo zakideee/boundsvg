@@ -47,7 +47,7 @@ pub(super) fn compute_layout_core(
             context.measure_call_count += 1;
 
             if let Some(text_input) = context.text_inputs.get(&node_id) {
-                return measure_text_node(
+                return match measure_text_node(
                     text_input,
                     context.font_registry,
                     context.fallback_registry,
@@ -59,7 +59,13 @@ pub(super) fn compute_layout_core(
                     &mut context.shaped_cache,
                     node_id,
                     &mut context.text_results,
-                );
+                ) {
+                    Ok(size) => size,
+                    Err(error) => {
+                        context.text_errors.entry(node_id).or_insert(error);
+                        Size::ZERO
+                    }
+                };
             }
 
             if context.text_path_inputs.contains_key(&node_id) {
@@ -80,6 +86,33 @@ pub(super) fn compute_layout_core(
         },
     )
     .map_err(|e| EngineError::Layout(format!("Layout computation failed: {e:?}")))?;
+
+    if !context.text_errors.is_empty() {
+        let mut failed_nodes = context
+            .text_errors
+            .keys()
+            .filter_map(|node_id| {
+                node_id_map
+                    .get(node_id)
+                    .map(|public_id| (public_id.clone(), *node_id))
+            })
+            .collect::<Vec<_>>();
+        failed_nodes.sort_by(|left, right| left.0.cmp(&right.0));
+        let (public_id, failed_node_id) = failed_nodes
+            .into_iter()
+            .next()
+            .ok_or_else(|| EngineError::Layout("Text measurement failed".to_string()))?;
+        let mut error = context
+            .text_errors
+            .remove(&failed_node_id)
+            .ok_or_else(|| EngineError::Layout("Text measurement failed".to_string()))?;
+        if let EngineError::Structured { node_id, .. } = &mut error
+            && node_id.is_none()
+        {
+            *node_id = Some(public_id);
+        }
+        return Err(error);
+    }
 
     // Collect results
     let mut nodes = Vec::new();
@@ -926,6 +959,7 @@ fn build_taffy_node(
                 max_font_size_px: text.max_font_size_px,
                 grow_epsilon_px: text.grow_epsilon_px,
                 grow_max_iterations: text.grow_max_iterations,
+                fit_max_probes: text.fit_max_probes,
                 ellipsis: text.ellipsis,
                 hanging_punctuation: text.hanging_punctuation,
                 font_variation_settings: text.font_variation_settings.clone(),
@@ -1305,6 +1339,7 @@ fn collect_layout_results(
                     max_font_size_px: None,
                     grow_epsilon_px: None,
                     grow_max_iterations: None,
+                    fit_max_probes: None,
                 };
                 let source_font_context = crate::font::FontContext {
                     registry: context.font_registry,
@@ -1470,6 +1505,7 @@ fn build_text_path_layout_output(
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
     let path_request = TextOnPathRequest {
         d: &input.d,

@@ -113,7 +113,7 @@ fn layout_vertical_at_size(
         font_ctx,
         text,
         font_size_px,
-        req.letter_spacing_px,
+        crate::text::fit::scaled_letter_spacing(req, font_size_px),
         &shape_options,
     )?;
 
@@ -228,6 +228,12 @@ pub(super) fn fit_vertical_shrink(
         at_min.line_height_px,
         at_min.all_placed,
     ) {
+        if req.ellipsis
+            && req.max_lines.is_some()
+            && let Some(result) = layout_vertical_ellipsis_at_size(req, font_ctx, min_size)
+        {
+            return Some(result);
+        }
         let overflow = if at_min.kinsoku_unresolved {
             TextOverflow::kinsoku_unresolved()
         } else {
@@ -268,6 +274,30 @@ pub(super) fn fit_vertical_shrink(
         TextOverflow::none()
     };
     Some(build_vertical_fit_result(at_best, best_size, overflow))
+}
+
+fn layout_vertical_ellipsis_at_size(
+    req: &TextLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    font_size_px: f64,
+) -> Option<TextLayoutResult> {
+    let final_request = TextLayoutRequest {
+        font_size_px,
+        letter_spacing_px: crate::text::fit::scaled_letter_spacing(req, font_size_px),
+        fit: crate::text::types::FitMode::None,
+        min_font_size_px: None,
+        shrink_epsilon_px: None,
+        shrink_max_iterations: None,
+        max_font_size_px: None,
+        grow_epsilon_px: None,
+        grow_max_iterations: None,
+        ..req.clone()
+    };
+    let mut result = super::layout_vertical_text(&final_request, font_ctx)?;
+    if result.lines.is_empty() {
+        result.overflow = TextOverflow::cannot_fit();
+    }
+    Some(result)
 }
 
 /// Grow-to-fit for vertical text with boundary evaluation.

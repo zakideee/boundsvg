@@ -27,7 +27,7 @@ pub use result_building::{
 
 // Re-export pub(crate) items
 pub(crate) use api::language_to_str;
-pub(crate) use api::layout_text_inner;
+pub(crate) use api::layout_text_inner_with_prepared_spans;
 pub(crate) use char_mapping::{build_byte_to_char_map, build_char_byte_offsets};
 pub(crate) use line_breaking::{break_lines_internal, measure_break_fit};
 pub(crate) use result_building::build_positioned_glyphs_for_text;

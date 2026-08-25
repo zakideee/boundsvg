@@ -156,6 +156,8 @@ pub fn shape_paragraph_with_options(
     #[cfg(any(test, feature = "phase-trace"))]
     crate::phase_trace::record_backend_shape();
     let raw_glyphs = shaper_face.shape(text, direction, language_str, &features, &variations);
+    #[cfg(any(test, feature = "phase-trace"))]
+    crate::phase_trace::record_shaped_glyphs(raw_glyphs.len());
 
     if raw_glyphs.is_empty() {
         return None;

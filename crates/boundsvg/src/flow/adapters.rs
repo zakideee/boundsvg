@@ -13,6 +13,61 @@ use crate::text::types::{
 };
 use crate::text::types::{preprocess_span_texts_for_white_space, preprocess_text_for_white_space};
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum TextFlowLayoutError {
+    #[error(transparent)]
+    Boundtext(#[from] boundtext::BoundtextError),
+    #[error("{0}")]
+    InvalidInput(String),
+}
+
+impl From<String> for TextFlowLayoutError {
+    fn from(message: String) -> Self {
+        Self::InvalidInput(message)
+    }
+}
+
+impl TextFlowLayoutError {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::Boundtext(boundtext::BoundtextError::FitProbeLimit { .. }) => {
+                "TEXT_FIT_PROBE_LIMIT"
+            }
+            Self::Boundtext(boundtext::BoundtextError::EllipsisCandidateLimit { .. }) => {
+                "TEXT_ELLIPSIS_CANDIDATE_LIMIT"
+            }
+            Self::Boundtext(boundtext::BoundtextError::RichTextDepthLimit { .. }) => {
+                "RICH_TEXT_MAX_DEPTH"
+            }
+            Self::Boundtext(boundtext::BoundtextError::InlineRectLimit { .. }) => {
+                "INLINE_RECT_COMPLEXITY_LIMIT"
+            }
+            Self::Boundtext(boundtext::BoundtextError::InvalidFitStep) => "TEXT_FIT_INVALID_STEP",
+            Self::Boundtext(boundtext::BoundtextError::RegionQueryLimit { .. }) => {
+                "TEXT_REGION_QUERY_LIMIT"
+            }
+            Self::Boundtext(boundtext::BoundtextError::RegionIntervalLimit { .. }) => {
+                "TEXT_REGION_INTERVAL_LIMIT"
+            }
+            Self::Boundtext(
+                boundtext::BoundtextError::InvalidRegionQuery(_)
+                | boundtext::BoundtextError::InvalidFlowRegion { .. },
+            ) => "TEXT_REGION_PROVIDER_INVALID",
+            Self::Boundtext(_) => "TEXT_LAYOUT_FAILED",
+            Self::InvalidInput(_) => "TEXT_LAYOUT_INVALID",
+        }
+    }
+
+    pub(crate) fn into_engine_error(self, node_id: Option<String>) -> crate::error::EngineError {
+        crate::error::EngineError::Structured {
+            code: self.code().to_string(),
+            message: self.to_string(),
+            stage: Some("text".to_string()),
+            node_id,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Adapter: simple flow
 // ---------------------------------------------------------------------------
@@ -80,7 +135,7 @@ pub(crate) fn layout_text_flow(
 pub(crate) fn layout_text_flow_with_exclusions(
     input: &TextFlowWithExclusionsInput,
     registry: &FontRegistry,
-) -> Result<TextFlowWithExclusionsResult, String> {
+) -> Result<TextFlowWithExclusionsResult, TextFlowLayoutError> {
     super::validate_rich_text_depth(input.rich_text.as_deref())?;
     let font_families = super::build_font_families(&input.font_family, input.fallback.as_deref());
     let font_style = match input.font_style.as_deref() {
@@ -135,7 +190,9 @@ pub(crate) fn layout_text_flow_with_exclusions(
     }
     let bt_spans_ref = bt_spans.as_deref();
     if bt_spans_ref.is_some_and(|spans| !spans.is_empty()) && rich_text_ref.is_some() {
-        return Err("spans and richText are mutually exclusive".to_string());
+        return Err(TextFlowLayoutError::InvalidInput(
+            "spans and richText are mutually exclusive".to_string(),
+        ));
     }
 
     let shape_options = crate::font::shaping::ShapeOptions {
@@ -195,6 +252,7 @@ pub(crate) fn layout_text_flow_with_exclusions(
         max_font_size_px: input.max_font_size_px,
         fit_epsilon_px: input.fit_epsilon_px,
         fit_max_iterations: input.fit_max_iterations,
+        fit_max_probes: input.fit_max_probes,
         shape_options,
     };
 
@@ -209,7 +267,7 @@ pub(crate) fn layout_resolved_text_flow(
     height: f64,
     registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
-) -> Result<TextLayoutResult, String> {
+) -> Result<TextLayoutResult, TextFlowLayoutError> {
     let flow = text_input
         .flow
         .as_ref()
@@ -337,6 +395,7 @@ pub(crate) fn layout_resolved_text_flow(
         fit_max_iterations: text_input
             .shrink_max_iterations
             .or(text_input.grow_max_iterations),
+        fit_max_probes: text_input.fit_max_probes,
         shape_options,
     };
 
@@ -380,6 +439,7 @@ pub(crate) fn layout_resolved_text_flow(
         max_font_size_px: text_input.max_font_size_px,
         grow_epsilon_px: text_input.grow_epsilon_px,
         grow_max_iterations: text_input.grow_max_iterations,
+        fit_max_probes: text_input.fit_max_probes,
     };
     crate::text::decoration::resolve_text_decorations(&decoration_request, &font_ctx, &mut result);
     Ok(result)
