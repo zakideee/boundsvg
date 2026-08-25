@@ -1892,8 +1892,12 @@ export class WasmEngineHandle {
         { stage: "wasm" },
       );
     }
-    const json = this.instance.shrinkwrap_text(JSON.stringify(input));
-    return decodeShrinkwrapTextResult(json);
+    try {
+      const json = this.instance.shrinkwrap_text(JSON.stringify(input));
+      return decodeShrinkwrapTextResult(json);
+    } catch (error) {
+      throw wrapWasmStructuredTextError(error);
+    }
   }
 
   shrinkwrapFlow(input: ShrinkwrapFlowInput): ShrinkwrapFlowResult {
@@ -1905,8 +1909,12 @@ export class WasmEngineHandle {
         { stage: "wasm" },
       );
     }
-    const json = this.instance.shrinkwrap_flow(JSON.stringify(input));
-    return decodeShrinkwrapFlowResult(json);
+    try {
+      const json = this.instance.shrinkwrap_flow(JSON.stringify(input));
+      return decodeShrinkwrapFlowResult(json);
+    } catch (error) {
+      throw wrapWasmStructuredTextError(error);
+    }
   }
 
   measureIntrinsicInlineSize(input: IntrinsicInlineSizeInput): IntrinsicInlineSizeResult {

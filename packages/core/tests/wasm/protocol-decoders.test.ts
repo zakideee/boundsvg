@@ -707,9 +707,13 @@ describe("WASM protocol decoders", () => {
     handle.dispose();
   });
 
-  it("preserves a structured fatal text error thrown by WASM", () => {
+  it.each([
+    ["layoutTextFlowWithExclusions", "layout_text_flow_with_exclusions"],
+    ["shrinkwrapText", "shrinkwrap_text"],
+    ["shrinkwrapFlow", "shrinkwrap_flow"],
+  ] as const)("preserves a structured fatal text error from %s", (method, wasmMethod) => {
     const handle = new WasmEngineHandle({
-      layout_text_flow_with_exclusions: () => {
+      [wasmMethod]: () => {
         throw JSON.stringify({
           code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
           message: "exact candidate budget exceeded",
@@ -719,15 +723,28 @@ describe("WASM protocol decoders", () => {
       free: () => undefined,
     } as unknown as WasmEngineInstance);
 
-    expect(() =>
-      handle.layoutTextFlowWithExclusions({
-        text: "A",
-        fontFamily: "Fixture",
-        fontSizePx: 16,
-        flowBox: { x: 0, y: 0, width: 100, height: 40 },
-        exclusions: [],
-      }),
-    ).toThrowError(
+    const common = {
+      text: "A",
+      fontFamily: "Fixture",
+      fontSizePx: 16,
+    };
+    const invoke = {
+      layoutTextFlowWithExclusions: () =>
+        handle.layoutTextFlowWithExclusions({
+          ...common,
+          flowBox: { x: 0, y: 0, width: 100, height: 40 },
+          exclusions: [],
+        }),
+      shrinkwrapText: () => handle.shrinkwrapText({ ...common, maxWidth: 100 }),
+      shrinkwrapFlow: () =>
+        handle.shrinkwrapFlow({
+          ...common,
+          flowBox: { x: 0, y: 0, width: 100, height: 40 },
+          exclusions: [],
+        }),
+    }[method];
+
+    expect(invoke).toThrowError(
       expect.objectContaining({
         name: "FatalError",
         code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
