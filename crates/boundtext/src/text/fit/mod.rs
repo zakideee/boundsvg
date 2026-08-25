@@ -10,7 +10,7 @@ mod shrink;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use common::scaled_letter_spacing;
+pub(crate) use common::{scaled_letter_spacing, selected_font_size_scale};
 pub use grow::fit_grow;
 pub use shrink::fit_shrink;
 pub(crate) use shrink::fit_shrink_with_unit_metadata;

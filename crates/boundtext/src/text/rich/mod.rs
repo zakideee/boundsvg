@@ -13,6 +13,7 @@ mod flow_layout;
 mod line_layout;
 mod prepare;
 
+use super::fit::selected_font_size_scale;
 use super::flow as text_flow;
 use super::grapheme::grapheme_split;
 use super::kinsoku::KinsokuProfile;
@@ -33,7 +34,7 @@ use line_layout::{
 use line_layout::{effective_line_width, layout_horizontal_tokens, layout_vertical_tokens};
 use prepare::{
     build_default_style, collect_notdef_warnings_from_tokens, collect_owned_warnings,
-    expand_tabs_in_nodes, flatten_rich_nodes_with_warnings, selected_font_size_scale,
+    expand_tabs_in_nodes, flatten_rich_nodes_with_warnings,
 };
 
 /// Maximum nesting depth for `InlineBox` (outer + 2 nested).
@@ -9097,11 +9098,16 @@ mod tests {
     }
 
     #[test]
-    fn selected_font_size_scale_rejects_non_finite_or_zero_authored_sizes() {
+    fn selected_font_size_scale_rejects_invalid_or_non_finite_ratios() {
         assert_eq!(selected_font_size_scale(20.0, 10.0), 0.5);
         assert_eq!(selected_font_size_scale(0.0, 10.0), 1.0);
         assert_eq!(selected_font_size_scale(f64::NAN, 10.0), 1.0);
         assert_eq!(selected_font_size_scale(20.0, f64::INFINITY), 1.0);
+        assert_eq!(selected_font_size_scale(1e-300, 1e10), 1.0);
+        let subnormal_scale = selected_font_size_scale(1e10, 1e-300);
+        assert!(subnormal_scale.is_finite());
+        assert!(subnormal_scale > 0.0);
+        assert_eq!(selected_font_size_scale(20.0, 0.0), 1.0);
     }
 
     #[test]

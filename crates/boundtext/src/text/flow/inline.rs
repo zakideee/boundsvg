@@ -3,6 +3,7 @@ use crate::font::shaping::{
     ShapeOptions, format_css_font_feature_settings, format_css_font_variation_settings,
 };
 use crate::font::{FontContext, FontStyle};
+use crate::text::fit::selected_font_size_scale;
 use crate::text::inline_runs;
 use crate::text::paragraph;
 use crate::text::types::{
@@ -261,7 +262,7 @@ pub(super) fn prepare_inline_flow_inputs(
     // Callers dispatch here only when spans exist; an absent value degrades to
     // an empty inline flow rather than aborting the render.
     let spans_input = req.spans.unwrap_or_default();
-    let scale = chosen_font_size_px / req.font_size_px.max(f64::EPSILON);
+    let scale = selected_font_size_scale(req.font_size_px, chosen_font_size_px);
     let spans = if (scale - 1.0).abs() < f64::EPSILON {
         spans_input.to_vec()
     } else {

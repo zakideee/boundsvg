@@ -1,5 +1,6 @@
 use crate::font::FontStyle;
 use crate::font::shaping::{format_css_font_feature_settings, format_css_font_variation_settings};
+use crate::text::fit::selected_font_size_scale;
 use crate::text::grapheme::grapheme_split;
 use crate::text::types::{RichTextNodeInput, RichTextStyleInput, TextWarning};
 
@@ -242,21 +243,6 @@ pub(super) fn build_default_style(
         font_feature_settings: format_css_font_feature_settings(&req.font_feature_settings),
         text_orientation: req.text_orientation,
         text_decoration: None,
-    }
-}
-
-/// Return a finite proportional scale for a settled fit size.
-pub(super) fn selected_font_size_scale(
-    authored_font_size_px: f64,
-    chosen_font_size_px: f64,
-) -> f64 {
-    if authored_font_size_px.is_finite()
-        && authored_font_size_px > 0.0
-        && chosen_font_size_px.is_finite()
-    {
-        chosen_font_size_px / authored_font_size_px
-    } else {
-        1.0
     }
 }
 
