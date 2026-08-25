@@ -7,6 +7,7 @@ use crate::font::shaping::{
 };
 use crate::font::{FontEntry, FontRegistry, FontStyle};
 
+mod ellipsis_plan;
 mod flow_layout;
 mod line_layout;
 mod prepare;
@@ -822,38 +823,38 @@ fn layout_rich_text_at_font_size(
             inline_rects: Vec::new(),
         });
     }
-    if req.is_vertical() {
+    let result = if req.is_vertical() {
         layout_vertical_tokens(
             req,
             &prepared.tokens,
             &prepared.decoration_spans,
             chosen_font_size_px,
             prepared.warnings,
-        )
+        )?
     } else {
-        let result = layout_horizontal_tokens(
+        layout_horizontal_tokens(
             req,
             &prepared.tokens,
             &prepared.decoration_spans,
             chosen_font_size_px,
             prepared.warnings,
-        )?;
-        // maxLines + ellipsis: relayout with truncated inline nodes.
-        // (Vertical rich content still truncates without an ellipsis —
-        // known residual, same as the vertical inline paths.)
-        if req.ellipsis && req.max_lines.is_some() && result.overflow.overflow_type != "none" {
-            if let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px) {
-                return Some(ellipsized);
-            }
-        }
-        Some(result)
+        )?
+    };
+
+    // Horizontal and vertical rich text share one display-projection step.
+    if req.ellipsis
+        && req.max_lines.is_some()
+        && result.overflow.overflow_type != "none"
+        && let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px)
+    {
+        return Some(ellipsized);
     }
+    Some(result)
 }
 
-/// Apply ellipsis to rich text by relayout: truncate the flattened inline
-/// nodes at grapheme granularity (ruby and inline boxes are atomic — kept
-/// whole or dropped), append "…" styled as the last kept segment, and
-/// binary-search the largest kept prefix that fits within `maxLines`.
+/// Apply ellipsis to rich text by exact relayout. Candidates are legal logical
+/// prefixes (ruby and atomic inlines are kept whole or dropped) and are tried
+/// longest-first, without assuming monotone prefix advances.
 fn apply_rich_ellipsis(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -866,82 +867,89 @@ fn apply_rich_ellipsis(
         return None;
     }
 
-    let max_width = req.max_width.max(1.0);
+    let source_text = collect_inline_source_text(&inline_nodes);
     let probe = |keep: usize| -> Option<TextLayoutResult> {
         let (mut truncated, _consumed) = truncate_inline_nodes(&inline_nodes, keep);
-        let ellipsis_style =
-            last_segment_style(&truncated).unwrap_or_else(|| default_style.clone());
+        let ellipsis_style = first_omitted_style(&inline_nodes, keep)
+            .or_else(|| last_segment_style(&truncated))
+            .unwrap_or_else(|| default_style.clone());
         truncated.push(RichInlineNode::Segment(RichSegment {
             text: "\u{2026}".to_string(),
             style: ellipsis_style,
             combine: false,
             decoration_runs: Vec::new(),
         }));
-        let (tokens, decoration_spans) = build_tokens(
+        let display_text = collect_inline_source_text(&truncated);
+        let (mut tokens, decoration_spans) = build_tokens(
             &truncated,
             req,
             font_ctx.registry,
             font_ctx.fallback_registry,
             &default_style,
         )?;
+        mark_last_token_as_synthetic_ellipsis(&mut tokens);
+        let warnings = collect_notdef_warnings_from_tokens(&tokens);
         let probe_req = TextLayoutRequest {
             max_lines: None,
             ellipsis: false,
             ..req.clone()
         };
-        layout_horizontal_tokens(
-            &probe_req,
-            &tokens,
-            &decoration_spans,
-            chosen_font_size_px,
-            Vec::new(),
-        )
+        let mut result = if req.is_vertical() {
+            layout_vertical_tokens(
+                &probe_req,
+                &tokens,
+                &decoration_spans,
+                chosen_font_size_px,
+                warnings,
+            )?
+        } else {
+            layout_horizontal_tokens(
+                &probe_req,
+                &tokens,
+                &decoration_spans,
+                chosen_font_size_px,
+                warnings,
+            )?
+        };
+        result.source_text = Some(source_text.clone());
+        result.display_text = Some(display_text);
+        Some(result)
     };
     let fits = |result: &TextLayoutResult| {
-        result.lines.len() <= max_lines && result.bbox.w <= max_width + 0.01
+        result.lines.len() <= max_lines
+            && result.bbox.w <= req.max_width + 0.01
+            && req
+                .max_height
+                .is_none_or(|max_height| result.bbox.h <= max_height + 0.01)
+            && result.overflow.overflow_type == "none"
     };
 
-    // Binary search the largest keep count whose relayout fits. Keeping
-    // everything is known not to fit (the caller checked overflow).
-    let mut lo = 0usize;
-    let mut hi = total - 1;
-    let mut best: Option<(usize, TextLayoutResult)> = None;
-    while lo <= hi {
-        let mid = lo + (hi - lo) / 2;
-        let candidate = probe(mid)?;
-        if fits(&candidate) {
-            best = Some((mid, candidate));
-            lo = mid + 1;
-        } else {
-            if mid == 0 {
-                break;
-            }
-            hi = mid - 1;
-        }
-    }
-    let (keep, mut result) = match best {
-        Some(found) => found,
-        // Even "…" alone overflows — return it as the best effort.
-        None => (0, probe(0)?),
-    };
-
-    // Back up past tail-prohibited characters (same contract as plain).
-    if let Some(profile) =
-        crate::text::kinsoku::get_kinsoku_profile(Some(language_to_str(req.language)))
+    let graphemes = collect_inline_graphemes(&inline_nodes);
+    let grapheme_refs: Vec<&str> = graphemes.iter().map(String::as_str).collect();
+    let profile = crate::text::kinsoku::get_kinsoku_profile(Some(language_to_str(req.language)));
+    let legal_prefixes = legal_ellipsis_prefixes(&inline_nodes)
+        .into_iter()
+        .filter(|keep| *keep < total)
+        .filter(|keep| {
+            profile.is_none_or(|active_profile| {
+                crate::text::kinsoku::is_valid_ellipsis_boundary(
+                    &grapheme_refs,
+                    *keep,
+                    active_profile,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if let Some((_keep, mut selected)) =
+        ellipsis_plan::select_longest_fitting(legal_prefixes.iter().copied(), &probe, fits)
     {
-        let graphemes = collect_inline_graphemes(&inline_nodes);
-        let grapheme_refs: Vec<&str> = graphemes.iter().map(String::as_str).collect();
-        let mut adjusted = keep;
-        while adjusted > 0
-            && !crate::text::kinsoku::is_valid_ellipsis_boundary(&grapheme_refs, adjusted, profile)
-        {
-            adjusted -= 1;
-        }
-        if adjusted != keep {
-            result = probe(adjusted)?;
-        }
+        selected.overflow = TextOverflow::overflow("ellipsis applied");
+        return Some(selected);
     }
 
+    // Retain the historical marker-only result until the typed empty-display
+    // failure path is introduced with the planner resource contract.
+    let mut result = probe(0)?;
     result.overflow = TextOverflow::overflow("ellipsis applied");
     Some(result)
 }
@@ -957,11 +965,63 @@ fn count_inline_graphemes(nodes: &[RichInlineNode]) -> usize {
                 .base
                 .iter()
                 .map(|seg| grapheme_split(&seg.text).len())
-                .sum(),
+                .sum::<usize>()
+                .max(1),
             RichInlineNode::InlineBox(_) | RichInlineNode::InlineRect(_) => 1,
             RichInlineNode::DecoratedSpan(span) => count_inline_graphemes(&span.children),
         })
         .sum()
+}
+
+fn legal_ellipsis_prefixes(nodes: &[RichInlineNode]) -> Vec<usize> {
+    fn append(nodes: &[RichInlineNode], cursor: &mut usize, output: &mut Vec<usize>) {
+        for node in nodes {
+            match node {
+                RichInlineNode::Segment(segment) => {
+                    for _ in grapheme_split(&segment.text) {
+                        *cursor += 1;
+                        output.push(*cursor);
+                    }
+                }
+                RichInlineNode::Ruby(_)
+                | RichInlineNode::InlineBox(_)
+                | RichInlineNode::InlineRect(_) => {
+                    *cursor += count_inline_graphemes(std::slice::from_ref(node));
+                    output.push(*cursor);
+                }
+                RichInlineNode::DecoratedSpan(span) => {
+                    append(&span.children, cursor, output);
+                }
+            }
+        }
+    }
+
+    let mut output = vec![0];
+    let mut cursor = 0;
+    append(nodes, &mut cursor, &mut output);
+    output
+}
+
+fn collect_inline_source_text(nodes: &[RichInlineNode]) -> String {
+    let mut source = String::new();
+    for node in nodes {
+        match node {
+            RichInlineNode::Segment(segment) => source.push_str(&segment.text),
+            RichInlineNode::Ruby(ruby) => {
+                for segment in &ruby.base {
+                    source.push_str(&segment.text);
+                }
+            }
+            RichInlineNode::InlineBox(inline_box) => {
+                source.push_str(&collect_inline_source_text(&inline_box.children));
+            }
+            RichInlineNode::InlineRect(_) => {}
+            RichInlineNode::DecoratedSpan(span) => {
+                source.push_str(&collect_inline_source_text(&span.children));
+            }
+        }
+    }
+    source
 }
 
 /// Flatten inline-node text into a grapheme list aligned with
@@ -994,6 +1054,7 @@ fn collect_inline_graphemes(nodes: &[RichInlineNode]) -> Vec<String> {
 fn truncate_inline_nodes(nodes: &[RichInlineNode], keep: usize) -> (Vec<RichInlineNode>, usize) {
     let mut out = Vec::new();
     let mut remaining = keep;
+    let mut consumed = 0;
     for node in nodes {
         if remaining == 0 {
             break;
@@ -1003,6 +1064,7 @@ fn truncate_inline_nodes(nodes: &[RichInlineNode], keep: usize) -> (Vec<RichInli
                 let graphemes = grapheme_split(&seg.text);
                 if graphemes.len() <= remaining {
                     remaining -= graphemes.len();
+                    consumed += graphemes.len();
                     out.push(node.clone());
                 } else {
                     out.push(RichInlineNode::Segment(RichSegment {
@@ -1011,6 +1073,7 @@ fn truncate_inline_nodes(nodes: &[RichInlineNode], keep: usize) -> (Vec<RichInli
                         combine: seg.combine,
                         decoration_runs: seg.decoration_runs.clone(),
                     }));
+                    consumed += remaining;
                     remaining = 0;
                 }
             }
@@ -1020,25 +1083,66 @@ fn truncate_inline_nodes(nodes: &[RichInlineNode], keep: usize) -> (Vec<RichInli
                 let unit = count_inline_graphemes(std::slice::from_ref(node));
                 if unit <= remaining {
                     remaining -= unit;
+                    consumed += unit;
                     out.push(node.clone());
                 } else {
                     // Atomic node does not fit the budget — drop it and stop.
-                    remaining = 0;
+                    break;
                 }
             }
             RichInlineNode::DecoratedSpan(span) => {
-                let (children, consumed) = truncate_inline_nodes(&span.children, remaining);
-                remaining -= consumed;
+                let span_units = count_inline_graphemes(&span.children);
+                let (children, child_consumed) = truncate_inline_nodes(&span.children, remaining);
+                remaining = remaining.saturating_sub(child_consumed);
+                consumed += child_consumed;
                 if !children.is_empty() {
                     out.push(RichInlineNode::DecoratedSpan(RichDecoratedSpan {
                         children,
                         ..span.clone()
                     }));
                 }
+                if child_consumed < span_units {
+                    return (out, keep - remaining);
+                }
             }
         }
     }
-    (out, keep - remaining)
+    (out, consumed)
+}
+
+fn first_omitted_style(nodes: &[RichInlineNode], keep: usize) -> Option<ResolvedStyle> {
+    let mut cursor = 0;
+    for node in nodes {
+        let units = count_inline_graphemes(std::slice::from_ref(node));
+        if keep >= cursor + units {
+            cursor += units;
+            continue;
+        }
+        return match node {
+            RichInlineNode::Segment(segment) => Some(segment.style.clone()),
+            RichInlineNode::Ruby(ruby) => ruby.base.first().map(|segment| segment.style.clone()),
+            RichInlineNode::InlineBox(inline_box) => first_omitted_style(&inline_box.children, 0),
+            RichInlineNode::InlineRect(rect) => Some(rect.style.clone()),
+            RichInlineNode::DecoratedSpan(span) => {
+                first_omitted_style(&span.children, keep.saturating_sub(cursor))
+            }
+        };
+    }
+    None
+}
+
+fn mark_last_token_as_synthetic_ellipsis(tokens: &mut [LayoutToken]) {
+    let Some(marker) = tokens.last_mut() else {
+        return;
+    };
+    for glyph in &mut marker.glyphs {
+        glyph.source_start = None;
+        glyph.source_end = None;
+        glyph.source_role = None;
+        glyph.decoration_source_start = None;
+        glyph.decoration_source_end = None;
+        glyph.synthetic_kind = Some("ellipsis".to_string());
+    }
 }
 
 /// Style of the last text segment in document order (for the "…" segment).

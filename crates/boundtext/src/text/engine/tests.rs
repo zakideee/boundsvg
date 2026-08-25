@@ -721,6 +721,60 @@ mod span_parity {
         assert!(result.bbox.w <= 80.0 + 0.01);
     }
 
+    /// Vertical rich text must use the same max-lines projection as the
+    /// horizontal planner. The marker is synthetic display content and must
+    /// not borrow an authored source range.
+    #[test]
+    fn vertical_rich_ellipsis_uses_a_source_less_synthetic_marker() {
+        use crate::text::types::RichTextNodeInput;
+
+        let registry = test_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+
+        let source = "あいうえおかきくけこさしすせそ";
+        let nodes = vec![RichTextNodeInput::Text {
+            text: source.to_string(),
+        }];
+        let mut rich_request = req("", None);
+        rich_request.rich_text = Some(&nodes);
+        rich_request.writing_mode = WritingMode::VerticalRl;
+        rich_request.max_width = 100.0;
+        rich_request.max_height = Some(80.0);
+        rich_request.max_lines = Some(2);
+        rich_request.ellipsis = true;
+
+        let result = crate::text::engine::layout_text_with_unit_metadata(&rich_request, &font_ctx)
+            .expect("vertical rich layout");
+
+        assert!(result.lines.len() <= 2, "must fit in maxLines");
+        assert_eq!(result.source_text.as_deref(), Some(source));
+        assert!(
+            result
+                .display_text
+                .as_deref()
+                .is_some_and(|text| text.ends_with('\u{2026}')),
+            "display projection must end with ellipsis: {:?}",
+            result.display_text
+        );
+        let marker = result
+            .lines
+            .iter()
+            .filter_map(|line| line.positioned_glyphs.as_deref())
+            .flatten()
+            .find(|glyph| glyph.synthetic_kind.as_deref() == Some("ellipsis"))
+            .expect("synthetic ellipsis glyph");
+        assert_eq!(marker.source_start, None);
+        assert_eq!(marker.source_end, None);
+        assert_eq!(marker.source_role, None);
+    }
+
     /// richText letterSpacing must match plain: per-grapheme token shaping
     /// previously dropped ALL inter-character tracking on the rich path.
     #[test]

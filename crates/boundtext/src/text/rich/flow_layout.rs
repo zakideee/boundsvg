@@ -118,7 +118,6 @@ fn layout_rich_flow_at_font_size(
             &text_req,
             font_ctx,
             regions_source,
-            &prepared.warnings,
             min_region,
             chosen_font_size_px,
             result.overflow_reason,
@@ -170,7 +169,6 @@ fn apply_rich_flow_ellipsis(
     text_req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     regions_source: &impl text_flow::FlowRegionSource,
-    warnings: &[TextWarning],
     min_region: f64,
     chosen_font_size_px: f64,
     overflow_reason: Option<text_flow::FlowOverflowReason>,
@@ -184,27 +182,30 @@ fn apply_rich_flow_ellipsis(
 
     let probe = |keep: usize| -> Option<text_flow::FlowLayoutResult> {
         let (mut truncated, _) = super::truncate_inline_nodes(&inline_nodes, keep);
-        let ellipsis_style =
-            super::last_segment_style(&truncated).unwrap_or_else(|| default_style.clone());
+        let ellipsis_style = super::first_omitted_style(&inline_nodes, keep)
+            .or_else(|| super::last_segment_style(&truncated))
+            .unwrap_or_else(|| default_style.clone());
         truncated.push(super::RichInlineNode::Segment(super::RichSegment {
             text: "\u{2026}".to_string(),
             style: ellipsis_style,
             combine: false,
             decoration_runs: Vec::new(),
         }));
-        let (tokens, _) = super::build_tokens(
+        let (mut tokens, _) = super::build_tokens(
             &truncated,
             text_req,
             font_ctx.registry,
             font_ctx.fallback_registry,
             &default_style,
         )?;
+        super::mark_last_token_as_synthetic_ellipsis(&mut tokens);
+        let candidate_warnings = super::collect_notdef_warnings_from_tokens(&tokens);
         Some(layout_prepared_rich_flow(
             req,
             font_ctx,
             regions_source,
             &tokens,
-            warnings,
+            &candidate_warnings,
             min_region,
             chosen_font_size_px,
         ))
@@ -213,38 +214,24 @@ fn apply_rich_flow_ellipsis(
         result.exhausted && text_flow::flow_layout_is_contained(result)
     };
 
-    let mut lo = 0usize;
-    let mut hi = total - 1;
-    let mut best: Option<(usize, text_flow::FlowLayoutResult)> = None;
-    while lo <= hi {
-        let mid = lo + (hi - lo) / 2;
-        let candidate = probe(mid)?;
-        if fits(&candidate) {
-            best = Some((mid, candidate));
-            lo = mid + 1;
-        } else if mid == 0 {
-            break;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    let (keep, mut result) = best.unwrap_or((0, probe(0)?));
-
-    if let Some(profile) =
-        crate::text::kinsoku::get_kinsoku_profile(Some(super::language_to_str(req.language)))
-    {
-        let graphemes = super::collect_inline_graphemes(&inline_nodes);
-        let grapheme_refs = graphemes.iter().map(String::as_str).collect::<Vec<_>>();
-        let mut adjusted = keep;
-        while adjusted > 0
-            && !crate::text::kinsoku::is_valid_ellipsis_boundary(&grapheme_refs, adjusted, profile)
-        {
-            adjusted -= 1;
-        }
-        if adjusted != keep {
-            result = probe(adjusted)?;
-        }
-    }
+    let graphemes = super::collect_inline_graphemes(&inline_nodes);
+    let grapheme_refs = graphemes.iter().map(String::as_str).collect::<Vec<_>>();
+    let profile =
+        crate::text::kinsoku::get_kinsoku_profile(Some(super::language_to_str(req.language)));
+    let legal_prefixes = super::legal_ellipsis_prefixes(&inline_nodes)
+        .into_iter()
+        .filter(|keep| *keep < total)
+        .filter(|keep| {
+            profile.is_none_or(|active_profile| {
+                crate::text::kinsoku::is_valid_ellipsis_boundary(
+                    &grapheme_refs,
+                    *keep,
+                    active_profile,
+                )
+            })
+        });
+    let mut result = super::ellipsis_plan::select_longest_fitting(legal_prefixes, &probe, fits)
+        .map_or_else(|| probe(0), |(_, selected)| Some(selected))?;
 
     result.exhausted = false;
     result.overflow_reason = overflow_reason;
