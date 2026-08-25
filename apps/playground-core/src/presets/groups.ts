@@ -22,6 +22,7 @@ export const PRESET_GROUPS: PresetGroupDef[] = [
       "inline-primitives",
       "ruby",
       "vertical",
+      "vertical-rich-ellipsis",
       "text-effects",
     ],
   },

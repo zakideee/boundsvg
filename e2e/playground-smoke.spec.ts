@@ -77,6 +77,23 @@ test.describe("public playground smoke", () => {
     await expect(overlay.first()).toBeVisible({ timeout: 15_000 });
   });
 
+  test("vertical rich ellipsis survives template switching", async ({ page }) => {
+    const errors = collectPageErrors(page);
+    await openRoute(page, "templates");
+
+    await page.locator(".template-button", { hasText: "Vertical Rich Ellipsis" }).click();
+    await expect(page.locator(".preview-header-meta h3")).toHaveText("Vertical Rich Ellipsis");
+    await expect(renderedSvg(page)).toBeVisible({ timeout: 30_000 });
+
+    await page.locator(".template-button", { hasText: "Vertical Japanese" }).click();
+    await expect(page.locator(".preview-header-meta h3")).toHaveText("Vertical Japanese");
+
+    await page.locator(".template-button", { hasText: "Vertical Rich Ellipsis" }).click();
+    await expect(page.locator(".preview-header-meta h3")).toHaveText("Vertical Rich Ellipsis");
+    await expect(renderedSvg(page)).toBeVisible({ timeout: 30_000 });
+    expect(errors).toEqual([]);
+  });
+
   test("the desktop Worker sample retains SVG and PNG outputs", async ({ page }) => {
     await openRoute(page, "worker");
     await expect(page.getByText("SVG Output", { exact: true })).toBeVisible();
