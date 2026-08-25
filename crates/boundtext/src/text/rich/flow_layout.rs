@@ -181,16 +181,19 @@ fn apply_rich_flow_ellipsis(
     }
 
     let probe = |keep: usize| -> Option<text_flow::FlowLayoutResult> {
-        let (mut truncated, _) = super::truncate_inline_nodes(&inline_nodes, keep);
         let ellipsis_style = super::first_omitted_style(&inline_nodes, keep)
-            .or_else(|| super::last_segment_style(&truncated))
+            .or_else(|| super::last_segment_style(&inline_nodes))
             .unwrap_or_else(|| default_style.clone());
-        truncated.push(super::RichInlineNode::Segment(super::RichSegment {
-            text: "\u{2026}".to_string(),
-            style: ellipsis_style,
-            combine: false,
-            decoration_runs: Vec::new(),
-        }));
+        let truncated = super::project_inline_nodes_with_ellipsis(
+            &inline_nodes,
+            keep,
+            super::RichSegment {
+                text: "\u{2026}".to_string(),
+                style: ellipsis_style,
+                combine: false,
+                decoration_runs: Vec::new(),
+            },
+        );
         let (mut tokens, _) = super::build_tokens(
             &truncated,
             text_req,
@@ -230,8 +233,17 @@ fn apply_rich_flow_ellipsis(
                 )
             })
         });
-    let mut result = super::ellipsis_plan::select_longest_fitting(legal_prefixes, &probe, fits)
-        .map_or_else(|| probe(0), |(_, selected)| Some(selected))?;
+    let selected = crate::text::ellipsis_plan::select_longest_fitting(legal_prefixes, &probe, fits);
+    let mut result = match selected {
+        Some((_, selected)) => selected,
+        None => {
+            let mut empty = probe(0)?;
+            empty.lines.clear();
+            empty.used_line_count = 0;
+            empty.warnings.clear();
+            empty
+        }
+    };
 
     result.exhausted = false;
     result.overflow_reason = overflow_reason;

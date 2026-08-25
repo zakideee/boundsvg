@@ -7,7 +7,6 @@ use crate::font::shaping::{
 };
 use crate::font::{FontEntry, FontRegistry, FontStyle};
 
-mod ellipsis_plan;
 mod flow_layout;
 mod line_layout;
 mod prepare;
@@ -869,16 +868,19 @@ fn apply_rich_ellipsis(
 
     let source_text = collect_inline_source_text(&inline_nodes);
     let probe = |keep: usize| -> Option<TextLayoutResult> {
-        let (mut truncated, _consumed) = truncate_inline_nodes(&inline_nodes, keep);
         let ellipsis_style = first_omitted_style(&inline_nodes, keep)
-            .or_else(|| last_segment_style(&truncated))
+            .or_else(|| last_segment_style(&inline_nodes))
             .unwrap_or_else(|| default_style.clone());
-        truncated.push(RichInlineNode::Segment(RichSegment {
-            text: "\u{2026}".to_string(),
-            style: ellipsis_style,
-            combine: false,
-            decoration_runs: Vec::new(),
-        }));
+        let truncated = project_inline_nodes_with_ellipsis(
+            &inline_nodes,
+            keep,
+            RichSegment {
+                text: "\u{2026}".to_string(),
+                style: ellipsis_style,
+                combine: false,
+                decoration_runs: Vec::new(),
+            },
+        );
         let display_text = collect_inline_source_text(&truncated);
         let (mut tokens, decoration_spans) = build_tokens(
             &truncated,
@@ -941,15 +943,21 @@ fn apply_rich_ellipsis(
         })
         .collect::<Vec<_>>();
     if let Some((_keep, mut selected)) =
-        ellipsis_plan::select_longest_fitting(legal_prefixes.iter().copied(), &probe, fits)
+        super::ellipsis_plan::select_longest_fitting(legal_prefixes.iter().copied(), &probe, fits)
     {
         selected.overflow = TextOverflow::overflow("ellipsis applied");
         return Some(selected);
     }
 
-    // Retain the historical marker-only result until the typed empty-display
-    // failure path is introduced with the planner resource contract.
     let mut result = probe(0)?;
+    result.lines.clear();
+    result.bbox.w = 0.0;
+    result.bbox.h = 0.0;
+    result.display_text = Some(String::new());
+    result.warnings.clear();
+    result.inline_box_decorations.clear();
+    result.text_decorations.clear();
+    result.inline_rects.clear();
     result.overflow = TextOverflow::overflow("ellipsis applied");
     Some(result)
 }
@@ -1024,6 +1032,141 @@ fn collect_inline_source_text(nodes: &[RichInlineNode]) -> String {
     source
 }
 
+fn build_inline_source_projection(
+    nodes: &[RichInlineNode],
+) -> super::unit_map::TextSourceProjection {
+    use super::unit_map::{TextSourceProjection, TextSourceUnit, TextUnitSourceRole};
+
+    fn append_segment(
+        segment: &RichSegment,
+        role: TextUnitSourceRole,
+        source_cursor: &mut u32,
+        byte_cursor: &mut u32,
+        authored_order: &mut u32,
+        output: &mut Vec<TextSourceUnit>,
+    ) {
+        for grapheme in grapheme_split(&segment.text) {
+            let source_start = *source_cursor;
+            let cluster_start = *byte_cursor;
+            *source_cursor = source_cursor.saturating_add(1);
+            *byte_cursor =
+                byte_cursor.saturating_add(u32::try_from(grapheme.len()).unwrap_or(u32::MAX));
+            output.push(TextSourceUnit {
+                source_start,
+                source_end: *source_cursor,
+                cluster_start,
+                cluster_end: *byte_cursor,
+                source_role: role,
+                authored_order: *authored_order,
+            });
+            *authored_order = authored_order.saturating_add(1);
+        }
+    }
+
+    fn append_nodes(
+        nodes: &[RichInlineNode],
+        source_cursor: &mut u32,
+        byte_cursor: &mut u32,
+        authored_order: &mut u32,
+        output: &mut Vec<TextSourceUnit>,
+    ) {
+        for node in nodes {
+            match node {
+                RichInlineNode::Segment(segment) => append_segment(
+                    segment,
+                    TextUnitSourceRole::Content,
+                    source_cursor,
+                    byte_cursor,
+                    authored_order,
+                    output,
+                ),
+                RichInlineNode::Ruby(ruby) => {
+                    let base_start = *source_cursor;
+                    for segment in &ruby.base {
+                        append_segment(
+                            segment,
+                            TextUnitSourceRole::RubyBase,
+                            source_cursor,
+                            byte_cursor,
+                            authored_order,
+                            output,
+                        );
+                    }
+                    let base_end = *source_cursor;
+                    if base_start == base_end {
+                        output.push(TextSourceUnit {
+                            source_start: base_start,
+                            source_end: base_end,
+                            cluster_start: *byte_cursor,
+                            cluster_end: *byte_cursor,
+                            source_role: TextUnitSourceRole::RubyBase,
+                            authored_order: *authored_order,
+                        });
+                        *authored_order = authored_order.saturating_add(1);
+                    }
+                    for level in &ruby.rt_levels {
+                        let mut annotation_byte_cursor = 0_u32;
+                        for segment in level {
+                            for grapheme in grapheme_split(&segment.text) {
+                                let cluster_start = annotation_byte_cursor;
+                                annotation_byte_cursor = annotation_byte_cursor.saturating_add(
+                                    u32::try_from(grapheme.len()).unwrap_or(u32::MAX),
+                                );
+                                output.push(TextSourceUnit {
+                                    source_start: base_start,
+                                    source_end: base_end,
+                                    cluster_start,
+                                    cluster_end: annotation_byte_cursor,
+                                    source_role: TextUnitSourceRole::RubyAnnotation,
+                                    authored_order: *authored_order,
+                                });
+                                *authored_order = authored_order.saturating_add(1);
+                            }
+                        }
+                    }
+                }
+                RichInlineNode::InlineBox(inline_box) => append_nodes(
+                    &inline_box.children,
+                    source_cursor,
+                    byte_cursor,
+                    authored_order,
+                    output,
+                ),
+                RichInlineNode::DecoratedSpan(span) => append_nodes(
+                    &span.children,
+                    source_cursor,
+                    byte_cursor,
+                    authored_order,
+                    output,
+                ),
+                RichInlineNode::InlineRect(_) => {}
+            }
+        }
+    }
+
+    let mut units = Vec::new();
+    let mut source_cursor = 0_u32;
+    let mut byte_cursor = 0_u32;
+    let mut authored_order = 0_u32;
+    append_nodes(
+        nodes,
+        &mut source_cursor,
+        &mut byte_cursor,
+        &mut authored_order,
+        &mut units,
+    );
+    TextSourceProjection { units }
+}
+
+pub(crate) fn build_source_projection(
+    req: &TextLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    chosen_font_size_px: f64,
+) -> super::unit_map::TextSourceProjection {
+    let (inline_nodes, _, _) = build_inline_nodes(req, font_ctx, chosen_font_size_px);
+    build_inline_source_projection(&inline_nodes)
+}
+
 /// Flatten inline-node text into a grapheme list aligned with
 /// [`count_inline_graphemes`] indexing (for kinsoku boundary validation).
 fn collect_inline_graphemes(nodes: &[RichInlineNode]) -> Vec<String> {
@@ -1032,8 +1175,12 @@ fn collect_inline_graphemes(nodes: &[RichInlineNode]) -> Vec<String> {
         match node {
             RichInlineNode::Segment(seg) => out.extend(grapheme_split(&seg.text)),
             RichInlineNode::Ruby(ruby) => {
+                let initial_len = out.len();
                 for seg in &ruby.base {
                     out.extend(grapheme_split(&seg.text));
+                }
+                if out.len() == initial_len {
+                    out.push("\u{FFFC}".to_string());
                 }
             }
             // Object replacement character: atomic, never tail-prohibited.
@@ -1048,66 +1195,127 @@ fn collect_inline_graphemes(nodes: &[RichInlineNode]) -> Vec<String> {
     out
 }
 
-/// Keep a `keep`-grapheme prefix of the inline nodes. Ruby and inline boxes
-/// are atomic: they are kept whole when their full budget fits, otherwise
-/// dropped. Returns the truncated nodes and the consumed grapheme count.
-fn truncate_inline_nodes(nodes: &[RichInlineNode], keep: usize) -> (Vec<RichInlineNode>, usize) {
-    let mut out = Vec::new();
-    let mut remaining = keep;
-    let mut consumed = 0;
-    for node in nodes {
-        if remaining == 0 {
-            break;
-        }
-        match node {
-            RichInlineNode::Segment(seg) => {
-                let graphemes = grapheme_split(&seg.text);
-                if graphemes.len() <= remaining {
-                    remaining -= graphemes.len();
-                    consumed += graphemes.len();
-                    out.push(node.clone());
-                } else {
-                    out.push(RichInlineNode::Segment(RichSegment {
-                        text: graphemes[..remaining].concat(),
-                        style: seg.style.clone(),
-                        combine: seg.combine,
-                        decoration_runs: seg.decoration_runs.clone(),
-                    }));
-                    consumed += remaining;
-                    remaining = 0;
-                }
+/// Build the selected authored prefix plus a structurally separate marker.
+/// Fragmentable decoration ancestry is retained, while the marker is inserted
+/// beside (never inside) an omitted atomic node.
+fn project_inline_nodes_with_ellipsis(
+    nodes: &[RichInlineNode],
+    keep: usize,
+    marker: RichSegment,
+) -> Vec<RichInlineNode> {
+    fn project(
+        nodes: &[RichInlineNode],
+        remaining: &mut usize,
+        marker: &mut Option<RichSegment>,
+    ) -> Vec<RichInlineNode> {
+        let mut output = Vec::new();
+        for node in nodes {
+            let units = count_inline_graphemes(std::slice::from_ref(node));
+            if units <= *remaining {
+                *remaining -= units;
+                output.push(node.clone());
+                continue;
             }
-            RichInlineNode::Ruby(_)
-            | RichInlineNode::InlineBox(_)
-            | RichInlineNode::InlineRect(_) => {
-                let unit = count_inline_graphemes(std::slice::from_ref(node));
-                if unit <= remaining {
-                    remaining -= unit;
-                    consumed += unit;
-                    out.push(node.clone());
-                } else {
-                    // Atomic node does not fit the budget — drop it and stop.
-                    break;
+
+            match node {
+                RichInlineNode::Segment(segment) => {
+                    if *remaining > 0 {
+                        let graphemes = grapheme_split(&segment.text);
+                        let prefix = graphemes[..*remaining].concat();
+                        output.push(RichInlineNode::Segment(RichSegment {
+                            decoration_runs: truncate_decoration_runs(
+                                &segment.decoration_runs,
+                                prefix.len(),
+                            ),
+                            text: prefix,
+                            style: segment.style.clone(),
+                            combine: segment.combine,
+                        }));
+                    }
+                    *remaining = 0;
+                    if let Some(marker_segment) = marker.take() {
+                        output.push(RichInlineNode::Segment(marker_segment));
+                    }
                 }
-            }
-            RichInlineNode::DecoratedSpan(span) => {
-                let span_units = count_inline_graphemes(&span.children);
-                let (children, child_consumed) = truncate_inline_nodes(&span.children, remaining);
-                remaining = remaining.saturating_sub(child_consumed);
-                consumed += child_consumed;
-                if !children.is_empty() {
-                    out.push(RichInlineNode::DecoratedSpan(RichDecoratedSpan {
+                RichInlineNode::DecoratedSpan(span) => {
+                    let children = project(&span.children, remaining, marker);
+                    output.push(RichInlineNode::DecoratedSpan(RichDecoratedSpan {
                         children,
                         ..span.clone()
                     }));
                 }
-                if child_consumed < span_units {
-                    return (out, keep - remaining);
+                RichInlineNode::Ruby(_)
+                | RichInlineNode::InlineBox(_)
+                | RichInlineNode::InlineRect(_) => {
+                    *remaining = 0;
+                    if let Some(marker_segment) = marker.take() {
+                        output.push(RichInlineNode::Segment(marker_segment));
+                    }
                 }
             }
+            break;
         }
+        if let Some(marker_segment) = marker.take() {
+            output.push(RichInlineNode::Segment(marker_segment));
+        }
+        output
     }
-    (out, consumed)
+
+    let mut remaining = keep;
+    let mut marker = Some(marker);
+    project(nodes, &mut remaining, &mut marker)
+}
+
+fn truncate_decoration_runs(
+    runs: &[RichTextDecorationRunInput],
+    prefix_bytes: usize,
+) -> Vec<RichTextDecorationRunInput> {
+    let mut remaining = prefix_bytes;
+    let mut output = Vec::new();
+    for run in runs {
+        if remaining == 0 {
+            break;
+        }
+        let keep = remaining.min(run.text.len());
+        if !run.text.is_char_boundary(keep) {
+            return Vec::new();
+        }
+        output.push(RichTextDecorationRunInput {
+            text: run.text[..keep].to_string(),
+            text_decoration: run.text_decoration.clone(),
+        });
+        remaining -= keep;
+    }
+    if remaining == 0 { output } else { Vec::new() }
+}
+
+fn segment_style_at_grapheme(segment: &RichSegment, grapheme_index: usize) -> ResolvedStyle {
+    let mut style = segment.style.clone();
+    let graphemes = grapheme_split(&segment.text);
+    let byte_offset = graphemes
+        .iter()
+        .take(grapheme_index)
+        .map(|grapheme| grapheme.len())
+        .sum::<usize>();
+    let runs_match = segment
+        .decoration_runs
+        .iter()
+        .map(|run| run.text.as_str())
+        .collect::<String>()
+        == segment.text;
+    if !runs_match {
+        return style;
+    }
+    let mut cursor = 0_usize;
+    for run in &segment.decoration_runs {
+        let end = cursor.saturating_add(run.text.len());
+        if byte_offset < end {
+            style.text_decoration.clone_from(&run.text_decoration);
+            break;
+        }
+        cursor = end;
+    }
+    style
 }
 
 fn first_omitted_style(nodes: &[RichInlineNode], keep: usize) -> Option<ResolvedStyle> {
@@ -1119,7 +1327,10 @@ fn first_omitted_style(nodes: &[RichInlineNode], keep: usize) -> Option<Resolved
             continue;
         }
         return match node {
-            RichInlineNode::Segment(segment) => Some(segment.style.clone()),
+            RichInlineNode::Segment(segment) => Some(segment_style_at_grapheme(
+                segment,
+                keep.saturating_sub(cursor),
+            )),
             RichInlineNode::Ruby(ruby) => ruby.base.first().map(|segment| segment.style.clone()),
             RichInlineNode::InlineBox(inline_box) => first_omitted_style(&inline_box.children, 0),
             RichInlineNode::InlineRect(rect) => Some(rect.style.clone()),

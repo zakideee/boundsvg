@@ -1,5 +1,6 @@
 pub mod decoration;
 pub mod ellipsis;
+pub(crate) mod ellipsis_plan;
 pub mod engine;
 pub mod fit;
 pub mod flow;

@@ -1,7 +1,7 @@
 /// Evaluate legal prefix candidates in descending logical order and return the
 /// first exact fit. No monotonicity is assumed: a shorter failure cannot prune
 /// any untested candidate.
-pub(super) fn select_longest_fitting<T>(
+pub(crate) fn select_longest_fitting<T>(
     candidates: impl DoubleEndedIterator<Item = usize>,
     mut probe: impl FnMut(usize) -> Option<T>,
     mut fits: impl FnMut(&T) -> bool,

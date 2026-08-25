@@ -1,7 +1,7 @@
 //! Ellipsis truncation for text layout.
 //!
-//! Uses binary search on grapheme count to find the best truncation point,
-//! then refines the boundary with a small linear scan.
+//! Every legal grapheme prefix is re-shaped as end-of-text and evaluated from
+//! longest to shortest. The synthetic marker is shaped as a separate run.
 
 use super::grapheme::grapheme_split;
 use super::kinsoku::{KinsokuProfile, is_valid_ellipsis_boundary};
@@ -12,8 +12,6 @@ use crate::font::{FontEntry, FontRegistry, FontStyle};
 
 /// Ellipsis character.
 const ELLIPSIS: &str = "\u{2026}"; // "…"
-/// Linear refinement window around the binary search boundary.
-const REFINE_WINDOW: usize = 2;
 
 fn total_advance(glyphs: &[GlyphInfo]) -> f64 {
     glyphs.iter().map(|g| g.x_advance).sum()
@@ -32,20 +30,20 @@ fn build_ellipsis_line(
     glyphs: Vec<GlyphInfo>,
     width: f64,
     baseline_y: f64,
-    ellipsis_source_start: usize,
-    ellipsis_source_end: usize,
     include_unit_metadata: bool,
 ) -> Line {
     let positioned_glyphs = if include_unit_metadata {
         let mut positioned_glyphs =
             super::engine::build_positioned_glyphs_for_text(&glyphs, &text, baseline_y);
-        let source_start = u32::try_from(ellipsis_source_start).unwrap_or(u32::MAX);
-        let source_end = u32::try_from(ellipsis_source_end).unwrap_or(u32::MAX);
         let ellipsis_cluster_start = synthetic_ellipsis_cluster_start(&text);
         for glyph in &mut positioned_glyphs {
             if is_synthetic_ellipsis_glyph(glyph, ellipsis_cluster_start) {
-                glyph.source_start = Some(source_start);
-                glyph.source_end = Some(source_end);
+                glyph.source_start = None;
+                glyph.source_end = None;
+                glyph.source_role = None;
+                glyph.decoration_source_start = None;
+                glyph.decoration_source_end = None;
+                glyph.synthetic_kind = Some("ellipsis".to_string());
             }
         }
         Some(positioned_glyphs)
@@ -59,6 +57,17 @@ fn build_ellipsis_line(
         baseline_y,
         fragments: None,
         positioned_glyphs,
+    }
+}
+
+fn build_empty_ellipsis_line(baseline_y: f64, include_unit_metadata: bool) -> Line {
+    Line {
+        text: String::new(),
+        glyphs: Vec::new(),
+        width: 0.0,
+        baseline_y,
+        fragments: None,
+        positioned_glyphs: include_unit_metadata.then(Vec::new),
     }
 }
 
@@ -198,44 +207,38 @@ fn remap_ellipsis_line_sources(line: &mut Line, segments: &[EllipsisSourceSegmen
     let Some(positioned_glyphs) = line.positioned_glyphs.as_mut() else {
         return;
     };
-    let source_end = segments
-        .iter()
-        .map(|segment| segment.source_end)
-        .max()
-        .unwrap_or(0);
-    let cluster_end = segments
-        .iter()
-        .map(|segment| segment.cluster_end)
-        .max()
-        .unwrap_or(0);
     for glyph in positioned_glyphs {
         let is_ellipsis = is_synthetic_ellipsis_glyph(glyph, ellipsis_cluster_start);
-        glyph.source_start = glyph.source_start.map(|start| {
-            remap_ellipsis_offset(start, segments, EllipsisCoordinate::Source, is_ellipsis)
-        });
-        glyph.source_end = glyph.source_end.map(|end| {
-            if is_ellipsis {
-                source_end
-            } else {
-                remap_ellipsis_offset(end, segments, EllipsisCoordinate::Source, true)
-            }
-        });
+        if is_ellipsis {
+            let remapped_cluster_start = remap_ellipsis_offset(
+                glyph.cluster_start,
+                segments,
+                EllipsisCoordinate::Cluster,
+                true,
+            );
+            glyph.cluster_start = remapped_cluster_start;
+            glyph.cluster_end = remapped_cluster_start
+                .saturating_add(u32::try_from(ELLIPSIS.len()).unwrap_or(u32::MAX));
+            continue;
+        }
+        glyph.source_start = glyph
+            .source_start
+            .map(|start| remap_ellipsis_offset(start, segments, EllipsisCoordinate::Source, false));
+        glyph.source_end = glyph
+            .source_end
+            .map(|end| remap_ellipsis_offset(end, segments, EllipsisCoordinate::Source, true));
         glyph.cluster_start = remap_ellipsis_offset(
             glyph.cluster_start,
             segments,
             EllipsisCoordinate::Cluster,
-            is_ellipsis,
+            false,
         );
-        glyph.cluster_end = if is_ellipsis {
-            cluster_end
-        } else {
-            remap_ellipsis_offset(
-                glyph.cluster_end,
-                segments,
-                EllipsisCoordinate::Cluster,
-                true,
-            )
-        };
+        glyph.cluster_end = remap_ellipsis_offset(
+            glyph.cluster_end,
+            segments,
+            EllipsisCoordinate::Cluster,
+            true,
+        );
     }
 }
 
@@ -311,6 +314,36 @@ fn shape_text(
         letter_spacing_px,
         options,
     ))
+}
+
+/// Shape a retained prefix as end-of-text and append a separately shaped
+/// synthetic marker. Tracking is restored once at the run boundary so the
+/// display advance matches ordinary adjacent clusters without allowing the
+/// marker to participate in the prefix's shaping context.
+fn shape_horizontal_candidate(
+    font_ctx: &FontContext<'_>,
+    prefix: &str,
+    font_size_px: f64,
+    letter_spacing_px: f64,
+    options: &ShapeOptions,
+) -> Option<Vec<GlyphInfo>> {
+    let mut prefix_glyphs = shape_text(font_ctx, prefix, font_size_px, letter_spacing_px, options)?;
+    let mut marker_glyphs =
+        shape_text(font_ctx, ELLIPSIS, font_size_px, letter_spacing_px, options)?;
+    if !prefix_glyphs.is_empty()
+        && !marker_glyphs.is_empty()
+        && letter_spacing_px != 0.0
+        && let Some(last_prefix_glyph) = prefix_glyphs.last_mut()
+    {
+        last_prefix_glyph.x_advance =
+            shaping::add_inline_tracking(last_prefix_glyph.x_advance, letter_spacing_px);
+    }
+    let marker_cluster_offset = u32::try_from(prefix.len()).unwrap_or(u32::MAX);
+    for marker_glyph in &mut marker_glyphs {
+        marker_glyph.cluster = marker_glyph.cluster.saturating_add(marker_cluster_offset);
+    }
+    prefix_glyphs.extend(marker_glyphs);
+    Some(prefix_glyphs)
 }
 
 fn total_vertical_advance(glyphs: &[GlyphInfo]) -> f64 {
@@ -445,121 +478,44 @@ fn apply_ellipsis_internal(
         return None; // No truncation needed
     }
 
-    let ellipsis_glyphs = shape_text(font_ctx, ELLIPSIS, font_size_px, letter_spacing_px, options)?;
-    let ellipsis_width = total_advance(&ellipsis_glyphs);
-
     let graphemes = grapheme_split(text);
     let total = graphemes.len();
+    let grapheme_refs = graphemes.iter().map(String::as_str).collect::<Vec<_>>();
+    let legal_candidates = (0..total).filter(|keep| {
+        kinsoku_profile
+            .is_none_or(|profile| is_valid_ellipsis_boundary(&grapheme_refs, *keep, profile))
+    });
+    let selected = super::ellipsis_plan::select_longest_fitting(
+        legal_candidates,
+        |keep| {
+            let prefix = graphemes[..keep].concat();
+            let glyphs = shape_horizontal_candidate(
+                font_ctx,
+                &prefix,
+                font_size_px,
+                letter_spacing_px,
+                options,
+            )?;
+            let width = total_advance(&glyphs);
+            Some((format!("{prefix}{ELLIPSIS}"), glyphs, width))
+        },
+        |(_, _, width)| *width <= max_width,
+    );
 
-    if total == 0 {
+    if let Some((_keep, (display_text, glyphs, width))) = selected {
         return Some(build_ellipsis_line(
-            ELLIPSIS.to_string(),
-            ellipsis_glyphs,
-            ellipsis_width,
-            baseline_offset_px,
-            0,
-            0,
-            include_unit_metadata,
-        ));
-    }
-
-    // Binary search: find the largest `keep` in [0, total] where prefix+ELLIPSIS fits.
-    // Monotonicity assumption: fewer kept graphemes → narrower width.
-    let mut lo: usize = 0;
-    let mut hi: usize = total;
-
-    while lo < hi {
-        let mid = lo + (hi - lo).div_ceil(2); // upper mid to converge upward
-        let candidate: String = graphemes[..mid].join("") + ELLIPSIS;
-        let glyphs = shape_text(
-            font_ctx,
-            &candidate,
-            font_size_px,
-            letter_spacing_px,
-            options,
-        )?;
-        let width = total_advance(&glyphs);
-        if width <= max_width {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-
-    // `lo` is the largest keep that fits (or 0 if nothing fits).
-    // Refine around boundary to account for shaping-dependent width variations.
-    let mut best_keep = lo;
-    let mut best_width = 0.0_f64;
-    let mut best_glyphs: Option<Vec<GlyphInfo>> = None;
-
-    let refine_lo = lo.saturating_sub(REFINE_WINDOW);
-    let refine_hi = (lo + REFINE_WINDOW).min(total);
-
-    for keep in refine_lo..=refine_hi {
-        let candidate: String = graphemes[..keep].join("") + ELLIPSIS;
-        let glyphs = shape_text(
-            font_ctx,
-            &candidate,
-            font_size_px,
-            letter_spacing_px,
-            options,
-        )?;
-        let width = total_advance(&glyphs);
-        if width <= max_width && keep >= best_keep {
-            best_keep = keep;
-            best_width = width;
-            best_glyphs = Some(glyphs);
-        }
-    }
-
-    // Back up past tail-prohibited characters so the kept prefix ends at a
-    // boundary where "…" may legally follow (JLREQ: no "（" before "…").
-    if let Some(profile) = kinsoku_profile {
-        if best_glyphs.is_some() {
-            let chars_ref: Vec<&str> = graphemes.iter().map(String::as_str).collect();
-            let mut adjusted_keep = best_keep;
-            while adjusted_keep > 0
-                && !is_valid_ellipsis_boundary(&chars_ref, adjusted_keep, profile)
-            {
-                adjusted_keep -= 1;
-            }
-            if adjusted_keep != best_keep {
-                let candidate: String = graphemes[..adjusted_keep].join("") + ELLIPSIS;
-                let glyphs = shape_text(
-                    font_ctx,
-                    &candidate,
-                    font_size_px,
-                    letter_spacing_px,
-                    options,
-                )?;
-                best_keep = adjusted_keep;
-                best_width = total_advance(&glyphs);
-                best_glyphs = Some(glyphs);
-            }
-        }
-    }
-
-    if let Some(glyphs) = best_glyphs {
-        let truncated_text: String = graphemes[..best_keep].join("") + ELLIPSIS;
-        return Some(build_ellipsis_line(
-            truncated_text,
+            display_text,
             glyphs,
-            best_width,
+            width,
             baseline_offset_px,
-            best_keep,
-            total,
             include_unit_metadata,
         ));
     }
 
-    // Even "…" alone overflows — return it as the best effort
-    Some(build_ellipsis_line(
-        ELLIPSIS.to_string(),
-        ellipsis_glyphs,
-        ellipsis_width,
+    // The fixed marker is display content, not an overflow fallback. If it
+    // cannot satisfy the inline constraint, no display ink is materialized.
+    Some(build_empty_ellipsis_line(
         baseline_offset_px,
-        0,
-        total,
         include_unit_metadata,
     ))
 }
@@ -799,10 +755,10 @@ mod tests {
             .iter()
             .find(|glyph| glyph.text.contains(ELLIPSIS))
             .expect("ellipsis glyph");
-        assert_eq!(
-            ellipsis.source_end,
-            Some(u32::try_from(text.len()).expect("test text length"))
-        );
+        assert_eq!(ellipsis.synthetic_kind.as_deref(), Some("ellipsis"));
+        assert_eq!(ellipsis.source_start, None);
+        assert_eq!(ellipsis.source_end, None);
+        assert_eq!(ellipsis.source_role, None);
     }
 
     #[test]
@@ -846,10 +802,10 @@ mod tests {
             .iter()
             .find(|glyph| is_synthetic_ellipsis_glyph(glyph, synthetic_cluster_start))
             .expect("synthetic ellipsis glyph");
-        assert_eq!(
-            synthetic.source_end,
-            Some(u32::try_from(grapheme_split(text).len()).expect("test grapheme count"))
-        );
+        assert_eq!(synthetic.synthetic_kind.as_deref(), Some("ellipsis"));
+        assert_eq!(synthetic.source_start, None);
+        assert_eq!(synthetic.source_end, None);
+        assert_eq!(synthetic.source_role, None);
     }
 
     #[test]
@@ -931,10 +887,15 @@ mod tests {
         assert_eq!(literal.source_end, Some(2));
         let ellipsis = positioned_glyphs
             .iter()
-            .find(|glyph| glyph.text.contains(ELLIPSIS) && glyph.source_end == Some(10))
+            .find(|glyph| glyph.synthetic_kind.as_deref() == Some("ellipsis"))
             .expect("ellipsis glyph");
-        assert_eq!(ellipsis.source_end, Some(10));
-        assert_eq!(ellipsis.cluster_end, 12);
+        assert_eq!(ellipsis.source_start, None);
+        assert_eq!(ellipsis.source_end, None);
+        assert_eq!(ellipsis.source_role, None);
+        assert_eq!(
+            ellipsis.cluster_end.saturating_sub(ellipsis.cluster_start),
+            u32::try_from(ELLIPSIS.len()).expect("ellipsis byte length")
+        );
     }
 
     #[test]
@@ -1005,7 +966,7 @@ mod tests {
     }
 
     #[test]
-    fn test_very_narrow_returns_ellipsis_only() {
+    fn test_very_narrow_returns_zero_ink() {
         let reg = test_registry();
         let families = vec!["NotoSansJP".to_string()];
         let font_ctx = FontContext {
@@ -1027,11 +988,10 @@ mod tests {
             None,
             &ShapeOptions::default(),
         );
-        let line = result.expect("should return ellipsis-only");
-        assert_eq!(
-            line.text, "\u{2026}",
-            "should be just the ellipsis character"
-        );
+        let line = result.expect("should return an empty display projection");
+        assert_eq!(line.text, "");
+        assert_eq!(line.width, 0.0);
+        assert!(line.glyphs.is_empty());
     }
 
     #[test]

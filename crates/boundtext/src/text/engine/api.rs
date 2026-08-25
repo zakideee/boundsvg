@@ -441,6 +441,14 @@ pub(crate) fn layout_text_inner(
                 std::slice::from_mut(&mut ellipsis_line),
                 &req.font_feature_settings,
             );
+            let display_text = ellipsis_line.text.clone();
+            let warnings = super::super::types::build_notdef_warnings(
+                &super::super::types::collect_notdef_from_glyphs(
+                    &ellipsis_line.glyphs,
+                    &display_text,
+                    primary_alias,
+                ),
+            );
             return Some(TextLayoutResult {
                 bbox: TextBBox {
                     x: 0.0,
@@ -451,10 +459,10 @@ pub(crate) fn layout_text_inner(
                 lines: vec![ellipsis_line],
                 chosen_font_size_px: req.font_size_px,
                 overflow: TextOverflow::overflow("ellipsis applied"),
-                source_text: None,
-                display_text: None,
+                source_text: Some(req.text.to_string()),
+                display_text: Some(display_text),
                 unit_map: None,
-                warnings: Vec::new(),
+                warnings,
                 inline_box_decorations: Vec::new(),
                 text_decorations: Vec::new(),
                 inline_rects: Vec::new(),
@@ -526,6 +534,22 @@ pub(crate) fn layout_text_inner(
                     max_w = l.width;
                 }
             }
+            let display_text = ellipsis_lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<String>();
+            let mut notdef_infos = Vec::new();
+            for line in &ellipsis_lines {
+                notdef_infos.extend(super::super::types::collect_notdef_from_glyphs(
+                    &line.glyphs,
+                    &line.text,
+                    primary_alias,
+                ));
+            }
+            let mut seen_notdef = std::collections::BTreeSet::new();
+            notdef_infos.retain(|info| {
+                seen_notdef.insert((info.font_alias.clone(), info.character.clone()))
+            });
             return Some(TextLayoutResult {
                 bbox: TextBBox {
                     x: 0.0,
@@ -536,10 +560,10 @@ pub(crate) fn layout_text_inner(
                 lines: ellipsis_lines,
                 chosen_font_size_px: req.font_size_px,
                 overflow: TextOverflow::overflow("ellipsis applied"),
-                source_text: None,
-                display_text: None,
+                source_text: Some(req.text.to_string()),
+                display_text: Some(display_text),
                 unit_map: None,
-                warnings: Vec::new(),
+                warnings: super::super::types::build_notdef_warnings(&notdef_infos),
                 inline_box_decorations: Vec::new(),
                 text_decorations: Vec::new(),
                 inline_rects: Vec::new(),
@@ -557,7 +581,9 @@ pub(crate) fn layout_text_inner(
                 lines.len() > max
             };
             if overflows {
-                if let Some(result) = apply_spans_ellipsis(req, font_ctx, max) {
+                if let Some(result) =
+                    apply_spans_ellipsis(req, font_ctx, max, include_unit_metadata)
+                {
                     return Some(result);
                 }
             }
@@ -602,15 +628,13 @@ pub(crate) fn layout_text_inner(
 // Spans ellipsis (relayout-based)
 // ---------------------------------------------------------------------------
 
-/// Apply ellipsis to styled spans by relayout: truncate the run list at
-/// grapheme granularity, append "…" styled as the last kept run, and re-run
-/// the same spans layout, binary-searching the largest kept prefix that fits
-/// within `max_lines`. The truncation boundary is validated against the
-/// kinsoku profile (no "…" directly after a tail-prohibited character).
+/// Apply ellipsis to styled spans by exact relayout. The marker is a separate
+/// synthetic run using the first omitted span's effective style.
 fn apply_spans_ellipsis(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     max_lines: usize,
+    include_unit_metadata: bool,
 ) -> Option<TextLayoutResult> {
     use super::super::grapheme::grapheme_split;
 
@@ -624,58 +648,61 @@ fn apply_spans_ellipsis(
     let fits = |result: &TextLayoutResult| {
         result.lines.len() <= max_lines
             && result.lines.iter().all(|l| l.width <= req.max_width + 0.01)
+            && req
+                .max_height
+                .is_none_or(|max_height| result.bbox.h <= max_height + 0.01)
+            && result.overflow.overflow_type == "none"
     };
-
-    // Binary search the largest keep count whose relayout fits. Keeping
-    // everything is known not to fit (the caller checked overflow).
-    let mut lo = 0usize;
-    let mut hi = total - 1;
-    let mut best: Option<(usize, TextLayoutResult)> = None;
-    while lo <= hi {
-        let mid = lo + (hi - lo) / 2;
-        let candidate = relayout_spans_with_ellipsis(req, font_ctx, spans, &span_graphemes, mid)?;
-        if fits(&candidate) {
-            best = Some((mid, candidate));
-            lo = mid + 1;
-        } else {
-            if mid == 0 {
-                break;
-            }
-            hi = mid - 1;
-        }
-    }
-
-    let (keep, result) = match best {
-        Some(found) => found,
-        // Even "…" alone overflows — return it as the best effort.
-        None => (
-            0,
-            relayout_spans_with_ellipsis(req, font_ctx, spans, &span_graphemes, 0)?,
-        ),
-    };
-
-    // Back up past tail-prohibited characters (same contract as plain).
     let kinsoku_profile = get_kinsoku_profile(Some(language_to_str(req.language)));
-    let mut result = result;
-    if let Some(profile) = kinsoku_profile {
-        let all_graphemes: Vec<&str> = span_graphemes
-            .iter()
-            .flatten()
-            .map(String::as_str)
-            .collect();
-        let mut adjusted = keep;
-        while adjusted > 0
-            && !super::super::kinsoku::is_valid_ellipsis_boundary(&all_graphemes, adjusted, profile)
-        {
-            adjusted -= 1;
-        }
-        if adjusted != keep {
-            result = relayout_spans_with_ellipsis(req, font_ctx, spans, &span_graphemes, adjusted)?;
-        }
+    let all_graphemes: Vec<&str> = span_graphemes
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    let legal_candidates = (0..total).filter(|keep| {
+        kinsoku_profile.is_none_or(|profile| {
+            super::super::kinsoku::is_valid_ellipsis_boundary(&all_graphemes, *keep, profile)
+        })
+    });
+    if let Some((_keep, mut result)) = super::super::ellipsis_plan::select_longest_fitting(
+        legal_candidates,
+        |keep| {
+            relayout_spans_with_ellipsis(
+                req,
+                font_ctx,
+                spans,
+                &span_graphemes,
+                keep,
+                include_unit_metadata,
+            )
+        },
+        fits,
+    ) {
+        result.overflow = TextOverflow::overflow("ellipsis applied");
+        return Some(result);
     }
 
-    result.overflow = TextOverflow::overflow("ellipsis applied");
-    Some(result)
+    let mut empty = relayout_spans_with_ellipsis(
+        req,
+        font_ctx,
+        spans,
+        &span_graphemes,
+        0,
+        include_unit_metadata,
+    )?;
+    for line in &mut empty.lines {
+        line.text.clear();
+        line.glyphs.clear();
+        line.width = 0.0;
+        line.fragments = None;
+        line.positioned_glyphs = include_unit_metadata.then(Vec::new);
+    }
+    empty.bbox.w = 0.0;
+    empty.source_text = Some(spans.iter().map(|span| span.text.as_str()).collect());
+    empty.display_text = Some(String::new());
+    empty.warnings.clear();
+    empty.overflow = TextOverflow::overflow("ellipsis applied");
+    Some(empty)
 }
 
 fn relayout_spans_with_ellipsis(
@@ -684,6 +711,7 @@ fn relayout_spans_with_ellipsis(
     spans: &[super::super::types::TextSpanInput],
     span_graphemes: &[Vec<String>],
     keep: usize,
+    include_unit_metadata: bool,
 ) -> Option<TextLayoutResult> {
     let mut truncated: Vec<super::super::types::TextSpanInput> = Vec::new();
     let mut remaining = keep;
@@ -698,13 +726,19 @@ fn relayout_spans_with_ellipsis(
             ..span.clone()
         });
     }
-    match truncated.last_mut() {
-        Some(last) => last.text.push('\u{2026}'),
-        None => truncated.push(super::super::types::TextSpanInput {
-            text: "\u{2026}".to_string(),
-            ..spans[0].clone()
-        }),
-    }
+    let first_omitted_index = span_graphemes
+        .iter()
+        .scan(0usize, |cursor, graphemes| {
+            let start = *cursor;
+            *cursor += graphemes.len();
+            Some((start, *cursor))
+        })
+        .position(|(start, end)| keep >= start && keep < end)
+        .unwrap_or_else(|| spans.len().saturating_sub(1));
+    truncated.push(super::super::types::TextSpanInput {
+        text: "\u{2026}".to_string(),
+        ..spans[first_omitted_index].clone()
+    });
 
     let concatenated: String = truncated.iter().map(|s| s.text.as_str()).collect();
     let probe = TextLayoutRequest {
@@ -714,7 +748,28 @@ fn relayout_spans_with_ellipsis(
         max_lines: None,
         ..req.clone()
     };
-    layout_text_inner(&probe, font_ctx, false)
+    let mut result = layout_text_inner(&probe, font_ctx, include_unit_metadata)?;
+    let marker_cluster_start =
+        u32::try_from(concatenated.len().saturating_sub("\u{2026}".len())).unwrap_or(u32::MAX);
+    for glyph in result
+        .lines
+        .iter_mut()
+        .filter_map(|line| line.positioned_glyphs.as_mut())
+        .flatten()
+    {
+        if glyph.cluster_end <= marker_cluster_start {
+            continue;
+        }
+        glyph.source_start = None;
+        glyph.source_end = None;
+        glyph.source_role = None;
+        glyph.decoration_source_start = None;
+        glyph.decoration_source_end = None;
+        glyph.synthetic_kind = Some("ellipsis".to_string());
+    }
+    result.source_text = Some(spans.iter().map(|span| span.text.as_str()).collect());
+    result.display_text = Some(concatenated);
+    Some(result)
 }
 
 fn fit_shrink_for_request(

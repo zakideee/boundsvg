@@ -769,6 +769,10 @@ fn text_unit_map_supports_single_and_multiline_ellipsis() {
                 ),
                 "ellipsis must retain the omitted source tail for {content:?} at maxLines={max_lines}",
             );
+            assert!(
+                unit_map.units.iter().any(|unit| unit.members.is_empty()),
+                "omitted source units must remain addressable without borrowing the synthetic marker for {content:?} at maxLines={max_lines}",
+            );
         }
     }
 }
