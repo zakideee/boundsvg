@@ -63,7 +63,7 @@ fn fit_shrink_internal(
     min_font_size_px: Option<f64>,
     shrink_epsilon_px: Option<f64>,
     shrink_max_iterations: Option<usize>,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Option<crate::text::types::TextLayoutResult> {
     let min_size = min_font_size_px
         .unwrap_or(DEFAULT_MIN_FONT_SIZE)
@@ -103,7 +103,7 @@ fn fit_shrink_internal(
                 min_size,
                 epsilon,
                 max_iter,
-                include_unit_metadata,
+                should_include_unit_metadata,
             ));
         }
     }
@@ -166,7 +166,7 @@ fn fit_shrink_internal(
         if req.ellipsis
             && req.max_lines.is_some()
             && let Some(result) =
-                layout_ellipsis_at_size(req, font_ctx, min_size, include_unit_metadata)
+                layout_ellipsis_at_size(req, font_ctx, min_size, should_include_unit_metadata)
         {
             return Some(result);
         }
@@ -236,7 +236,7 @@ fn layout_ellipsis_at_size(
     req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     font_size_px: f64,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Option<crate::text::types::TextLayoutResult> {
     let final_request = TextLayoutRequest {
         font_size_px,
@@ -250,15 +250,15 @@ fn layout_ellipsis_at_size(
         grow_max_iterations: None,
         ..req.clone()
     };
-    let mut result = if include_unit_metadata {
+    let mut layout_result = if should_include_unit_metadata {
         super::super::engine::layout_text_with_unit_metadata(&final_request, font_ctx).ok()?
     } else {
         super::super::engine::layout_text(&final_request, font_ctx).ok()?
     };
-    if result.lines.is_empty() {
-        result.overflow = TextOverflow::cannot_fit();
+    if layout_result.lines.is_empty() {
+        layout_result.overflow = TextOverflow::cannot_fit();
     }
-    Some(result)
+    Some(layout_result)
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +274,7 @@ fn fit_shrink_shaped(
     min_size: f64,
     epsilon: f64,
     max_iter: usize,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> crate::text::types::TextLayoutResult {
     // Step 1: does original size already fit?
     let lh = resolve_line_height(req, font_ctx, req.font_size_px);
@@ -311,7 +311,7 @@ fn fit_shrink_shaped(
         if req.ellipsis
             && req.max_lines.is_some()
             && let Some(result) =
-                layout_ellipsis_at_size(req, font_ctx, min_size, include_unit_metadata)
+                layout_ellipsis_at_size(req, font_ctx, min_size, should_include_unit_metadata)
         {
             return result;
         }

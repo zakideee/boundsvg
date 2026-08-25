@@ -1,7 +1,12 @@
+//! Exact longest-prefix selection for authoritative ellipsis projection.
+//!
+//! Candidate order is explicit because shaped advance is not monotone in the
+//! retained source length.
+
 /// Maximum exact prefix layouts that one authoritative ellipsis projection
 /// may require. The limit is checked before candidate materialization so a
 /// rejected operation cannot leak partial output or diagnostics.
-pub(crate) const MAX_ELLIPSIS_CANDIDATES: usize = 1_024;
+pub(crate) const ELLIPSIS_CANDIDATES_MAX: usize = 1_024;
 
 /// Evaluate legal prefix candidates in descending logical order and return the
 /// first exact fit. No monotonicity is assumed: a shorter failure cannot prune
@@ -9,11 +14,11 @@ pub(crate) const MAX_ELLIPSIS_CANDIDATES: usize = 1_024;
 pub(crate) fn select_longest_fitting<T>(
     candidates: impl DoubleEndedIterator<Item = usize>,
     mut probe: impl FnMut(usize) -> Option<T>,
-    mut fits: impl FnMut(&T) -> bool,
+    mut is_candidate_fit: impl FnMut(&T) -> bool,
 ) -> Option<(usize, T)> {
     for candidate_prefix in candidates.rev() {
         let candidate = probe(candidate_prefix)?;
-        if fits(&candidate) {
+        if is_candidate_fit(&candidate) {
             return Some((candidate_prefix, candidate));
         }
     }
@@ -23,16 +28,20 @@ pub(crate) fn select_longest_fitting<T>(
 /// Fallible counterpart used when candidate layout depends on an external
 /// geometry provider. Provider/resource failures abort the complete search;
 /// they are never interpreted as a rejected prefix.
+///
+/// # Errors
+///
+/// Returns the first error produced while materializing a candidate.
 pub(crate) fn try_select_longest_fitting<T, E>(
     candidates: impl DoubleEndedIterator<Item = usize>,
     mut probe: impl FnMut(usize) -> Result<Option<T>, E>,
-    mut fits: impl FnMut(&T) -> bool,
+    mut is_candidate_fit: impl FnMut(&T) -> bool,
 ) -> Result<Option<(usize, T)>, E> {
     for candidate_prefix in candidates.rev() {
         let Some(candidate) = probe(candidate_prefix)? else {
             return Ok(None);
         };
-        if fits(&candidate) {
+        if is_candidate_fit(&candidate) {
             return Ok(Some((candidate_prefix, candidate)));
         }
     }

@@ -11,11 +11,17 @@ use super::{
 // Fit binary search helpers
 // ---------------------------------------------------------------------------
 
+/// Default lower bound for shrink-to-fit.
 pub(crate) const DEFAULT_MIN_FONT_SIZE: f64 = 8.0;
+/// Default font-size search step, in px.
 pub(crate) const DEFAULT_FIT_EPSILON: f64 = 0.25;
+/// Default iteration cap for certified monotone binary search.
 pub(crate) const DEFAULT_FIT_MAX_ITERATIONS: usize = 12;
+/// Default probe cap for uncertified exact-grid search.
 pub(crate) const DEFAULT_FIT_MAX_PROBES: usize = 4_096;
+/// Absolute probe cap accepted from public input.
 pub(crate) const HARD_FIT_MAX_PROBES: usize = 65_536;
+/// Default upper-bound multiplier for grow-to-fit.
 pub(crate) const DEFAULT_GROW_MULTIPLIER: f64 = 4.0;
 
 #[expect(
@@ -41,6 +47,12 @@ fn exact_grid_limit(requested: Option<usize>) -> usize {
         .min(HARD_FIT_MAX_PROBES)
 }
 
+/// Validate the exact-grid probe count before evaluating any candidate.
+///
+/// # Errors
+///
+/// Returns [`BoundtextError::InvalidFitStep`] for an invalid step or
+/// [`BoundtextError::FitProbeLimit`] when the requested grid exceeds its cap.
 pub(crate) fn ensure_grid_budget(
     lower: f64,
     upper: f64,
@@ -55,6 +67,7 @@ pub(crate) fn ensure_grid_budget(
     Ok(required)
 }
 
+/// Return one descending exact-grid candidate, including the lower endpoint.
 pub(crate) fn descending_grid_candidate(
     lower: f64,
     upper: f64,
@@ -70,14 +83,19 @@ pub(crate) fn descending_grid_candidate(
 }
 
 fn evaluate_fit_probe(
-    fits_at: &mut impl FnMut(f64) -> Result<bool, BoundtextError>,
+    is_candidate_fit: &mut impl FnMut(f64) -> Result<bool, BoundtextError>,
     candidate: f64,
 ) -> Result<bool, BoundtextError> {
     #[cfg(any(test, feature = "phase-trace"))]
     crate::phase_trace::record_fit_probe();
-    fits_at(candidate)
+    is_candidate_fit(candidate)
 }
 
+/// Select a shrink candidate under the declared monotonicity contract.
+///
+/// # Errors
+///
+/// Returns a typed budget or candidate-evaluation failure.
 pub(crate) fn fit_shrink_with(
     font_size_px: f64,
     min_size: f64,
@@ -85,7 +103,7 @@ pub(crate) fn fit_shrink_with(
     max_iter: usize,
     search_kind: FitSearchKind,
     max_probes: Option<usize>,
-    mut fits_at: impl FnMut(f64) -> Result<bool, BoundtextError>,
+    mut is_candidate_fit: impl FnMut(f64) -> Result<bool, BoundtextError>,
 ) -> Result<(f64, Option<FlowOverflowReason>), BoundtextError> {
     let min_size = min_size.max(f64::EPSILON).min(font_size_px);
     if search_kind == FitSearchKind::Uncertified {
@@ -93,16 +111,16 @@ pub(crate) fn fit_shrink_with(
         for index in 0..probe_count {
             let candidate =
                 descending_grid_candidate(min_size, font_size_px, epsilon, index, probe_count);
-            if evaluate_fit_probe(&mut fits_at, candidate)? {
+            if evaluate_fit_probe(&mut is_candidate_fit, candidate)? {
                 return Ok((candidate, None));
             }
         }
         return Ok((min_size, Some(FlowOverflowReason::CannotFit)));
     }
-    if evaluate_fit_probe(&mut fits_at, font_size_px)? {
+    if evaluate_fit_probe(&mut is_candidate_fit, font_size_px)? {
         return Ok((font_size_px, None));
     }
-    if !evaluate_fit_probe(&mut fits_at, min_size)? {
+    if !evaluate_fit_probe(&mut is_candidate_fit, min_size)? {
         return Ok((min_size, Some(FlowOverflowReason::CannotFit)));
     }
 
@@ -112,7 +130,7 @@ pub(crate) fn fit_shrink_with(
             break;
         }
         let mid = f64::midpoint(lo, hi);
-        if evaluate_fit_probe(&mut fits_at, mid)? {
+        if evaluate_fit_probe(&mut is_candidate_fit, mid)? {
             lo = mid;
         } else {
             hi = mid;
@@ -121,6 +139,11 @@ pub(crate) fn fit_shrink_with(
     Ok((lo, None))
 }
 
+/// Select a grow candidate under the declared monotonicity contract.
+///
+/// # Errors
+///
+/// Returns a typed budget or candidate-evaluation failure.
 pub(crate) fn fit_grow_with(
     font_size_px: f64,
     max_size: f64,
@@ -128,12 +151,12 @@ pub(crate) fn fit_grow_with(
     max_iter: usize,
     search_kind: FitSearchKind,
     max_probes: Option<usize>,
-    mut fits_at: impl FnMut(f64) -> Result<bool, BoundtextError>,
+    mut is_candidate_fit: impl FnMut(f64) -> Result<bool, BoundtextError>,
 ) -> Result<(f64, Option<FlowOverflowReason>), BoundtextError> {
     let max_size = max_size.max(font_size_px);
     if search_kind == FitSearchKind::Uncertified {
         let probe_count = ensure_grid_budget(font_size_px, max_size, epsilon, max_probes)?;
-        if !evaluate_fit_probe(&mut fits_at, font_size_px)? {
+        if !evaluate_fit_probe(&mut is_candidate_fit, font_size_px)? {
             return Ok((font_size_px, Some(FlowOverflowReason::CannotFit)));
         }
         for index in 0..probe_count {
@@ -142,16 +165,16 @@ pub(crate) fn fit_grow_with(
             if index + 1 == probe_count {
                 return Ok((font_size_px, None));
             }
-            if evaluate_fit_probe(&mut fits_at, candidate)? {
+            if evaluate_fit_probe(&mut is_candidate_fit, candidate)? {
                 return Ok((candidate, None));
             }
         }
         return Ok((font_size_px, Some(FlowOverflowReason::CannotFit)));
     }
-    if !evaluate_fit_probe(&mut fits_at, font_size_px)? {
+    if !evaluate_fit_probe(&mut is_candidate_fit, font_size_px)? {
         return Ok((font_size_px, Some(FlowOverflowReason::CannotFit)));
     }
-    if evaluate_fit_probe(&mut fits_at, max_size)? {
+    if evaluate_fit_probe(&mut is_candidate_fit, max_size)? {
         return Ok((max_size, None));
     }
 
@@ -161,7 +184,7 @@ pub(crate) fn fit_grow_with(
             break;
         }
         let mid = f64::midpoint(lo, hi);
-        if evaluate_fit_probe(&mut fits_at, mid)? {
+        if evaluate_fit_probe(&mut is_candidate_fit, mid)? {
             lo = mid;
         } else {
             hi = mid;
@@ -176,7 +199,7 @@ fn flow_fits_at_size(
     font_size_px: f64,
     line_height_px: f64,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_width_fixed: Option<f64>,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -187,7 +210,7 @@ fn flow_fits_at_size(
         font_size_px,
         line_height_px,
         fb,
-        regions_source,
+        region_provider,
         min_region_width,
         max_lines,
         wrap,
@@ -197,6 +220,10 @@ fn flow_fits_at_size(
 
 /// Select the largest font size in `[min_size, font_size_px]` that fits all
 /// text, using the provider's declared search contract.
+///
+/// # Errors
+///
+/// Returns a typed budget, geometry-provider, or candidate-layout failure.
 pub(super) fn flow_fit_shrink(
     pp: &paragraph::ShapedParagraph,
     font_size_px: f64,
@@ -206,7 +233,7 @@ pub(super) fn flow_fit_shrink(
     max_probes: Option<usize>,
     mut resolve_line_height_px: impl FnMut(f64) -> f64,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_width_fixed: Option<f64>,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -216,7 +243,7 @@ pub(super) fn flow_fit_shrink(
         min_size,
         epsilon,
         max_iter,
-        regions_source.fit_search_kind(),
+        region_provider.fit_search_kind(),
         max_probes,
         |candidate| {
             flow_fits_at_size(
@@ -224,7 +251,7 @@ pub(super) fn flow_fit_shrink(
                 candidate,
                 resolve_line_height_px(candidate),
                 fb,
-                regions_source,
+                region_provider,
                 min_region_width_fixed,
                 max_lines,
                 wrap,
@@ -235,6 +262,10 @@ pub(super) fn flow_fit_shrink(
 
 /// Select the largest font size in `[font_size_px, max_size]` that fits all
 /// text, using the provider's declared search contract.
+///
+/// # Errors
+///
+/// Returns a typed budget, geometry-provider, or candidate-layout failure.
 pub(super) fn flow_fit_grow(
     pp: &paragraph::ShapedParagraph,
     font_size_px: f64,
@@ -244,7 +275,7 @@ pub(super) fn flow_fit_grow(
     max_probes: Option<usize>,
     mut resolve_line_height_px: impl FnMut(f64) -> f64,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_width_fixed: Option<f64>,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -254,7 +285,7 @@ pub(super) fn flow_fit_grow(
         max_size,
         epsilon,
         max_iter,
-        regions_source.fit_search_kind(),
+        region_provider.fit_search_kind(),
         max_probes,
         |candidate| {
             flow_fits_at_size(
@@ -262,7 +293,7 @@ pub(super) fn flow_fit_grow(
                 candidate,
                 resolve_line_height_px(candidate),
                 fb,
-                regions_source,
+                region_provider,
                 min_region_width_fixed,
                 max_lines,
                 wrap,
@@ -280,7 +311,7 @@ fn flow_fits_at_size_vertical(
     font_size_px: f64,
     column_width: f64,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_height_fixed: Option<f64>,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -291,7 +322,7 @@ fn flow_fits_at_size_vertical(
         font_size_px,
         column_width,
         fb,
-        regions_source,
+        region_provider,
         min_region_height,
         max_lines,
         wrap,
@@ -299,6 +330,11 @@ fn flow_fits_at_size_vertical(
     .map(|measure| measure.fits())
 }
 
+/// Select the largest vertical font size in the shrink interval that fits.
+///
+/// # Errors
+///
+/// Returns a typed budget, geometry-provider, or candidate-layout failure.
 pub(super) fn flow_fit_shrink_vertical(
     pp: &paragraph::ShapedParagraph,
     font_size_px: f64,
@@ -308,7 +344,7 @@ pub(super) fn flow_fit_shrink_vertical(
     max_probes: Option<usize>,
     mut resolve_column_width_px: impl FnMut(f64) -> f64,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_height_fixed: Option<f64>,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -318,7 +354,7 @@ pub(super) fn flow_fit_shrink_vertical(
         min_size,
         epsilon,
         max_iter,
-        regions_source.fit_search_kind(),
+        region_provider.fit_search_kind(),
         max_probes,
         |candidate| {
             flow_fits_at_size_vertical(
@@ -326,7 +362,7 @@ pub(super) fn flow_fit_shrink_vertical(
                 candidate,
                 resolve_column_width_px(candidate),
                 fb,
-                regions_source,
+                region_provider,
                 min_region_height_fixed,
                 max_lines,
                 wrap,
@@ -335,6 +371,11 @@ pub(super) fn flow_fit_shrink_vertical(
     )
 }
 
+/// Select the largest vertical font size in the grow interval that fits.
+///
+/// # Errors
+///
+/// Returns a typed budget, geometry-provider, or candidate-layout failure.
 pub(super) fn flow_fit_grow_vertical(
     pp: &paragraph::ShapedParagraph,
     font_size_px: f64,
@@ -344,7 +385,7 @@ pub(super) fn flow_fit_grow_vertical(
     max_probes: Option<usize>,
     mut resolve_column_width_px: impl FnMut(f64) -> f64,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_height_fixed: Option<f64>,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -354,7 +395,7 @@ pub(super) fn flow_fit_grow_vertical(
         max_size,
         epsilon,
         max_iter,
-        regions_source.fit_search_kind(),
+        region_provider.fit_search_kind(),
         max_probes,
         |candidate| {
             flow_fits_at_size_vertical(
@@ -362,7 +403,7 @@ pub(super) fn flow_fit_grow_vertical(
                 candidate,
                 resolve_column_width_px(candidate),
                 fb,
-                regions_source,
+                region_provider,
                 min_region_height_fixed,
                 max_lines,
                 wrap,

@@ -1,6 +1,6 @@
 use super::adapters::TextFlowLayoutError;
 use super::conversions::{
-    ExclusionRegionSource, convert_flow_result, convert_flow_span, convert_shrinkwrap_status,
+    ExclusionRegionProvider, convert_flow_result, convert_flow_span, convert_shrinkwrap_status,
 };
 use super::geometry::FlowBox;
 use super::types::{
@@ -452,7 +452,7 @@ pub(crate) fn shrinkwrap_text(
                     height: horizontal_cross_extent,
                 }
             };
-            let regions = ExclusionRegionSource {
+            let regions = ExclusionRegionProvider {
                 flow_box: &flow_box,
                 exclusions: &[],
             };
@@ -872,7 +872,7 @@ pub(crate) fn shrinkwrap_flow(
                 height: input.flow_box.height,
             }
         };
-        let regions = ExclusionRegionSource {
+        let regions = ExclusionRegionProvider {
             flow_box: &fb,
             exclusions: &input.exclusions,
         };
@@ -1036,7 +1036,7 @@ pub(crate) fn shrinkwrap_flow(
             height: input.flow_box.height,
         }
     };
-    let final_regions = ExclusionRegionSource {
+    let final_regions = ExclusionRegionProvider {
         flow_box: &final_fb,
         exclusions: &input.exclusions,
     };

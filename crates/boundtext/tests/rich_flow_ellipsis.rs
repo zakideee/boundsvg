@@ -126,9 +126,9 @@ fn rich_flow_ellipsis_is_a_source_less_synthetic_glyph() {
         shape_options: ShapeOptions::default(),
     };
 
-    let result =
+    let flow_layout =
         layout_flow_with_regions(&request, &font_context, &regions).expect("rich flow layout");
-    let marker = result
+    let marker = flow_layout
         .lines
         .iter()
         .flat_map(|line| &line.fragments)
@@ -214,9 +214,9 @@ fn rich_flow_ellipsis_commits_only_retained_authored_node_warnings() {
         shape_options: ShapeOptions::default(),
     };
 
-    let result =
+    let flow_layout =
         layout_flow_with_regions(&request, &font_context, &regions).expect("rich flow warnings");
-    let display = result
+    let display = flow_layout
         .lines
         .iter()
         .flat_map(|line| &line.fragments)
@@ -225,12 +225,12 @@ fn rich_flow_ellipsis_commits_only_retained_authored_node_warnings() {
 
     assert!(display.starts_with('A') && display.ends_with('\u{2026}'));
     assert!(
-        result
+        flow_layout
             .warnings
             .iter()
             .any(|warning| warning.code == "LONG_RUBY_ANNOTATION"),
         "retained atomic warning must survive flow projection: {:?}",
-        result.warnings
+        flow_layout.warnings
     );
 }
 
@@ -381,14 +381,14 @@ fn vertical_rich_flow_materializes_nested_owners_but_not_the_omitted_suffix() {
         shape_options: ShapeOptions::default(),
     };
 
-    let result =
+    let flow_layout =
         layout_flow_with_regions(&request, &font_context, &regions).expect("vertical rich flow");
-    let keys = result
+    let keys = flow_layout
         .inline_box_decorations
         .iter()
         .filter_map(|decoration| decoration.span_key.as_deref())
         .collect::<Vec<_>>();
-    let marker = result
+    let marker = flow_layout
         .lines
         .iter()
         .flat_map(|line| &line.fragments)

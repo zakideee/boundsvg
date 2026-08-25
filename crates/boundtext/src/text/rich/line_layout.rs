@@ -378,6 +378,7 @@ pub(super) fn resolve_fragment_border_radius(
     }
 }
 
+/// Resolve vertical fragment corners while preserving authored edge ownership.
 pub(super) fn resolve_fragment_border_radius_vertical(
     radius: Option<[f64; 4]>,
     is_first: bool,
@@ -415,7 +416,7 @@ pub(super) fn effective_line_width(
         width += super::token_decoration_start_advance(token) + token.advance;
         for membership in &token.decoration_memberships {
             if index + 1 == end
-                || !super::token_has_decoration_span(&tokens[index + 1], membership.span_id)
+                || !super::has_decoration_span(&tokens[index + 1], membership.span_id)
             {
                 width += membership.end_advance;
             }

@@ -195,10 +195,11 @@ fn resolved_styles_have_equal_layout(left: &ResolvedStyle, right: &ResolvedStyle
         && left.text_orientation == right.text_orientation
 }
 
-/// Equality for one `HarfBuzz` shaping run. Paint fields are deliberately not
-/// included; the glyph cluster that starts at a paint boundary keeps the
-/// paint of its source-start grapheme after the shared run is distributed.
-pub(super) fn resolved_styles_have_equal_shaping(
+/// Determine whether two resolved styles share one `HarfBuzz` shaping run.
+/// Paint fields are deliberately excluded; the glyph cluster that starts at a
+/// paint boundary keeps the paint of its source-start grapheme after the
+/// shared run is distributed.
+pub(super) fn are_resolved_styles_shaping_equivalent(
     left: &ResolvedStyle,
     right: &ResolvedStyle,
 ) -> bool {

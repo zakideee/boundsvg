@@ -3,7 +3,7 @@ use super::super::inline_runs;
 use super::super::rich;
 use super::super::types::{
     FitMode, Language, LineFragment, PositionedGlyph, RichTextResourceViolation, TextLayoutRequest,
-    TextLayoutResult, TextOrientation, TextRunStyle, TextSpanInput, text_fit_is_certified_monotone,
+    TextLayoutResult, TextOrientation, TextRunStyle, TextSpanInput, is_text_fit_certified_monotone,
     validate_rich_text_resources,
 };
 use super::super::vertical;
@@ -155,7 +155,7 @@ pub fn layout_text_with_unit_metadata(
 fn layout_text_with_options(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Result<TextLayoutResult, crate::TextLayoutError> {
     validate_layout_request_resources(req)?;
     let coalesced_spans = req
@@ -172,37 +172,37 @@ fn layout_text_with_options(
         ..req.clone()
     });
     let layout_request = coalesced_request.as_ref().unwrap_or(req);
-    let mut result =
-        layout_text_inner_authoritative(layout_request, font_ctx, include_unit_metadata)?;
-    let has_positioned_glyphs = result.lines.iter().any(|line| {
+    let mut layout_result =
+        layout_text_inner_authoritative(layout_request, font_ctx, should_include_unit_metadata)?;
+    let has_positioned_glyphs = layout_result.lines.iter().any(|line| {
         line.positioned_glyphs
             .as_ref()
             .is_some_and(|glyphs| !glyphs.is_empty())
     });
     if has_positioned_glyphs {
-        super::super::decoration::resolve_text_decorations(req, font_ctx, &mut result);
-    } else if coalesced_spans.is_some() && !result.lines.is_empty() {
+        super::super::decoration::resolve_text_decorations(req, font_ctx, &mut layout_result);
+    } else if coalesced_spans.is_some() && !layout_result.lines.is_empty() {
         let mut decoration_layout =
             layout_text_inner_authoritative(layout_request, font_ctx, true)?;
         super::super::decoration::resolve_text_decorations(req, font_ctx, &mut decoration_layout);
-        result.text_decorations = decoration_layout.text_decorations;
+        layout_result.text_decorations = decoration_layout.text_decorations;
     }
 
     if layout_request.spans.is_some_and(|spans| !spans.is_empty()) {
-        materialize_span_fragments(layout_request, &mut result);
+        materialize_span_fragments(layout_request, &mut layout_result);
     }
 
     // PreWrap: convert spaces to NBSP to prevent SVG whitespace collapsing
     if req.white_space == super::super::types::WhiteSpaceMode::PreWrap {
-        result.convert_spaces_to_nbsp();
+        layout_result.convert_spaces_to_nbsp();
     }
 
-    record_text_materialization(&result);
+    record_text_materialization(&layout_result);
 
-    Ok(result)
+    Ok(layout_result)
 }
 
-fn materialize_span_fragments(req: &TextLayoutRequest<'_>, result: &mut TextLayoutResult) {
+fn materialize_span_fragments(req: &TextLayoutRequest<'_>, layout_result: &mut TextLayoutResult) {
     let Some(spans) = req.spans.filter(|spans| !spans.is_empty()) else {
         return;
     };
@@ -219,7 +219,7 @@ fn materialize_span_fragments(req: &TextLayoutRequest<'_>, result: &mut TextLayo
         })
         .collect::<Vec<_>>();
 
-    for line in &mut result.lines {
+    for line in &mut layout_result.lines {
         let Some(positioned_glyphs) = line.positioned_glyphs.as_deref() else {
             continue;
         };
@@ -239,7 +239,8 @@ fn materialize_span_fragments(req: &TextLayoutRequest<'_>, result: &mut TextLayo
                     .find(|(start, end, _)| *start <= source_start && source_start < *end)
                     .map(|(_, _, span)| *span)
             });
-            let style = text_run_style_for_glyph(req, result.chosen_font_size_px, glyph, span);
+            let style =
+                text_run_style_for_glyph(req, layout_result.chosen_font_size_px, glyph, span);
             if fragments
                 .last()
                 .is_none_or(|fragment| fragment.style != style)
@@ -377,10 +378,10 @@ fn validate_layout_request_resources(
     })
 }
 
-fn record_text_materialization(result: &TextLayoutResult) {
+fn record_text_materialization(layout_result: &TextLayoutResult) {
     #[cfg(any(test, feature = "phase-trace"))]
     {
-        let glyph_count = result
+        let glyph_count = layout_result
             .lines
             .iter()
             .map(|line| {
@@ -390,14 +391,14 @@ fn record_text_materialization(result: &TextLayoutResult) {
             })
             .sum();
         crate::phase_trace::record_materialization(
-            result.lines.len(),
+            layout_result.lines.len(),
             glyph_count,
-            result.inline_box_decorations.len() + result.text_decorations.len(),
-            result.inline_rects.len(),
+            layout_result.inline_box_decorations.len() + layout_result.text_decorations.len(),
+            layout_result.inline_rects.len(),
         );
     }
     #[cfg(not(any(test, feature = "phase-trace")))]
-    let _ = result;
+    let _ = layout_result;
 }
 
 fn span_matches_plain_request(
@@ -431,7 +432,7 @@ fn span_matches_plain_request(
 fn layout_text_inner_authoritative(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Result<TextLayoutResult, crate::TextLayoutError> {
     ensure_text_fit_budget(req)?;
     // Measure and fit the complete authored document first. Only when that
@@ -443,9 +444,9 @@ fn layout_text_inner_authoritative(
             ellipsis: false,
             ..req.clone()
         };
-        let complete = layout_text_inner(&complete_request, font_ctx, include_unit_metadata)
+        let complete = layout_text_inner(&complete_request, font_ctx, should_include_unit_metadata)
             .ok_or(crate::TextLayoutError::PreparationFailed)?;
-        if complete_text_plan_fits(req, &complete) {
+        if is_complete_text_plan_fit(req, &complete) {
             return Ok(complete);
         }
 
@@ -476,12 +477,12 @@ fn layout_text_inner_authoritative(
         .ok_or(crate::TextLayoutError::PreparationFailed);
     }
 
-    layout_text_inner(req, font_ctx, include_unit_metadata)
+    layout_text_inner(req, font_ctx, should_include_unit_metadata)
         .ok_or(crate::TextLayoutError::PreparationFailed)
 }
 
 fn ensure_text_fit_budget(req: &TextLayoutRequest<'_>) -> Result<(), crate::TextLayoutError> {
-    if req.fit == FitMode::None || text_fit_is_certified_monotone(req) {
+    if req.fit == FitMode::None || is_text_fit_certified_monotone(req) {
         return Ok(());
     }
     let (lower, upper, step) = match req.fit {
@@ -519,7 +520,7 @@ fn ensure_ellipsis_candidate_budget(
     font_ctx: &FontContext<'_>,
 ) -> Result<(), crate::TextLayoutError> {
     let required = rich::ellipsis_candidate_upper_bound(req, font_ctx);
-    let limit = super::super::ellipsis_plan::MAX_ELLIPSIS_CANDIDATES;
+    let limit = super::super::ellipsis_plan::ELLIPSIS_CANDIDATES_MAX;
     if required > limit {
         return Err(crate::TextLayoutError::EllipsisCandidateLimit { required, limit });
     }
@@ -529,9 +530,9 @@ fn ensure_ellipsis_candidate_budget(
 pub(crate) fn layout_text_inner(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Option<TextLayoutResult> {
-    layout_text_inner_with_span_promotion(req, font_ctx, include_unit_metadata, true)
+    layout_text_inner_with_span_promotion(req, font_ctx, should_include_unit_metadata, true)
 }
 
 /// Text-on-path has already canonicalized shaping runs and paint ranges. It
@@ -540,18 +541,18 @@ pub(crate) fn layout_text_inner(
 pub(crate) fn layout_text_inner_with_prepared_spans(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Option<TextLayoutResult> {
-    layout_text_inner_with_span_promotion(req, font_ctx, include_unit_metadata, false)
+    layout_text_inner_with_span_promotion(req, font_ctx, should_include_unit_metadata, false)
 }
 
 fn layout_text_inner_with_span_promotion(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-    include_unit_metadata: bool,
-    promote_spans: bool,
+    should_include_unit_metadata: bool,
+    should_promote_spans: bool,
 ) -> Option<TextLayoutResult> {
-    if promote_spans
+    if should_promote_spans
         && !req.has_rich_text()
         && let Some(spans) = req.spans.filter(|spans| !spans.is_empty())
     {
@@ -626,7 +627,7 @@ fn layout_text_inner_with_span_promotion(
 
     // Handle fit=shrink via binary search
     if req.fit == FitMode::Shrink {
-        return fit_shrink_for_request(req, font_ctx, include_unit_metadata);
+        return fit_shrink_for_request(req, font_ctx, should_include_unit_metadata);
     }
 
     // Handle fit=grow via upward binary search
@@ -819,13 +820,16 @@ fn layout_text_inner_with_span_promotion(
     ))
 }
 
-fn complete_text_plan_fits(req: &TextLayoutRequest<'_>, result: &TextLayoutResult) -> bool {
-    result.overflow.overflow_type == "none"
-        && result.lines.len() <= req.max_lines.unwrap_or(usize::MAX)
-        && result.bbox.w <= req.max_width + 0.001
+fn is_complete_text_plan_fit(
+    req: &TextLayoutRequest<'_>,
+    layout_result: &TextLayoutResult,
+) -> bool {
+    layout_result.overflow.overflow_type == "none"
+        && layout_result.lines.len() <= req.max_lines.unwrap_or(usize::MAX)
+        && layout_result.bbox.w <= req.max_width + 0.001
         && req
             .max_height
-            .is_none_or(|max_height| result.bbox.h <= max_height + 0.001)
+            .is_none_or(|max_height| layout_result.bbox.h <= max_height + 0.001)
 }
 
 fn promote_request_to_rich_nodes(
@@ -871,9 +875,9 @@ fn promote_spans_to_rich_nodes(
 fn fit_shrink_for_request(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Option<TextLayoutResult> {
-    if include_unit_metadata {
+    if should_include_unit_metadata {
         fit::fit_shrink_with_unit_metadata(
             req,
             font_ctx,

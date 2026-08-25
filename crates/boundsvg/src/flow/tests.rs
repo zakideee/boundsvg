@@ -189,9 +189,9 @@ fn resolved_vertical_flow_materializes_nested_decoration_owners() {
         span_key: Some("outer".to_string()),
     }]);
 
-    let result = layout_resolved_text_flow(&input, 120.0, 72.0, &registry, None)
+    let layout_result = layout_resolved_text_flow(&input, 120.0, 72.0, &registry, None)
         .expect("resolved nested vertical flow");
-    let keys = result
+    let keys = layout_result
         .inline_box_decorations
         .iter()
         .filter_map(|decoration| decoration.span_key.as_deref())
@@ -199,7 +199,7 @@ fn resolved_vertical_flow_materializes_nested_decoration_owners() {
 
     assert!(keys.contains(&"outer"));
     assert!(keys.contains(&"inner"));
-    assert!(result.lines.iter().any(|line| {
+    assert!(layout_result.lines.iter().any(|line| {
         line.positioned_glyphs
             .as_deref()
             .unwrap_or_default()

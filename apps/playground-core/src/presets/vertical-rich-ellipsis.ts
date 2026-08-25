@@ -2,6 +2,7 @@ import { Canvas, Flex, Inline, InlineBox, Rt, Ruby, Text } from "@boundsvg/core"
 import { FONT_ALIAS as FA } from "../config";
 import type { Preset } from "../types";
 
+/** Demonstrate vertical rich-text ellipsis across authored inline boundaries. */
 export const verticalRichEllipsisPreset: Preset = {
   title: "Vertical Rich Ellipsis",
   description:

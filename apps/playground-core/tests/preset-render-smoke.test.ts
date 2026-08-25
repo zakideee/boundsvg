@@ -12,7 +12,8 @@ import {
 } from "../src/config";
 import { presets } from "../src/presets/index";
 
-const REPRESENTATIVE_PRESETS = [
+/** Presets that exercise distinct text-layout entry paths in the render smoke test. */
+const representativePresets = [
   "fit",
   "text-on-path-basics",
   "vertical",
@@ -97,7 +98,7 @@ describe("playground-core public preset smoke", () => {
     });
   });
 
-  for (const presetKey of REPRESENTATIVE_PRESETS) {
+  for (const presetKey of representativePresets) {
     it(`renders the ${presetKey} representative to SVG and PNG`, () => {
       const vnode = presets[presetKey].build(engine);
       const { svg, ir } = engine.renderToSvgAndIR(vnode, {

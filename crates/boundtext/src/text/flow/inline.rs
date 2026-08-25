@@ -81,8 +81,8 @@ fn flow_span_to_text_span(
     }
 }
 
-/// Build [`TextSpanInput`] and [`SpanRubyInfo`] vectors from
-/// [`FlowTextSpan`] slices.  This centralises the default resolution
+/// Build [`TextSpanInput`] and [`inline_runs::SpanRubyInfo`] vectors from
+/// [`FlowTextSpan`] slices. This centralises the default resolution
 /// (ruby position = "over", align = "space-around", font-size = 50 % base)
 /// shared by `layout_flow_inline`, `layout_flow_vertical_inline`, and
 /// the shrinkwrap-flow inline path.
@@ -305,7 +305,7 @@ pub(super) fn default_alphabetic_baseline_offset_px(
 pub(super) fn measure_inline_flow_at_font_size(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     chosen_font_size_px: f64,
 ) -> Result<FlowMeasure, crate::BoundtextError> {
     let (_, text_spans, _, shaped_runs) =
@@ -328,7 +328,7 @@ pub(super) fn measure_inline_flow_at_font_size(
             req.line_height,
             req.line_height_px,
             &req.flow_bounds,
-            regions_source,
+            region_provider,
             min_region_extent,
             req.max_lines,
             req.wrap,
@@ -349,7 +349,7 @@ pub(super) fn measure_inline_flow_at_font_size(
             req.line_height,
             req.line_height_px,
             &req.flow_bounds,
-            regions_source,
+            region_provider,
             min_region_extent,
             req.max_lines,
             req.wrap,

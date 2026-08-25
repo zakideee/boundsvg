@@ -85,12 +85,15 @@ pub(super) fn resolve_flow_baseline_offset_px(
 }
 
 // ---------------------------------------------------------------------------
-// RegionProvider trait
+// Region providers
 // ---------------------------------------------------------------------------
 
+/// State whether a provider/content pair permits monotone fit refinement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FitSearchKind {
+    /// Permit binary refinement after boundary checks.
     CertifiedMonotone,
+    /// Require descending exact-grid evaluation.
     Uncertified,
 }
 
@@ -100,16 +103,22 @@ pub enum FitSearchKind {
 /// edge. Returned inline positions use the layout coordinate system.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RegionQuery {
+    /// Logical writing mode used to interpret both axes.
     pub writing_mode: WritingMode,
+    /// Inclusive logical block-start offset from the flow frame.
     pub cross_start_px: f64,
+    /// Exclusive logical block-end offset from the flow frame.
     pub cross_end_px: f64,
+    /// Smallest usable interval on the logical inline axis.
     pub min_inline_size_px: f64,
 }
 
 /// One usable inline-axis interval returned by a [`RegionProvider`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlowRegion {
+    /// Logical inline start in the layout coordinate system.
     pub inline_start_px: f64,
+    /// Usable logical inline extent.
     pub inline_size_px: f64,
 }
 
@@ -313,6 +322,12 @@ pub struct FlowBounds {
     pub height: f64,
 }
 
+/// Validate, normalize, and deterministically order one provider response.
+///
+/// # Errors
+///
+/// Returns a typed error for invalid queries, provider failures, or invalid
+/// intervals.
 pub(crate) fn query_regions(
     region_provider: &impl RegionProvider,
     writing_mode: WritingMode,
@@ -692,7 +707,7 @@ fn run_flow_loop(
     font_size_px: f64,
     line_height_px: f64,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -727,7 +742,7 @@ fn run_flow_loop(
         }
 
         let regions = query_regions(
-            regions_source,
+            region_provider,
             WritingMode::HorizontalTb,
             fb,
             line_top,
@@ -889,8 +904,8 @@ fn paragraph_line_is_contained(line: &paragraph::LayoutLine, regions: &[(f64, f6
 /// Whether every non-intentional fragment in a final flow layout fits its
 /// reported available inline size.
 #[must_use]
-pub fn flow_layout_is_contained(result: &FlowLayoutResult) -> bool {
-    result.lines.iter().all(|line| {
+pub fn flow_layout_is_contained(flow_layout: &FlowLayoutResult) -> bool {
+    flow_layout.lines.iter().all(|line| {
         let mut region_totals = std::collections::HashMap::<usize, (f64, f64, f64)>::new();
         for fragment in &line.fragments {
             let (capacity, total_advance, intentional_overflow_px) = region_totals
@@ -916,11 +931,11 @@ pub(crate) fn layout_overflow_reason_name(reason: paragraph::LayoutOverflowReaso
 }
 
 /// Convert a `BandLoopResult` into `(exhausted, overflow_reason)`.
-fn resolve_outcome(result: &BandLoopResult) -> (bool, Option<FlowOverflowReason>) {
-    if result.text_exhausted {
+fn resolve_outcome(band_result: &BandLoopResult) -> (bool, Option<FlowOverflowReason>) {
+    if band_result.text_exhausted {
         (true, None)
     } else {
-        match result.outcome {
+        match band_result.outcome {
             BandLoopOutcome::TextExhausted => (true, None),
             BandLoopOutcome::MaxLinesReached => {
                 (false, Some(FlowOverflowReason::MaxLinesTruncated))
@@ -946,7 +961,7 @@ pub fn measure_flow(
     font_size_px: f64,
     line_height_px: f64,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -957,7 +972,7 @@ pub fn measure_flow(
         font_size_px,
         line_height_px,
         fb,
-        regions_source,
+        region_provider,
         min_region_width,
         max_lines,
         wrap,
@@ -985,7 +1000,7 @@ pub fn measure_flow_vertical(
     font_size_px: f64,
     column_width: f64,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_height: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -1008,7 +1023,7 @@ pub fn measure_flow_vertical(
         }
 
         let regions = query_regions(
-            regions_source,
+            region_provider,
             WritingMode::VerticalRl,
             fb,
             column_left,
@@ -1070,7 +1085,7 @@ pub fn measure_flow_inline_with_styles(
     line_height: Option<f64>,
     explicit_line_height_px: Option<f64>,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -1105,7 +1120,7 @@ pub fn measure_flow_inline_with_styles(
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
             let regions = query_regions(
-                regions_source,
+                region_provider,
                 WritingMode::HorizontalTb,
                 fb,
                 line_top,
@@ -1151,7 +1166,7 @@ pub fn measure_flow_inline_with_styles(
             measured_contained = paragraph_line_is_contained(&vline, &regions);
             let next_cross_size = probe_cross_size.max(actual_cross_size);
             let expanded = query_regions(
-                regions_source,
+                region_provider,
                 WritingMode::HorizontalTb,
                 fb,
                 line_top,
@@ -1211,7 +1226,7 @@ pub fn measure_flow_vertical_inline_with_styles(
     line_height: Option<f64>,
     explicit_line_height_px: Option<f64>,
     fb: &FlowBounds,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
     min_region_height: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -1244,7 +1259,7 @@ pub fn measure_flow_vertical_inline_with_styles(
             cursor = saved_cursor.clone();
             let probe_left = column_right - probe_cross_size;
             let regions = query_regions(
-                regions_source,
+                region_provider,
                 WritingMode::VerticalRl,
                 fb,
                 probe_left,
@@ -1290,7 +1305,7 @@ pub fn measure_flow_vertical_inline_with_styles(
             measured_contained = paragraph_line_is_contained(&vline, &regions);
             let next_cross_size = probe_cross_size.max(actual_cross_size);
             let expanded = query_regions(
-                regions_source,
+                region_provider,
                 WritingMode::VerticalRl,
                 fb,
                 column_right - next_cross_size,
@@ -1347,10 +1362,10 @@ pub fn measure_flow_vertical_inline_with_styles(
 /// be added to measured height. Uses [`rich::ruby_gap_px`] as the single source
 /// of truth for the frame gap.
 #[must_use]
-pub fn compute_ruby_overflow(result: &FlowLayoutResult) -> (f64, f64) {
+pub fn compute_ruby_overflow(flow_layout: &FlowLayoutResult) -> (f64, f64) {
     let mut top_overflow: f64 = 0.0;
     let mut bottom_overflow: f64 = 0.0;
-    for line in &result.lines {
+    for line in &flow_layout.lines {
         for fragment in &line.fragments {
             if let Some(ref ruby) = fragment.ruby {
                 let ruby_height = ruby.style.font_size_px + ruby.gap_px;
@@ -1642,7 +1657,7 @@ fn layout_flow_simple_vertical(
 
     let line_height_px =
         resolve_flow_line_height_px(font_ctx, req.font_size_px, req.line_height, None);
-    let result = vertical::break_vertical_columns_with_variable_heights(
+    let break_result = vertical::break_vertical_columns_with_variable_heights(
         &glyphs,
         req.text,
         req.line_widths,
@@ -1655,10 +1670,10 @@ fn layout_flow_simple_vertical(
         true,
     );
 
-    let lines = result
+    let lines = break_result
         .column_ranges
         .iter()
-        .zip(result.columns.iter())
+        .zip(break_result.columns.iter())
         .enumerate()
         .map(|(index, ((char_start, char_end), column))| FlowSimpleLine {
             text: column.text.clone(),
@@ -1701,19 +1716,19 @@ fn layout_flow_simple_vertical(
 pub fn layout_flow_with_regions(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
 ) -> Result<FlowLayoutResult, BoundtextError> {
     validate_flow_request_resources(req)?;
-    let budgeted_regions = BudgetedRegionProvider::new(regions_source);
-    let result = layout_flow_with_regions_budgeted(req, font_ctx, &budgeted_regions)?;
-    record_flow_materialization(&result);
-    Ok(result)
+    let budgeted_regions = BudgetedRegionProvider::new(region_provider);
+    let flow_layout = layout_flow_with_regions_budgeted(req, font_ctx, &budgeted_regions)?;
+    record_flow_materialization(&flow_layout);
+    Ok(flow_layout)
 }
 
 fn layout_flow_with_regions_budgeted(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
 ) -> Result<FlowLayoutResult, BoundtextError> {
     let has_spans = req.spans.is_some_and(|spans| !spans.is_empty());
     let has_rich_text = req.rich_text.is_some_and(|nodes| !nodes.is_empty());
@@ -1725,7 +1740,7 @@ fn layout_flow_with_regions_budgeted(
     }
 
     if has_rich_text {
-        return rich::layout_rich_flow_with_regions(req, font_ctx, regions_source);
+        return rich::layout_rich_flow_with_regions(req, font_ctx, region_provider);
     }
 
     // Ellipsis and fit operate on the canonical rich document for every
@@ -1760,22 +1775,22 @@ fn layout_flow_with_regions_budgeted(
         canonical_req.text = "";
         canonical_req.spans = None;
         canonical_req.rich_text = Some(&canonical_nodes);
-        return rich::layout_rich_flow_with_regions(&canonical_req, font_ctx, regions_source);
+        return rich::layout_rich_flow_with_regions(&canonical_req, font_ctx, region_provider);
     }
 
     // Dispatch to vertical + inline runs path
     if req.writing_mode == WritingMode::VerticalRl && has_spans {
-        return layout_flow_vertical_inline(req, font_ctx, regions_source);
+        return layout_flow_vertical_inline(req, font_ctx, region_provider);
     }
 
     // Dispatch to inline runs path when spans are provided
     if has_spans {
-        return layout_flow_inline(req, font_ctx, regions_source);
+        return layout_flow_inline(req, font_ctx, region_provider);
     }
 
     // Dispatch to vertical path when writing mode is vertical-rl
     if req.writing_mode == WritingMode::VerticalRl {
-        return layout_flow_vertical(req, font_ctx, regions_source);
+        return layout_flow_vertical(req, font_ctx, region_provider);
     }
 
     // --- Horizontal, single-font path ---
@@ -1832,7 +1847,7 @@ fn layout_flow_with_regions_budgeted(
                     )
                 },
                 fb,
-                regions_source,
+                region_provider,
                 min_region_width_fixed,
                 req.max_lines,
                 req.wrap,
@@ -1860,7 +1875,7 @@ fn layout_flow_with_regions_budgeted(
                     )
                 },
                 fb,
-                regions_source,
+                region_provider,
                 min_region_width_fixed,
                 req.max_lines,
                 req.wrap,
@@ -1888,7 +1903,7 @@ fn layout_flow_with_regions_budgeted(
         settled_font_size,
         line_height_px,
         fb,
-        regions_source,
+        region_provider,
         min_region_width,
         req.max_lines,
         req.wrap,
@@ -1960,39 +1975,40 @@ fn layout_flow_with_regions_budgeted(
 pub fn layout_resolved_flow_with_regions(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
 ) -> Result<TextLayoutResult, BoundtextError> {
     validate_flow_request_resources(req)?;
-    let budgeted_regions = BudgetedRegionProvider::new(regions_source);
-    let result = layout_resolved_flow_with_regions_budgeted(req, font_ctx, &budgeted_regions)?;
-    record_resolved_flow_materialization(&result);
-    Ok(result)
+    let budgeted_regions = BudgetedRegionProvider::new(region_provider);
+    let layout_result =
+        layout_resolved_flow_with_regions_budgeted(req, font_ctx, &budgeted_regions)?;
+    record_resolved_flow_materialization(&layout_result);
+    Ok(layout_result)
 }
 
-fn record_flow_materialization(result: &FlowLayoutResult) {
+fn record_flow_materialization(flow_layout: &FlowLayoutResult) {
     #[cfg(any(test, feature = "phase-trace"))]
     {
-        let glyph_count = result
+        let glyph_count = flow_layout
             .lines
             .iter()
             .flat_map(|line| &line.fragments)
             .map(|fragment| fragment.positioned_glyphs.len())
             .sum();
-        let inline_rect_count = result
+        let inline_rect_count = flow_layout
             .lines
             .iter()
             .flat_map(|line| &line.fragments)
             .map(|fragment| fragment.inline_rects.len())
             .sum();
         crate::phase_trace::record_materialization(
-            result.lines.len(),
+            flow_layout.lines.len(),
             glyph_count,
-            result.inline_box_decorations.len(),
+            flow_layout.inline_box_decorations.len(),
             inline_rect_count,
         );
     }
     #[cfg(not(any(test, feature = "phase-trace")))]
-    let _ = result;
+    let _ = flow_layout;
 }
 
 fn validate_flow_request_resources(req: &FlowLayoutRequest<'_>) -> Result<(), BoundtextError> {
@@ -2009,10 +2025,10 @@ fn validate_flow_request_resources(req: &FlowLayoutRequest<'_>) -> Result<(), Bo
     })
 }
 
-fn record_resolved_flow_materialization(result: &TextLayoutResult) {
+fn record_resolved_flow_materialization(layout_result: &TextLayoutResult) {
     #[cfg(any(test, feature = "phase-trace"))]
     {
-        let glyph_count = result
+        let glyph_count = layout_result
             .lines
             .iter()
             .map(|line| {
@@ -2022,20 +2038,20 @@ fn record_resolved_flow_materialization(result: &TextLayoutResult) {
             })
             .sum();
         crate::phase_trace::record_materialization(
-            result.lines.len(),
+            layout_result.lines.len(),
             glyph_count,
-            result.inline_box_decorations.len() + result.text_decorations.len(),
-            result.inline_rects.len(),
+            layout_result.inline_box_decorations.len() + layout_result.text_decorations.len(),
+            layout_result.inline_rects.len(),
         );
     }
     #[cfg(not(any(test, feature = "phase-trace")))]
-    let _ = result;
+    let _ = layout_result;
 }
 
 fn layout_resolved_flow_with_regions_budgeted(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
 ) -> Result<TextLayoutResult, BoundtextError> {
     let mut resolved_req = req.clone();
     let resolved_spans;
@@ -2063,7 +2079,8 @@ fn layout_resolved_flow_with_regions_budgeted(
         resolved_req.rich_text = Some(&resolved_rich_text);
     }
 
-    let flow_result = rich::layout_rich_flow_with_regions(&resolved_req, font_ctx, regions_source)?;
+    let flow_result =
+        rich::layout_rich_flow_with_regions(&resolved_req, font_ctx, region_provider)?;
     let overflow = match flow_result.overflow_reason {
         None => TextOverflow::none(),
         Some(FlowOverflowReason::CannotFit) => TextOverflow::cannot_fit(),
@@ -2166,7 +2183,7 @@ fn layout_resolved_flow_with_regions_budgeted(
         });
     }
 
-    let mut result = TextLayoutResult {
+    let mut layout_result = TextLayoutResult {
         lines,
         bbox: TextBBox {
             x: 0.0,
@@ -2185,9 +2202,9 @@ fn layout_resolved_flow_with_regions_budgeted(
         inline_rects,
     };
     if req.white_space == WhiteSpaceMode::PreWrap {
-        result.convert_spaces_to_nbsp();
+        layout_result.convert_spaces_to_nbsp();
     }
-    Ok(result)
+    Ok(layout_result)
 }
 
 // ---------------------------------------------------------------------------
@@ -2197,7 +2214,7 @@ fn layout_resolved_flow_with_regions_budgeted(
 fn layout_flow_vertical(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
 ) -> Result<FlowLayoutResult, BoundtextError> {
     if font_ctx
         .registry
@@ -2250,7 +2267,7 @@ fn layout_flow_vertical(
                     )
                 },
                 fb,
-                regions_source,
+                region_provider,
                 min_region_height_fixed,
                 req.max_lines,
                 req.wrap,
@@ -2278,7 +2295,7 @@ fn layout_flow_vertical(
                     )
                 },
                 fb,
-                regions_source,
+                region_provider,
                 min_region_height_fixed,
                 req.max_lines,
                 req.wrap,
@@ -2319,7 +2336,7 @@ fn layout_flow_vertical(
         }
 
         let regions = query_regions(
-            regions_source,
+            region_provider,
             WritingMode::VerticalRl,
             fb,
             column_left,
@@ -2408,7 +2425,7 @@ fn layout_flow_vertical(
 fn layout_flow_inline(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
 ) -> Result<FlowLayoutResult, BoundtextError> {
     let (settled_font_size, fit_overflow) = match req.fit {
         Some("shrink") => {
@@ -2420,10 +2437,10 @@ fn layout_flow_inline(
                 min_size,
                 epsilon,
                 max_iter,
-                regions_source.fit_search_kind(),
+                region_provider.fit_search_kind(),
                 req.fit_max_probes,
                 |candidate| {
-                    measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate)
+                    measure_inline_flow_at_font_size(req, font_ctx, region_provider, candidate)
                         .map(|measure| measure.fits())
                 },
             )
@@ -2439,10 +2456,10 @@ fn layout_flow_inline(
                 max_size,
                 epsilon,
                 max_iter,
-                regions_source.fit_search_kind(),
+                region_provider.fit_search_kind(),
                 req.fit_max_probes,
                 |candidate| {
-                    measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate)
+                    measure_inline_flow_at_font_size(req, font_ctx, region_provider, candidate)
                         .map(|measure| measure.fits())
                 },
             )
@@ -2499,7 +2516,7 @@ fn layout_flow_inline(
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
             let regions = query_regions(
-                regions_source,
+                region_provider,
                 WritingMode::HorizontalTb,
                 fb,
                 line_top,
@@ -2547,7 +2564,7 @@ fn layout_flow_inline(
             resolved_line = Some((line_fragments, line_cross_size));
             let next_cross_size = probe_cross_size.max(line_cross_size);
             let expanded = query_regions(
-                regions_source,
+                region_provider,
                 WritingMode::HorizontalTb,
                 fb,
                 line_top,
@@ -2614,7 +2631,7 @@ fn layout_flow_inline(
 fn layout_flow_vertical_inline(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl RegionProvider,
+    region_provider: &impl RegionProvider,
 ) -> Result<FlowLayoutResult, BoundtextError> {
     let (settled_font_size, fit_overflow) = match req.fit {
         Some("shrink") => {
@@ -2626,10 +2643,10 @@ fn layout_flow_vertical_inline(
                 min_size,
                 epsilon,
                 max_iter,
-                regions_source.fit_search_kind(),
+                region_provider.fit_search_kind(),
                 req.fit_max_probes,
                 |candidate| {
-                    measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate)
+                    measure_inline_flow_at_font_size(req, font_ctx, region_provider, candidate)
                         .map(|measure| measure.fits())
                 },
             )
@@ -2645,10 +2662,10 @@ fn layout_flow_vertical_inline(
                 max_size,
                 epsilon,
                 max_iter,
-                regions_source.fit_search_kind(),
+                region_provider.fit_search_kind(),
                 req.fit_max_probes,
                 |candidate| {
-                    measure_inline_flow_at_font_size(req, font_ctx, regions_source, candidate)
+                    measure_inline_flow_at_font_size(req, font_ctx, region_provider, candidate)
                         .map(|measure| measure.fits())
                 },
             )
@@ -2701,7 +2718,7 @@ fn layout_flow_vertical_inline(
             cursor = saved_cursor.clone();
             let probe_left = column_right - probe_cross_size;
             let regions = query_regions(
-                regions_source,
+                region_provider,
                 WritingMode::VerticalRl,
                 fb,
                 probe_left,
@@ -2759,7 +2776,7 @@ fn layout_flow_vertical_inline(
             resolved_column = Some((line_fragments, line_cross_size));
             let next_cross_size = probe_cross_size.max(line_cross_size);
             let expanded = query_regions(
-                regions_source,
+                region_provider,
                 WritingMode::VerticalRl,
                 fb,
                 column_right - next_cross_size,

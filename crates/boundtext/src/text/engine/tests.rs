@@ -751,20 +751,21 @@ mod span_parity {
         rich_request.max_lines = Some(2);
         rich_request.ellipsis = true;
 
-        let result = crate::text::engine::layout_text_with_unit_metadata(&rich_request, &font_ctx)
-            .expect("vertical rich layout");
+        let layout_result =
+            crate::text::engine::layout_text_with_unit_metadata(&rich_request, &font_ctx)
+                .expect("vertical rich layout");
 
-        assert!(result.lines.len() <= 2, "must fit in maxLines");
-        assert_eq!(result.source_text.as_deref(), Some(source));
+        assert!(layout_result.lines.len() <= 2, "must fit in maxLines");
+        assert_eq!(layout_result.source_text.as_deref(), Some(source));
         assert!(
-            result
+            layout_result
                 .display_text
                 .as_deref()
                 .is_some_and(|text| text.ends_with('\u{2026}')),
             "display projection must end with ellipsis: {:?}",
-            result.display_text
+            layout_result.display_text
         );
-        let marker = result
+        let marker = layout_result
             .lines
             .iter()
             .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -1454,10 +1455,10 @@ mod fit_projection_work {
         };
 
         reset_work();
-        let result = layout_text(&request, &font_context).expect("fitted ellipsis layout");
+        let layout_result = layout_text(&request, &font_context).expect("fitted ellipsis layout");
         let counters = snapshot_work();
 
-        assert_eq!(result.chosen_font_size_px, 12.0);
+        assert_eq!(layout_result.chosen_font_size_px, 12.0);
         assert_eq!(counters.fit_probes, 3);
         assert!(counters.ellipsis_candidates > 0);
     }

@@ -9,15 +9,16 @@ use crate::text::shrinkwrap;
 use crate::text::types::TextWarning;
 
 // ---------------------------------------------------------------------------
-// ExclusionRegionSource — bridges flow_geometry to RegionProvider
+// Exclusion region provider
 // ---------------------------------------------------------------------------
 
-pub(super) struct ExclusionRegionSource<'a> {
+/// Adapt boundsvg exclusion geometry to boundtext's logical-region contract.
+pub(super) struct ExclusionRegionProvider<'a> {
     pub flow_box: &'a geometry::FlowBox,
     pub exclusions: &'a [geometry::FlowExclusionShape],
 }
 
-impl bt_flow::RegionProvider for ExclusionRegionSource<'_> {
+impl bt_flow::RegionProvider for ExclusionRegionProvider<'_> {
     fn regions(
         &self,
         query: bt_flow::RegionQuery,

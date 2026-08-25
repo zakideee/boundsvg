@@ -253,7 +253,7 @@ pub fn layout_vertical_text(
         columns
     };
 
-    let mut result = build_vertical_result_with_constraints(
+    let mut layout_result = build_vertical_result_with_constraints(
         truncated_columns,
         total_column_count,
         line_height_px,
@@ -264,8 +264,8 @@ pub fn layout_vertical_text(
         selected_warnings,
     );
     if let Some(display_text) = projected_display_text {
-        result.source_text = Some(text.to_string());
-        result.display_text = Some(display_text);
+        layout_result.source_text = Some(text.to_string());
+        layout_result.display_text = Some(display_text);
     }
-    Some(result)
+    Some(layout_result)
 }

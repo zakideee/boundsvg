@@ -46,6 +46,7 @@ pub(super) fn resolve_line_height(
     resolve_line_metrics(req, font_ctx, font_size_px).line_height_px
 }
 
+/// Return the proportional scale from the authored size to a fit candidate.
 pub(super) fn fit_scale(req: &TextLayoutRequest<'_>, font_size_px: f64) -> f64 {
     if req.font_size_px > 0.0 {
         font_size_px / req.font_size_px
@@ -54,6 +55,7 @@ pub(super) fn fit_scale(req: &TextLayoutRequest<'_>, font_size_px: f64) -> f64 {
     }
 }
 
+/// Scale authored tracking with the selected fit candidate.
 pub(crate) fn scaled_letter_spacing(req: &TextLayoutRequest<'_>, font_size_px: f64) -> f64 {
     req.letter_spacing_px * fit_scale(req, font_size_px)
 }

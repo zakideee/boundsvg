@@ -30,9 +30,9 @@ fn build_ellipsis_line(
     glyphs: Vec<GlyphInfo>,
     width: f64,
     baseline_y: f64,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Line {
-    let positioned_glyphs = if include_unit_metadata {
+    let positioned_glyphs = if should_include_unit_metadata {
         let mut positioned_glyphs =
             super::engine::build_positioned_glyphs_for_text(&glyphs, &text, baseline_y);
         let ellipsis_cluster_start = synthetic_ellipsis_cluster_start(&text);
@@ -60,14 +60,14 @@ fn build_ellipsis_line(
     }
 }
 
-fn build_empty_ellipsis_line(baseline_y: f64, include_unit_metadata: bool) -> Line {
+fn build_empty_ellipsis_line(baseline_y: f64, should_include_unit_metadata: bool) -> Line {
     Line {
         text: String::new(),
         glyphs: Vec::new(),
         width: 0.0,
         baseline_y,
         fragments: None,
-        positioned_glyphs: include_unit_metadata.then(Vec::new),
+        positioned_glyphs: should_include_unit_metadata.then(Vec::new),
     }
 }
 
@@ -470,7 +470,7 @@ fn apply_ellipsis_internal(
     baseline_offset_px: f64,
     kinsoku_profile: Option<&KinsokuProfile>,
     options: &ShapeOptions,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Option<Line> {
     let full_glyphs = shape_text(font_ctx, text, font_size_px, letter_spacing_px, options)?;
     let full_width = total_advance(&full_glyphs);
@@ -511,7 +511,7 @@ fn apply_ellipsis_internal(
             glyphs,
             width,
             baseline_offset_px,
-            include_unit_metadata,
+            should_include_unit_metadata,
         ));
     }
 
@@ -519,7 +519,7 @@ fn apply_ellipsis_internal(
     // cannot satisfy the inline constraint, no display ink is materialized.
     Some(build_empty_ellipsis_line(
         baseline_offset_px,
-        include_unit_metadata,
+        should_include_unit_metadata,
     ))
 }
 
@@ -595,7 +595,7 @@ fn apply_multiline_ellipsis_internal(
     baseline_offset_px: f64,
     kinsoku_profile: Option<&KinsokuProfile>,
     options: &ShapeOptions,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Option<Vec<Line>> {
     if max_lines == 0 || lines.len() <= max_lines {
         return None; // No truncation needed
@@ -611,7 +611,7 @@ fn apply_multiline_ellipsis_internal(
         .join("");
 
     let baseline_y = baseline_offset_px + (max_lines - 1) as f64 * line_height_px;
-    let source_segments = if include_unit_metadata {
+    let source_segments = if should_include_unit_metadata {
         build_ellipsis_source_segments(&lines[max_lines - 1..])
     } else {
         None
@@ -627,12 +627,12 @@ fn apply_multiline_ellipsis_internal(
         baseline_y,
         kinsoku_profile,
         options,
-        include_unit_metadata,
+        should_include_unit_metadata,
     );
 
     let mut result = kept;
     if let Some(mut el) = ellipsis_line {
-        if include_unit_metadata {
+        if should_include_unit_metadata {
             if let Some(source_segments) = &source_segments {
                 remap_ellipsis_line_sources(&mut el, source_segments);
             } else {

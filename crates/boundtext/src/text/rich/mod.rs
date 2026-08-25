@@ -20,7 +20,7 @@ use super::types::{
     FitMode, InlineRectInput, IntrinsicInlineSizes, Language, PositionedGlyph,
     RichTextDecorationRunInput, TextBBox, TextDecorationGlyphGeometry, TextDecorationInput,
     TextLayoutRequest, TextLayoutResult, TextOrientation, TextOverflow, TextWarning,
-    WhiteSpaceMode, WrapMode, text_fit_is_certified_monotone, validate_rich_text_resources,
+    WhiteSpaceMode, WrapMode, is_text_fit_certified_monotone, validate_rich_text_resources,
 };
 #[cfg(test)]
 use super::types::{RichTextNodeInput, RichTextStyleInput};
@@ -301,7 +301,7 @@ fn token_decoration_start_advance(token: &LayoutToken) -> f64 {
         .sum()
 }
 
-fn token_has_decoration_span(token: &LayoutToken, span_id: u32) -> bool {
+fn has_decoration_span(token: &LayoutToken, span_id: u32) -> bool {
     token
         .decoration_memberships
         .iter()
@@ -811,17 +811,17 @@ pub fn measure_intrinsic_inline_size(
 fn fit_rich_text(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-    shrink: bool,
+    should_shrink: bool,
 ) -> Option<TextLayoutResult> {
-    if !text_fit_is_certified_monotone(req) {
-        return fit_rich_text_exact_grid(req, font_ctx, shrink);
+    if !is_text_fit_certified_monotone(req) {
+        return fit_rich_text_exact_grid(req, font_ctx, should_shrink);
     }
-    let epsilon = if shrink {
+    let epsilon = if should_shrink {
         req.shrink_epsilon_px.unwrap_or(0.25)
     } else {
         req.grow_epsilon_px.unwrap_or(0.25)
     };
-    let iterations = if shrink {
+    let iterations = if should_shrink {
         req.shrink_max_iterations.unwrap_or(12)
     } else {
         req.grow_max_iterations.unwrap_or(12)
@@ -829,10 +829,10 @@ fn fit_rich_text(
 
     let initial_size = req.font_size_px;
     let mut initial = fit_rich_probe(req, font_ctx, initial_size)?;
-    let initial_fits = rich_text_fits(req, &initial);
+    let is_initial_fit = is_rich_text_fit(req, &initial);
 
-    if shrink {
-        if initial_fits {
+    if should_shrink {
+        if is_initial_fit {
             return Some(initial);
         }
         let min_size = req
@@ -841,7 +841,7 @@ fn fit_rich_text(
             .max(f64::EPSILON)
             .min(initial_size);
         let mut at_min = fit_rich_probe(req, font_ctx, min_size)?;
-        if !rich_text_fits(req, &at_min) {
+        if !is_rich_text_fit(req, &at_min) {
             if req.ellipsis
                 && req.max_lines.is_some()
                 && let Some(mut ellipsized) = apply_rich_ellipsis(req, font_ctx, min_size)
@@ -865,7 +865,7 @@ fn fit_rich_text(
             }
             let mid = f64::midpoint(lo, hi);
             let candidate = fit_rich_probe(req, font_ctx, mid)?;
-            if rich_text_fits(req, &candidate) {
+            if is_rich_text_fit(req, &candidate) {
                 lo = mid;
             } else {
                 hi = mid;
@@ -874,7 +874,7 @@ fn fit_rich_text(
         return fit_rich_probe(req, font_ctx, lo);
     }
 
-    if !initial_fits {
+    if !is_initial_fit {
         // Grow eligibility is decided from the complete document. Ellipsis
         // is only a final display projection at the unchanged authored size;
         // it must never make an overflowing initial size eligible to grow.
@@ -895,7 +895,7 @@ fn fit_rich_text(
         .unwrap_or(initial_size * 4.0)
         .max(initial_size);
     let at_max = fit_rich_probe(req, font_ctx, max_size)?;
-    if rich_text_fits(req, &at_max) {
+    if is_rich_text_fit(req, &at_max) {
         return Some(at_max);
     }
 
@@ -907,7 +907,7 @@ fn fit_rich_text(
         }
         let mid = f64::midpoint(lo, hi);
         let candidate = fit_rich_probe(req, font_ctx, mid)?;
-        if rich_text_fits(req, &candidate) {
+        if is_rich_text_fit(req, &candidate) {
             lo = mid;
         } else {
             hi = mid;
@@ -919,18 +919,18 @@ fn fit_rich_text(
 fn fit_rich_text_exact_grid(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-    shrink: bool,
+    should_shrink: bool,
 ) -> Option<TextLayoutResult> {
-    let fit_at = |candidate| {
+    let is_fit_at_size = |candidate| {
         layout_rich_text_at_font_size(req, font_ctx, candidate, false)
-            .map(|result| rich_text_fits(req, &result))
+            .map(|layout_result| is_rich_text_fit(req, &layout_result))
             .ok_or_else(|| {
                 crate::BoundtextError::FlowLayout(
                     "Failed to prepare exact-grid text fit candidate".to_string(),
                 )
             })
     };
-    let (chosen_size, fit_overflow) = if shrink {
+    let (chosen_size, fit_overflow) = if should_shrink {
         text_flow::fit_shrink_with(
             req.font_size_px,
             req.min_font_size_px.unwrap_or(8.0),
@@ -938,7 +938,7 @@ fn fit_rich_text_exact_grid(
             req.shrink_max_iterations.unwrap_or(12),
             text_flow::FitSearchKind::Uncertified,
             req.fit_max_probes,
-            fit_at,
+            is_fit_at_size,
         )
     } else {
         text_flow::fit_grow_with(
@@ -948,30 +948,31 @@ fn fit_rich_text_exact_grid(
             req.grow_max_iterations.unwrap_or(12),
             text_flow::FitSearchKind::Uncertified,
             req.fit_max_probes,
-            fit_at,
+            is_fit_at_size,
         )
     }
     .ok()?;
 
-    let mut result = layout_rich_text_at_font_size(req, font_ctx, chosen_size, true)?;
-    if fit_overflow.is_none() || result.overflow.overflow_type == "kinsoku_unresolved" {
-        return Some(result);
+    let mut layout_result = layout_rich_text_at_font_size(req, font_ctx, chosen_size, true)?;
+    if fit_overflow.is_none() || layout_result.overflow.overflow_type == "kinsoku_unresolved" {
+        return Some(layout_result);
     }
-    let ellipsis_applied = req.ellipsis
+    let is_ellipsis_applied = req.ellipsis
         && req.max_lines.is_some()
-        && result.overflow.reason.as_deref() == Some("ellipsis applied");
-    if shrink {
-        if ellipsis_applied {
-            if result.lines.is_empty() {
-                result.overflow = TextOverflow::cannot_fit();
+        && layout_result.overflow.reason.as_deref() == Some("ellipsis applied");
+    if should_shrink {
+        if is_ellipsis_applied {
+            if layout_result.lines.is_empty() {
+                layout_result.overflow = TextOverflow::cannot_fit();
             }
         } else {
-            result.overflow = TextOverflow::cannot_fit();
+            layout_result.overflow = TextOverflow::cannot_fit();
         }
-    } else if !ellipsis_applied {
-        result.overflow = TextOverflow::overflow("initial font size does not fit; cannot grow");
+    } else if !is_ellipsis_applied {
+        layout_result.overflow =
+            TextOverflow::overflow("initial font size does not fit; cannot grow");
     }
-    Some(result)
+    Some(layout_result)
 }
 
 fn fit_rich_probe(
@@ -984,28 +985,28 @@ fn fit_rich_probe(
     layout_rich_text_at_font_size(req, font_ctx, font_size_px, false)
 }
 
-fn rich_text_fits(req: &TextLayoutRequest, result: &TextLayoutResult) -> bool {
-    if result.bbox.w > req.max_width {
+fn is_rich_text_fit(req: &TextLayoutRequest, layout_result: &TextLayoutResult) -> bool {
+    if layout_result.bbox.w > req.max_width {
         return false;
     }
     if let Some(max_h) = req.max_height {
-        if result.bbox.h > max_h {
+        if layout_result.bbox.h > max_h {
             return false;
         }
     }
     if let Some(max_lines) = req.max_lines {
-        if result.lines.len() > max_lines {
+        if layout_result.lines.len() > max_lines {
             return false;
         }
     }
-    result.overflow.overflow_type == "none"
+    layout_result.overflow.overflow_type == "none"
 }
 
 fn layout_rich_text_at_font_size(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     chosen_font_size_px: f64,
-    apply_ellipsis_projection: bool,
+    should_apply_ellipsis_projection: bool,
 ) -> Option<TextLayoutResult> {
     let prepared = prepare_rich_text(req, font_ctx, chosen_font_size_px)?;
 
@@ -1029,7 +1030,7 @@ fn layout_rich_text_at_font_size(
             inline_rects: Vec::new(),
         });
     }
-    let result = if req.is_vertical() {
+    let layout_result = if req.is_vertical() {
         layout_vertical_tokens(
             req,
             &prepared.tokens,
@@ -1048,15 +1049,15 @@ fn layout_rich_text_at_font_size(
     };
 
     // Horizontal and vertical rich text share one display-projection step.
-    if apply_ellipsis_projection
+    if should_apply_ellipsis_projection
         && req.ellipsis
         && req.max_lines.is_some()
-        && result.overflow.overflow_type != "none"
+        && layout_result.overflow.overflow_type != "none"
         && let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px)
     {
         return Some(ellipsized);
     }
-    Some(result)
+    Some(layout_result)
 }
 
 /// Apply ellipsis to rich text by exact relayout. Candidates are legal logical
@@ -1108,7 +1109,7 @@ fn apply_rich_ellipsis(
             ellipsis: false,
             ..req.clone()
         };
-        let mut result = if req.is_vertical() {
+        let mut candidate_layout = if req.is_vertical() {
             layout_vertical_tokens(
                 &probe_req,
                 &tokens,
@@ -1125,38 +1126,40 @@ fn apply_rich_ellipsis(
                 warnings,
             )?
         };
-        result.source_text = Some(source_text.clone());
-        result.display_text = Some(display_text);
-        Some(result)
+        candidate_layout.source_text = Some(source_text.clone());
+        candidate_layout.display_text = Some(display_text);
+        Some(candidate_layout)
     };
-    let fits = |result: &TextLayoutResult| {
-        result.lines.len() <= max_lines
-            && result.bbox.w <= req.max_width + 0.01
+    let is_candidate_fit = |candidate_layout: &TextLayoutResult| {
+        candidate_layout.lines.len() <= max_lines
+            && candidate_layout.bbox.w <= req.max_width + 0.01
             && req
                 .max_height
-                .is_none_or(|max_height| result.bbox.h <= max_height + 0.01)
-            && result.overflow.overflow_type == "none"
+                .is_none_or(|max_height| candidate_layout.bbox.h <= max_height + 0.01)
+            && candidate_layout.overflow.overflow_type == "none"
     };
 
     let legal_prefixes = legal_ellipsis_prefixes_for_request(req, &inline_nodes, total);
-    if let Some((_keep, mut selected)) =
-        super::ellipsis_plan::select_longest_fitting(legal_prefixes.iter().copied(), &probe, fits)
-    {
+    if let Some((_keep, mut selected)) = super::ellipsis_plan::select_longest_fitting(
+        legal_prefixes.iter().copied(),
+        &probe,
+        is_candidate_fit,
+    ) {
         selected.overflow = TextOverflow::overflow("ellipsis applied");
         return Some(selected);
     }
 
-    let mut result = probe(0)?;
-    result.lines.clear();
-    result.bbox.w = 0.0;
-    result.bbox.h = 0.0;
-    result.display_text = Some(String::new());
-    result.warnings.clear();
-    result.inline_box_decorations.clear();
-    result.text_decorations.clear();
-    result.inline_rects.clear();
-    result.overflow = TextOverflow::overflow("ellipsis applied");
-    Some(result)
+    let mut empty_projection = probe(0)?;
+    empty_projection.lines.clear();
+    empty_projection.bbox.w = 0.0;
+    empty_projection.bbox.h = 0.0;
+    empty_projection.display_text = Some(String::new());
+    empty_projection.warnings.clear();
+    empty_projection.inline_box_decorations.clear();
+    empty_projection.text_decorations.clear();
+    empty_projection.inline_rects.clear();
+    empty_projection.overflow = TextOverflow::overflow("ellipsis applied");
+    Some(empty_projection)
 }
 
 /// Return the maximum number of exact candidate layouts needed by the
@@ -1188,7 +1191,12 @@ fn legal_ellipsis_prefixes_for_request(
         .into_iter()
         .filter(|keep| *keep < total)
         .filter(|keep| {
-            wrap_allows_ellipsis_boundary(&graphemes, *keep, req.effective_wrap(), req.uax14_breaks)
+            is_ellipsis_boundary_allowed_by_wrap(
+                &graphemes,
+                *keep,
+                req.effective_wrap(),
+                req.uax14_breaks,
+            )
         })
         .filter(|keep| {
             profile.is_none_or(|active_profile| {
@@ -1250,10 +1258,10 @@ fn legal_ellipsis_prefixes(nodes: &[RichInlineNode]) -> Vec<usize> {
     output
 }
 
-/// Whether the configured wrapping policy permits truncation at a normalized
-/// logical boundary. Character and no-wrap ellipsis may stop at any EGC;
+/// Determine whether the configured wrapping policy permits truncation at a
+/// normalized logical boundary. Character and no-wrap ellipsis may stop at any EGC;
 /// word wrapping must stop at a supplied or computed UAX #14 opportunity.
-fn wrap_allows_ellipsis_boundary(
+fn is_ellipsis_boundary_allowed_by_wrap(
     graphemes: &[String],
     keep: usize,
     wrap: WrapMode,
@@ -1427,6 +1435,7 @@ fn build_inline_source_projection(
     TextSourceProjection { units }
 }
 
+/// Build the immutable authored-unit projection used by output metadata.
 pub(crate) fn build_source_projection(
     req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
@@ -1471,7 +1480,7 @@ fn project_inline_nodes_with_ellipsis(
     nodes: &[RichInlineNode],
     keep: usize,
     marker: RichSegment,
-    trim_collapsible_tail: bool,
+    should_trim_collapsible_tail: bool,
 ) -> Vec<RichInlineNode> {
     fn is_collapsible_whitespace(grapheme: &str) -> bool {
         !grapheme.is_empty()
@@ -1523,9 +1532,9 @@ fn project_inline_nodes_with_ellipsis(
     fn append_marker(
         output: &mut Vec<RichInlineNode>,
         marker: &mut Option<RichSegment>,
-        trim_collapsible_tail: bool,
+        should_trim_collapsible_tail: bool,
     ) {
-        if trim_collapsible_tail {
+        if should_trim_collapsible_tail {
             trim_tail(output);
         }
         if let Some(marker_segment) = marker.take() {
@@ -1537,7 +1546,7 @@ fn project_inline_nodes_with_ellipsis(
         nodes: &[RichInlineNode],
         remaining: &mut usize,
         marker: &mut Option<RichSegment>,
-        trim_collapsible_tail: bool,
+        should_trim_collapsible_tail: bool,
     ) -> Vec<RichInlineNode> {
         let mut output = Vec::new();
         for node in nodes {
@@ -1564,11 +1573,15 @@ fn project_inline_nodes_with_ellipsis(
                         }));
                     }
                     *remaining = 0;
-                    append_marker(&mut output, marker, trim_collapsible_tail);
+                    append_marker(&mut output, marker, should_trim_collapsible_tail);
                 }
                 RichInlineNode::DecoratedSpan(span) => {
-                    let children =
-                        project(&span.children, remaining, marker, trim_collapsible_tail);
+                    let children = project(
+                        &span.children,
+                        remaining,
+                        marker,
+                        should_trim_collapsible_tail,
+                    );
                     output.push(RichInlineNode::DecoratedSpan(RichDecoratedSpan {
                         children,
                         ..span.clone()
@@ -1578,18 +1591,23 @@ fn project_inline_nodes_with_ellipsis(
                 | RichInlineNode::InlineBox(_)
                 | RichInlineNode::InlineRect(_) => {
                     *remaining = 0;
-                    append_marker(&mut output, marker, trim_collapsible_tail);
+                    append_marker(&mut output, marker, should_trim_collapsible_tail);
                 }
             }
             break;
         }
-        append_marker(&mut output, marker, trim_collapsible_tail);
+        append_marker(&mut output, marker, should_trim_collapsible_tail);
         output
     }
 
     let mut remaining = keep;
     let mut marker = Some(marker);
-    project(nodes, &mut remaining, &mut marker, trim_collapsible_tail)
+    project(
+        nodes,
+        &mut remaining,
+        &mut marker,
+        should_trim_collapsible_tail,
+    )
 }
 
 fn truncate_decoration_runs(
@@ -1623,13 +1641,13 @@ fn segment_style_at_grapheme(segment: &RichSegment, grapheme_index: usize) -> Re
         .take(grapheme_index)
         .map(String::len)
         .sum::<usize>();
-    let runs_match = segment
+    let are_runs_equivalent = segment
         .decoration_runs
         .iter()
         .map(|run| run.text.as_str())
         .collect::<String>()
         == segment.text;
-    if !runs_match {
+    if !are_runs_equivalent {
         return style;
     }
     let mut cursor = 0_usize;
@@ -1744,7 +1762,7 @@ fn build_tokens_with_options(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-    isolate_trailing_segment: bool,
+    should_isolate_trailing_segment: bool,
 ) -> Option<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
     let mut flat_items = Vec::new();
     let mut decoration_spans: Vec<DecorationSpanMeta> = Vec::new();
@@ -1763,7 +1781,7 @@ fn build_tokens_with_options(
         font_registry,
         fallback_registry,
         default_style,
-        isolate_trailing_segment,
+        should_isolate_trailing_segment,
     )?;
 
     // Whole-string letterSpacing parity: per-token shaping drops the
@@ -1923,7 +1941,7 @@ fn build_flat_items(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-    isolate_trailing_segment: bool,
+    should_isolate_trailing_segment: bool,
 ) -> Option<Vec<LayoutToken>> {
     let mut tokens = Vec::new();
     let mut item_index = 0usize;
@@ -1966,9 +1984,9 @@ fn build_flat_items(
                     ..
                 }) = items.get(run_end)
                 {
-                    if (isolate_trailing_segment && run_end + 1 == items.len())
+                    if (should_isolate_trailing_segment && run_end + 1 == items.len())
                         || next_segment.combine
-                        || !prepare::resolved_styles_have_equal_shaping(
+                        || !prepare::are_resolved_styles_shaping_equivalent(
                             &segment.style,
                             &next_segment.style,
                         )
@@ -9018,19 +9036,19 @@ mod tests {
     fn word_ellipsis_only_accepts_supplied_uax14_boundaries() {
         let graphemes = vec!["a".to_string(), "b".to_string(), "c".to_string()];
 
-        assert!(wrap_allows_ellipsis_boundary(
+        assert!(is_ellipsis_boundary_allowed_by_wrap(
             &graphemes,
             2,
             WrapMode::Word,
             Some(&[2]),
         ));
-        assert!(!wrap_allows_ellipsis_boundary(
+        assert!(!is_ellipsis_boundary_allowed_by_wrap(
             &graphemes,
             1,
             WrapMode::Word,
             Some(&[2]),
         ));
-        assert!(wrap_allows_ellipsis_boundary(
+        assert!(is_ellipsis_boundary_allowed_by_wrap(
             &graphemes,
             1,
             WrapMode::Char,

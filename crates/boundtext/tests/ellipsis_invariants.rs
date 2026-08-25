@@ -135,14 +135,15 @@ fn ordinary_ellipsis_preserves_source_and_marks_the_marker_synthetic() {
         style: &FontStyle::Normal,
     };
     let source = "あいうえおかきくけこ";
-    let result = layout_text_with_unit_metadata(&layout_request(source, 72.0), &font_context)
-        .expect("ordinary ellipsis layout");
+    let layout_result =
+        layout_text_with_unit_metadata(&layout_request(source, 72.0), &font_context)
+            .expect("ordinary ellipsis layout");
 
-    assert_eq!(result.source_text.as_deref(), Some(source));
-    assert!(result.display_text.as_deref().is_some_and(|text| {
+    assert_eq!(layout_result.source_text.as_deref(), Some(source));
+    assert!(layout_result.display_text.as_deref().is_some_and(|text| {
         text.ends_with('\u{2026}') && source.starts_with(text.trim_end_matches('\u{2026}'))
     }));
-    let marker = result
+    let marker = layout_result
         .lines
         .iter()
         .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -166,14 +167,14 @@ fn marker_that_cannot_fit_produces_zero_ink_and_retains_source() {
         style: &FontStyle::Normal,
     };
     let source = "あいうえお";
-    let result = layout_text_with_unit_metadata(&layout_request(source, 1.0), &font_context)
+    let layout_result = layout_text_with_unit_metadata(&layout_request(source, 1.0), &font_context)
         .expect("zero-ink ellipsis layout");
 
-    assert_eq!(result.source_text.as_deref(), Some(source));
-    assert_eq!(result.display_text.as_deref(), Some(""));
-    assert_eq!(result.bbox.w, 0.0);
+    assert_eq!(layout_result.source_text.as_deref(), Some(source));
+    assert_eq!(layout_result.display_text.as_deref(), Some(""));
+    assert_eq!(layout_result.bbox.w, 0.0);
     assert!(
-        result
+        layout_result
             .lines
             .iter()
             .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -223,10 +224,10 @@ fn a_large_non_overflowing_document_does_not_spend_the_ellipsis_budget() {
     let source = "あ".repeat(1_025);
     let request = layout_request(&source, 1_000_000.0);
 
-    let result = layout_text_with_unit_metadata(&request, &font_context)
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
         .expect("a complete fitting document needs no candidate search");
-    assert_eq!(result.overflow.overflow_type, "none");
-    assert_eq!(result.display_text, None);
+    assert_eq!(layout_result.overflow.overflow_type, "none");
+    assert_eq!(layout_result.display_text, None);
 }
 
 #[test]
@@ -244,17 +245,17 @@ fn vertical_ellipsis_uses_the_same_source_projection() {
     let mut request = layout_request(source, 100.0);
     request.writing_mode = WritingMode::VerticalRl;
     request.max_height = Some(72.0);
-    let result =
+    let layout_result =
         layout_text_with_unit_metadata(&request, &font_context).expect("vertical ellipsis layout");
 
-    assert_eq!(result.source_text.as_deref(), Some(source));
+    assert_eq!(layout_result.source_text.as_deref(), Some(source));
     assert!(
-        result
+        layout_result
             .display_text
             .as_deref()
             .is_some_and(|text| text.ends_with('\u{2026}'))
     );
-    let marker = result
+    let marker = layout_result
         .lines
         .iter()
         .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -282,9 +283,9 @@ fn ellipsis_never_splits_an_extended_grapheme_cluster() {
 
     for max_width in (8..96).step_by(4) {
         let request = layout_request(source, f64::from(max_width));
-        let result = layout_text_with_unit_metadata(&request, &font_context)
+        let layout_result = layout_text_with_unit_metadata(&request, &font_context)
             .expect("combining-sequence ellipsis layout");
-        let Some(display) = result.display_text.as_deref() else {
+        let Some(display) = layout_result.display_text.as_deref() else {
             continue;
         };
         let Some(prefix) = display.strip_suffix('\u{2026}') else {
@@ -313,9 +314,9 @@ fn ligature_prefix_is_reshaped_as_end_of_text() {
     for max_width in (32..160).step_by(2) {
         let mut request = layout_request(source, f64::from(max_width));
         request.language = Language::En;
-        let result = layout_text_with_unit_metadata(&request, &font_context)
+        let layout_result = layout_text_with_unit_metadata(&request, &font_context)
             .expect("ligature ellipsis layout");
-        let Some(prefix) = result
+        let Some(prefix) = layout_result
             .display_text
             .as_deref()
             .and_then(|display| display.strip_suffix('\u{2026}'))
@@ -323,11 +324,12 @@ fn ligature_prefix_is_reshaped_as_end_of_text() {
             continue;
         };
         if matches!(prefix, "of" | "off") {
-            selected = Some((prefix.to_string(), result));
+            selected = Some((prefix.to_string(), layout_result));
             break;
         }
     }
-    let (prefix, result) = selected.expect("fixture must cut inside the original ffi ligature");
+    let (prefix, layout_result) =
+        selected.expect("fixture must cut inside the original ffi ligature");
     let expected = shape_with_fallback_and_options(
         &font_context,
         &prefix,
@@ -335,7 +337,7 @@ fn ligature_prefix_is_reshaped_as_end_of_text() {
         0.0,
         &ShapeOptions::default(),
     );
-    let actual_ids = result
+    let actual_ids = layout_result
         .lines
         .iter()
         .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -366,9 +368,9 @@ fn arabic_prefix_recomputes_its_contextual_end_form() {
     };
     let source = "ببببب";
     let request = layout_request(source, 58.0);
-    let result = layout_text_with_unit_metadata(&request, &font_context)
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
         .expect("Arabic contextual ellipsis layout");
-    let prefix = result
+    let prefix = layout_result
         .display_text
         .as_deref()
         .and_then(|display| display.strip_suffix('\u{2026}'))
@@ -383,7 +385,7 @@ fn arabic_prefix_recomputes_its_contextual_end_form() {
         .iter()
         .map(|glyph| glyph.glyph_id)
         .collect::<Vec<_>>();
-    let actual_ids = result
+    let actual_ids = layout_result
         .lines
         .iter()
         .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -413,11 +415,11 @@ fn synthetic_marker_is_shaped_in_an_isolated_run() {
     let mut request = layout_request("AAAA", 31.0);
     request.language = Language::En;
 
-    let result = layout_text_with_unit_metadata(&request, &font_context)
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
         .expect("synthetic marker isolation layout");
-    assert_eq!(result.display_text.as_deref(), Some("A\u{2026}"));
+    assert_eq!(layout_result.display_text.as_deref(), Some("A\u{2026}"));
 
-    let glyphs = result
+    let glyphs = layout_result
         .lines
         .iter()
         .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -483,9 +485,9 @@ fn paint_and_line_box_boundaries_preserve_arabic_contextual_shaping() {
     request.ellipsis = false;
     request.language = Language::Auto;
 
-    let result = layout_text_with_unit_metadata(&request, &font_context)
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
         .expect("paint-separated Arabic layout");
-    let actual = result
+    let actual = layout_result
         .lines
         .iter()
         .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -514,7 +516,7 @@ fn paint_and_line_box_boundaries_preserve_arabic_contextual_shaping() {
         }
     }));
     assert!(
-        result
+        layout_result
             .inline_box_decorations
             .iter()
             .any(|decoration| { decoration.span_key.as_deref() == Some("arabic-context") })
@@ -568,9 +570,9 @@ fn ruby_keeps_global_base_identity_and_local_annotation_decoration_identity() {
     request.max_lines = None;
     request.ellipsis = false;
 
-    let result = layout_text_with_unit_metadata(&request, &font_context)
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
         .expect("ruby decoration projection layout");
-    let annotation_glyphs = result
+    let annotation_glyphs = layout_result
         .lines
         .iter()
         .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -585,7 +587,7 @@ fn ruby_keeps_global_base_identity_and_local_annotation_decoration_identity() {
             && glyph.decoration_source_start.is_some_and(|start| start < 2)
             && glyph.decoration_source_end.is_some_and(|end| end <= 2)
     }));
-    assert!(result.text_decorations.iter().any(|fragment| {
+    assert!(layout_result.text_decorations.iter().any(|fragment| {
         fragment.line == TextDecorationLine::Overline
             && fragment.source_start == 0
             && fragment.source_end == 2
@@ -609,10 +611,10 @@ fn word_ellipsis_honors_supplied_uax14_boundaries() {
     request.language = Language::En;
     request.wrap = WrapMode::Word;
     request.uax14_breaks = Some(&supplied_breaks);
-    let result = layout_text_with_unit_metadata(&request, &font_context)
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
         .expect("supplied UAX #14 ellipsis layout");
 
-    assert_eq!(result.display_text.as_deref(), Some("abc\u{2026}"));
+    assert_eq!(layout_result.display_text.as_deref(), Some("abc\u{2026}"));
 }
 
 #[test]
@@ -728,11 +730,11 @@ fn span_ellipsis_uses_the_first_omitted_style_and_synthetic_identity() {
     let mut request = layout_request(&source, 52.0);
     request.language = Language::En;
     request.spans = Some(&spans);
-    let result =
+    let layout_result =
         layout_text_with_unit_metadata(&request, &font_context).expect("span ellipsis layout");
 
-    assert_eq!(result.source_text.as_deref(), Some(source.as_str()));
-    let marker = result
+    assert_eq!(layout_result.source_text.as_deref(), Some(source.as_str()));
+    let marker = layout_result
         .lines
         .iter()
         .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -969,26 +971,26 @@ fn nested_decorated_spans_fragment_without_losing_either_owner() {
     request.max_lines = None;
     request.ellipsis = false;
 
-    let result = layout_text_with_unit_metadata(&request, &font_context)
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
         .expect("nested fragmentable decoration layout");
-    let outer_fragments = result
+    let outer_fragments = layout_result
         .inline_box_decorations
         .iter()
         .filter(|decoration| decoration.span_key.as_deref() == Some("outer"))
         .count();
-    let inner_fragments = result
+    let inner_fragments = layout_result
         .inline_box_decorations
         .iter()
         .filter(|decoration| decoration.span_key.as_deref() == Some("inner"))
         .count();
 
     assert!(
-        result.lines.len() >= 2,
+        layout_result.lines.len() >= 2,
         "the nested span must remain wrappable"
     );
     assert!(outer_fragments >= 2, "outer owner must fragment per line");
     assert!(inner_fragments >= 2, "inner owner must fragment per line");
-    for owner_pair in result.inline_box_decorations.chunks_exact(2) {
+    for owner_pair in layout_result.inline_box_decorations.chunks_exact(2) {
         assert_eq!(owner_pair[0].span_key.as_deref(), Some("outer"));
         assert_eq!(owner_pair[1].span_key.as_deref(), Some("inner"));
     }
@@ -1025,10 +1027,10 @@ fn rich_ellipsis_keeps_first_omitted_fragmentable_decoration_ownership() {
     let mut request = layout_request("", 58.0);
     request.language = Language::En;
     request.rich_text = Some(&rich_text);
-    let result =
+    let layout_result =
         layout_text_with_unit_metadata(&request, &font_context).expect("decorated rich ellipsis");
 
-    let marker = result
+    let marker = layout_result
         .lines
         .iter()
         .filter_map(|line| line.positioned_glyphs.as_deref())
@@ -1038,7 +1040,7 @@ fn rich_ellipsis_keeps_first_omitted_fragmentable_decoration_ownership() {
     assert_eq!(marker.font_size_px, Some(32.0));
     assert_eq!(marker.fill.as_deref(), Some("#0000ff"));
     assert!(
-        result
+        layout_result
             .inline_box_decorations
             .iter()
             .any(|decoration| { decoration.span_key.as_deref() == Some("marker-owner") })
@@ -1104,11 +1106,11 @@ fn rich_ellipsis_omits_atomic_output_and_diagnostics_as_a_unit() {
     ];
     let mut request = layout_request("", 52.0);
     request.rich_text = Some(&rich_text);
-    let result =
+    let layout_result =
         layout_text_with_unit_metadata(&request, &font_context).expect("atomic rich ellipsis");
 
-    assert_eq!(result.display_text.as_deref(), Some("A\u{2026}"));
-    assert!(result.lines.iter().all(|line| {
+    assert_eq!(layout_result.display_text.as_deref(), Some("A\u{2026}"));
+    assert!(layout_result.lines.iter().all(|line| {
         line.positioned_glyphs.as_deref().is_none_or(|glyphs| {
             glyphs
                 .iter()
@@ -1116,23 +1118,23 @@ fn rich_ellipsis_omits_atomic_output_and_diagnostics_as_a_unit() {
         })
     }));
     assert!(
-        result
+        layout_result
             .inline_box_decorations
             .iter()
             .all(|decoration| decoration.span_key.as_deref() != Some("omitted-box"))
     );
     assert!(
-        result
+        layout_result
             .inline_rects
             .iter()
             .all(|rect| rect.fragment_id != "omitted-rect")
     );
     assert!(
-        result.warnings.iter().all(|warning| {
+        layout_result.warnings.iter().all(|warning| {
             warning.code != "LONG_RUBY_ANNOTATION" && !warning.message.contains("10FFFF")
         }),
         "omitted atomic descendants must not commit owned warnings: {:?}",
-        result.warnings
+        layout_result.warnings
     );
 }
 
@@ -1172,24 +1174,24 @@ fn rich_ellipsis_commits_warning_owned_by_a_retained_atomic_node() {
     request.language = Language::En;
     request.rich_text = Some(&rich_text);
 
-    let result = layout_text_with_unit_metadata(&request, &font_context)
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
         .expect("retained ruby warning ellipsis layout");
 
     assert!(
-        result
+        layout_result
             .display_text
             .as_deref()
             .is_some_and(|display| display.starts_with('A') && display.ends_with('\u{2026}')),
         "the warning-owning ruby must be retained: {:?}",
-        result.display_text
+        layout_result.display_text
     );
     assert!(
-        result
+        layout_result
             .warnings
             .iter()
             .any(|warning| warning.code == "LONG_RUBY_ANNOTATION"),
         "a warning owned by the retained atomic node must be committed: {:?}",
-        result.warnings
+        layout_result.warnings
     );
 }
 
@@ -1217,18 +1219,18 @@ fn synthetic_marker_diagnostics_are_committed() {
         style: &FontStyle::Normal,
     };
     let request = layout_request("AAAAAAAAAAAAAAAA", 40.0);
-    let result = layout_text_with_unit_metadata(&request, &font_context)
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
         .expect("synthetic missing-glyph marker layout");
 
     assert!(
-        result
+        layout_result
             .warnings
             .iter()
             .any(|warning| warning.message.contains("U+2026")),
         "the selected synthetic marker must retain its own warning: {:?}",
-        result.warnings
+        layout_result.warnings
     );
-    assert!(result.lines.iter().any(|line| {
+    assert!(layout_result.lines.iter().any(|line| {
         line.positioned_glyphs.as_deref().is_some_and(|glyphs| {
             glyphs
                 .iter()

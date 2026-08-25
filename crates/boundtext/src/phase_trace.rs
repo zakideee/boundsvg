@@ -2,17 +2,28 @@
 
 use std::cell::RefCell;
 
+/// Count deterministic units of text-layout work for regression benchmarks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TextWorkCounters {
+    /// Calls into the selected shaping backend.
     pub backend_shape_calls: usize,
+    /// Glyphs returned by shaping backends.
     pub shaped_glyphs: usize,
+    /// Exact ellipsis candidates evaluated.
     pub ellipsis_candidates: usize,
+    /// Font-size fit candidates evaluated.
     pub fit_probes: usize,
+    /// Distinct geometry-provider queries.
     pub region_queries: usize,
+    /// Intervals returned by distinct geometry-provider queries.
     pub returned_regions: usize,
+    /// Lines copied into public output.
     pub materialized_lines: usize,
+    /// Glyphs copied into public output.
     pub materialized_glyphs: usize,
+    /// Decorations copied into public output.
     pub materialized_decorations: usize,
+    /// Inline rectangles copied into public output.
     pub materialized_inline_rects: usize,
 }
 
@@ -24,22 +35,27 @@ fn update(mut operation: impl FnMut(&mut TextWorkCounters)) {
     COUNTERS.with(|counters| operation(&mut counters.borrow_mut()));
 }
 
+/// Record one call into a shaping backend.
 pub fn record_backend_shape() {
     update(|counters| counters.backend_shape_calls += 1);
 }
 
+/// Record glyphs returned by a shaping backend.
 pub fn record_shaped_glyphs(count: usize) {
     update(|counters| counters.shaped_glyphs += count);
 }
 
+/// Record one exact ellipsis candidate evaluation.
 pub fn record_ellipsis_candidate() {
     update(|counters| counters.ellipsis_candidates += 1);
 }
 
+/// Record one font-size fit candidate evaluation.
 pub fn record_fit_probe() {
     update(|counters| counters.fit_probes += 1);
 }
 
+/// Record one distinct geometry query and its returned intervals.
 pub fn record_region_query(returned_regions: usize) {
     update(|counters| {
         counters.region_queries += 1;
@@ -47,6 +63,7 @@ pub fn record_region_query(returned_regions: usize) {
     });
 }
 
+/// Record public output materialized by one completed layout.
 pub fn record_materialization(
     lines: usize,
     glyphs: usize,
@@ -61,20 +78,24 @@ pub fn record_materialization(
     });
 }
 
+/// Return the current thread's deterministic work counters.
 #[must_use]
 pub fn snapshot_work() -> TextWorkCounters {
     COUNTERS.with(|counters| *counters.borrow())
 }
 
+/// Reset every deterministic work counter for the current thread.
 pub fn reset_work() {
     COUNTERS.with(|counters| *counters.borrow_mut() = TextWorkCounters::default());
 }
 
+/// Return the current thread's shaping-backend call count.
 #[must_use]
 pub fn current_backend_shape_calls() -> usize {
     snapshot_work().backend_shape_calls
 }
 
+/// Reset only the shaping-backend call count for the current thread.
 pub fn reset_backend_shape_calls() {
     update(|counters| counters.backend_shape_calls = 0);
 }

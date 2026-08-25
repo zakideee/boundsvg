@@ -230,9 +230,9 @@ pub(super) fn fit_vertical_shrink(
     ) {
         if req.ellipsis
             && req.max_lines.is_some()
-            && let Some(result) = layout_vertical_ellipsis_at_size(req, font_ctx, min_size)
+            && let Some(layout_result) = layout_vertical_ellipsis_at_size(req, font_ctx, min_size)
         {
-            return Some(result);
+            return Some(layout_result);
         }
         let overflow = if at_min.kinsoku_unresolved {
             TextOverflow::kinsoku_unresolved()
@@ -293,11 +293,11 @@ fn layout_vertical_ellipsis_at_size(
         grow_max_iterations: None,
         ..req.clone()
     };
-    let mut result = super::layout_vertical_text(&final_request, font_ctx)?;
-    if result.lines.is_empty() {
-        result.overflow = TextOverflow::cannot_fit();
+    let mut layout_result = super::layout_vertical_text(&final_request, font_ctx)?;
+    if layout_result.lines.is_empty() {
+        layout_result.overflow = TextOverflow::cannot_fit();
     }
-    Some(result)
+    Some(layout_result)
 }
 
 /// Grow-to-fit for vertical text with boundary evaluation.

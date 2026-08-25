@@ -128,10 +128,10 @@ fn benchmark_exact_ellipsis(font_context: &FontContext<'_>) -> BenchmarkResult {
 
     reset_work();
     let started = Instant::now();
-    let result = layout_text_with_unit_metadata(&request, font_context)?;
+    let layout_result = layout_text_with_unit_metadata(&request, font_context)?;
     let elapsed = started.elapsed();
     assert!(
-        result
+        layout_result
             .display_text
             .as_deref()
             .is_some_and(|text| text.ends_with('\u{2026}'))
@@ -298,9 +298,9 @@ fn benchmark_exact_exclusion_fit(font_context: &FontContext<'_>) -> BenchmarkRes
 
     reset_work();
     let started = Instant::now();
-    let result = layout_flow_with_regions(&request, font_context, &UncertifiedRectProvider)?;
+    let layout_result = layout_flow_with_regions(&request, font_context, &UncertifiedRectProvider)?;
     let elapsed = started.elapsed();
-    assert_eq!(result.chosen_font_size_px, Some(16.0));
+    assert_eq!(layout_result.chosen_font_size_px, Some(16.0));
     print_result(
         "exact-exclusion-fit-65",
         elapsed.as_micros(),
@@ -355,9 +355,10 @@ fn benchmark_default_fit_probe_budget(font_context: &FontContext<'_>) -> Benchma
 
     reset_work();
     let started = Instant::now();
-    let result = layout_flow_with_regions(&request, font_context, &UncertifiedNarrowProvider)?;
+    let layout_result =
+        layout_flow_with_regions(&request, font_context, &UncertifiedNarrowProvider)?;
     let elapsed = started.elapsed();
-    assert_eq!(result.chosen_font_size_px, Some(8.0));
+    assert_eq!(layout_result.chosen_font_size_px, Some(8.0));
     let counters = snapshot_work();
     assert_eq!(counters.fit_probes, 4_096);
     print_result(
@@ -448,9 +449,9 @@ fn benchmark_content_exact_fit(font_context: &FontContext<'_>) -> BenchmarkResul
 
     reset_work();
     let started = Instant::now();
-    let result = layout_text_with_unit_metadata(&request, font_context)?;
+    let layout_result = layout_text_with_unit_metadata(&request, font_context)?;
     let elapsed = started.elapsed();
-    assert_eq!(result.chosen_font_size_px, 41.5);
+    assert_eq!(layout_result.chosen_font_size_px, 41.5);
     let counters = snapshot_work();
     assert_eq!(counters.fit_probes, 75);
     assert_eq!(counters.materialized_inline_rects, 1);

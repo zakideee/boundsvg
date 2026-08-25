@@ -232,15 +232,16 @@ pub fn build_text_unit_map(
 /// Returns [`TextUnitMapError`] when a visible authored glyph lacks required
 /// source metadata.
 pub fn build_text_unit_map_for_request(
-    result: &TextLayoutResult,
+    layout_result: &TextLayoutResult,
     request: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     kind: TextUnitKind,
     ruby: TextUnitRubyMode,
 ) -> Result<TextUnitMap, TextUnitMapError> {
-    let projection = source_projection_for_request(request, font_ctx, result.chosen_font_size_px);
+    let projection =
+        source_projection_for_request(request, font_ctx, layout_result.chosen_font_size_px);
     build_text_unit_map_internal(
-        &result.lines,
+        &layout_result.lines,
         Some(&projection),
         kind,
         ruby,
@@ -536,14 +537,14 @@ fn append_omitted_cluster_drafts(
             if draft.signature.role != source_unit.source_role {
                 return false;
             }
-            let source_covered = draft.signature.source_start <= source_unit.source_start
+            let is_source_covered = draft.signature.source_start <= source_unit.source_start
                 && draft.signature.source_end >= source_unit.source_end;
             if source_unit.source_role == TextUnitSourceRole::RubyAnnotation {
-                source_covered
+                is_source_covered
                     && draft.signature.cluster_start <= source_unit.cluster_start
                     && draft.signature.cluster_end >= source_unit.cluster_end
             } else {
-                source_covered
+                is_source_covered
             }
         })
     };

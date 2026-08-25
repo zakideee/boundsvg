@@ -702,7 +702,7 @@ impl TextLayoutRequest<'_> {
 /// a larger run can overlap enough to fit again after an intermediate size
 /// overflowed. Negative proportional line/ruby offsets have the same proof
 /// problem. Such inputs must use exact-grid search.
-pub(crate) fn text_fit_is_certified_monotone(req: &TextLayoutRequest<'_>) -> bool {
+pub(crate) fn is_text_fit_certified_monotone(req: &TextLayoutRequest<'_>) -> bool {
     if req.letter_spacing_px < 0.0 || req.line_height.is_some_and(|value| value < 0.0) {
         return false;
     }
@@ -713,16 +713,17 @@ pub(crate) fn text_fit_is_certified_monotone(req: &TextLayoutRequest<'_>) -> boo
     }) {
         return false;
     }
-    rich_text_fit_is_certified_monotone(req.rich_text)
+    is_rich_text_fit_certified_monotone(req.rich_text)
 }
 
-pub(crate) fn rich_text_fit_is_certified_monotone(rich_text: Option<&[RichTextNodeInput]>) -> bool {
+/// Determine whether every rich style preserves monotone font-size fit.
+pub(crate) fn is_rich_text_fit_certified_monotone(rich_text: Option<&[RichTextNodeInput]>) -> bool {
     let Some(nodes) = rich_text else {
         return true;
     };
     let mut pending = nodes.iter().collect::<Vec<_>>();
     while let Some(node) = pending.pop() {
-        let style_is_uncertified = |style: &RichTextStyleInput| {
+        let is_style_uncertified = |style: &RichTextStyleInput| {
             style.font_size_px < 0.0
                 || style.letter_spacing_px.is_some_and(|value| value < 0.0)
                 || style.line_height.is_some_and(|value| value < 0.0)
@@ -730,7 +731,7 @@ pub(crate) fn rich_text_fit_is_certified_monotone(rich_text: Option<&[RichTextNo
         match node {
             RichTextNodeInput::Text { .. } | RichTextNodeInput::InlineRect { .. } => {}
             RichTextNodeInput::Span { style, .. } | RichTextNodeInput::Combine { style, .. } => {
-                if style_is_uncertified(style) {
+                if is_style_uncertified(style) {
                     return false;
                 }
             }
@@ -743,7 +744,7 @@ pub(crate) fn rich_text_fit_is_certified_monotone(rich_text: Option<&[RichTextNo
                 ruby_offset_px,
                 ..
             } => {
-                if style_is_uncertified(style)
+                if is_style_uncertified(style)
                     || ruby_gap_px.is_some_and(|value| value < 0.0)
                     || ruby_offset_px.is_some_and(|value| value < 0.0)
                 {
@@ -761,7 +762,7 @@ pub(crate) fn rich_text_fit_is_certified_monotone(rich_text: Option<&[RichTextNo
             | RichTextNodeInput::DecoratedSpan {
                 style, children, ..
             } => {
-                if style_is_uncertified(style) {
+                if is_style_uncertified(style) {
                     return false;
                 }
                 pending.extend(children);
@@ -1132,9 +1133,12 @@ pub const MAX_RICH_TEXT_DEPTH: usize = 48;
 /// Maximum authored inline rectangles accepted for one Text node.
 pub const MAX_INLINE_RECTS: usize = 4_096;
 
+/// Identify which recursive rich-text resource limit was exceeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RichTextResourceViolation {
+    /// Authored nesting exceeded the maximum accepted depth.
     Depth { actual: usize, limit: usize },
+    /// Authored inline rectangles exceeded the per-layout limit.
     InlineRects { required: usize, limit: usize },
 }
 
@@ -1143,6 +1147,10 @@ pub(crate) enum RichTextResourceViolation {
 /// This guard must run before flattening so an over-depth public Rust input
 /// cannot exhaust the call stack even when it bypasses the TypeScript and
 /// `boundsvg` validators.
+///
+/// # Errors
+///
+/// Returns the first depth or inline-rectangle limit exceeded by the input.
 pub(crate) fn validate_rich_text_resources(
     nodes: &[RichTextNodeInput],
 ) -> Result<(), RichTextResourceViolation> {

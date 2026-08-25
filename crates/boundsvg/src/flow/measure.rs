@@ -101,12 +101,12 @@ pub(crate) fn measure_text_block(
             grow_max_iterations: None,
             fit_max_probes: None,
         };
-        let result =
+        let layout_result =
             crate::text::engine::layout_text(&req, &font_ctx).map_err(|error| error.to_string())?;
         return Ok(MeasureTextBlockResult {
-            line_count: result.lines.len(),
-            used_width: result.bbox.w,
-            used_height: result.bbox.h,
+            line_count: layout_result.lines.len(),
+            used_width: layout_result.bbox.w,
+            used_height: layout_result.bbox.h,
             // Vertical lines carry no character ranges; per-line data for
             // vertical text is available via layoutTextFlow.
             lines: None,

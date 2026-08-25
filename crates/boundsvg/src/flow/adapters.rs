@@ -1,5 +1,5 @@
 use super::conversions::{
-    ExclusionRegionSource, convert_flow_result, convert_flow_span, convert_simple_result,
+    ExclusionRegionProvider, convert_flow_result, convert_flow_span, convert_simple_result,
 };
 use super::types::{
     TextFlowInput, TextFlowResult, TextFlowWithExclusionsInput, TextFlowWithExclusionsResult,
@@ -13,6 +13,7 @@ use crate::text::types::{
 };
 use crate::text::types::{preprocess_span_texts_for_white_space, preprocess_text_for_white_space};
 
+/// Preserve typed boundtext failures across boundsvg orchestration.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TextFlowLayoutError {
     #[error(transparent)]
@@ -28,6 +29,7 @@ impl From<String> for TextFlowLayoutError {
 }
 
 impl TextFlowLayoutError {
+    /// Map a typed layout failure to its stable engine error code.
     pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::Boundtext(boundtext::BoundtextError::FitProbeLimit { .. }) => {
@@ -58,6 +60,7 @@ impl TextFlowLayoutError {
         }
     }
 
+    /// Attach rendering context without erasing the underlying text failure.
     pub(crate) fn into_engine_error(self, node_id: Option<String>) -> crate::error::EngineError {
         crate::error::EngineError::Structured {
             code: self.code().to_string(),
@@ -124,14 +127,19 @@ pub(crate) fn layout_text_flow(
         font_feature_settings: parse_feature_settings_opt(input.font_feature_settings.as_deref()),
     };
 
-    let result = bt_flow::layout_flow_simple(&req, &font_ctx)?;
-    Ok(convert_simple_result(result))
+    let flow_layout = bt_flow::layout_flow_simple(&req, &font_ctx)?;
+    Ok(convert_simple_result(flow_layout))
 }
 
 // ---------------------------------------------------------------------------
 // Adapter: exclusion-based flow
 // ---------------------------------------------------------------------------
 
+/// Resolve diagnostics-oriented flow against boundsvg exclusion geometry.
+///
+/// # Errors
+///
+/// Returns a typed validation, resource, provider, shaping, or layout failure.
 pub(crate) fn layout_text_flow_with_exclusions(
     input: &TextFlowWithExclusionsInput,
     registry: &FontRegistry,
@@ -217,7 +225,7 @@ pub(crate) fn layout_text_flow_with_exclusions(
         height: input.flow_box.height,
     };
 
-    let regions_source = ExclusionRegionSource {
+    let region_provider = ExclusionRegionProvider {
         flow_box: &input.flow_box,
         exclusions: &input.exclusions,
     };
@@ -256,11 +264,15 @@ pub(crate) fn layout_text_flow_with_exclusions(
         shape_options,
     };
 
-    let result = bt_flow::layout_flow_with_regions(&req, &font_ctx, &regions_source)?;
-    Ok(convert_flow_result(result))
+    let flow_layout = bt_flow::layout_flow_with_regions(&req, &font_ctx, &region_provider)?;
+    Ok(convert_flow_result(flow_layout))
 }
 
 /// Layout a renderable Text node around exclusions in one boundtext pass.
+///
+/// # Errors
+///
+/// Returns a typed validation, resource, provider, shaping, or layout failure.
 pub(crate) fn layout_resolved_text_flow(
     text_input: &TextInput,
     width: f64,
@@ -356,7 +368,7 @@ pub(crate) fn layout_resolved_text_flow(
         width,
         height,
     };
-    let regions_source = ExclusionRegionSource {
+    let region_provider = ExclusionRegionProvider {
         flow_box: &flow_box,
         exclusions: &flow.exclusions,
     };
@@ -400,7 +412,7 @@ pub(crate) fn layout_resolved_text_flow(
     };
 
     let mut result =
-        bt_flow::layout_resolved_flow_with_regions(&request, &font_ctx, &regions_source)?;
+        bt_flow::layout_resolved_flow_with_regions(&request, &font_ctx, &region_provider)?;
     let decoration_request = TextLayoutRequest {
         text: &text_input.content,
         spans: text_input.spans.as_deref(),
