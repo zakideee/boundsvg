@@ -1186,18 +1186,13 @@ fn legal_ellipsis_prefixes_for_request(
 ) -> Vec<usize> {
     let graphemes = collect_inline_graphemes(inline_nodes);
     let grapheme_refs: Vec<&str> = graphemes.iter().map(String::as_str).collect();
+    let word_boundaries =
+        prepare_ellipsis_word_boundaries(&graphemes, req.effective_wrap(), req.uax14_breaks);
     let profile = crate::text::kinsoku::get_kinsoku_profile(Some(language_to_str(req.language)));
     legal_ellipsis_prefixes(inline_nodes)
         .into_iter()
         .filter(|keep| *keep < total)
-        .filter(|keep| {
-            is_ellipsis_boundary_allowed_by_wrap(
-                &graphemes,
-                *keep,
-                req.effective_wrap(),
-                req.uax14_breaks,
-            )
-        })
+        .filter(|keep| is_ellipsis_boundary_allowed_by_wrap(word_boundaries.as_ref(), *keep))
         .filter(|keep| {
             profile.is_none_or(|active_profile| {
                 crate::text::kinsoku::is_valid_ellipsis_boundary(
@@ -1258,33 +1253,63 @@ fn legal_ellipsis_prefixes(nodes: &[RichInlineNode]) -> Vec<usize> {
     output
 }
 
-/// Determine whether the configured wrapping policy permits truncation at a
-/// normalized logical boundary. Character and no-wrap ellipsis may stop at any EGC;
-/// word wrapping must stop at a supplied or computed UAX #14 opportunity.
-fn is_ellipsis_boundary_allowed_by_wrap(
+/// Precompute the byte offsets needed to filter every word-wrapped ellipsis
+/// candidate without rescanning or reallocating the complete source text.
+struct EllipsisWordBoundaries {
+    grapheme_end_offsets: Vec<usize>,
+    break_offsets: Vec<usize>,
+}
+
+fn prepare_ellipsis_word_boundaries(
     graphemes: &[String],
-    keep: usize,
     wrap: WrapMode,
     supplied_uax14_breaks: Option<&[usize]>,
-) -> bool {
-    if keep == 0 || wrap != WrapMode::Word {
-        return true;
-    }
-    if keep > graphemes.len() {
-        return false;
+) -> Option<EllipsisWordBoundaries> {
+    if wrap != WrapMode::Word {
+        return None;
     }
 
-    let text = graphemes.concat();
-    let boundary_offset = graphemes.iter().take(keep).map(String::len).sum::<usize>();
-    let computed_breaks;
-    let breaks = match supplied_uax14_breaks {
-        Some(supplied) if !supplied.is_empty() => supplied,
-        _ => {
-            computed_breaks = crate::text::linebreak::uax14_break_opportunities(&text);
-            &computed_breaks
-        }
+    #[cfg(any(test, feature = "phase-trace"))]
+    crate::phase_trace::record_ellipsis_word_boundary_preparation();
+
+    let mut grapheme_end_offsets = Vec::with_capacity(graphemes.len());
+    let mut byte_offset = 0usize;
+    for grapheme in graphemes {
+        byte_offset = byte_offset.saturating_add(grapheme.len());
+        grapheme_end_offsets.push(byte_offset);
+    }
+
+    let mut break_offsets = match supplied_uax14_breaks {
+        Some(supplied) if !supplied.is_empty() => supplied.to_vec(),
+        _ => crate::text::linebreak::uax14_break_opportunities(&graphemes.concat()),
     };
-    breaks.contains(&boundary_offset)
+    break_offsets.sort_unstable();
+    break_offsets.dedup();
+
+    Some(EllipsisWordBoundaries {
+        grapheme_end_offsets,
+        break_offsets,
+    })
+}
+
+/// Determine whether a normalized logical boundary is legal for the prepared
+/// wrapping policy. Character and no-wrap ellipsis pass `None` and may stop at
+/// any EGC; word wrapping supplies its precomputed UAX #14 byte offsets.
+fn is_ellipsis_boundary_allowed_by_wrap(
+    word_boundaries: Option<&EllipsisWordBoundaries>,
+    keep: usize,
+) -> bool {
+    if keep == 0 || word_boundaries.is_none() {
+        return true;
+    }
+    word_boundaries
+        .and_then(|boundaries| {
+            boundaries
+                .grapheme_end_offsets
+                .get(keep - 1)
+                .map(|offset| (boundaries, offset))
+        })
+        .is_some_and(|(boundaries, offset)| boundaries.break_offsets.binary_search(offset).is_ok())
 }
 
 fn collect_inline_source_text(nodes: &[RichInlineNode]) -> String {
@@ -9035,25 +9060,40 @@ mod tests {
     #[test]
     fn word_ellipsis_only_accepts_supplied_uax14_boundaries() {
         let graphemes = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let word_boundaries =
+            prepare_ellipsis_word_boundaries(&graphemes, WrapMode::Word, Some(&[2]))
+                .expect("word wrapping prepares a boundary set");
 
         assert!(is_ellipsis_boundary_allowed_by_wrap(
-            &graphemes,
+            Some(&word_boundaries),
             2,
-            WrapMode::Word,
-            Some(&[2]),
         ));
         assert!(!is_ellipsis_boundary_allowed_by_wrap(
-            &graphemes,
+            Some(&word_boundaries),
             1,
-            WrapMode::Word,
-            Some(&[2]),
         ));
-        assert!(is_ellipsis_boundary_allowed_by_wrap(
-            &graphemes,
-            1,
-            WrapMode::Char,
-            Some(&[2]),
-        ));
+        assert!(is_ellipsis_boundary_allowed_by_wrap(None, 1));
+    }
+
+    #[test]
+    fn word_ellipsis_prepares_uax14_boundaries_once_for_the_candidate_set() {
+        let nodes = vec![RichInlineNode::Segment(RichSegment {
+            text: "あ".repeat(1_025),
+            style: test_resolved_style(16.0),
+            combine: false,
+            decoration_runs: Vec::new(),
+        })];
+        let request = TextLayoutRequest {
+            wrap: WrapMode::Word,
+            ..test_request()
+        };
+
+        crate::phase_trace::reset_work();
+        let legal_prefixes = legal_ellipsis_prefixes_for_request(&request, &nodes, 1_025);
+        let counters = crate::phase_trace::snapshot_work();
+
+        assert_eq!(legal_prefixes.len(), 1_025);
+        assert_eq!(counters.ellipsis_word_boundary_preparations, 1);
     }
 
     #[test]

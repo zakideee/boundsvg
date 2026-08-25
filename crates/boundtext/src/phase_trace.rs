@@ -11,6 +11,8 @@ pub struct TextWorkCounters {
     pub shaped_glyphs: usize,
     /// Exact ellipsis candidates evaluated.
     pub ellipsis_candidates: usize,
+    /// Word-boundary sets prepared for ellipsis candidate filtering.
+    pub ellipsis_word_boundary_preparations: usize,
     /// Font-size fit candidates evaluated.
     pub fit_probes: usize,
     /// Distinct geometry-provider queries.
@@ -48,6 +50,11 @@ pub fn record_shaped_glyphs(count: usize) {
 /// Record one exact ellipsis candidate evaluation.
 pub fn record_ellipsis_candidate() {
     update(|counters| counters.ellipsis_candidates += 1);
+}
+
+/// Record one complete word-boundary preparation for ellipsis filtering.
+pub fn record_ellipsis_word_boundary_preparation() {
+    update(|counters| counters.ellipsis_word_boundary_preparations += 1);
 }
 
 /// Record one font-size fit candidate evaluation.

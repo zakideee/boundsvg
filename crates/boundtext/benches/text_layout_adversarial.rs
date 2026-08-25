@@ -26,6 +26,7 @@ struct InputStats {
     source_boundaries: usize,
     atomic_items: usize,
     exclusions: usize,
+    geometry_segments: usize,
 }
 
 fn registry() -> BenchmarkResult<FontRegistry> {
@@ -61,7 +62,8 @@ fn print_result(
             "\"inputBytes\":{},\"canonicalNodes\":{},\"resolvedRuns\":{},",
             "\"maxDepth\":{},\"sourceBoundaries\":{},\"atomicItems\":{},",
             "\"exclusions\":{},\"geometrySegments\":{},",
-            "\"ellipsisCandidates\":{},\"fitProbes\":{},",
+            "\"ellipsisCandidates\":{},\"ellipsisWordBoundaryPreparations\":{},",
+            "\"fitProbes\":{},",
             "\"regionQueries\":{},\"returnedRegions\":{},",
             "\"shapeCalls\":{},\"shapedGlyphs\":{},",
             "\"materializedLines\":{},\"materializedGlyphs\":{},",
@@ -77,8 +79,9 @@ fn print_result(
         stats.source_boundaries,
         stats.atomic_items,
         stats.exclusions,
-        stats.exclusions,
+        stats.geometry_segments,
         counters.ellipsis_candidates,
+        counters.ellipsis_word_boundary_preparations,
         counters.fit_probes,
         counters.region_queries,
         counters.returned_regions,
@@ -147,6 +150,7 @@ fn benchmark_exact_ellipsis(font_context: &FontContext<'_>) -> BenchmarkResult {
             source_boundaries: 256,
             atomic_items: 0,
             exclusions: 0,
+            geometry_segments: 0,
         },
         snapshot_work(),
     );
@@ -166,7 +170,7 @@ fn benchmark_ellipsis_candidate_budget(font_context: &FontContext<'_>) -> Benchm
         text_indent: None,
         max_width: 1.0,
         max_height: None,
-        wrap: WrapMode::Char,
+        wrap: WrapMode::Word,
         white_space: WhiteSpaceMode::Normal,
         tab_size: 4,
         fit: FitMode::None,
@@ -206,8 +210,9 @@ fn benchmark_ellipsis_candidate_budget(font_context: &FontContext<'_>) -> Benchm
     );
     let counters = snapshot_work();
     assert_eq!(counters.ellipsis_candidates, 0);
+    assert_eq!(counters.ellipsis_word_boundary_preparations, 1);
     print_result(
-        "ellipsis-candidate-budget-1024",
+        "word-ellipsis-candidate-budget-1024",
         elapsed.as_micros(),
         InputStats {
             input_bytes: text.len(),
@@ -217,6 +222,7 @@ fn benchmark_ellipsis_candidate_budget(font_context: &FontContext<'_>) -> Benchm
             source_boundaries: 1_025,
             atomic_items: 0,
             exclusions: 0,
+            geometry_segments: 0,
         },
         counters,
     );
@@ -312,6 +318,7 @@ fn benchmark_exact_exclusion_fit(font_context: &FontContext<'_>) -> BenchmarkRes
             source_boundaries: 96,
             atomic_items: 0,
             exclusions: 1,
+            geometry_segments: 0,
         },
         snapshot_work(),
     );
@@ -372,6 +379,7 @@ fn benchmark_default_fit_probe_budget(font_context: &FontContext<'_>) -> Benchma
             source_boundaries: 100,
             atomic_items: 0,
             exclusions: 1,
+            geometry_segments: 0,
         },
         counters,
     );
@@ -466,6 +474,7 @@ fn benchmark_content_exact_fit(font_context: &FontContext<'_>) -> BenchmarkResul
             source_boundaries: 1,
             atomic_items: 1,
             exclusions: 0,
+            geometry_segments: 0,
         },
         counters,
     );

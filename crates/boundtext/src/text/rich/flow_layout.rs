@@ -275,19 +275,18 @@ fn apply_rich_flow_ellipsis(
 
     let graphemes = super::collect_inline_graphemes(&inline_nodes);
     let grapheme_refs = graphemes.iter().map(String::as_str).collect::<Vec<_>>();
+    let effective_wrap = if req.white_space == crate::text::types::WhiteSpaceMode::NoWrap {
+        WrapMode::None
+    } else {
+        req.wrap
+    };
+    let word_boundaries = super::prepare_ellipsis_word_boundaries(&graphemes, effective_wrap, None);
     let profile =
         crate::text::kinsoku::get_kinsoku_profile(Some(super::language_to_str(req.language)));
     let legal_prefixes = super::legal_ellipsis_prefixes(&inline_nodes)
         .into_iter()
         .filter(|keep| *keep < total)
-        .filter(|keep| {
-            let effective_wrap = if req.white_space == crate::text::types::WhiteSpaceMode::NoWrap {
-                WrapMode::None
-            } else {
-                req.wrap
-            };
-            super::is_ellipsis_boundary_allowed_by_wrap(&graphemes, *keep, effective_wrap, None)
-        })
+        .filter(|keep| super::is_ellipsis_boundary_allowed_by_wrap(word_boundaries.as_ref(), *keep))
         .filter(|keep| {
             profile.is_none_or(|active_profile| {
                 crate::text::kinsoku::is_valid_ellipsis_boundary(

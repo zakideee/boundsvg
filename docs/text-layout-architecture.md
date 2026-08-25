@@ -119,6 +119,11 @@ monotone in prefix length. An optimization may skip candidates only when a
 conservative bound proves that every skipped candidate is impossible; a
 last-visible-line heuristic is not a proof.
 
+Word-wrapped projection prepares the normalized grapheme byte offsets and its
+sorted UAX #14 break set once for the complete candidate enumeration. Each
+candidate then performs a binary-search membership check; filtering does not
+rebuild or rescan the complete source for every prefix.
+
 After the complete document is proven to overflow, the authoritative API
 preflights the maximum exact work before shaping a candidate. One projection
 may require at most 1,024 exact candidate layouts, including the marker-only
@@ -261,12 +266,15 @@ With `T(p, K, E, Q, Z)` denoting one exact layout of a prefix of length `p`,
 the conservative worst case is:
 
 ```text
-time  = O(B + N + R + (G+S) log G + (S+A)*D + K log K + F*T(S,K,E,Q,Z) + sum(T(p_i,K,E,Q,Z)) + O_g + O_d + O_r)
+time  = O(B + N + R + G log G + S log S + (S+A)*D + K log K + F*T(S,K,E,Q,Z) + sum(T(p_i,K,E,Q,Z)) + O_g + O_d + O_r)
 space = O(B + N + R + (S+A)*D + K + Q + Z + O_g + O_d + O_r)
 ```
 
-The `(G+S) log G` term covers deterministic logical-source indexing and lookup
-of whole-run glyph clusters, including descending RTL-backend cluster order.
+The `G log G` term covers deterministic logical-source indexing of whole-run
+glyph clusters, including descending RTL-backend cluster order. `S log S`
+bounds preparation and lookup of the sorted UAX #14 byte-boundary set for
+word-wrapped ellipsis; the complete source is scanned once per candidate
+enumeration, not once per candidate.
 The `(S+A)*D` term is the complete fragmentable-decoration ancestry carried by
 text tokens and zero-source atomic items (with public rich depth capped at
 48). `Q+Z` is the memoized region-query cache and its returned intervals. `T`
@@ -279,20 +287,22 @@ size terms rather than being hidden behind a wall-clock cutoff.
 
 `cargo bench -p boundtext --bench text_layout_adversarial --features phase-trace`
 prints one JSON record per adversarial scenario. A reference Linux run on
-2026-08-25 produced:
+2026-08-26 produced:
 
-| Scenario                         | Time (µs) | VmHWM (KiB) | Candidates | Fit probes | Region queries | Shape calls / glyphs | Materialized lines / glyphs |
-| -------------------------------- | --------: | ----------: | ---------: | ---------: | -------------: | -------------------: | --------------------------: |
-| `exact-ellipsis-256`             |   244,847 |       6,132 |        255 |          0 |              0 |         512 / 33,407 |                       1 / 2 |
-| `ellipsis-candidate-budget-1024` |       921 |       6,488 |          0 |          0 |              0 |            1 / 1,025 |                       0 / 0 |
-| `exact-exclusion-fit-65`         |    45,847 |       6,488 |         85 |         65 |            122 |         236 / 10,926 |                      2 / 12 |
-| `default-exact-fit-budget-4096`  | 1,739,867 |       6,488 |          0 |      4,096 |          4,096 |      4,097 / 409,700 |                       1 / 1 |
-| `content-exact-fit-209-grid`     |       412 |       6,488 |          0 |         75 |              0 |              76 / 76 |                       1 / 1 |
+| Scenario                              | Time (µs) | VmHWM (KiB) | Candidates | Word-boundary preparations | Fit probes | Region queries | Shape calls / glyphs | Materialized lines / glyphs |
+| ------------------------------------- | --------: | ----------: | ---------: | -------------------------: | ---------: | -------------: | -------------------: | --------------------------: |
+| `exact-ellipsis-256`                  |   231,349 |       6,100 |        255 |                          0 |          0 |              0 |         512 / 33,407 |                       1 / 2 |
+| `word-ellipsis-candidate-budget-1024` |       876 |       6,476 |          0 |                          1 |          0 |              0 |            1 / 1,025 |                       0 / 0 |
+| `exact-exclusion-fit-65`              |    42,216 |       6,476 |         85 |                          0 |         65 |            122 |         236 / 10,926 |                      2 / 12 |
+| `default-exact-fit-budget-4096`       | 1,671,739 |       6,476 |          0 |                          0 |      4,096 |          4,096 |      4,097 / 409,700 |                       1 / 1 |
+| `content-exact-fit-209-grid`          |       381 |       6,476 |          0 |                          0 |         75 |              0 |              76 / 76 |                       1 / 1 |
 
 Elapsed time and process high-water memory are observational rather than
 portable pass/fail thresholds. Counter assertions are the deterministic
-performance contract and demonstrate that budget rejection performs no exact
-candidate or output materialization work.
+performance contract and demonstrate that word boundaries are prepared once
+and budget rejection performs no exact candidate or output materialization
+work. `geometrySegments` is independent from the exclusion count and is zero
+for these abstract-provider scenarios, which do not normalize path geometry.
 
 ## Public and Rust migration
 
