@@ -326,7 +326,7 @@ matching authored units against visible shaping clusters and `V^2` for
 associating ruby-base clusters with the narrowest containing annotation
 range. Logical/visual ordering adds `V log V`; member materialization is
 charged to `O_u`. Equal annotation text on separate ruby levels remains
-separate by an internal level namespace even when its public source and
+separate by a level-local namespace even when its public source and
 cluster ranges are identical. The 4,096 animation-unit scene limit bounds
 emitted animation units in `boundsvg`; it does not replace this explicit
 construction-cost bound in the public `boundtext` mapping API.
