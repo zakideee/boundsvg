@@ -310,7 +310,7 @@ fn build_text_unit_map_internal(
 ) -> Result<TextUnitMap, TextUnitMapError> {
     let candidates = collect_candidates(lines, writing_mode)?;
     let line_ids = build_line_ids(lines.len(), &candidates, writing_mode);
-    let (mut units, _visible_draft_count) = match kind {
+    let (mut units, visible_draft_count) = match kind {
         TextUnitKind::Cluster => {
             let mut drafts = build_cluster_drafts(&candidates, &line_ids);
             let visible_draft_count = drafts.len();
@@ -329,9 +329,11 @@ fn build_text_unit_map_internal(
     #[cfg(any(test, feature = "phase-trace"))]
     crate::phase_trace::record_unit_map_work(
         source_projection.map_or(0, |projection| projection.units.len()),
-        _visible_draft_count,
+        visible_draft_count,
         units.iter().map(|draft| draft.entry.members.len()).sum(),
     );
+    #[cfg(not(any(test, feature = "phase-trace")))]
+    let _ = visible_draft_count;
     Ok(TextUnitMap {
         kind,
         ruby,
