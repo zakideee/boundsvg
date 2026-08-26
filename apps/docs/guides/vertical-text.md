@@ -114,7 +114,13 @@ When multiple head-prohibit characters appear consecutively (e.g., `」）。`),
 
 1. If a head-prohibit group would start a new line, pull the entire group back to the previous line
 2. If it doesn't fit, backtrack up to 8 clusters to find a valid break point
-3. If no valid break is found: `overflow.type = "clip"` with `reason = "kinsoku_unresolved"`
+3. If no valid break is found, use a forced break and report
+   `overflow.type = "kinsoku_unresolved"` when the resulting plan remains
+   physically contained
+
+`kinsoku_unresolved` is diagnostic and does not trigger ellipsis by itself. If
+the plan also violates width, height, or `maxLines`, the physical `overflow` or
+`cannot_fit` status takes precedence.
 
 ## Hanging Punctuation
 

@@ -9,6 +9,11 @@ longest exact legal prefix without splitting grapheme clusters or atomic rich it
 contextual text at the retained end, preserves source/style/decoration identity, and excludes output
 and warnings owned only by the omitted suffix.
 
+`kinsoku_unresolved` now remains a diagnostic for a forced but physically
+contained break and does not by itself trigger ellipsis. When the same plan
+also violates width, height, or `maxLines`, the physical `overflow` or
+`cannot_fit` status takes precedence.
+
 Ordinary spans now use the canonical rich planner. Paint-only boundaries keep
 one shaping run (an indivisible cross-boundary cluster uses its source-start
 paint), and nested decorated spans remain fragmentable with all owner keys in

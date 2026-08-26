@@ -84,6 +84,10 @@ for glyph in &glyphs {
 | `bbox`                | Bounding box `{ x, y, w, h }`                              |
 | `overflow`            | `none` / `overflow` / `kinsoku_unresolved` / `cannot_fit`  |
 
+`kinsoku_unresolved` reports a forced break whose resulting plan still fits
+its physical constraints. It does not trigger ellipsis by itself. A width,
+height, or `max_lines` failure takes precedence when both conditions occur.
+
 `layout_text` and `layout_text_with_unit_metadata` return
 `Result<TextLayoutResult, TextLayoutError>`. Preparation failure and
 deterministic rich-depth, inline-rectangle, and ellipsis-budget exhaustion are
