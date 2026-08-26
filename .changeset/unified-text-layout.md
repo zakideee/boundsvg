@@ -38,8 +38,9 @@ matching `@boundsvg/core` package.
 logical-axis `RegionProvider` contract. Rust callers must migrate `Option` handling and provider
 implementations as documented in `crates/boundtext/README.md`.
 `FlowLayoutResult` also adds `inline_box_decorations`; direct struct constructors must initialize
-or forward that field. Shrinkwrap resource failures now keep their structured text error codes
-through the WASM bridge.
+or forward that field. Flow shrinkwrap geometry/resource failures now keep their structured text
+error codes through the WASM bridge; the older direct Rust preformatted-text shrinkwrap helpers
+continue to return `Option` pending a separate SemVer decision.
 The `boundtext` default feature set now includes `unicode-full`, changing direct
 default-feature Rust builds from per-code-point fallback boundaries to UAX #29
 extended grapheme clusters. Custom no-default builds must enable

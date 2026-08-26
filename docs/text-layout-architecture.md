@@ -64,11 +64,19 @@ The planner runs in this order:
 Fit therefore never measures an already-truncated display sequence. Ellipsis
 never changes the selected fit size.
 
+`kinsoku_unresolved` describes a forced break in an otherwise contained plan;
+it is not by itself a width, height, or line-count overflow. If both conditions
+occur, the violated layout constraint takes precedence in `TextOverflow`.
+Fit and ellipsis therefore retain a contained diagnostic plan, but still
+reject or project a plan whose complete content violates a physical limit.
+
 ## Logical axes and regions
 
 Line breaking consumes logical inline intervals in logical block bands.
-Horizontal and vertical writing share the same planner state; an axis strategy
-maps logical coordinates to physical coordinates only at placement time.
+Horizontal and vertical writing share the canonical authored projection and
+the fit/ellipsis selection policy. Axis-specific line and column breakers own
+their placement state, while both consume the same logical-region contract
+before mapping coordinates to physical output.
 
 Every exclusion-flow input uses a fallible, normalized, memoized
 `RegionProvider`. A provider with no exclusions may declare
@@ -233,7 +241,8 @@ errors. There is no approximate or partial text output. Numeric limits are
 calibrated with public adversarial benchmarks in the same output-affecting
 change that enables them; an unexplained constant is not a contract.
 
-The limits enforced per authoritative operation are:
+The limits enforced independently by each public layout or measurement
+entrypoint are:
 
 | Resource                                 |                                 Limit | Fatal code                      |
 | ---------------------------------------- | ------------------------------------: | ------------------------------- |
@@ -265,7 +274,8 @@ The public input variables are:
 - `E`: flow exclusions;
 - `K`: normalized geometry segments;
 - `Q`: region queries;
-- `Z`: returned free intervals; and
+- `Z`: returned free intervals;
+- `I_w`: configured shrinkwrap search iterations;
 - `U`: authored UnitMap source units, including every ruby annotation-level
   grapheme;
 - `V`: visible cluster drafts before ruby-unit coalescing; and
@@ -295,8 +305,14 @@ bound `D`, inline-rectangle contribution to `A`, `C`, `F`, `Q`, and `Z`.
 `B`, `N`, `R`, `S`, `G`, `U`, `V`, and the selected output remain explicit
 input/output size terms rather than being hidden behind a wall-clock cutoff.
 Within one `T`, fragment paint-style ownership walks a segment's graphemes and
-decoration runs once; it must not re-segment the complete source for each
-grapheme.
+decoration runs once. Span-fragment materialization builds a source-unit owner
+table in `O(S)` space and performs `O(1)` owner lookup per output glyph; it does
+not scan every authored span for every glyph.
+
+A higher-level shrinkwrap operation performs at most `I_w + 5` independently
+budgeted measure/layout calls in the current adapters. Its geometry-provider
+work is therefore `O((I_w + 5) * (Q + Z))`, with `Q` and `Z` capped per call;
+`I_w` remains an explicit public input rather than a hidden wall-clock limit.
 
 UnitMap work is opt-in. Its current conservative bound includes `U*V` for
 matching authored units against visible shaping clusters and `V^2` for
@@ -314,26 +330,30 @@ prints one JSON record per adversarial scenario. A reference Linux run on
 
 | Scenario                              | Time (µs) | VmHWM (KiB) | Candidates | Word-boundary preparations | Fit probes | Region queries | Shape calls / glyphs | Materialized lines / glyphs |
 | ------------------------------------- | --------: | ----------: | ---------: | -------------------------: | ---------: | -------------: | -------------------: | --------------------------: |
-| `exact-ellipsis-256`                  |    59,063 |       5,844 |        255 |                          0 |          0 |              0 |         512 / 33,407 |                       1 / 2 |
-| `word-ellipsis-candidate-budget-1024` |     1,123 |       6,220 |          0 |                          1 |          0 |              0 |            1 / 1,025 |                       0 / 0 |
-| `exact-exclusion-fit-65`              |    13,664 |       6,220 |         85 |                          0 |         65 |            122 |         236 / 10,926 |                      2 / 12 |
-| `default-exact-fit-budget-4096`       |   400,034 |       6,220 |          0 |                          0 |      4,096 |          4,096 |      4,097 / 409,700 |                       1 / 1 |
-| `content-exact-fit-209-grid`          |       388 |       6,220 |          0 |                          0 |         75 |              0 |              76 / 76 |                       1 / 1 |
+| `exact-ellipsis-256`                  |    58,218 |       5,856 |        255 |                          0 |          0 |              0 |         512 / 33,407 |                       1 / 2 |
+| `word-ellipsis-candidate-budget-1024` |       950 |       6,232 |          0 |                          1 |          0 |              0 |            1 / 1,025 |                       0 / 0 |
+| `exact-exclusion-fit-65`              |    13,216 |       6,232 |         85 |                          0 |         65 |            122 |         236 / 10,926 |                      2 / 12 |
+| `default-exact-fit-budget-4096`       |   404,460 |       6,232 |          0 |                          0 |      4,096 |          4,096 |      4,097 / 409,700 |                       1 / 1 |
+| `content-exact-fit-209-grid`          |       417 |       6,232 |          0 |                          0 |         75 |              0 |              76 / 76 |                       1 / 1 |
 
-The same executable isolates UnitMap construction after layout and publishes
-the variables needed to falsify its bound:
+The same executable isolates UnitMap construction after layout. Fixture input
+columns are declared from the deterministic scene construction; `U`, `V`, and
+`O_u` below come from engine phase counters and are asserted against the
+result, so drift fails the benchmark instead of silently changing a label:
 
 | Scenario            | Time (µs) | VmHWM (KiB) | `U` projected units | `V` visible drafts | `O_u` member refs |
 | ------------------- | --------: | ----------: | ------------------: | -----------------: | ----------------: |
-| `unit-map-ruby-256` |       641 |       7,212 |                 512 |                512 |               512 |
-| `unit-map-ruby-512` |     1,723 |       9,192 |               1,024 |              1,024 |             1,024 |
+| `unit-map-ruby-256` |       689 |       7,224 |                 512 |                512 |               512 |
+| `unit-map-ruby-512` |     1,687 |       9,304 |               1,024 |              1,024 |             1,024 |
 
 Elapsed time and process high-water memory are observational rather than
 portable pass/fail thresholds. Counter assertions are the deterministic
-performance contract and demonstrate that word boundaries are prepared once
-and budget rejection performs no exact candidate or output materialization
-work. `geometrySegments` is independent from the exclusion count and is zero
-for these abstract-provider scenarios, which do not normalize path geometry.
+performance contract and demonstrate that word boundaries are prepared once,
+budget rejection performs no exact candidate or output materialization work,
+and UnitMap work reports the engine-created projection/drafts/output rather
+than author-entered output counts. `geometrySegments` is independent from the
+exclusion count and is zero for these abstract-provider scenarios, which do
+not normalize path geometry.
 
 ## Public and Rust migration
 
@@ -361,8 +381,10 @@ for these abstract-provider scenarios, which do not normalize path geometry.
 - `FlowLayoutResult` adds `inline_box_decorations`; consumers that construct
   this public struct add an empty vector for plain flow or forward the
   materialized rich-flow decorations.
-- Shrinkwrap adapters preserve `BoundtextError` resource codes through the
-  structured WASM error envelope instead of flattening them to strings.
+- Flow shrinkwrap measurement preserves `BoundtextError` geometry/resource
+  codes through the structured WASM error envelope. The older direct Rust
+  preformatted-text shrinkwrap helpers still return `Option`; changing those
+  signatures to preserve `TextLayoutError` is a separate SemVer decision.
 - The bundled WASM ABI is updated with TypeScript bridge types in the same
   change. It is not a public compatibility boundary, and versions must not be
   mixed.

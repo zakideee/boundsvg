@@ -203,10 +203,10 @@ returns `TextLayoutError::EllipsisCandidateLimit` or
 Flow consumers implement one logical-axis `RegionProvider::regions` method.
 The engine memoizes identical `RegionQuery` values and validates that returned
 `FlowRegion` intervals are finite, non-negative, clipped, ordered, and
-non-overlapping. One operation permits at most 65,536 distinct queries and
-262,144 cumulative returned intervals. Provider invalidity or budget
-exhaustion is a typed `BoundtextError`; it is never interpreted as an empty
-region or a rejected fit/ellipsis candidate.
+non-overlapping. Each public layout or measurement call permits at most 65,536
+distinct queries and 262,144 cumulative returned intervals. Provider
+invalidity or budget exhaustion is a typed `BoundtextError`; it is never
+interpreted as an empty region or a rejected fit/ellipsis candidate.
 
 ### Vertical Writing (vertical-rl)
 
