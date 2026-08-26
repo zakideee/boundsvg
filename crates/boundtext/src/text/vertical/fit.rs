@@ -234,11 +234,7 @@ pub(super) fn fit_vertical_shrink(
         {
             return Some(layout_result);
         }
-        let overflow = if at_min.kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::cannot_fit()
-        };
+        let overflow = TextOverflow::cannot_fit();
         return Some(build_vertical_fit_result(at_min, min_size, overflow));
     }
 
@@ -323,11 +319,7 @@ pub(super) fn fit_vertical_grow(
         at_initial.line_height_px,
         at_initial.all_placed,
     ) {
-        let overflow = if at_initial.kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::overflow("initial font size does not fit; cannot grow")
-        };
+        let overflow = TextOverflow::overflow("initial font size does not fit; cannot grow");
         return Some(build_vertical_fit_result(
             at_initial,
             req.font_size_px,

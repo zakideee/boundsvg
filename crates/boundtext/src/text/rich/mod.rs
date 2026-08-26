@@ -1004,7 +1004,7 @@ fn is_rich_text_fit(req: &TextLayoutRequest, layout_result: &TextLayoutResult) -
             return false;
         }
     }
-    layout_result.overflow.overflow_type == "none"
+    !layout_result.overflow.is_constraint_overflow()
 }
 
 fn layout_rich_text_at_font_size(
@@ -1057,7 +1057,7 @@ fn layout_rich_text_at_font_size(
     if should_apply_ellipsis_projection
         && req.ellipsis
         && req.max_lines.is_some()
-        && layout_result.overflow.overflow_type != "none"
+        && !is_rich_text_fit(req, &layout_result)
         && let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px)
     {
         return Some(ellipsized);
@@ -1141,7 +1141,7 @@ fn apply_rich_ellipsis(
             && req
                 .max_height
                 .is_none_or(|max_height| candidate_layout.bbox.h <= max_height + 0.01)
-            && candidate_layout.overflow.overflow_type == "none"
+            && !candidate_layout.overflow.is_constraint_overflow()
     };
 
     let legal_prefixes = legal_ellipsis_prefixes_for_request(req, &inline_nodes, total);
@@ -1674,10 +1674,10 @@ fn truncate_decoration_runs(
 fn segment_style_at_byte_offset(
     segment: &RichSegment,
     byte_offset: usize,
-    decoration_runs_match: bool,
+    has_matching_decoration_runs: bool,
 ) -> ResolvedStyle {
     let mut style = segment.style.clone();
-    if !decoration_runs_match {
+    if !has_matching_decoration_runs {
         return style;
     }
     let mut cursor = 0_usize;
@@ -1699,13 +1699,13 @@ fn segment_style_at_grapheme(segment: &RichSegment, grapheme_index: usize) -> Re
     segment_style_at_byte_offset(
         segment,
         byte_offset,
-        prepare::decoration_runs_match_text(segment),
+        prepare::has_matching_decoration_runs(segment),
     )
 }
 
 fn segment_styles_for_graphemes(segment: &RichSegment, graphemes: &[String]) -> Vec<ResolvedStyle> {
-    let decoration_runs_match = prepare::decoration_runs_match_text(segment);
-    if !decoration_runs_match {
+    let has_matching_decoration_runs = prepare::has_matching_decoration_runs(segment);
+    if !has_matching_decoration_runs {
         return vec![segment.style.clone(); graphemes.len()];
     }
 

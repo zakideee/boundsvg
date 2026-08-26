@@ -128,6 +128,12 @@ pub struct TextOverflow {
 }
 
 impl TextOverflow {
+    /// Return whether this status means that a layout constraint was violated.
+    #[must_use]
+    pub(crate) fn is_constraint_overflow(&self) -> bool {
+        !matches!(self.overflow_type.as_str(), "none" | "kinsoku_unresolved")
+    }
+
     #[must_use]
     pub fn none() -> Self {
         Self {

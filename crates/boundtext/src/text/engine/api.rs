@@ -839,7 +839,7 @@ fn is_complete_text_plan_fit(
     req: &TextLayoutRequest<'_>,
     layout_result: &TextLayoutResult,
 ) -> bool {
-    layout_result.overflow.overflow_type == "none"
+    !layout_result.overflow.is_constraint_overflow()
         && layout_result.lines.len() <= req.max_lines.unwrap_or(usize::MAX)
         && layout_result.bbox.w <= req.max_width + 0.001
         && req

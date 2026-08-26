@@ -252,14 +252,14 @@ pub(super) fn build_vertical_result_with_constraints(
     }
 
     let has_overflow = total_column_count > truncated_columns.len();
-    let overflow = if kinsoku_unresolved {
-        TextOverflow::kinsoku_unresolved()
-    } else if has_overflow {
+    let overflow = if has_overflow {
         TextOverflow::overflow("columns truncated by maxLines")
     } else if let Some(constraint_overflow) =
         detect_constraint_overflow(total_width, max_column_h, max_width, max_height)
     {
         constraint_overflow
+    } else if kinsoku_unresolved {
+        TextOverflow::kinsoku_unresolved()
     } else {
         TextOverflow::none()
     };

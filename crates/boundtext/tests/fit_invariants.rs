@@ -312,3 +312,78 @@ fn grow_requires_the_authored_size_to_fit_before_considering_a_larger_island() {
         Some("initial font size does not fit; cannot grow")
     );
 }
+
+#[test]
+fn kinsoku_diagnostic_does_not_mask_fit_constraint_failures() {
+    let registry = font_registry();
+    let families = vec!["FitProbe".to_string()];
+    let font_context = FontContext {
+        registry: &registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+
+    for writing_mode in [WritingMode::HorizontalTb, WritingMode::VerticalRl] {
+        for fit in [FitMode::Shrink, FitMode::Grow] {
+            for source_length in [12, 14] {
+                let source = "。".repeat(source_length);
+                let request = TextLayoutRequest {
+                    text: &source,
+                    spans: None,
+                    rich_text: None,
+                    font_size_px: 20.0,
+                    line_height: Some(1.2),
+                    line_height_px: None,
+                    letter_spacing_px: 0.0,
+                    text_indent: None,
+                    max_width: if writing_mode == WritingMode::HorizontalTb {
+                        40.0
+                    } else {
+                        300.0
+                    },
+                    max_height: Some(if writing_mode == WritingMode::HorizontalTb {
+                        300.0
+                    } else {
+                        40.0
+                    }),
+                    wrap: WrapMode::Char,
+                    white_space: WhiteSpaceMode::Normal,
+                    tab_size: 4,
+                    fit,
+                    max_lines: Some(6),
+                    ellipsis: false,
+                    language: Language::Ja,
+                    writing_mode,
+                    text_orientation: TextOrientation::Mixed,
+                    uax14_breaks: None,
+                    hanging_punctuation: false,
+                    font_variation_settings: Vec::new(),
+                    font_feature_settings: Vec::new(),
+                    min_font_size_px: Some(20.0),
+                    shrink_epsilon_px: Some(0.25),
+                    shrink_max_iterations: Some(1),
+                    max_font_size_px: Some(24.0),
+                    grow_epsilon_px: Some(0.25),
+                    grow_max_iterations: Some(1),
+                    fit_max_probes: None,
+                };
+
+                let layout_result =
+                    layout_text(&request, &font_context).expect("kinsoku fit result");
+                let expected_overflow = if source_length == 12 {
+                    "kinsoku_unresolved"
+                } else if fit == FitMode::Shrink {
+                    "cannot_fit"
+                } else {
+                    "overflow"
+                };
+                assert_eq!(
+                    layout_result.overflow.overflow_type, expected_overflow,
+                    "{writing_mode:?} {fit:?} source_length={source_length}"
+                );
+            }
+        }
+    }
+}

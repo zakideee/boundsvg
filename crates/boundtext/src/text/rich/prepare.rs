@@ -319,7 +319,7 @@ fn collapse_whitespace_walk(
     for node in nodes {
         match node {
             RichInlineNode::Segment(seg) => {
-                if decoration_runs_match_text(seg) {
+                if has_matching_decoration_runs(seg) {
                     let mut collapsed = String::with_capacity(seg.text.len());
                     for run in &mut seg.decoration_runs {
                         let mut collapsed_run = String::with_capacity(run.text.len());
@@ -383,7 +383,7 @@ fn trim_trailing_collapsed_space(nodes: &mut [RichInlineNode]) -> bool {
                 }
                 if seg.text.ends_with(' ') {
                     seg.text.pop();
-                    if decoration_runs_match_text_with_trailing_space(seg) {
+                    if has_matching_decoration_runs_with_trailing_space(seg) {
                         for run in seg.decoration_runs.iter_mut().rev() {
                             if run.text.ends_with(' ') {
                                 run.text.pop();
@@ -419,7 +419,7 @@ pub(super) fn expand_tabs_in_nodes(nodes: &mut [RichInlineNode], tab_size: u32) 
         match node {
             RichInlineNode::Segment(seg) => {
                 if seg.text.contains('\t') || seg.text.contains('\r') {
-                    if decoration_runs_match_text(seg) {
+                    if has_matching_decoration_runs(seg) {
                         expand_tabs_in_decoration_runs(seg, tab_size);
                     } else {
                         seg.text = expand_tabs(&seg.text, tab_size);
@@ -437,17 +437,18 @@ pub(super) fn expand_tabs_in_nodes(nodes: &mut [RichInlineNode], tab_size: u32) 
     }
 }
 
-pub(super) fn decoration_runs_match_text(segment: &RichSegment) -> bool {
-    decoration_runs_match_value(&segment.decoration_runs, &segment.text)
+/// Return whether decoration-run text exactly partitions the segment text.
+pub(super) fn has_matching_decoration_runs(segment: &RichSegment) -> bool {
+    has_matching_decoration_run_value(&segment.decoration_runs, &segment.text)
 }
 
-fn decoration_runs_match_text_with_trailing_space(segment: &RichSegment) -> bool {
+fn has_matching_decoration_runs_with_trailing_space(segment: &RichSegment) -> bool {
     let mut text_with_space = segment.text.clone();
     text_with_space.push(' ');
-    decoration_runs_match_value(&segment.decoration_runs, &text_with_space)
+    has_matching_decoration_run_value(&segment.decoration_runs, &text_with_space)
 }
 
-fn decoration_runs_match_value(
+fn has_matching_decoration_run_value(
     runs: &[crate::text::types::RichTextDecorationRunInput],
     text: &str,
 ) -> bool {

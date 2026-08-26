@@ -1179,6 +1179,128 @@ fn collapsed_span_whitespace_preserves_fragment_style_ownership() {
 }
 
 #[test]
+fn kinsoku_diagnostic_does_not_trigger_ellipsis_without_constraint_overflow() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let source = "。".repeat(12);
+    let mut punctuation_style = rich_style(20.0, "#111111");
+    punctuation_style.language = Some("ja".to_string());
+    let rich_text = vec![RichTextNodeInput::Span {
+        text: source.clone(),
+        style: punctuation_style,
+    }];
+
+    for should_use_rich_text in [false, true] {
+        for writing_mode in [WritingMode::HorizontalTb, WritingMode::VerticalRl] {
+            let mut request = layout_request(
+                if should_use_rich_text { "" } else { &source },
+                if writing_mode == WritingMode::HorizontalTb {
+                    40.0
+                } else {
+                    300.0
+                },
+            );
+            request.rich_text = should_use_rich_text.then_some(rich_text.as_slice());
+            request.font_size_px = 20.0;
+            request.line_height = Some(1.2);
+            request.max_height = Some(if writing_mode == WritingMode::HorizontalTb {
+                300.0
+            } else {
+                40.0
+            });
+            request.max_lines = Some(6);
+            request.writing_mode = writing_mode;
+
+            let layout_result = layout_text_with_unit_metadata(&request, &font_context)
+                .expect("contained kinsoku layout");
+
+            assert_eq!(
+                layout_result.overflow.overflow_type, "kinsoku_unresolved",
+                "rich={should_use_rich_text} {writing_mode:?}"
+            );
+            assert_eq!(
+                layout_result
+                    .lines
+                    .iter()
+                    .map(|line| line.text.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["。。"; 6],
+                "rich={should_use_rich_text} {writing_mode:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn kinsoku_diagnostic_does_not_reject_a_physically_fitting_ellipsis_candidate() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let source = "。".repeat(14);
+    let mut punctuation_style = rich_style(20.0, "#111111");
+    punctuation_style.language = Some("ja".to_string());
+    let rich_text = vec![RichTextNodeInput::Span {
+        text: source.clone(),
+        style: punctuation_style,
+    }];
+
+    for should_use_rich_text in [false, true] {
+        for writing_mode in [WritingMode::HorizontalTb, WritingMode::VerticalRl] {
+            let mut request = layout_request(
+                if should_use_rich_text { "" } else { &source },
+                if writing_mode == WritingMode::HorizontalTb {
+                    40.0
+                } else {
+                    300.0
+                },
+            );
+            request.rich_text = should_use_rich_text.then_some(rich_text.as_slice());
+            request.font_size_px = 20.0;
+            request.line_height = Some(1.2);
+            request.max_height = Some(if writing_mode == WritingMode::HorizontalTb {
+                300.0
+            } else {
+                40.0
+            });
+            request.max_lines = Some(6);
+            request.writing_mode = writing_mode;
+
+            let layout_result = layout_text_with_unit_metadata(&request, &font_context)
+                .expect("kinsoku ellipsis candidate");
+
+            assert_eq!(
+                layout_result.display_text.as_deref(),
+                Some("。。。。。。。。。。。…"),
+                "rich={should_use_rich_text} {writing_mode:?}"
+            );
+            assert_eq!(
+                layout_result.lines.len(),
+                6,
+                "rich={should_use_rich_text} {writing_mode:?}"
+            );
+            assert_eq!(
+                layout_result.overflow.reason.as_deref(),
+                Some("ellipsis applied"),
+                "rich={should_use_rich_text} {writing_mode:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn mixed_metrics_and_negative_tracking_choose_the_longest_exact_prefix() {
     let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
     let families = vec!["JP".to_string()];
@@ -1298,6 +1420,24 @@ fn nested_decorated_resource_input(depth: usize) -> Vec<RichTextNodeInput> {
         };
     }
     vec![node]
+}
+
+fn nested_inline_box(depth: usize) -> RichTextNodeInput {
+    if depth == 0 {
+        return RichTextNodeInput::Text {
+            text: "deep".to_string(),
+        };
+    }
+    RichTextNodeInput::InlineBox {
+        style: rich_style(24.0, "#333333"),
+        children: vec![nested_inline_box(depth - 1)],
+        padding_inline: None,
+        background: None,
+        border_color: None,
+        border_width: None,
+        border_radius: None,
+        span_key: Some(format!("depth-{depth}")),
+    }
 }
 
 #[test]
@@ -1623,6 +1763,46 @@ fn rich_ellipsis_commits_warning_owned_by_a_retained_atomic_node() {
         "a warning owned by the retained atomic node must be committed: {:?}",
         layout_result.warnings
     );
+}
+
+#[test]
+fn rich_ellipsis_commits_only_selected_inline_depth_warnings() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+
+    for should_retain_inline_box in [false, true] {
+        let mut rich_text = vec![RichTextNodeInput::Text {
+            text: "BBBBBBBBBBBB".to_string(),
+        }];
+        if should_retain_inline_box {
+            rich_text.insert(0, nested_inline_box(4));
+        } else {
+            rich_text.push(nested_inline_box(4));
+        }
+        let mut request = layout_request("", 80.0);
+        request.language = Language::En;
+        request.rich_text = Some(&rich_text);
+
+        let layout_result = layout_text_with_unit_metadata(&request, &font_context)
+            .expect("nested inline-depth ellipsis");
+        assert_eq!(
+            layout_result
+                .warnings
+                .iter()
+                .filter(|warning| warning.code == "INLINE_BOX_MAX_DEPTH")
+                .count(),
+            usize::from(should_retain_inline_box),
+            "retain={should_retain_inline_box}: display={:?}",
+            layout_result.display_text
+        );
+    }
 }
 
 #[test]

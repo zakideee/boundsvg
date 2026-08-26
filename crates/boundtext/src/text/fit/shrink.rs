@@ -171,7 +171,7 @@ fn fit_shrink_internal(
             return Some(result);
         }
         // Cannot fit even at min size
-        let (lines, lh, kinsoku_unresolved) = layout_at_size(
+        let (lines, lh, _) = layout_at_size(
             req,
             font_ctx,
             min_size,
@@ -179,11 +179,7 @@ fn fit_shrink_internal(
             kinsoku_profile,
             hanging_chars,
         )?;
-        let overflow = if kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::cannot_fit()
-        };
+        let overflow = TextOverflow::cannot_fit();
         let warnings = collect_warnings_from_lines(&lines, primary_alias);
         return Some(build_result(lines, min_size, lh, overflow, warnings));
     }
@@ -316,11 +312,7 @@ fn fit_shrink_shaped(
             return result;
         }
         // Cannot fit even at min size — return all lines without truncation.
-        let overflow = if m_min.kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::cannot_fit()
-        };
+        let overflow = TextOverflow::cannot_fit();
         return fit_build_shaped_failure(pp, req, font_ctx, min_size, overflow);
     }
 

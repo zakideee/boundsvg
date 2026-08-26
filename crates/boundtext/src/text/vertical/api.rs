@@ -167,7 +167,7 @@ pub fn layout_vertical_text(
     let total_column_count = columns.len();
     let mut projected_display_text = None;
     let mut selected_warnings = warnings;
-    let mut selected_kinsoku_unresolved = kinsoku_unresolved;
+    let mut has_selected_kinsoku_violation = kinsoku_unresolved;
     let truncated_columns = if let Some(max) = req.max_lines {
         if columns.len() > max {
             let mut kept: Vec<Line> = columns.into_iter().take(max).collect();
@@ -235,12 +235,12 @@ pub fn layout_vertical_text(
                         &display_text,
                         primary_alias,
                     ));
-                    selected_kinsoku_unresolved = candidate_kinsoku_unresolved;
+                    has_selected_kinsoku_violation = candidate_kinsoku_unresolved;
                     projected_display_text = Some(display_text);
                     kept = columns;
                 } else {
                     selected_warnings = Vec::new();
-                    selected_kinsoku_unresolved = false;
+                    has_selected_kinsoku_violation = false;
                     projected_display_text = Some(String::new());
                     kept.clear();
                 }
@@ -258,7 +258,7 @@ pub fn layout_vertical_text(
         total_column_count,
         line_height_px,
         req.font_size_px,
-        selected_kinsoku_unresolved,
+        has_selected_kinsoku_violation,
         Some(req.max_width),
         req.max_height,
         selected_warnings,

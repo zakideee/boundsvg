@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::text::engine::detect_constraint_overflow;
 use crate::text::kinsoku::{
     KinsokuProfile, apply_kinsoku_by_boundary, avoid_non_breaking_pair_split_by_boundary,
     get_kinsoku_profile,
@@ -161,10 +162,14 @@ pub(super) fn layout_horizontal_tokens(
             h: y,
         },
         chosen_font_size_px,
-        overflow: if kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else if total_count > req.max_lines.unwrap_or(total_count) {
+        overflow: if total_count > req.max_lines.unwrap_or(total_count) {
             TextOverflow::overflow("lines truncated by maxLines")
+        } else if let Some(constraint_overflow) =
+            detect_constraint_overflow(max_line_width, y, Some(req.max_width), req.max_height)
+        {
+            constraint_overflow
+        } else if kinsoku_unresolved {
+            TextOverflow::kinsoku_unresolved()
         } else {
             TextOverflow::none()
         },
@@ -302,10 +307,17 @@ pub(super) fn layout_vertical_tokens(
             h: max_column_height,
         },
         chosen_font_size_px,
-        overflow: if kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else if total_count > req.max_lines.unwrap_or(total_count) {
+        overflow: if total_count > req.max_lines.unwrap_or(total_count) {
             TextOverflow::overflow("columns truncated by maxLines")
+        } else if let Some(constraint_overflow) = detect_constraint_overflow(
+            total_width,
+            max_column_height,
+            Some(req.max_width),
+            req.max_height,
+        ) {
+            constraint_overflow
+        } else if kinsoku_unresolved {
+            TextOverflow::kinsoku_unresolved()
         } else {
             TextOverflow::none()
         },
