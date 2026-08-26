@@ -437,7 +437,7 @@ pub(super) fn expand_tabs_in_nodes(nodes: &mut [RichInlineNode], tab_size: u32) 
     }
 }
 
-fn decoration_runs_match_text(segment: &RichSegment) -> bool {
+pub(super) fn decoration_runs_match_text(segment: &RichSegment) -> bool {
     decoration_runs_match_value(&segment.decoration_runs, &segment.text)
 }
 

@@ -1667,21 +1667,13 @@ fn truncate_decoration_runs(
     if remaining == 0 { output } else { Vec::new() }
 }
 
-fn segment_style_at_grapheme(segment: &RichSegment, grapheme_index: usize) -> ResolvedStyle {
+fn segment_style_at_byte_offset(
+    segment: &RichSegment,
+    byte_offset: usize,
+    decoration_runs_match: bool,
+) -> ResolvedStyle {
     let mut style = segment.style.clone();
-    let graphemes = grapheme_split(&segment.text);
-    let byte_offset = graphemes
-        .iter()
-        .take(grapheme_index)
-        .map(String::len)
-        .sum::<usize>();
-    let are_runs_equivalent = segment
-        .decoration_runs
-        .iter()
-        .map(|run| run.text.as_str())
-        .collect::<String>()
-        == segment.text;
-    if !are_runs_equivalent {
+    if !decoration_runs_match {
         return style;
     }
     let mut cursor = 0_usize;
@@ -1694,6 +1686,45 @@ fn segment_style_at_grapheme(segment: &RichSegment, grapheme_index: usize) -> Re
         cursor = end;
     }
     style
+}
+
+fn segment_style_at_grapheme(segment: &RichSegment, grapheme_index: usize) -> ResolvedStyle {
+    let byte_offset = grapheme_byte_ranges(&segment.text)
+        .get(grapheme_index)
+        .map_or(segment.text.len(), |(byte_start, _)| *byte_start);
+    segment_style_at_byte_offset(
+        segment,
+        byte_offset,
+        prepare::decoration_runs_match_text(segment),
+    )
+}
+
+fn segment_styles_for_graphemes(segment: &RichSegment, graphemes: &[String]) -> Vec<ResolvedStyle> {
+    let decoration_runs_match = prepare::decoration_runs_match_text(segment);
+    if !decoration_runs_match {
+        return vec![segment.style.clone(); graphemes.len()];
+    }
+
+    let mut styles = Vec::with_capacity(graphemes.len());
+    let mut byte_offset = 0_usize;
+    let mut decoration_run_index = 0_usize;
+    let mut decoration_run_end = segment.decoration_runs[0].text.len();
+    for grapheme in graphemes {
+        while byte_offset >= decoration_run_end
+            && decoration_run_index + 1 < segment.decoration_runs.len()
+        {
+            decoration_run_index += 1;
+            decoration_run_end = decoration_run_end
+                .saturating_add(segment.decoration_runs[decoration_run_index].text.len());
+        }
+        let mut style = segment.style.clone();
+        style
+            .text_decoration
+            .clone_from(&segment.decoration_runs[decoration_run_index].text_decoration);
+        styles.push(style);
+        byte_offset = byte_offset.saturating_add(grapheme.len());
+    }
+    styles
 }
 
 fn first_omitted_style(nodes: &[RichInlineNode], keep: usize) -> Option<ResolvedStyle> {
@@ -2154,16 +2185,17 @@ fn build_fragmentable_segment_run(
         return Some(Vec::new());
     }
 
-    let capacity = segments
+    let segment_graphemes = segments
         .iter()
-        .map(|segment| grapheme_split(&segment.text).len())
-        .sum();
+        .map(|segment| grapheme_split(&segment.text))
+        .collect::<Vec<_>>();
+    let capacity = segment_graphemes.iter().map(Vec::len).sum();
     let mut tokens = Vec::with_capacity(capacity);
     let mut chunk_graphemes = Vec::new();
     let mut chunk_styles = Vec::new();
-    for segment in segments {
-        for (grapheme_index, grapheme) in grapheme_split(&segment.text).into_iter().enumerate() {
-            let paint_style = segment_style_at_grapheme(segment, grapheme_index);
+    for (segment, graphemes) in segments.iter().zip(segment_graphemes) {
+        let paint_styles = segment_styles_for_graphemes(segment, &graphemes);
+        for (grapheme, paint_style) in graphemes.into_iter().zip(paint_styles) {
             if grapheme == "\n" {
                 append_fragmentable_mixed_chunk(
                     &mut tokens,
