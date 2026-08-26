@@ -1124,6 +1124,61 @@ fn span_ellipsis_uses_the_first_omitted_style_and_synthetic_identity() {
 }
 
 #[test]
+fn collapsed_span_whitespace_preserves_fragment_style_ownership() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let span = |text: &str, letter_spacing_px: f64, language: &str| TextSpanInput {
+        text: text.to_string(),
+        font_family: families.clone(),
+        font_weight: 400,
+        font_style: FontStyle::Normal,
+        font_size_px: 24.0,
+        letter_spacing_px: Some(letter_spacing_px),
+        language: Some(language.to_string()),
+        text_orientation: None,
+        color: None,
+        text_strokes: None,
+        text_shadows: None,
+        font_variation_settings: None,
+        font_feature_settings: None,
+        text_decoration: None,
+        decoration_transport_only: false,
+    };
+    let spans = vec![span("AB  ", 5.0, "en"), span("CD", 0.0, "fr")];
+    let mut request = layout_request("AB  CD", 1_000.0);
+    request.spans = Some(&spans);
+    request.ellipsis = false;
+    request.max_lines = None;
+    request.wrap = WrapMode::None;
+
+    let layout_result =
+        layout_text_with_unit_metadata(&request, &font_context).expect("collapsed span layout");
+    let fragments = layout_result.lines[0]
+        .fragments
+        .as_deref()
+        .expect("materialized span fragments");
+
+    assert_eq!(
+        fragments
+            .iter()
+            .map(|fragment| fragment.text.as_str())
+            .collect::<Vec<_>>(),
+        ["AB ", "CD"]
+    );
+    assert_eq!(fragments[0].style.letter_spacing_px, 5.0);
+    assert_eq!(fragments[0].style.language.as_deref(), Some("en"));
+    assert_eq!(fragments[1].style.letter_spacing_px, 0.0);
+    assert_eq!(fragments[1].style.language.as_deref(), Some("fr"));
+}
+
+#[test]
 fn mixed_metrics_and_negative_tracking_choose_the_longest_exact_prefix() {
     let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
     let families = vec!["JP".to_string()];

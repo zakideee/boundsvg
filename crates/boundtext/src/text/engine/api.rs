@@ -206,13 +206,26 @@ fn materialize_span_fragments(req: &TextLayoutRequest<'_>, layout_result: &mut T
     let Some(spans) = req.spans.filter(|spans| !spans.is_empty()) else {
         return;
     };
+    let span_texts = spans
+        .iter()
+        .map(|span| span.text.as_str())
+        .collect::<Vec<_>>();
+    let normalized_span_texts = super::super::types::preprocess_span_texts_for_white_space(
+        &span_texts,
+        req.white_space,
+        req.tab_size,
+    );
     let mut source_end = 0_u32;
     let span_ranges = spans
         .iter()
-        .map(|span| {
+        .enumerate()
+        .map(|(span_index, span)| {
             let source_start = source_end;
+            let span_text = normalized_span_texts
+                .as_ref()
+                .map_or(span.text.as_str(), |texts| texts[span_index].as_str());
             source_end = source_end.saturating_add(
-                u32::try_from(super::super::grapheme::grapheme_split(&span.text).len())
+                u32::try_from(super::super::grapheme::grapheme_split(span_text).len())
                     .unwrap_or(u32::MAX),
             );
             (source_start, source_end, span)
