@@ -103,6 +103,8 @@ pub(crate) struct TextSourceUnit {
     pub(crate) cluster_start: u32,
     pub(crate) cluster_end: u32,
     pub(crate) source_role: TextUnitSourceRole,
+    /// Ruby annotation source namespace; absent for content and ruby base.
+    pub(crate) annotation_level: Option<u32>,
     pub(crate) authored_order: u32,
 }
 
@@ -132,6 +134,7 @@ impl TextSourceProjection {
                     cluster_start,
                     cluster_end: byte_cursor,
                     source_role: TextUnitSourceRole::Content,
+                    annotation_level: None,
                     authored_order: source_start,
                 }
             })
@@ -166,6 +169,30 @@ struct ClusterSignature {
     source_end: u32,
     cluster_start: u32,
     cluster_end: u32,
+    annotation_level: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ClusterOccurrenceKey {
+    role: TextUnitSourceRole,
+    source_start: u32,
+    source_end: u32,
+    cluster_start: u32,
+    cluster_end: u32,
+}
+
+impl ClusterSignature {
+    /// Coordinates shared by the public unit ID format. Annotation levels use
+    /// consecutive occurrences so existing IDs stay opaque and collision-free.
+    fn occurrence_key(&self) -> ClusterOccurrenceKey {
+        ClusterOccurrenceKey {
+            role: self.role,
+            source_start: self.source_start,
+            source_end: self.source_end,
+            cluster_start: self.cluster_start,
+            cluster_end: self.cluster_end,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -362,6 +389,11 @@ fn collect_candidates(
                     source_end,
                     cluster_start: glyph.cluster_start,
                     cluster_end: glyph.cluster_end,
+                    annotation_level: if role == TextUnitSourceRole::RubyAnnotation {
+                        glyph.decoration_level
+                    } else {
+                        None
+                    },
                 },
                 inline_position: match writing_mode {
                     WritingMode::HorizontalTb => glyph.origin_x,
@@ -453,7 +485,7 @@ fn build_cluster_drafts(
     candidates: &[GlyphCandidate],
     line_ids: &[Option<String>],
 ) -> Vec<UnitDraft> {
-    let mut occurrence_by_signature = BTreeMap::<ClusterSignature, u32>::new();
+    let mut occurrence_by_coordinates = BTreeMap::<ClusterOccurrenceKey, u32>::new();
     let mut drafts = Vec::<UnitDraft>::new();
     let mut candidate_index = 0_usize;
     while candidate_index < candidates.len() {
@@ -467,8 +499,8 @@ fn build_cluster_drafts(
         {
             end += 1;
         }
-        let occurrence = occurrence_by_signature
-            .entry(signature.clone())
+        let occurrence = occurrence_by_coordinates
+            .entry(signature.occurrence_key())
             .or_default();
         let occurrence_value = *occurrence;
         *occurrence += 1;
@@ -537,6 +569,9 @@ fn append_omitted_cluster_drafts(
             if draft.signature.role != source_unit.source_role {
                 return false;
             }
+            if draft.signature.annotation_level != source_unit.annotation_level {
+                return false;
+            }
             let is_source_covered = draft.signature.source_start <= source_unit.source_start
                 && draft.signature.source_end >= source_unit.source_end;
             if source_unit.source_role == TextUnitSourceRole::RubyAnnotation {
@@ -554,10 +589,10 @@ fn append_omitted_cluster_drafts(
         .filter(|source_unit| !is_represented(source_unit))
         .cloned()
         .collect::<Vec<_>>();
-    let mut occurrence_by_signature = drafts.iter().fold(
-        BTreeMap::<ClusterSignature, u32>::new(),
+    let mut occurrence_by_coordinates = drafts.iter().fold(
+        BTreeMap::<ClusterOccurrenceKey, u32>::new(),
         |mut counts, draft| {
-            let next = counts.entry(draft.signature.clone()).or_default();
+            let next = counts.entry(draft.signature.occurrence_key()).or_default();
             *next = (*next).max(draft.occurrence.saturating_add(1));
             counts
         },
@@ -569,9 +604,10 @@ fn append_omitted_cluster_drafts(
             source_end: source_unit.source_end,
             cluster_start: source_unit.cluster_start,
             cluster_end: source_unit.cluster_end,
+            annotation_level: source_unit.annotation_level,
         };
-        let occurrence = occurrence_by_signature
-            .entry(signature.clone())
+        let occurrence = occurrence_by_coordinates
+            .entry(signature.occurrence_key())
             .or_default();
         let occurrence_value = *occurrence;
         *occurrence += 1;
@@ -774,6 +810,7 @@ fn combine_ruby_units(drafts: Vec<UnitDraft>) -> Vec<UnitDraft> {
                 source_end,
                 cluster_start: 0,
                 cluster_end: 0,
+                annotation_level: None,
             },
             occurrence: 0,
             logical_key: LogicalKey {
@@ -856,6 +893,7 @@ fn build_line_units(
                 source_end,
                 cluster_start: 0,
                 cluster_end: 0,
+                annotation_level: None,
             },
             occurrence: axis_rank,
             logical_key: LogicalKey {
@@ -1270,6 +1308,7 @@ mod tests {
                     cluster_start: 0,
                     cluster_end: 3,
                     source_role: TextUnitSourceRole::RubyBase,
+                    annotation_level: None,
                     authored_order: 0,
                 },
                 TextSourceUnit {
@@ -1278,6 +1317,7 @@ mod tests {
                     cluster_start: 0,
                     cluster_end: 3,
                     source_role: TextUnitSourceRole::RubyAnnotation,
+                    annotation_level: Some(0),
                     authored_order: 1,
                 },
             ],

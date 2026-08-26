@@ -607,6 +607,57 @@ describe("Text animateUnits", () => {
     expect(text.unitAnimationSamples).toHaveLength(5);
   });
 
+  it("keeps nested inline and multi-level ruby source units distinct", () => {
+    const scene = createElement(
+      "Canvas",
+      { width: 320, height: 140 },
+      createElement(
+        "Text",
+        {
+          id: "nested-rich-units",
+          font: "NotoSansJP",
+          fontSizePx: 36,
+          animateUnits: {
+            by: "cluster",
+            animation: UNIT_TRACK,
+            order: "logical",
+            ruby: "separate",
+          },
+        },
+        createElement(
+          "InlineBox",
+          {},
+          "AB",
+          createElement("InlineBox", { color: "#60a5fa" }, "CD"),
+        ),
+        createElement(
+          "Ruby",
+          { rubyPosition: "alternate" },
+          createElement("Inline", { color: "#fca5a5" }, "漢"),
+          createElement("Inline", { color: "#fde68a" }, "字"),
+          createElement(
+            "Rt",
+            { fontSizePx: 16 },
+            createElement("Inline", { color: "#fca5a5" }, "か"),
+            createElement("Inline", { color: "#fde68a" }, "ん"),
+          ),
+          createElement("Rt", { fontSizePx: 16 }, "かん"),
+        ),
+      ),
+    );
+    const text = findText(engine.renderToIR(scene, { timeMs: 25 }).root, "nested-rich-units");
+    const units = text.unitMap?.units ?? [];
+    const annotationUnits = units.filter((unit) =>
+      unit.members.some((member) => member.sourceRole === "rubyAnnotation"),
+    );
+
+    expect(units).toHaveLength(10);
+    expect(annotationUnits).toHaveLength(4);
+    expect(new Set(units.map((unit) => unit.unitId))).toHaveProperty("size", 10);
+    expect(units.every((unit) => unit.members.length > 0)).toBe(true);
+    expect(text.unitAnimationSamples).toHaveLength(10);
+  });
+
   it.each([
     { order: "logical" as const, ruby: "with-base" as const },
     { order: "logical" as const, ruby: "separate" as const },

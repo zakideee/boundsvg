@@ -674,6 +674,292 @@ fn ruby_after_content_keeps_annotation_clusters_local_without_phantom_units() {
 }
 
 #[test]
+fn nested_inline_box_children_keep_one_global_source_identity() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = vec![RichTextNodeInput::InlineBox {
+        style: rich_style(24.0, "#111111"),
+        children: vec![
+            RichTextNodeInput::Text {
+                text: "AB".to_string(),
+            },
+            RichTextNodeInput::InlineBox {
+                style: rich_style(24.0, "#222222"),
+                children: vec![RichTextNodeInput::Text {
+                    text: "CD".to_string(),
+                }],
+                padding_inline: None,
+                background: None,
+                border_color: None,
+                border_width: None,
+                border_radius: None,
+                span_key: Some("nested-source".to_string()),
+            },
+        ],
+        padding_inline: None,
+        background: None,
+        border_color: None,
+        border_width: None,
+        border_radius: None,
+        span_key: Some("outer-source".to_string()),
+    }];
+
+    for writing_mode in [WritingMode::HorizontalTb, WritingMode::VerticalRl] {
+        let mut request = layout_request("", 1_000.0);
+        request.rich_text = Some(&rich_text);
+        request.max_lines = None;
+        request.ellipsis = false;
+        request.writing_mode = writing_mode;
+        request.max_height = Some(1_000.0);
+
+        let layout_result = layout_text_with_unit_metadata(&request, &font_context)
+            .expect("nested inline-box source projection layout");
+        let source_and_cluster_ranges = layout_result
+            .lines
+            .iter()
+            .filter_map(|line| line.positioned_glyphs.as_deref())
+            .flatten()
+            .filter(|glyph| glyph.source_role.as_deref() == Some("content"))
+            .map(|glyph| {
+                (
+                    glyph.source_start,
+                    glyph.source_end,
+                    glyph.cluster_start,
+                    glyph.cluster_end,
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            source_and_cluster_ranges,
+            std::collections::BTreeSet::from([
+                (Some(0), Some(1), 0, 1),
+                (Some(1), Some(2), 1, 2),
+                (Some(2), Some(3), 2, 3),
+                (Some(3), Some(4), 3, 4),
+            ])
+        );
+
+        let unit_map = build_text_unit_map_for_request(
+            &layout_result,
+            &request,
+            &font_context,
+            TextUnitKind::Cluster,
+            TextUnitRubyMode::Separate,
+        )
+        .expect("nested inline-box unit map");
+        assert_eq!(unit_map.units.len(), 4);
+        assert!(unit_map.units.iter().all(|unit| !unit.members.is_empty()));
+    }
+}
+
+#[test]
+fn multi_segment_ruby_keeps_contiguous_level_local_clusters() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = vec![RichTextNodeInput::Ruby {
+        ruby_position: Some("over".to_string()),
+        ruby_align: Some("center".to_string()),
+        ruby_gap_px: None,
+        ruby_offset_px: None,
+        ruby_line_sizing: None,
+        style: rich_style(24.0, "#111111"),
+        base: vec![
+            RichTextNodeInput::Span {
+                text: "漢".to_string(),
+                style: rich_style(24.0, "#111111"),
+            },
+            RichTextNodeInput::Span {
+                text: "字".to_string(),
+                style: rich_style(24.0, "#222222"),
+            },
+        ],
+        rt: vec![
+            RichTextNodeInput::Span {
+                text: "か".to_string(),
+                style: rich_style(12.0, "#333333"),
+            },
+            RichTextNodeInput::Span {
+                text: "ん".to_string(),
+                style: rich_style(12.0, "#444444"),
+            },
+        ],
+        rt_levels: Vec::new(),
+    }];
+
+    for writing_mode in [WritingMode::HorizontalTb, WritingMode::VerticalRl] {
+        let mut request = layout_request("", 1_000.0);
+        request.rich_text = Some(&rich_text);
+        request.max_lines = None;
+        request.ellipsis = false;
+        request.writing_mode = writing_mode;
+        request.max_height = Some(1_000.0);
+
+        let layout_result = layout_text_with_unit_metadata(&request, &font_context)
+            .expect("multi-segment ruby layout");
+        for role in ["rubyBase", "rubyAnnotation"] {
+            let cluster_ranges = layout_result
+                .lines
+                .iter()
+                .filter_map(|line| line.positioned_glyphs.as_deref())
+                .flatten()
+                .filter(|glyph| glyph.source_role.as_deref() == Some(role))
+                .map(|glyph| (glyph.cluster_start, glyph.cluster_end))
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(
+                cluster_ranges,
+                std::collections::BTreeSet::from([(0, 3), (3, 6)]),
+                "{writing_mode:?} {role}"
+            );
+        }
+
+        let unit_map = build_text_unit_map_for_request(
+            &layout_result,
+            &request,
+            &font_context,
+            TextUnitKind::Cluster,
+            TextUnitRubyMode::Separate,
+        )
+        .expect("multi-segment ruby unit map");
+        assert_eq!(unit_map.units.len(), 4);
+        assert!(unit_map.units.iter().all(|unit| !unit.members.is_empty()));
+    }
+}
+
+#[test]
+fn equal_ruby_annotation_levels_remain_distinct_units() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = vec![RichTextNodeInput::Ruby {
+        ruby_position: Some("alternate".to_string()),
+        ruby_align: Some("center".to_string()),
+        ruby_gap_px: None,
+        ruby_offset_px: None,
+        ruby_line_sizing: None,
+        style: rich_style(24.0, "#111111"),
+        base: vec![RichTextNodeInput::Text {
+            text: "漢".to_string(),
+        }],
+        rt: Vec::new(),
+        rt_levels: vec![
+            vec![RichTextNodeInput::Text {
+                text: "か".to_string(),
+            }],
+            vec![RichTextNodeInput::Text {
+                text: "か".to_string(),
+            }],
+        ],
+    }];
+
+    for writing_mode in [WritingMode::HorizontalTb, WritingMode::VerticalRl] {
+        let mut request = layout_request("", 1_000.0);
+        request.rich_text = Some(&rich_text);
+        request.max_lines = None;
+        request.ellipsis = false;
+        request.writing_mode = writing_mode;
+        request.max_height = Some(1_000.0);
+
+        let layout_result = layout_text_with_unit_metadata(&request, &font_context)
+            .expect("multi-level ruby layout");
+        let unit_map = build_text_unit_map_for_request(
+            &layout_result,
+            &request,
+            &font_context,
+            TextUnitKind::Cluster,
+            TextUnitRubyMode::Separate,
+        )
+        .expect("multi-level ruby unit map");
+        let annotation_units = unit_map
+            .units
+            .iter()
+            .filter(|unit| {
+                unit.members
+                    .iter()
+                    .any(|member| member.source_role == TextUnitSourceRole::RubyAnnotation)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(annotation_units.len(), 2, "{writing_mode:?}");
+        assert_ne!(annotation_units[0].unit_id, annotation_units[1].unit_id);
+        assert!(unit_map.units.iter().all(|unit| !unit.members.is_empty()));
+
+        let omitted_rich_text = vec![
+            RichTextNodeInput::Text {
+                text: "AAAA".to_string(),
+            },
+            rich_text[0].clone(),
+        ];
+        let mut omitted_request = layout_request("", 50.0);
+        omitted_request.rich_text = Some(&omitted_rich_text);
+        omitted_request.writing_mode = writing_mode;
+        omitted_request.max_height = Some(50.0);
+        let omitted_layout = layout_text_with_unit_metadata(&omitted_request, &font_context)
+            .expect("omitted multi-level ruby layout");
+        let omitted_unit_map = build_text_unit_map_for_request(
+            &omitted_layout,
+            &omitted_request,
+            &font_context,
+            TextUnitKind::Cluster,
+            TextUnitRubyMode::Separate,
+        )
+        .expect("omitted multi-level ruby unit map");
+        assert!(
+            omitted_layout
+                .display_text
+                .as_deref()
+                .is_some_and(|text| text.ends_with('\u{2026}')),
+            "{writing_mode:?}: {:?}",
+            omitted_layout.display_text
+        );
+        assert_eq!(omitted_unit_map.units.len(), 7, "{writing_mode:?}");
+        assert_eq!(
+            omitted_unit_map
+                .units
+                .iter()
+                .map(|unit| unit.unit_id.as_str())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            7,
+            "{writing_mode:?}"
+        );
+        assert!(
+            omitted_unit_map
+                .units
+                .iter()
+                .filter(|unit| unit.members.is_empty())
+                .count()
+                >= 3,
+            "{writing_mode:?}: display={:?}, members={:?}",
+            omitted_layout.display_text,
+            omitted_unit_map
+                .units
+                .iter()
+                .map(|unit| unit.members.len())
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn word_ellipsis_honors_supplied_uax14_boundaries() {
     let font_registry = registry("VF", "Inter-Variable.ttf");
     let families = vec!["VF".to_string()];

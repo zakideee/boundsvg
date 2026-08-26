@@ -1343,6 +1343,7 @@ fn build_inline_source_projection(
     fn append_segment(
         segment: &RichSegment,
         role: TextUnitSourceRole,
+        annotation_level: Option<u32>,
         source_cursor: &mut u32,
         byte_cursor: &mut u32,
         authored_order: &mut u32,
@@ -1360,6 +1361,7 @@ fn build_inline_source_projection(
                 cluster_start,
                 cluster_end: *byte_cursor,
                 source_role: role,
+                annotation_level,
                 authored_order: *authored_order,
             });
             *authored_order = authored_order.saturating_add(1);
@@ -1378,6 +1380,7 @@ fn build_inline_source_projection(
                 RichInlineNode::Segment(segment) => append_segment(
                     segment,
                     TextUnitSourceRole::Content,
+                    None,
                     source_cursor,
                     byte_cursor,
                     authored_order,
@@ -1389,6 +1392,7 @@ fn build_inline_source_projection(
                         append_segment(
                             segment,
                             TextUnitSourceRole::RubyBase,
+                            None,
                             source_cursor,
                             byte_cursor,
                             authored_order,
@@ -1403,11 +1407,12 @@ fn build_inline_source_projection(
                             cluster_start: *byte_cursor,
                             cluster_end: *byte_cursor,
                             source_role: TextUnitSourceRole::RubyBase,
+                            annotation_level: None,
                             authored_order: *authored_order,
                         });
                         *authored_order = authored_order.saturating_add(1);
                     }
-                    for level in &ruby.rt_levels {
+                    for (level_index, level) in ruby.rt_levels.iter().enumerate() {
                         let mut annotation_byte_cursor = 0_u32;
                         for segment in level {
                             for grapheme in grapheme_split(&segment.text) {
@@ -1421,6 +1426,9 @@ fn build_inline_source_projection(
                                     cluster_start,
                                     cluster_end: annotation_byte_cursor,
                                     source_role: TextUnitSourceRole::RubyAnnotation,
+                                    annotation_level: Some(
+                                        u32::try_from(level_index).unwrap_or(u32::MAX),
+                                    ),
                                     authored_order: *authored_order,
                                 });
                                 *authored_order = authored_order.saturating_add(1);
@@ -1834,22 +1842,7 @@ fn build_tokens_with_options(
     let mut source_cursor = 0_u32;
     let mut byte_cursor = 0_u32;
     for token in &mut tokens {
-        for glyph in &mut token.glyphs {
-            if glyph.source_role.as_deref() != Some("rubyAnnotation") {
-                glyph.cluster_start = glyph.cluster_start.saturating_add(byte_cursor);
-                glyph.cluster_end = glyph.cluster_end.saturating_add(byte_cursor);
-            }
-            if let Some(source_start) = glyph.source_start.as_mut() {
-                *source_start += source_cursor;
-            }
-            if let Some(source_end) = glyph.source_end.as_mut() {
-                *source_end += source_cursor;
-            }
-            // Ruby annotation decoration ranges intentionally stay local to
-            // their annotation level. `source_*` identifies the ruby base in
-            // the complete rich-text stream, while `decoration_source_*`
-            // projects into the annotation text for that level.
-        }
+        offset_glyph_source_identity(&mut token.glyphs, source_cursor, byte_cursor);
         byte_cursor =
             byte_cursor.saturating_add(u32::try_from(token.text.len()).unwrap_or(u32::MAX));
         source_cursor = source_cursor
@@ -1857,6 +1850,29 @@ fn build_tokens_with_options(
     }
 
     Some((tokens, decoration_spans))
+}
+
+fn offset_glyph_source_identity(
+    glyphs: &mut [PositionedGlyph],
+    source_offset: u32,
+    cluster_byte_offset: u32,
+) {
+    for glyph in glyphs {
+        if glyph.source_role.as_deref() != Some("rubyAnnotation") {
+            glyph.cluster_start = glyph.cluster_start.saturating_add(cluster_byte_offset);
+            glyph.cluster_end = glyph.cluster_end.saturating_add(cluster_byte_offset);
+        }
+        if let Some(source_start) = glyph.source_start.as_mut() {
+            *source_start = source_start.saturating_add(source_offset);
+        }
+        if let Some(source_end) = glyph.source_end.as_mut() {
+            *source_end = source_end.saturating_add(source_offset);
+        }
+        // Ruby annotation decoration ranges intentionally stay local to
+        // their annotation level. `source_*` identifies the ruby base in
+        // the complete rich-text stream, while `decoration_source_*`
+        // projects into the annotation text for that level.
+    }
 }
 
 enum FlatBuildItem<'a> {
@@ -2998,8 +3014,12 @@ fn build_atomic_box_token_inner(
     let mut inline_rects: Vec<NestedInlineRect> = Vec::new();
     let mut kinsoku_start = None;
     let mut kinsoku_end = None;
+    let mut source_cursor = 0_u32;
+    let mut byte_cursor = 0_u32;
 
     for child in children {
+        let source_glyph_start = glyphs.len();
+        let child_text_start = text.len();
         match child {
             RichInlineNode::Segment(seg) => {
                 let (child_start, child_end) = segment_kinsoku_edges(std::slice::from_ref(seg));
@@ -3193,6 +3213,16 @@ fn build_atomic_box_token_inner(
                 }
             }
         }
+        offset_glyph_source_identity(
+            &mut glyphs[source_glyph_start..],
+            source_cursor,
+            byte_cursor,
+        );
+        let child_text = &text[child_text_start..];
+        byte_cursor =
+            byte_cursor.saturating_add(u32::try_from(child_text.len()).unwrap_or(u32::MAX));
+        source_cursor = source_cursor
+            .saturating_add(u32::try_from(grapheme_split(child_text).len()).unwrap_or(u32::MAX));
     }
 
     let (cross_size, reference_offset) = if child_metrics.is_empty() {
@@ -4117,6 +4147,7 @@ fn shape_segment_run_horizontal(
     let mut glyphs = Vec::new();
     let mut cursor_x = start_x;
     let mut source_cursor = 0_u32;
+    let mut byte_cursor = 0_u32;
     for (segment_index, segment) in segments.iter().enumerate() {
         let mut shaped = shape_text(
             font_registry,
@@ -4141,19 +4172,23 @@ fn shape_segment_run_horizontal(
             baseline_y,
         );
         for glyph in &mut positioned {
+            glyph.cluster_start = glyph.cluster_start.saturating_add(byte_cursor);
+            glyph.cluster_end = glyph.cluster_end.saturating_add(byte_cursor);
             if let Some(source_start) = glyph.source_start.as_mut() {
-                *source_start += source_cursor;
+                *source_start = source_start.saturating_add(source_cursor);
             }
             if let Some(source_end) = glyph.source_end.as_mut() {
-                *source_end += source_cursor;
+                *source_end = source_end.saturating_add(source_cursor);
             }
             if let Some(source_start) = glyph.decoration_source_start.as_mut() {
-                *source_start += source_cursor;
+                *source_start = source_start.saturating_add(source_cursor);
             }
             if let Some(source_end) = glyph.decoration_source_end.as_mut() {
-                *source_end += source_cursor;
+                *source_end = source_end.saturating_add(source_cursor);
             }
         }
+        byte_cursor =
+            byte_cursor.saturating_add(u32::try_from(segment.text.len()).unwrap_or(u32::MAX));
         source_cursor = source_cursor
             .saturating_add(u32::try_from(grapheme_split(&segment.text).len()).unwrap_or(u32::MAX));
         cursor_x += shaped.iter().map(|glyph| glyph.x_advance).sum::<f64>();
@@ -4172,6 +4207,7 @@ fn shape_segment_run_vertical(
     let mut glyphs = Vec::new();
     let mut cursor_y = start_y;
     let mut source_cursor = 0_u32;
+    let mut byte_cursor = 0_u32;
     for (segment_index, segment) in segments.iter().enumerate() {
         let mut shaped = shape_text(
             font_registry,
@@ -4191,19 +4227,23 @@ fn shape_segment_run_vertical(
         let mut positioned =
             position_vertical_glyphs(&segment.text, &shaped, &segment.style, center_x, cursor_y);
         for glyph in &mut positioned {
+            glyph.cluster_start = glyph.cluster_start.saturating_add(byte_cursor);
+            glyph.cluster_end = glyph.cluster_end.saturating_add(byte_cursor);
             if let Some(source_start) = glyph.source_start.as_mut() {
-                *source_start += source_cursor;
+                *source_start = source_start.saturating_add(source_cursor);
             }
             if let Some(source_end) = glyph.source_end.as_mut() {
-                *source_end += source_cursor;
+                *source_end = source_end.saturating_add(source_cursor);
             }
             if let Some(source_start) = glyph.decoration_source_start.as_mut() {
-                *source_start += source_cursor;
+                *source_start = source_start.saturating_add(source_cursor);
             }
             if let Some(source_end) = glyph.decoration_source_end.as_mut() {
-                *source_end += source_cursor;
+                *source_end = source_end.saturating_add(source_cursor);
             }
         }
+        byte_cursor =
+            byte_cursor.saturating_add(u32::try_from(segment.text.len()).unwrap_or(u32::MAX));
         source_cursor = source_cursor
             .saturating_add(u32::try_from(grapheme_split(&segment.text).len()).unwrap_or(u32::MAX));
         cursor_y += shaped.iter().map(glyph_advance_in_vertical).sum::<f64>();
