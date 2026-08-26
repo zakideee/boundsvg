@@ -18,6 +18,13 @@ together; explicit pixel line height remains absolute. Positioned glyph
 UTF-8 byte offsets instead of run-local offsets. Ruby annotations continue to
 use annotation-level local offsets because they are shaped from a separate
 source string; use `sourceRole` or UnitMap identity across source namespaces.
+Nested atomic children and multiple styled ruby segments now keep continuous
+source/cluster coordinates, while equal annotation text on different ruby
+levels remains distinct UnitMap identity.
+Unregistered aliases are now rejected before authoritative WASM text layout
+on every render and layout-transition route, preserving
+`FONT_ALIAS_NOT_REGISTERED`; when an input has multiple fatal defects, this
+structured font diagnosis may now precede a shaping failure.
 
 Add the positive-integer `fitMaxProbes` Text prop for deterministic exact-grid
 fit when content (including negative tracking) or flow geometry is not

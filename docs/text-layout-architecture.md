@@ -251,7 +251,8 @@ queries consume one entry.
 
 The public input variables are:
 
-- `B`: normalized UTF-8 bytes;
+- `B`: normalized UTF-8 bytes across base and ruby-annotation shaping
+  namespaces;
 - `N`: canonical nodes, including zero-source nodes;
 - `R`: resolved shaping/paint/decoration runs;
 - `D`: maximum rich nesting depth;
@@ -265,14 +266,18 @@ The public input variables are:
 - `K`: normalized geometry segments;
 - `Q`: region queries;
 - `Z`: returned free intervals; and
-- `O_g`, `O_d`, `O_r`: materialized glyph, decoration, and inline-rect output.
+- `U`: authored UnitMap source units, including every ruby annotation-level
+  grapheme;
+- `V`: visible cluster drafts before ruby-unit coalescing; and
+- `O_g`, `O_d`, `O_r`, `O_u`: materialized glyph, decoration, inline-rect,
+  and UnitMap unit/member-reference output.
 
 With `T(p, K, E, Q, Z)` denoting one exact layout of a prefix of length `p`,
 the conservative worst case is:
 
 ```text
-time  = O(B + N + R + G log G + S log S + (S+A)*D + K log K + F*T(S,K,E,Q,Z) + sum(T(p_i,K,E,Q,Z)) + O_g + O_d + O_r)
-space = O(B + N + R + (S+A)*D + K + Q + Z + O_g + O_d + O_r)
+time  = O(B + N + R + G log G + S log S + (S+A)*D + K log K + F*T(S,K,E,Q,Z) + sum(T(p_i,K,E,Q,Z)) + U*V + V^2 + V log V + O_g + O_d + O_r + O_u)
+space = O(B + N + R + (S+A)*D + K + Q + Z + U + V + O_g + O_d + O_r + O_u)
 ```
 
 The `G log G` term covers deterministic logical-source indexing of whole-run
@@ -287,8 +292,18 @@ includes the same indexing and ancestry work for the candidate it shapes. The
 sum covers all evaluated ellipsis candidates and is quadratic in source length
 when no safe pruning or reusable checkpoint applies. The public hard limits
 bound `D`, inline-rectangle contribution to `A`, `C`, `F`, `Q`, and `Z`.
-`B`, `N`, `R`, `S`, `G`, and the selected output remain explicit input/output
-size terms rather than being hidden behind a wall-clock cutoff.
+`B`, `N`, `R`, `S`, `G`, `U`, `V`, and the selected output remain explicit
+input/output size terms rather than being hidden behind a wall-clock cutoff.
+
+UnitMap work is opt-in. Its current conservative bound includes `U*V` for
+matching authored units against visible shaping clusters and `V^2` for
+associating ruby-base clusters with the narrowest containing annotation
+range. Logical/visual ordering adds `V log V`; member materialization is
+charged to `O_u`. Equal annotation text on separate ruby levels remains
+separate by an internal level namespace even when its public source and
+cluster ranges are identical. The 4,096 animation-unit scene limit bounds
+emitted animation units in `boundsvg`; it does not replace this explicit
+construction-cost bound in the public `boundtext` mapping API.
 
 `cargo bench -p boundtext --bench text_layout_adversarial --features phase-trace`
 prints one JSON record per adversarial scenario. A reference Linux run on
@@ -296,11 +311,19 @@ prints one JSON record per adversarial scenario. A reference Linux run on
 
 | Scenario                              | Time (µs) | VmHWM (KiB) | Candidates | Word-boundary preparations | Fit probes | Region queries | Shape calls / glyphs | Materialized lines / glyphs |
 | ------------------------------------- | --------: | ----------: | ---------: | -------------------------: | ---------: | -------------: | -------------------: | --------------------------: |
-| `exact-ellipsis-256`                  |   231,349 |       6,100 |        255 |                          0 |          0 |              0 |         512 / 33,407 |                       1 / 2 |
-| `word-ellipsis-candidate-budget-1024` |       876 |       6,476 |          0 |                          1 |          0 |              0 |            1 / 1,025 |                       0 / 0 |
-| `exact-exclusion-fit-65`              |    42,216 |       6,476 |         85 |                          0 |         65 |            122 |         236 / 10,926 |                      2 / 12 |
-| `default-exact-fit-budget-4096`       | 1,671,739 |       6,476 |          0 |                          0 |      4,096 |          4,096 |      4,097 / 409,700 |                       1 / 1 |
-| `content-exact-fit-209-grid`          |       381 |       6,476 |          0 |                          0 |         75 |              0 |              76 / 76 |                       1 / 1 |
+| `exact-ellipsis-256`                  |   236,143 |       6,072 |        255 |                          0 |          0 |              0 |         512 / 33,407 |                       1 / 2 |
+| `word-ellipsis-candidate-budget-1024` |       900 |       6,512 |          0 |                          1 |          0 |              0 |            1 / 1,025 |                       0 / 0 |
+| `exact-exclusion-fit-65`              |    43,143 |       6,512 |         85 |                          0 |         65 |            122 |         236 / 10,926 |                      2 / 12 |
+| `default-exact-fit-budget-4096`       | 1,696,354 |       6,512 |          0 |                          0 |      4,096 |          4,096 |      4,097 / 409,700 |                       1 / 1 |
+| `content-exact-fit-209-grid`          |       384 |       6,512 |          0 |                          0 |         75 |              0 |              76 / 76 |                       1 / 1 |
+
+The same executable isolates UnitMap construction after layout and publishes
+the variables needed to falsify its bound:
+
+| Scenario            | Time (µs) | VmHWM (KiB) | `U` projected units | `V` visible drafts | `O_u` member refs |
+| ------------------- | --------: | ----------: | ------------------: | -----------------: | ----------------: |
+| `unit-map-ruby-256` |       654 |       7,240 |                 512 |                512 |               512 |
+| `unit-map-ruby-512` |     1,772 |       9,244 |               1,024 |              1,024 |             1,024 |
 
 Elapsed time and process high-water memory are observational rather than
 portable pass/fail thresholds. Counter assertions are the deterministic
@@ -346,9 +369,11 @@ release migration note. The TypeScript addition is non-breaking. Rendered
 output changes are output-affecting and require a changeset; this work does not
 perform a version bump.
 
-## Rollback units
+## Rollback responsibilities
 
-The implementation is rollbackable in three green responsibility units:
+The Conventional Commit sequence can be reverted in reverse order along three
+responsibility boundaries. These are dependency groups, not claims that each
+group is represented by one commit:
 
 1. The canonical planner, typed failures, logical provider, exact selection,
    fit budgets, synchronized Rust/TypeScript/WASM contract, tests, fixtures,

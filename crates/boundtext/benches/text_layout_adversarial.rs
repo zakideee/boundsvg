@@ -1,4 +1,4 @@
-//! Deterministic adversarial benchmark for exact ellipsis and exclusion fit.
+//! Deterministic adversarial benchmark for exact ellipsis, fit, and UnitMap work.
 
 use std::time::Instant;
 
@@ -14,6 +14,7 @@ use boundtext::text::types::{
     FitMode, InlineRectInput, Language, RichTextNodeInput, RichTextStyleInput, TextLayoutRequest,
     TextOrientation, WhiteSpaceMode, WrapMode, WritingMode,
 };
+use boundtext::text::unit_map::{TextUnitKind, TextUnitRubyMode, build_text_unit_map_for_request};
 
 type BenchmarkResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -27,6 +28,9 @@ struct InputStats {
     atomic_items: usize,
     exclusions: usize,
     geometry_segments: usize,
+    projected_units: usize,
+    visible_unit_drafts: usize,
+    unit_member_refs: usize,
 }
 
 fn registry() -> BenchmarkResult<FontRegistry> {
@@ -62,6 +66,7 @@ fn print_result(
             "\"inputBytes\":{},\"canonicalNodes\":{},\"resolvedRuns\":{},",
             "\"maxDepth\":{},\"sourceBoundaries\":{},\"atomicItems\":{},",
             "\"exclusions\":{},\"geometrySegments\":{},",
+            "\"projectedUnits\":{},\"visibleUnitDrafts\":{},\"unitMemberRefs\":{},",
             "\"ellipsisCandidates\":{},\"ellipsisWordBoundaryPreparations\":{},",
             "\"fitProbes\":{},",
             "\"regionQueries\":{},\"returnedRegions\":{},",
@@ -80,6 +85,9 @@ fn print_result(
         stats.atomic_items,
         stats.exclusions,
         stats.geometry_segments,
+        stats.projected_units,
+        stats.visible_unit_drafts,
+        stats.unit_member_refs,
         counters.ellipsis_candidates,
         counters.ellipsis_word_boundary_preparations,
         counters.fit_probes,
@@ -151,6 +159,9 @@ fn benchmark_exact_ellipsis(font_context: &FontContext<'_>) -> BenchmarkResult {
             atomic_items: 0,
             exclusions: 0,
             geometry_segments: 0,
+            projected_units: 0,
+            visible_unit_drafts: 0,
+            unit_member_refs: 0,
         },
         snapshot_work(),
     );
@@ -223,6 +234,9 @@ fn benchmark_ellipsis_candidate_budget(font_context: &FontContext<'_>) -> Benchm
             atomic_items: 0,
             exclusions: 0,
             geometry_segments: 0,
+            projected_units: 0,
+            visible_unit_drafts: 0,
+            unit_member_refs: 0,
         },
         counters,
     );
@@ -319,6 +333,9 @@ fn benchmark_exact_exclusion_fit(font_context: &FontContext<'_>) -> BenchmarkRes
             atomic_items: 0,
             exclusions: 1,
             geometry_segments: 0,
+            projected_units: 0,
+            visible_unit_drafts: 0,
+            unit_member_refs: 0,
         },
         snapshot_work(),
     );
@@ -380,6 +397,9 @@ fn benchmark_default_fit_probe_budget(font_context: &FontContext<'_>) -> Benchma
             atomic_items: 0,
             exclusions: 1,
             geometry_segments: 0,
+            projected_units: 0,
+            visible_unit_drafts: 0,
+            unit_member_refs: 0,
         },
         counters,
     );
@@ -475,8 +495,123 @@ fn benchmark_content_exact_fit(font_context: &FontContext<'_>) -> BenchmarkResul
             atomic_items: 1,
             exclusions: 0,
             geometry_segments: 0,
+            projected_units: 0,
+            visible_unit_drafts: 0,
+            unit_member_refs: 0,
         },
         counters,
+    );
+    Ok(())
+}
+
+fn benchmark_unit_map_projection(
+    font_context: &FontContext<'_>,
+    ruby_count: usize,
+) -> BenchmarkResult {
+    let ruby_style = RichTextStyleInput {
+        font_family: vec!["Noto".to_string()],
+        font_weight: 400,
+        font_style: FontStyle::Normal,
+        font_size_px: 24.0,
+        line_height: None,
+        line_height_px: None,
+        letter_spacing_px: Some(0.0),
+        language: Some("ja".to_string()),
+        color: None,
+        text_strokes: None,
+        text_shadows: None,
+        font_variation_settings: None,
+        font_feature_settings: None,
+        text_orientation: None,
+        text_decoration: None,
+    };
+    let rich_text = (0..ruby_count)
+        .map(|_| RichTextNodeInput::Ruby {
+            ruby_position: Some("over".to_string()),
+            ruby_align: Some("center".to_string()),
+            ruby_gap_px: None,
+            ruby_offset_px: None,
+            ruby_line_sizing: None,
+            style: ruby_style.clone(),
+            base: vec![RichTextNodeInput::Text {
+                text: "漢".to_string(),
+            }],
+            rt: vec![RichTextNodeInput::Text {
+                text: "か".to_string(),
+            }],
+            rt_levels: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let request = TextLayoutRequest {
+        text: "",
+        spans: None,
+        rich_text: Some(&rich_text),
+        font_size_px: 24.0,
+        line_height: None,
+        line_height_px: None,
+        letter_spacing_px: 0.0,
+        text_indent: None,
+        max_width: 1_000_000.0,
+        max_height: None,
+        wrap: WrapMode::Char,
+        white_space: WhiteSpaceMode::Normal,
+        tab_size: 4,
+        fit: FitMode::None,
+        max_lines: None,
+        ellipsis: false,
+        language: Language::Ja,
+        writing_mode: WritingMode::HorizontalTb,
+        text_orientation: TextOrientation::Mixed,
+        uax14_breaks: None,
+        hanging_punctuation: false,
+        font_variation_settings: Vec::new(),
+        font_feature_settings: Vec::new(),
+        min_font_size_px: None,
+        shrink_epsilon_px: None,
+        shrink_max_iterations: None,
+        max_font_size_px: None,
+        grow_epsilon_px: None,
+        grow_max_iterations: None,
+        fit_max_probes: None,
+    };
+    let layout_result = layout_text_with_unit_metadata(&request, font_context)?;
+
+    reset_work();
+    let started = Instant::now();
+    let unit_map = build_text_unit_map_for_request(
+        &layout_result,
+        &request,
+        font_context,
+        TextUnitKind::Cluster,
+        TextUnitRubyMode::Separate,
+    )?;
+    let elapsed = started.elapsed();
+    let projected_units = ruby_count * 2;
+    let unit_member_refs = unit_map
+        .units
+        .iter()
+        .map(|unit| unit.members.len())
+        .sum::<usize>();
+    assert_eq!(unit_map.units.len(), projected_units);
+    assert_eq!(unit_member_refs, projected_units);
+    assert!(unit_map.units.iter().all(|unit| !unit.members.is_empty()));
+    print_result(
+        &format!("unit-map-ruby-{ruby_count}"),
+        elapsed.as_micros(),
+        InputStats {
+            input_bytes: ruby_count * 6,
+            canonical_nodes: ruby_count * 3,
+            resolved_runs: ruby_count * 2,
+            max_depth: 2,
+            source_boundaries: ruby_count,
+            atomic_items: ruby_count,
+            exclusions: 0,
+            geometry_segments: 0,
+            projected_units,
+            visible_unit_drafts: unit_map.units.len(),
+            unit_member_refs,
+        },
+        snapshot_work(),
     );
     Ok(())
 }
@@ -498,5 +633,7 @@ fn main() -> BenchmarkResult {
     benchmark_exact_exclusion_fit(&font_context)?;
     benchmark_default_fit_probe_budget(&font_context)?;
     benchmark_content_exact_fit(&font_context)?;
+    benchmark_unit_map_projection(&font_context, 256)?;
+    benchmark_unit_map_projection(&font_context, 512)?;
     Ok(())
 }
