@@ -892,6 +892,73 @@ fn ordinary_text_measurement_surfaces_the_content_fit_probe_limit() {
 }
 
 #[test]
+fn text_measure_cache_separates_fit_probe_budgets() {
+    let mut registry = FontRegistry::new();
+    registry
+        .register(
+            test_font_data(),
+            "NotoSansJP".into(),
+            400,
+            FontStyle::Normal,
+        )
+        .expect("font registration should succeed");
+
+    let mut permissive = plain_text_input("negative tracking fit", 32.0, "char");
+    permissive.letter_spacing_px = Some(-1.0);
+    permissive.fit = Some("shrink".to_string());
+    permissive.min_font_size_px = Some(8.0);
+    permissive.shrink_epsilon_px = Some(0.25);
+    permissive.fit_max_probes = Some(128);
+    let mut constrained = plain_text_input("negative tracking fit", 32.0, "char");
+    constrained.letter_spacing_px = Some(-1.0);
+    constrained.fit = Some("shrink".to_string());
+    constrained.min_font_size_px = Some(8.0);
+    constrained.shrink_epsilon_px = Some(0.25);
+    constrained.fit_max_probes = Some(1);
+
+    let available_space = Size {
+        width: AvailableSpace::Definite(50.0),
+        height: AvailableSpace::Definite(20.0),
+    };
+    let mut measure_cache = HashMap::new();
+    let mut measure_cache_hits = 0;
+    let mut shrink_to_fit_widths = HashMap::new();
+    let mut shaped_cache = HashMap::new();
+    let mut text_results = HashMap::new();
+
+    measure_text_node(
+        &permissive,
+        &registry,
+        None,
+        Size::NONE,
+        available_space,
+        &mut measure_cache,
+        &mut measure_cache_hits,
+        &mut shrink_to_fit_widths,
+        &mut shaped_cache,
+        NodeId::new(1),
+        &mut text_results,
+    )
+    .expect("the permissive exact-fit budget should complete");
+
+    let error = measure_text_node(
+        &constrained,
+        &registry,
+        None,
+        Size::NONE,
+        available_space,
+        &mut measure_cache,
+        &mut measure_cache_hits,
+        &mut shrink_to_fit_widths,
+        &mut shaped_cache,
+        NodeId::new(2),
+        &mut text_results,
+    )
+    .expect_err("a cached result must not bypass the constrained probe budget");
+    assert_structured_error_code(error, "TEXT_FIT_PROBE_LIMIT");
+}
+
+#[test]
 fn test_simple_layout() {
     let input = LayoutInput {
         root: LayoutNodeInput {

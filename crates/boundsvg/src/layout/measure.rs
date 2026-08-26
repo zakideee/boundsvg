@@ -243,6 +243,7 @@ impl MeasureContext<'_> {
         text_input.font_feature_settings.hash(&mut hasher);
         text_input.unit_map.hash(&mut hasher);
         text_input.text_decoration_range_count.hash(&mut hasher);
+        text_input.fit_max_probes.hash(&mut hasher);
         if let Some(flow) = &text_input.flow {
             format!("{flow:?}").hash(&mut hasher);
         }
