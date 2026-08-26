@@ -22,8 +22,12 @@ error and does not materialize partial layout or output.
 
 ## Canonical document
 
-All plain, span, and recursive rich inputs adapt to one immutable logical
-document before planning. Every authored item has independent identities for:
+The authoritative planner adapts recursive rich input, span input, and plain
+input that needs fit, ellipsis, or indentation to one immutable logical
+document before planning. The plain, non-fit, non-ellipsis fast path still
+shapes and breaks text directly; it shares the resulting source and output
+contracts but does not construct the canonical rich document. Every authored
+item in a canonical document has independent identities for:
 
 - authored order, including zero-source items such as `InlineRect`;
 - source range, when the item contributes source text;
@@ -241,8 +245,11 @@ errors. There is no approximate or partial text output. Numeric limits are
 calibrated with public adversarial benchmarks in the same output-affecting
 change that enables them; an unexplained constant is not a contract.
 
-The limits enforced independently by each public layout or measurement
-entrypoint are:
+The checked `Result`-returning authorities enforce each applicable limit per
+operation: `text::engine::layout_text`, the public region-flow layout and
+measurement entrypoints, and their `boundsvg` bridges. Legacy direct
+`Option`-returning helpers are not alternate contract authorities; their
+consolidation requires a separate breaking Rust API decision. The limits are:
 
 | Resource                                 |                                 Limit | Fatal code                      |
 | ---------------------------------------- | ------------------------------------: | ------------------------------- |

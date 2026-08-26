@@ -390,6 +390,11 @@ fn extend_kinsoku_edges(
     }
 }
 
+/// Perform legacy direct rich-text layout.
+///
+/// Checked callers should use [`crate::text::engine::layout_text`] so resource,
+/// fit, and ellipsis failures retain their typed identity. This helper keeps its
+/// pre-existing `Option` contract until a separate breaking Rust API migration.
 #[must_use]
 pub fn layout_rich_text(
     req: &TextLayoutRequest,
@@ -729,6 +734,10 @@ fn prepare_rich_text(
 ///   In horizontal text this is physical line width; in vertical text this is
 ///   physical column height. Newline-only tokens act as separators.
 /// - `min_content_inline_size`: the largest single unbreakable token.
+///
+/// This legacy direct helper reports preparation and resource failure as
+/// `None`. A typed measurement authority requires a separate Rust API
+/// migration.
 #[must_use]
 pub fn measure_intrinsic_inline_size(
     req: &TextLayoutRequest,

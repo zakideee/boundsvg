@@ -75,9 +75,12 @@ fn mark_vertical_ellipsis(columns: &mut [Line], marker_cluster_start: u32) {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Perform full vertical text layout: shaping -> column breaking -> result building.
+/// Perform legacy direct vertical layout: shaping -> column breaking -> result building.
 ///
-/// This is the Rust equivalent of TS `layoutVerticalText()`.
+/// Checked callers should use [`crate::text::engine::layout_text`], which routes
+/// fit and ellipsis through the canonical planner with typed work limits. This
+/// `Option`-returning helper retains its pre-existing direct behavior until a
+/// separate breaking Rust API migration.
 #[must_use]
 pub fn layout_vertical_text(
     req: &crate::text::types::TextLayoutRequest,

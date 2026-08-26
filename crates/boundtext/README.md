@@ -158,6 +158,14 @@ profile. They live in a stricter table that is not yet selectable:
 
 ### Fit (Shrink / Grow)
 
+The contracts in this section apply to the checked authorities:
+`text::engine::layout_text` and the public `text::flow` layout entrypoints.
+The older direct helpers `text::fit::{fit_shrink, fit_grow}` and
+`text::vertical::layout_vertical_text` retain their pre-existing `Option`
+signatures and search behavior for now; they are not alternate fit-contract
+authorities. Removing or changing those helpers requires a separate breaking
+Rust API migration.
+
 Fit always evaluates the complete authored document with ellipsis disabled.
 A fit predicate uses endpoint checks and binary refinement only when both its
 content metrics and (for flow) its provider are certified monotone. Negative
@@ -201,6 +209,8 @@ is empty while source metadata remains complete. At most 1,024 exact candidate
 layouts are admitted after overflow is established; a larger maximum set
 returns `TextLayoutError::EllipsisCandidateLimit` or
 `BoundtextError::EllipsisCandidateLimit` before candidate materialization.
+This typed candidate limit is provided by the checked authorities above, not
+by the legacy direct vertical helper.
 
 ### Exclusion regions
 
