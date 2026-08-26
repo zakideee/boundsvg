@@ -7,7 +7,8 @@
 plain/rich text, exclusion flow, shrink/grow fit, and `maxLines` ellipsis. Ellipsis now selects the
 longest exact legal prefix without splitting grapheme clusters or atomic rich items, re-shapes
 contextual text at the retained end, preserves source/style/decoration identity, and excludes output
-and warnings owned only by the omitted suffix.
+and warnings owned only by the omitted suffix. Inline backgrounds and borders follow the aligned
+text bounds in horizontal and vertical layouts.
 
 `kinsoku_unresolved` now remains a diagnostic for a forced but physically
 contained break and does not by itself trigger ellipsis. When the same plan

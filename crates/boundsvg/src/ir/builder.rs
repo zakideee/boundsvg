@@ -580,7 +580,11 @@ fn append_text_warnings(context: &mut TextChildContext, layout: &TextLayoutOutpu
     }
 }
 
-fn append_inline_box_decorations(context: &mut TextChildContext, layout: &TextLayoutOutput) {
+fn append_inline_box_decorations(
+    context: &mut TextChildContext,
+    layout: &TextLayoutOutput,
+    text_bbox: BBox,
+) {
     for (index, decoration) in layout.inline_box_decorations.iter().enumerate() {
         let has_background = is_truthy(decoration.background.as_deref());
         let has_border_color = is_truthy(decoration.border_color.as_deref());
@@ -590,8 +594,8 @@ fn append_inline_box_decorations(context: &mut TextChildContext, layout: &TextLa
         let node_id = context.node_id;
         let decoration_id = format!("{node_id}:ibox{index}");
         let bbox = BBox {
-            x: context.bbox.x + decoration.x,
-            y: context.bbox.y + decoration.y,
+            x: text_bbox.x + decoration.x,
+            y: text_bbox.y + decoration.y,
             w: decoration.width,
             h: decoration.height,
         };
@@ -952,16 +956,6 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
             .collect()
     });
 
-    append_inline_box_decorations(&mut context, layout);
-    append_inline_rects(
-        &mut context,
-        layout,
-        measured_bbox,
-        is_vertical,
-        text_align,
-        "behind",
-    );
-
     let resolved_text_bbox = if is_path {
         BBox {
             x: context.bbox.x + measured_bbox.x,
@@ -972,6 +966,15 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
     } else {
         resolve_aligned_text_bbox(context.bbox, measured_bbox, is_vertical, text_align)
     };
+    append_inline_box_decorations(&mut context, layout, resolved_text_bbox);
+    append_inline_rects(
+        &mut context,
+        layout,
+        measured_bbox,
+        is_vertical,
+        text_align,
+        "behind",
+    );
     let text_node = IrNode {
         node_id: node_id.clone(),
         bbox: resolved_text_bbox,
