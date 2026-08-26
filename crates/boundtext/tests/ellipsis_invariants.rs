@@ -20,6 +20,9 @@ use boundtext::text::types::{
     TextDecorationStyle, TextLayoutRequest, TextOrientation, TextSpanInput, WhiteSpaceMode,
     WrapMode, WritingMode,
 };
+use boundtext::text::unit_map::{
+    TextUnitKind, TextUnitRubyMode, TextUnitSourceRole, build_text_unit_map_for_request,
+};
 
 fn registry(alias: &str, path: &str) -> FontRegistry {
     let mut reg = FontRegistry::new();
@@ -593,6 +596,81 @@ fn ruby_keeps_global_base_identity_and_local_annotation_decoration_identity() {
             && fragment.source_end == 2
             && !fragment.paths.is_empty()
     }));
+}
+
+#[test]
+fn ruby_after_content_keeps_annotation_clusters_local_without_phantom_units() {
+    let font_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let families = vec!["JP".to_string()];
+    let font_context = FontContext {
+        registry: &font_registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let rich_text = vec![
+        RichTextNodeInput::Text {
+            text: "AB".to_string(),
+        },
+        RichTextNodeInput::Ruby {
+            ruby_position: Some("over".to_string()),
+            ruby_align: Some("center".to_string()),
+            ruby_gap_px: None,
+            ruby_offset_px: None,
+            ruby_line_sizing: None,
+            style: rich_style(24.0, "#111111"),
+            base: vec![RichTextNodeInput::Text {
+                text: "漢".to_string(),
+            }],
+            rt: vec![RichTextNodeInput::Text {
+                text: "かん".to_string(),
+            }],
+            rt_levels: Vec::new(),
+        },
+    ];
+    let mut request = layout_request("", 1_000.0);
+    request.rich_text = Some(&rich_text);
+    request.max_lines = None;
+    request.ellipsis = false;
+
+    let layout_result = layout_text_with_unit_metadata(&request, &font_context)
+        .expect("ruby source projection layout");
+    let annotation_cluster_ranges = layout_result
+        .lines
+        .iter()
+        .filter_map(|line| line.positioned_glyphs.as_deref())
+        .flatten()
+        .filter(|glyph| glyph.source_role.as_deref() == Some("rubyAnnotation"))
+        .map(|glyph| (glyph.cluster_start, glyph.cluster_end))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        annotation_cluster_ranges,
+        std::collections::BTreeSet::from([(0, 3), (3, 6)])
+    );
+
+    let unit_map = build_text_unit_map_for_request(
+        &layout_result,
+        &request,
+        &font_context,
+        TextUnitKind::Cluster,
+        TextUnitRubyMode::Separate,
+    )
+    .expect("ruby unit map");
+    assert_eq!(unit_map.units.len(), 5);
+    assert!(unit_map.units.iter().all(|unit| !unit.members.is_empty()));
+    assert_eq!(
+        unit_map
+            .units
+            .iter()
+            .filter(|unit| {
+                unit.members
+                    .iter()
+                    .any(|member| member.source_role == TextUnitSourceRole::RubyAnnotation)
+            })
+            .count(),
+        2
+    );
 }
 
 #[test]

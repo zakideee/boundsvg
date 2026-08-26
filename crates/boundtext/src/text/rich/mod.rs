@@ -1827,14 +1827,18 @@ fn build_tokens_with_options(
         }
     }
 
-    // Convert the run-local ranges assigned while shaping into one logical
-    // byte/grapheme address space for the complete rich-text node.
+    // Convert base-text ranges into one logical address space for the complete
+    // rich-text node. Ruby annotations keep annotation-level cluster ranges:
+    // they shape a separate source string and their public source role provides
+    // the namespace needed to distinguish them from base glyphs.
     let mut source_cursor = 0_u32;
     let mut byte_cursor = 0_u32;
     for token in &mut tokens {
         for glyph in &mut token.glyphs {
-            glyph.cluster_start = glyph.cluster_start.saturating_add(byte_cursor);
-            glyph.cluster_end = glyph.cluster_end.saturating_add(byte_cursor);
+            if glyph.source_role.as_deref() != Some("rubyAnnotation") {
+                glyph.cluster_start = glyph.cluster_start.saturating_add(byte_cursor);
+                glyph.cluster_end = glyph.cluster_end.saturating_add(byte_cursor);
+            }
             if let Some(source_start) = glyph.source_start.as_mut() {
                 *source_start += source_cursor;
             }

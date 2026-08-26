@@ -151,6 +151,11 @@ The result projection is:
 - `sourceText`: the complete normalized authored source;
 - `displayText`: the retained logical prefix followed by U+2026;
 - authored glyphs: their original source range and role;
+- `clusterStart` / `clusterEnd`: UTF-8 offsets in the glyph's shaping-source
+  namespace. Content and ruby-base glyphs use the normalized base document;
+  ruby annotations stay local to their annotation level. These offsets are not
+  cross-role identities; consumers use `sourceRole` or UnitMap identity across
+  namespaces;
 - synthetic glyphs: `syntheticKind = "ellipsis"` with no source range or
   source role; and
 - omitted source units: retained with empty glyph-member lists.

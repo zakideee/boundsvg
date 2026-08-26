@@ -409,12 +409,22 @@ export interface TextShadowLayer {
 export interface PositionedGlyph {
   glyphId: number;
   text: string;
+  /**
+   * Inclusive UTF-8 byte offset in the glyph's shaping source. Content and
+   * ruby-base glyphs use the normalized base document; ruby annotations use
+   * their annotation level's local text.
+   */
   clusterStart: number;
+  /**
+   * Exclusive UTF-8 byte offset in the same shaping source. The cluster
+   * range is not a cross-role identity; use the source role or the unit map
+   * when comparing glyphs from different source namespaces.
+   */
   clusterEnd: number;
   /**
    * Grapheme range in the logical base text, stable for selection across
-   * rich-text runs. `cluster_*` uses shaping UTF-8 byte offsets instead;
-   * ruby annotations point to the base-text range they annotate.
+   * rich-text runs. Ruby annotations point to the base-text range they
+   * annotate.
    */
   sourceStart?: number;
   sourceEnd?: number;

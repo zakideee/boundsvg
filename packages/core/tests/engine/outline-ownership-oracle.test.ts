@@ -19,14 +19,14 @@ type OracleResult = {
 const expectedOracle: Record<string, OracleResult> = {
   "vertical-ruby-merged": {
     svgSha256: "dfc3551088618aeadfbf10cf0fe2d542a9c9a8f29087f98bece9e110fc17482f",
-    rootSha256: "e12e61b981e363a79bf20d4eed9862af087b7227e50745032e30a3af30caf7b0",
+    rootSha256: "c5f023624b4db7f5ed32ed3cc4dfd2d09e45da7a9bd830395494f69fdc6ac24c",
     outlinesSha256: "d66146c49b76b739e82d892ceda7b3ad786a36dcd982b7400bf60a06afcda803",
     glyphPathCount: 2,
     unitSampleCount: 0,
   },
   "vertical-ruby-glyphs": {
     svgSha256: "be5a71775b4f3add9921fdf16436fbd7c49ff96aa56087d4dee12b5a6fbb7564",
-    rootSha256: "2de65b28638d9f2491906e37ca44909e5c4777cefbff3d67ba54581c257aee52",
+    rootSha256: "e7725040142493b695fd2345acb22417a6e6f2cf480e83a69d8fecb176f5da8d",
     outlinesSha256: "112894497c1337e414a9a75582e05b350c38d5c0079218143b6b6a6b2a6c1246",
     glyphPathCount: 53,
     unitSampleCount: 0,

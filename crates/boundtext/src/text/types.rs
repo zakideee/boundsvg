@@ -330,11 +330,17 @@ pub struct TextDecorationGlyphGeometry {
 pub struct PositionedGlyph {
     pub glyph_id: u32,
     pub text: String,
+    /// Inclusive UTF-8 byte offset in the glyph's shaping source. Content and
+    /// ruby-base glyphs use the normalized base document; ruby annotations use
+    /// their annotation level's local text.
     pub cluster_start: u32,
+    /// Exclusive UTF-8 byte offset in the same shaping source. The cluster
+    /// range is not a cross-role identity; use the source role or the unit map
+    /// when comparing glyphs from different source namespaces.
     pub cluster_end: u32,
     /// Grapheme range in the logical base text, stable for selection across
-    /// rich-text runs. `cluster_*` uses shaping UTF-8 byte offsets instead;
-    /// ruby annotations point to the base-text range they annotate.
+    /// rich-text runs. Ruby annotations point to the base-text range they
+    /// annotate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_start: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]

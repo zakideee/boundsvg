@@ -576,6 +576,37 @@ describe("Text animateUnits", () => {
     expect(svg.match(/aria-label=/g)).toHaveLength(1);
   });
 
+  it("keeps preceding content from creating empty ruby-annotation units", () => {
+    const scene = createElement(
+      "Canvas",
+      { width: 240, height: 100 },
+      createElement(
+        "Text",
+        {
+          id: "ruby-after-content",
+          font: "NotoSansJP",
+          fontSizePx: 36,
+          animateUnits: {
+            by: "cluster",
+            animation: UNIT_TRACK,
+            delayStepMs: 20,
+            order: "logical",
+            ruby: "separate",
+          },
+        },
+        "AB",
+        createElement("Ruby", {}, "漢", createElement("Rt", { fontSizePx: 16 }, "かん")),
+      ),
+    );
+    const text = findText(engine.renderToIR(scene, { timeMs: 25 }).root, "ruby-after-content");
+    const units = text.unitMap?.units ?? [];
+
+    expect(units).toHaveLength(5);
+    expect(units.every((unit) => unit.members.length > 0)).toBe(true);
+    expect(units.map((unit) => unit.logicalOrder)).toEqual([0, 1, 2, 3, 4]);
+    expect(text.unitAnimationSamples).toHaveLength(5);
+  });
+
   it.each([
     { order: "logical" as const, ruby: "with-base" as const },
     { order: "logical" as const, ruby: "separate" as const },

@@ -15,7 +15,9 @@ paint), and nested decorated spans remain fragmentable with all owner keys in
 normal and exclusion-flow output. Fit scales font size and letter spacing
 together; explicit pixel line height remains absolute. Positioned glyph
 `clusterStart` / `clusterEnd` values for ordinary spans are now document-global
-UTF-8 byte offsets instead of run-local offsets.
+UTF-8 byte offsets instead of run-local offsets. Ruby annotations continue to
+use annotation-level local offsets because they are shaped from a separate
+source string; use `sourceRole` or UnitMap identity across source namespaces.
 
 Add the positive-integer `fitMaxProbes` Text prop for deterministic exact-grid
 fit when content (including negative tracking) or flow geometry is not
