@@ -1616,6 +1616,8 @@ export class Engine {
       this.options.compileLayoutTransitionFn,
       "compileLayoutTransitionFn",
     );
+    this.assertWasmFontAliasesRegistered(referenceVNode);
+    this.assertWasmFontAliasesRegistered(targetVNode);
     let envelopeJson: string;
     try {
       envelopeJson = compileLayoutTransitionFn(
@@ -1940,18 +1942,13 @@ export class Engine {
     });
   }
 
-  /**
-   * Replicate the TS backend's post-layout text diagnostics on a wasm-built
-   * IR: unregistered font aliases fail first, then text nodes whose content
-   * produced no layout (no text node in the IR) fail as TEXT_NO_LAYOUT.
-   */
+  /** Require every authored text node with content to survive WASM layout. */
   private assertWasmTextContracts(vnode: VNode, irTextNodeIds: ReadonlySet<string>): void {
     const visit = (node: VNode, position: NodePosition): void => {
       const { id: nodeId } = generateNodeId(node, position);
       if (node.type === "Text") {
         const fontUsage = collectTextFontAliases(node);
         if (fontUsage.hasText) {
-          this.assertFontAliasesRegistered(fontUsage.aliases, nodeId);
           if (!irTextNodeIds.has(nodeId)) {
             throw new FatalError(
               "TEXT_NO_LAYOUT",
@@ -1965,8 +1962,6 @@ export class Engine {
         return;
       }
       if (node.type === "TextOnPath") {
-        const fontUsage = collectTextFontAliases(node);
-        this.assertFontAliasesRegistered(fontUsage.aliases, nodeId);
         if (!irTextNodeIds.has(nodeId)) {
           throw new FatalError(
             "TEXT_NO_LAYOUT",
@@ -1987,7 +1982,10 @@ export class Engine {
     visit(vnode, { depth: 0, siblingIndex: 0 });
   }
 
-  /** Reject unresolved authored aliases before the authoritative Rust layout can fail generically. */
+  /**
+   * Reject unresolved authored aliases before authoritative Rust layout can
+   * replace their identity with a generic shaping failure.
+   */
   private assertWasmFontAliasesRegistered(vnode: VNode): void {
     const visit = (node: VNode, position: NodePosition): void => {
       const { id: nodeId } = generateNodeId(node, position);
@@ -2343,6 +2341,7 @@ export class Engine {
     if (!stableRenderOpts?.skipValidation) {
       validate(vnode);
     }
+    this.assertWasmFontAliasesRegistered(vnode);
 
     // Layout once (matching the TS backend's single compile); the emit at
     // the applied scale reuses this IR so callback-driven registry changes

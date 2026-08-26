@@ -157,14 +157,22 @@ struct RegionQueryKey {
 
 impl From<RegionQuery> for RegionQueryKey {
     fn from(query: RegionQuery) -> Self {
+        fn canonical_bits(value: f64) -> u64 {
+            if value == 0.0 {
+                0.0_f64.to_bits()
+            } else {
+                value.to_bits()
+            }
+        }
+
         Self {
             writing_mode: match query.writing_mode {
                 WritingMode::HorizontalTb => 0,
                 WritingMode::VerticalRl => 1,
             },
-            cross_start_bits: query.cross_start_px.to_bits(),
-            cross_end_bits: query.cross_end_px.to_bits(),
-            min_inline_size_bits: query.min_inline_size_px.to_bits(),
+            cross_start_bits: canonical_bits(query.cross_start_px),
+            cross_end_bits: canonical_bits(query.cross_end_px),
+            min_inline_size_bits: canonical_bits(query.min_inline_size_px),
         }
     }
 }
@@ -286,6 +294,20 @@ mod region_budget_tests {
 
         assert_eq!(source.calls.get(), 2);
         assert_eq!(error, BoundtextError::RegionQueryLimit { limit: 2 });
+    }
+
+    #[test]
+    fn signed_zero_queries_share_one_memoized_budget_entry() {
+        let source = CountingProvider {
+            calls: Cell::new(0),
+            returned_regions: 1,
+        };
+        let provider = BudgetedRegionProvider::with_limits(&source, 1, 1);
+
+        provider.regions(query(-0.0)).expect("negative-zero query");
+        provider.regions(query(0.0)).expect("positive-zero query");
+
+        assert_eq!(source.calls.get(), 1);
     }
 
     #[test]

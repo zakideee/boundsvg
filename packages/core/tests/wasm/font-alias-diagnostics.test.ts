@@ -12,19 +12,23 @@ import {
 function textCanvas(font: string, fallback?: string[]): ReturnType<typeof createElement> {
   return createElement(
     "Canvas",
-    { width: 400, height: 200 },
+    { id: "scene", width: 400, height: 200 },
     createElement("Text", { id: "txt-alias", font, fallback, fontSizePx: 24 }, "テスト"),
   );
 }
 
 function renderError(engine: Engine, vnode: ReturnType<typeof createElement>): FatalError {
+  return captureFatal(() => engine.renderToSvg(vnode));
+}
+
+function captureFatal(action: () => unknown): FatalError {
   try {
-    engine.renderToSvg(vnode);
+    action();
   } catch (error) {
     expect(error).toBeInstanceOf(FatalError);
     return error as FatalError;
   }
-  throw new Error("expected renderToSvg to throw");
+  throw new Error("expected operation to throw");
 }
 
 describe("font alias diagnostics", () => {
@@ -53,6 +57,33 @@ describe("font alias diagnostics", () => {
     expect(error.message).toContain("NotoSansJP");
     expect(error.stage).toBe("text");
     expect(error.nodeId).toBe("txt-alias");
+  });
+
+  it("preflights aliases on layout, raster, and layout-transition routes", () => {
+    const missingFontScene = textCanvas("RouteMissing");
+    const transition = {
+      states: { reference: missingFontScene, target: missingFontScene },
+      checkpoints: [
+        { timeMs: 0, state: "reference" },
+        { timeMs: 100, state: "target" },
+        { timeMs: 200, state: "target" },
+        { timeMs: 300, state: "reference" },
+      ],
+    } as const;
+    const actions = [
+      () => engine.renderToLayoutTree(missingFontScene),
+      () => engine.renderToIR(missingFontScene),
+      () => engine.renderToPng(missingFontScene),
+      () => engine.compileLayoutTransition(transition),
+    ];
+
+    for (const action of actions) {
+      expect(captureFatal(action)).toMatchObject({
+        code: "FONT_ALIAS_NOT_REGISTERED",
+        stage: "text",
+        nodeId: "txt-alias",
+      });
+    }
   });
 
   it("reports unregistered aliases from the fallback chain", () => {
