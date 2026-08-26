@@ -108,7 +108,43 @@ fn layout_rich_flow_at_font_size(
     chosen_font_size_px: f64,
     should_apply_ellipsis_projection: bool,
 ) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
-    let text_req = TextLayoutRequest {
+    let text_req = text_layout_request_for_flow(req);
+
+    let prepared =
+        prepare_rich_text(&text_req, font_ctx, chosen_font_size_px).ok_or_else(|| {
+            BoundtextError::FlowLayout("Failed to prepare rich-text flow layout".to_string())
+        })?;
+    let min_region = req.min_region_width.unwrap_or(chosen_font_size_px);
+    let flow_layout = layout_prepared_rich_flow(
+        req,
+        font_ctx,
+        region_provider,
+        &prepared.tokens,
+        &prepared.decoration_spans,
+        &prepared.warnings,
+        min_region,
+        chosen_font_size_px,
+    )?;
+    if should_apply_ellipsis_projection && req.ellipsis && !flow_layout.exhausted {
+        Ok(apply_rich_flow_ellipsis(
+            req,
+            &text_req,
+            font_ctx,
+            region_provider,
+            min_region,
+            chosen_font_size_px,
+            flow_layout.overflow_reason,
+        )?
+        .unwrap_or(flow_layout))
+    } else {
+        Ok(flow_layout)
+    }
+}
+
+fn text_layout_request_for_flow<'a>(
+    req: &text_flow::FlowLayoutRequest<'a>,
+) -> TextLayoutRequest<'a> {
+    TextLayoutRequest {
         text: req.text,
         spans: None,
         rich_text: req.rich_text,
@@ -139,41 +175,20 @@ fn layout_rich_flow_at_font_size(
         grow_epsilon_px: None,
         grow_max_iterations: None,
         fit_max_probes: None,
-    };
-
-    let prepared =
-        prepare_rich_text(&text_req, font_ctx, chosen_font_size_px).ok_or_else(|| {
-            BoundtextError::FlowLayout("Failed to prepare rich-text flow layout".to_string())
-        })?;
-    let min_region = req.min_region_width.unwrap_or(chosen_font_size_px);
-    let flow_layout = layout_prepared_rich_flow(
-        req,
-        font_ctx,
-        region_provider,
-        &prepared.tokens,
-        &prepared.decoration_spans,
-        &prepared.warnings,
-        min_region,
-        chosen_font_size_px,
-    )?;
-    if should_apply_ellipsis_projection
-        && req.ellipsis
-        && !flow_layout.exhausted
-        && !flow_layout.lines.is_empty()
-    {
-        Ok(apply_rich_flow_ellipsis(
-            req,
-            &text_req,
-            font_ctx,
-            region_provider,
-            min_region,
-            chosen_font_size_px,
-            flow_layout.overflow_reason,
-        )?
-        .unwrap_or(flow_layout))
-    } else {
-        Ok(flow_layout)
     }
+}
+
+/// Materialize the normalized authored text for a resolved flow projection.
+/// This follows the same logical-document construction as candidate layout and
+/// runs only after ellipsis has selected the committed output.
+pub(crate) fn source_text_for_flow_projection(
+    req: &text_flow::FlowLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    chosen_font_size_px: f64,
+) -> String {
+    let text_req = text_layout_request_for_flow(req);
+    let (inline_nodes, _, _) = super::build_inline_nodes(&text_req, font_ctx, chosen_font_size_px);
+    super::collect_inline_source_text(&inline_nodes)
 }
 
 fn layout_prepared_rich_flow(

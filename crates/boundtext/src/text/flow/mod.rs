@@ -2221,6 +2221,19 @@ fn layout_resolved_flow_with_regions_budgeted(
         Some(FlowOverflowReason::FlowBoxExhausted) => TextOverflow::overflow("flow box exhausted"),
     };
     let chosen_font_size_px = flow_result.chosen_font_size_px.unwrap_or(req.font_size_px);
+    let (source_text, display_text) = if req.ellipsis && !flow_result.exhausted {
+        let source_text =
+            rich::source_text_for_flow_projection(&resolved_req, font_ctx, chosen_font_size_px);
+        let display_text = flow_result
+            .lines
+            .iter()
+            .flat_map(|line| &line.fragments)
+            .map(|fragment| fragment.text.as_str())
+            .collect();
+        (Some(source_text), Some(display_text))
+    } else {
+        (None, None)
+    };
     let is_vertical = req.writing_mode == WritingMode::VerticalRl;
     let mut lines = Vec::with_capacity(flow_result.lines.len());
     let mut inline_rects = Vec::new();
@@ -2324,8 +2337,8 @@ fn layout_resolved_flow_with_regions_budgeted(
         },
         chosen_font_size_px,
         overflow,
-        source_text: None,
-        display_text: None,
+        source_text,
+        display_text,
         unit_map: None,
         warnings: flow_result.warnings,
         inline_box_decorations,

@@ -25,7 +25,7 @@ use super::types::{
 };
 #[cfg(test)]
 use super::types::{RichTextNodeInput, RichTextStyleInput};
-pub(crate) use flow_layout::layout_rich_flow_with_regions;
+pub(crate) use flow_layout::{layout_rich_flow_with_regions, source_text_for_flow_projection};
 #[cfg(test)]
 use line_layout::{
     assemble_horizontal_line, assemble_vertical_line, break_tokens_horizontal,

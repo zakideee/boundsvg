@@ -6,7 +6,7 @@ use boundtext::font::shaping::ShapeOptions;
 use boundtext::font::{FontContext, FontRegistry, FontStyle};
 use boundtext::text::flow::{
     FlowBounds, FlowLayoutRequest, FlowRegion, RegionProvider, RegionQuery,
-    layout_flow_with_regions,
+    layout_flow_with_regions, layout_resolved_flow_with_regions,
 };
 use boundtext::text::types::{
     Language, RichTextNodeInput, RichTextStyleInput, WhiteSpaceMode, WrapMode, WritingMode,
@@ -231,6 +231,137 @@ fn rich_flow_ellipsis_commits_only_retained_authored_node_warnings() {
             .any(|warning| warning.code == "LONG_RUBY_ANNOTATION"),
         "retained atomic warning must survive flow projection: {:?}",
         flow_layout.warnings
+    );
+}
+
+#[test]
+fn zero_line_rich_flow_discards_omitted_missing_glyph_warnings() {
+    let registry = font_registry();
+    let families = vec!["Noto".to_string()];
+    let style = FontStyle::Normal;
+    let font_context = FontContext {
+        registry: &registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &style,
+    };
+    let rich_text = vec![RichTextNodeInput::Text {
+        text: "🦀".to_string(),
+    }];
+    let regions = RectRegions {
+        width: 80.0,
+        height: 1.0,
+    };
+    let request = FlowLayoutRequest {
+        text: "",
+        font_size_px: 24.0,
+        line_height: None,
+        line_height_px: None,
+        letter_spacing_px: 0.0,
+        language: Language::En,
+        wrap: WrapMode::Char,
+        white_space: WhiteSpaceMode::Normal,
+        tab_size: 4,
+        hanging_punctuation: false,
+        flow_bounds: FlowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: regions.width,
+            height: regions.height,
+        },
+        min_region_width: None,
+        max_lines: Some(1),
+        ellipsis: true,
+        fit: None,
+        spans: None,
+        rich_text: Some(&rich_text),
+        writing_mode: WritingMode::HorizontalTb,
+        text_orientation: None,
+        min_font_size_px: None,
+        max_font_size_px: None,
+        fit_epsilon_px: None,
+        fit_max_iterations: None,
+        fit_max_probes: None,
+        shape_options: ShapeOptions::default(),
+    };
+
+    let flow_layout =
+        layout_flow_with_regions(&request, &font_context, &regions).expect("zero-line flow");
+    assert!(flow_layout.lines.is_empty());
+    assert!(
+        flow_layout
+            .warnings
+            .iter()
+            .all(|warning| warning.code != "MISSING_GLYPH"),
+        "warnings from fully omitted authored content must be discarded: {:?}",
+        flow_layout.warnings
+    );
+}
+
+#[test]
+fn resolved_rich_flow_ellipsis_preserves_source_and_display_text() {
+    let registry = font_registry();
+    let families = vec!["Noto".to_string()];
+    let style = FontStyle::Normal;
+    let font_context = FontContext {
+        registry: &registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &style,
+    };
+    let source = "あいうえおかきくけこさしすせそ";
+    let rich_text = vec![RichTextNodeInput::Text {
+        text: source.to_string(),
+    }];
+    let regions = RectRegions {
+        width: 72.0,
+        height: 200.0,
+    };
+    let request = FlowLayoutRequest {
+        text: "",
+        font_size_px: 24.0,
+        line_height: None,
+        line_height_px: None,
+        letter_spacing_px: 0.0,
+        language: Language::Ja,
+        wrap: WrapMode::Char,
+        white_space: WhiteSpaceMode::Normal,
+        tab_size: 4,
+        hanging_punctuation: false,
+        flow_bounds: FlowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: regions.width,
+            height: regions.height,
+        },
+        min_region_width: None,
+        max_lines: Some(1),
+        ellipsis: true,
+        fit: None,
+        spans: None,
+        rich_text: Some(&rich_text),
+        writing_mode: WritingMode::HorizontalTb,
+        text_orientation: None,
+        min_font_size_px: None,
+        max_font_size_px: None,
+        fit_epsilon_px: None,
+        fit_max_iterations: None,
+        fit_max_probes: None,
+        shape_options: ShapeOptions::default(),
+    };
+
+    let layout_result = layout_resolved_flow_with_regions(&request, &font_context, &regions)
+        .expect("resolved rich flow ellipsis");
+    assert_eq!(layout_result.source_text.as_deref(), Some(source));
+    assert!(
+        layout_result
+            .display_text
+            .as_deref()
+            .is_some_and(|display| display.ends_with('…') && display != source),
+        "projected display text must describe the selected ellipsis output: {:?}",
+        layout_result.display_text
     );
 }
 
