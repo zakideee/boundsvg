@@ -1047,6 +1047,18 @@ mod span_parity {
             styled.lines[0].width,
             plain.lines[0].width
         );
+        let materialized_fragment_width = styled.lines[0]
+            .fragments
+            .as_ref()
+            .expect("span layout fragments")
+            .iter()
+            .map(|fragment| fragment.width)
+            .sum::<f64>();
+        assert!(
+            (materialized_fragment_width - styled.lines[0].width).abs() < 0.01,
+            "materialized fragment width {materialized_fragment_width} must equal line width {}",
+            styled.lines[0].width
+        );
     }
 }
 
