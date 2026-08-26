@@ -25,6 +25,13 @@ Scope: LTR only. Bidi and RTL reordering are not implemented, and the only line-
 cargo add boundtext
 ```
 
+The default feature set includes `unicode-full`, which provides UAX #29
+extended-grapheme-cluster boundaries for wrapping and ellipsis. A
+`--no-default-features` build still compiles, but uses the documented
+per-code-point fallback in `grapheme_split`; enable `unicode-full` explicitly
+when a custom feature set must preserve combining marks and multi-codepoint
+emoji sequences.
+
 ## Usage
 
 ```rust
@@ -102,8 +109,9 @@ recursive preparation.
 
 `Word` mode consumes UAX #14 opportunities computed for the normalized source
 or explicitly supplied by the caller. Japanese kinsoku can reject an otherwise
-available UAX boundary. `Char` and `None` still preserve extended grapheme
-clusters.
+available UAX boundary. With the default `unicode-full` feature, `Char` and
+`None` preserve extended grapheme clusters. The no-default fallback is
+per-code-point as described under [Installation](#installation).
 
 ### Japanese Kinsoku (禁則処理)
 
@@ -252,6 +260,11 @@ boundtext is published on [crates.io](https://crates.io/crates/boundtext) and ma
   preserve one shaping run by contract.
 
 These are breaking changes for the `0.x` Rust crate contract.
+
+This release also adds `unicode-full` to the default feature set. Direct Rust
+consumers that disable default features retain the smaller per-code-point
+fallback and must opt into `unicode-full` for the extended-grapheme guarantees
+used by the authoritative default and WASM builds.
 
 ## Known Limitations
 

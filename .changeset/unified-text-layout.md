@@ -40,3 +40,7 @@ implementations as documented in `crates/boundtext/README.md`.
 `FlowLayoutResult` also adds `inline_box_decorations`; direct struct constructors must initialize
 or forward that field. Shrinkwrap resource failures now keep their structured text error codes
 through the WASM bridge.
+The `boundtext` default feature set now includes `unicode-full`, changing direct
+default-feature Rust builds from per-code-point fallback boundaries to UAX #29
+extended grapheme clusters. Custom no-default builds must enable
+`unicode-full` explicitly to receive the same boundary guarantee.

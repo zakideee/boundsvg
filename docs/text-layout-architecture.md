@@ -294,6 +294,9 @@ when no safe pruning or reusable checkpoint applies. The public hard limits
 bound `D`, inline-rectangle contribution to `A`, `C`, `F`, `Q`, and `Z`.
 `B`, `N`, `R`, `S`, `G`, `U`, `V`, and the selected output remain explicit
 input/output size terms rather than being hidden behind a wall-clock cutoff.
+Within one `T`, fragment paint-style ownership walks a segment's graphemes and
+decoration runs once; it must not re-segment the complete source for each
+grapheme.
 
 UnitMap work is opt-in. Its current conservative bound includes `U*V` for
 matching authored units against visible shaping clusters and `V^2` for
@@ -311,19 +314,19 @@ prints one JSON record per adversarial scenario. A reference Linux run on
 
 | Scenario                              | Time (µs) | VmHWM (KiB) | Candidates | Word-boundary preparations | Fit probes | Region queries | Shape calls / glyphs | Materialized lines / glyphs |
 | ------------------------------------- | --------: | ----------: | ---------: | -------------------------: | ---------: | -------------: | -------------------: | --------------------------: |
-| `exact-ellipsis-256`                  |   236,143 |       6,072 |        255 |                          0 |          0 |              0 |         512 / 33,407 |                       1 / 2 |
-| `word-ellipsis-candidate-budget-1024` |       900 |       6,512 |          0 |                          1 |          0 |              0 |            1 / 1,025 |                       0 / 0 |
-| `exact-exclusion-fit-65`              |    43,143 |       6,512 |         85 |                          0 |         65 |            122 |         236 / 10,926 |                      2 / 12 |
-| `default-exact-fit-budget-4096`       | 1,696,354 |       6,512 |          0 |                          0 |      4,096 |          4,096 |      4,097 / 409,700 |                       1 / 1 |
-| `content-exact-fit-209-grid`          |       384 |       6,512 |          0 |                          0 |         75 |              0 |              76 / 76 |                       1 / 1 |
+| `exact-ellipsis-256`                  |    59,063 |       5,844 |        255 |                          0 |          0 |              0 |         512 / 33,407 |                       1 / 2 |
+| `word-ellipsis-candidate-budget-1024` |     1,123 |       6,220 |          0 |                          1 |          0 |              0 |            1 / 1,025 |                       0 / 0 |
+| `exact-exclusion-fit-65`              |    13,664 |       6,220 |         85 |                          0 |         65 |            122 |         236 / 10,926 |                      2 / 12 |
+| `default-exact-fit-budget-4096`       |   400,034 |       6,220 |          0 |                          0 |      4,096 |          4,096 |      4,097 / 409,700 |                       1 / 1 |
+| `content-exact-fit-209-grid`          |       388 |       6,220 |          0 |                          0 |         75 |              0 |              76 / 76 |                       1 / 1 |
 
 The same executable isolates UnitMap construction after layout and publishes
 the variables needed to falsify its bound:
 
 | Scenario            | Time (µs) | VmHWM (KiB) | `U` projected units | `V` visible drafts | `O_u` member refs |
 | ------------------- | --------: | ----------: | ------------------: | -----------------: | ----------------: |
-| `unit-map-ruby-256` |       654 |       7,240 |                 512 |                512 |               512 |
-| `unit-map-ruby-512` |     1,772 |       9,244 |               1,024 |              1,024 |             1,024 |
+| `unit-map-ruby-256` |       641 |       7,212 |                 512 |                512 |               512 |
+| `unit-map-ruby-512` |     1,723 |       9,192 |               1,024 |              1,024 |             1,024 |
 
 Elapsed time and process high-water memory are observational rather than
 portable pass/fail thresholds. Counter assertions are the deterministic
