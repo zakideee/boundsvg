@@ -142,10 +142,10 @@ pub trait RegionProvider {
 }
 
 /// Maximum number of distinct geometry queries in one public flow layout.
-pub const MAX_REGION_QUERIES: usize = 65_536;
+pub const REGION_QUERIES_MAX: usize = 65_536;
 /// Maximum cumulative number of intervals returned by distinct queries in
 /// one public flow layout.
-pub const MAX_RETURNED_REGIONS: usize = 262_144;
+pub const RETURNED_REGIONS_MAX: usize = 262_144;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct RegionQueryKey {
@@ -157,11 +157,11 @@ struct RegionQueryKey {
 
 impl From<RegionQuery> for RegionQueryKey {
     fn from(query: RegionQuery) -> Self {
-        fn canonical_bits(value: f64) -> u64 {
-            if value == 0.0 {
+        fn canonical_coordinate_bits(coordinate_px: f64) -> u64 {
+            if coordinate_px == 0.0 {
                 0.0_f64.to_bits()
             } else {
-                value.to_bits()
+                coordinate_px.to_bits()
             }
         }
 
@@ -170,9 +170,9 @@ impl From<RegionQuery> for RegionQueryKey {
                 WritingMode::HorizontalTb => 0,
                 WritingMode::VerticalRl => 1,
             },
-            cross_start_bits: canonical_bits(query.cross_start_px),
-            cross_end_bits: canonical_bits(query.cross_end_px),
-            min_inline_size_bits: canonical_bits(query.min_inline_size_px),
+            cross_start_bits: canonical_coordinate_bits(query.cross_start_px),
+            cross_end_bits: canonical_coordinate_bits(query.cross_end_px),
+            min_inline_size_bits: canonical_coordinate_bits(query.min_inline_size_px),
         }
     }
 }
@@ -192,8 +192,8 @@ impl<'a, P> BudgetedRegionProvider<'a, P> {
             source,
             cache: RefCell::new(BTreeMap::new()),
             returned_region_count: Cell::new(0),
-            max_query_count: MAX_REGION_QUERIES,
-            max_returned_regions: MAX_RETURNED_REGIONS,
+            max_query_count: REGION_QUERIES_MAX,
+            max_returned_regions: RETURNED_REGIONS_MAX,
         }
     }
 
@@ -632,6 +632,7 @@ pub struct FlowLayoutRequest<'a> {
     pub max_font_size_px: Option<f64>,
     pub fit_epsilon_px: Option<f64>,
     pub fit_max_iterations: Option<usize>,
+    /// Work limit for an uncertified exact-grid fit search.
     pub fit_max_probes: Option<usize>,
     /// Shape options for the base (non-span) path.
     pub shape_options: ShapeOptions,
@@ -988,6 +989,29 @@ pub fn measure_flow(
     max_lines: Option<usize>,
     wrap: WrapMode,
 ) -> Result<FlowMeasure, crate::BoundtextError> {
+    let budgeted_region_provider = BudgetedRegionProvider::new(region_provider);
+    measure_flow_with_budgeted_provider(
+        pp,
+        font_size_px,
+        line_height_px,
+        fb,
+        &budgeted_region_provider,
+        min_region_width,
+        max_lines,
+        wrap,
+    )
+}
+
+fn measure_flow_with_budgeted_provider(
+    pp: &paragraph::ShapedParagraph,
+    font_size_px: f64,
+    line_height_px: f64,
+    fb: &FlowBounds,
+    region_provider: &impl RegionProvider,
+    min_region_width: f64,
+    max_lines: Option<usize>,
+    wrap: WrapMode,
+) -> Result<FlowMeasure, crate::BoundtextError> {
     let mut contained = true;
     let loop_result = run_flow_loop(
         pp,
@@ -1018,6 +1042,29 @@ pub fn measure_flow(
 ///
 /// Returns a typed provider, query-validation, or region-budget error.
 pub fn measure_flow_vertical(
+    pp: &paragraph::ShapedParagraph,
+    font_size_px: f64,
+    column_width: f64,
+    fb: &FlowBounds,
+    region_provider: &impl RegionProvider,
+    min_region_height: f64,
+    max_lines: Option<usize>,
+    wrap: WrapMode,
+) -> Result<FlowMeasure, crate::BoundtextError> {
+    let budgeted_region_provider = BudgetedRegionProvider::new(region_provider);
+    measure_flow_vertical_with_budgeted_provider(
+        pp,
+        font_size_px,
+        column_width,
+        fb,
+        &budgeted_region_provider,
+        min_region_height,
+        max_lines,
+        wrap,
+    )
+}
+
+fn measure_flow_vertical_with_budgeted_provider(
     pp: &paragraph::ShapedParagraph,
     font_size_px: f64,
     column_width: f64,
@@ -1099,6 +1146,37 @@ pub fn measure_flow_vertical(
 ///
 /// Returns a typed provider, query-validation, or region-budget error.
 pub fn measure_flow_inline_with_styles(
+    shaped_runs: &inline_runs::ShapedInlineRuns,
+    text_spans: &[crate::text::types::TextSpanInput],
+    font_ctx: &FontContext<'_>,
+    font_size_px: f64,
+    line_height_px: f64,
+    line_height: Option<f64>,
+    explicit_line_height_px: Option<f64>,
+    fb: &FlowBounds,
+    region_provider: &impl RegionProvider,
+    min_region_width: f64,
+    max_lines: Option<usize>,
+    wrap: WrapMode,
+) -> Result<FlowMeasure, crate::BoundtextError> {
+    let budgeted_region_provider = BudgetedRegionProvider::new(region_provider);
+    measure_flow_inline_with_styles_and_budgeted_provider(
+        shaped_runs,
+        text_spans,
+        font_ctx,
+        font_size_px,
+        line_height_px,
+        line_height,
+        explicit_line_height_px,
+        fb,
+        &budgeted_region_provider,
+        min_region_width,
+        max_lines,
+        wrap,
+    )
+}
+
+fn measure_flow_inline_with_styles_and_budgeted_provider(
     shaped_runs: &inline_runs::ShapedInlineRuns,
     text_spans: &[crate::text::types::TextSpanInput],
     font_ctx: &FontContext<'_>,
@@ -1240,6 +1318,37 @@ pub fn measure_flow_inline_with_styles(
 ///
 /// Returns a typed provider, query-validation, or region-budget error.
 pub fn measure_flow_vertical_inline_with_styles(
+    shaped_runs: &inline_runs::ShapedInlineRuns,
+    text_spans: &[crate::text::types::TextSpanInput],
+    font_ctx: &FontContext<'_>,
+    font_size_px: f64,
+    column_width: f64,
+    line_height: Option<f64>,
+    explicit_line_height_px: Option<f64>,
+    fb: &FlowBounds,
+    region_provider: &impl RegionProvider,
+    min_region_height: f64,
+    max_lines: Option<usize>,
+    wrap: WrapMode,
+) -> Result<FlowMeasure, crate::BoundtextError> {
+    let budgeted_region_provider = BudgetedRegionProvider::new(region_provider);
+    measure_flow_vertical_inline_with_styles_and_budgeted_provider(
+        shaped_runs,
+        text_spans,
+        font_ctx,
+        font_size_px,
+        column_width,
+        line_height,
+        explicit_line_height_px,
+        fb,
+        &budgeted_region_provider,
+        min_region_height,
+        max_lines,
+        wrap,
+    )
+}
+
+fn measure_flow_vertical_inline_with_styles_and_budgeted_provider(
     shaped_runs: &inline_runs::ShapedInlineRuns,
     text_spans: &[crate::text::types::TextSpanInput],
     font_ctx: &FontContext<'_>,

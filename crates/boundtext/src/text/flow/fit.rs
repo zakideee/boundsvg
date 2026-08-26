@@ -3,8 +3,8 @@ use crate::text::paragraph;
 use crate::text::types::WrapMode;
 
 use super::{
-    FitSearchKind, FlowBounds, FlowOverflowReason, RegionProvider, measure_flow,
-    measure_flow_vertical,
+    FitSearchKind, FlowBounds, FlowOverflowReason, RegionProvider,
+    measure_flow_vertical_with_budgeted_provider, measure_flow_with_budgeted_provider,
 };
 
 // ---------------------------------------------------------------------------
@@ -18,9 +18,9 @@ pub(crate) const DEFAULT_FIT_EPSILON: f64 = 0.25;
 /// Default iteration cap for certified monotone binary search.
 pub(crate) const DEFAULT_FIT_MAX_ITERATIONS: usize = 12;
 /// Default probe cap for uncertified exact-grid search.
-pub(crate) const DEFAULT_FIT_MAX_PROBES: usize = 4_096;
+pub(crate) const DEFAULT_FIT_PROBES_MAX: usize = 4_096;
 /// Absolute probe cap accepted from public input.
-pub(crate) const HARD_FIT_MAX_PROBES: usize = 65_536;
+pub(crate) const HARD_FIT_PROBES_MAX: usize = 65_536;
 /// Default upper-bound multiplier for grow-to-fit.
 pub(crate) const DEFAULT_GROW_MULTIPLIER: f64 = 4.0;
 
@@ -43,8 +43,8 @@ fn exact_grid_probe_count(lower: f64, upper: f64, step: f64) -> Result<usize, Bo
 
 fn exact_grid_limit(requested: Option<usize>) -> usize {
     requested
-        .unwrap_or(DEFAULT_FIT_MAX_PROBES)
-        .min(HARD_FIT_MAX_PROBES)
+        .unwrap_or(DEFAULT_FIT_PROBES_MAX)
+        .min(HARD_FIT_PROBES_MAX)
 }
 
 /// Validate the exact-grid probe count before evaluating any candidate.
@@ -205,7 +205,7 @@ fn flow_fits_at_size(
     wrap: WrapMode,
 ) -> Result<bool, BoundtextError> {
     let min_region_width = min_region_width_fixed.unwrap_or(font_size_px);
-    measure_flow(
+    measure_flow_with_budgeted_provider(
         pp,
         font_size_px,
         line_height_px,
@@ -317,7 +317,7 @@ fn flow_fits_at_size_vertical(
     wrap: WrapMode,
 ) -> Result<bool, BoundtextError> {
     let min_region_height = min_region_height_fixed.unwrap_or(font_size_px);
-    measure_flow_vertical(
+    measure_flow_vertical_with_budgeted_provider(
         pp,
         font_size_px,
         column_width,

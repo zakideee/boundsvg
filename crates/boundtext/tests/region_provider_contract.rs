@@ -8,9 +8,10 @@ use boundtext::BoundtextError;
 use boundtext::font::shaping::ShapeOptions;
 use boundtext::font::{FontContext, FontRegistry, FontStyle};
 use boundtext::text::flow::{
-    FlowBounds, FlowLayoutRequest, FlowRegion, RegionProvider, RegionQuery,
-    layout_flow_with_regions,
+    FlowBounds, FlowLayoutRequest, FlowRegion, RETURNED_REGIONS_MAX, RegionProvider, RegionQuery,
+    layout_flow_with_regions, measure_flow,
 };
+use boundtext::text::paragraph::shape_paragraph_with_options;
 use boundtext::text::types::{Language, WhiteSpaceMode, WrapMode, WritingMode};
 use boundtext::text::types::{MAX_RICH_TEXT_DEPTH, RichTextNodeInput, RichTextStyleInput};
 
@@ -222,6 +223,65 @@ fn provider_failure_aborts_without_becoming_an_empty_region() {
     assert_eq!(
         error,
         BoundtextError::InvalidRegionQuery("sentinel".to_string())
+    );
+}
+
+struct ExcessiveIntervalProvider;
+
+impl RegionProvider for ExcessiveIntervalProvider {
+    fn regions(&self, _query: RegionQuery) -> Result<Vec<FlowRegion>, BoundtextError> {
+        Ok(vec![
+            FlowRegion {
+                inline_start_px: 10.0,
+                inline_size_px: 0.0,
+            };
+            RETURNED_REGIONS_MAX + 1
+        ])
+    }
+}
+
+#[test]
+fn measurement_enforces_the_returned_interval_budget() {
+    let registry = font_registry();
+    let families = vec!["Noto".to_string()];
+    let font_context = FontContext {
+        registry: &registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let paragraph = shape_paragraph_with_options(
+        "あ",
+        &font_context,
+        Language::Ja,
+        WrapMode::Char,
+        false,
+        &ShapeOptions::default(),
+        None,
+        0.0,
+        true,
+    )
+    .expect("shaped paragraph");
+
+    let error = measure_flow(
+        &paragraph,
+        16.0,
+        19.2,
+        &request(WritingMode::HorizontalTb).flow_bounds,
+        &ExcessiveIntervalProvider,
+        0.0,
+        Some(1),
+        WrapMode::Char,
+    )
+    .expect_err("measurement must enforce the provider interval budget");
+
+    assert_eq!(
+        error,
+        BoundtextError::RegionIntervalLimit {
+            required: RETURNED_REGIONS_MAX + 1,
+            limit: RETURNED_REGIONS_MAX,
+        }
     );
 }
 

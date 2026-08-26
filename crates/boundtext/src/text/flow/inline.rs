@@ -12,7 +12,8 @@ use crate::text::types::{
 
 use super::{
     FlowFragment, FlowFragmentStyle, FlowLayoutRequest, FlowMeasure, FlowTextSpan, RegionProvider,
-    measure_flow_inline_with_styles, measure_flow_vertical_inline_with_styles,
+    measure_flow_inline_with_styles_and_budgeted_provider,
+    measure_flow_vertical_inline_with_styles_and_budgeted_provider,
 };
 
 // ---------------------------------------------------------------------------
@@ -320,7 +321,7 @@ pub(super) fn measure_inline_flow_at_font_size(
             req.line_height,
             req.line_height_px,
         );
-        measure_flow_vertical_inline_with_styles(
+        measure_flow_vertical_inline_with_styles_and_budgeted_provider(
             &shaped_runs,
             &text_spans,
             font_ctx,
@@ -341,7 +342,7 @@ pub(super) fn measure_inline_flow_at_font_size(
             req.line_height,
             req.line_height_px,
         );
-        measure_flow_inline_with_styles(
+        measure_flow_inline_with_styles_and_budgeted_provider(
             &shaped_runs,
             &text_spans,
             font_ctx,
