@@ -19,7 +19,7 @@ use boundtext::text::unit_map::{TextUnitKind, TextUnitRubyMode, build_text_unit_
 type BenchmarkResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Clone, Copy)]
-struct InputStats {
+struct FixtureInputStats {
     input_bytes: usize,
     canonical_nodes: usize,
     resolved_runs: usize,
@@ -28,22 +28,19 @@ struct InputStats {
     atomic_items: usize,
     exclusions: usize,
     geometry_segments: usize,
-    projected_units: usize,
-    visible_unit_drafts: usize,
-    unit_member_refs: usize,
 }
 
-fn registry() -> BenchmarkResult<FontRegistry> {
-    let mut registry = FontRegistry::new();
+fn build_font_registry() -> BenchmarkResult<FontRegistry> {
+    let mut font_registry = FontRegistry::new();
     let font_bytes = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"
     ))?;
-    registry.register(font_bytes, "Noto".to_string(), 400, FontStyle::Normal)?;
-    Ok(registry)
+    font_registry.register(font_bytes, "Noto".to_string(), 400, FontStyle::Normal)?;
+    Ok(font_registry)
 }
 
-fn vm_hwm_kib() -> Option<usize> {
+fn read_vm_hwm_kib() -> Option<usize> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     status.lines().find_map(|line| {
         line.strip_prefix("VmHWM:")?
@@ -57,7 +54,7 @@ fn vm_hwm_kib() -> Option<usize> {
 fn print_result(
     scenario: &str,
     elapsed_micros: u128,
-    stats: InputStats,
+    stats: FixtureInputStats,
     counters: TextWorkCounters,
 ) {
     println!(
@@ -76,7 +73,7 @@ fn print_result(
         ),
         scenario,
         elapsed_micros,
-        vm_hwm_kib().unwrap_or_default(),
+        read_vm_hwm_kib().unwrap_or_default(),
         stats.input_bytes,
         stats.canonical_nodes,
         stats.resolved_runs,
@@ -85,9 +82,9 @@ fn print_result(
         stats.atomic_items,
         stats.exclusions,
         stats.geometry_segments,
-        stats.projected_units,
-        stats.visible_unit_drafts,
-        stats.unit_member_refs,
+        counters.unit_map_projected_units,
+        counters.unit_map_visible_drafts,
+        counters.unit_map_member_refs,
         counters.ellipsis_candidates,
         counters.ellipsis_word_boundary_preparations,
         counters.fit_probes,
@@ -150,7 +147,7 @@ fn benchmark_exact_ellipsis(font_context: &FontContext<'_>) -> BenchmarkResult {
     print_result(
         "exact-ellipsis-256",
         elapsed.as_micros(),
-        InputStats {
+        FixtureInputStats {
             input_bytes: text.len(),
             canonical_nodes: 1,
             resolved_runs: 1,
@@ -159,9 +156,6 @@ fn benchmark_exact_ellipsis(font_context: &FontContext<'_>) -> BenchmarkResult {
             atomic_items: 0,
             exclusions: 0,
             geometry_segments: 0,
-            projected_units: 0,
-            visible_unit_drafts: 0,
-            unit_member_refs: 0,
         },
         snapshot_work(),
     );
@@ -225,7 +219,7 @@ fn benchmark_ellipsis_candidate_budget(font_context: &FontContext<'_>) -> Benchm
     print_result(
         "word-ellipsis-candidate-budget-1024",
         elapsed.as_micros(),
-        InputStats {
+        FixtureInputStats {
             input_bytes: text.len(),
             canonical_nodes: 1,
             resolved_runs: 1,
@@ -234,9 +228,6 @@ fn benchmark_ellipsis_candidate_budget(font_context: &FontContext<'_>) -> Benchm
             atomic_items: 0,
             exclusions: 0,
             geometry_segments: 0,
-            projected_units: 0,
-            visible_unit_drafts: 0,
-            unit_member_refs: 0,
         },
         counters,
     );
@@ -324,7 +315,7 @@ fn benchmark_exact_exclusion_fit(font_context: &FontContext<'_>) -> BenchmarkRes
     print_result(
         "exact-exclusion-fit-65",
         elapsed.as_micros(),
-        InputStats {
+        FixtureInputStats {
             input_bytes: text.len(),
             canonical_nodes: 1,
             resolved_runs: 1,
@@ -333,9 +324,6 @@ fn benchmark_exact_exclusion_fit(font_context: &FontContext<'_>) -> BenchmarkRes
             atomic_items: 0,
             exclusions: 1,
             geometry_segments: 0,
-            projected_units: 0,
-            visible_unit_drafts: 0,
-            unit_member_refs: 0,
         },
         snapshot_work(),
     );
@@ -388,7 +376,7 @@ fn benchmark_default_fit_probe_budget(font_context: &FontContext<'_>) -> Benchma
     print_result(
         "default-exact-fit-budget-4096",
         elapsed.as_micros(),
-        InputStats {
+        FixtureInputStats {
             input_bytes: text.len(),
             canonical_nodes: 1,
             resolved_runs: 1,
@@ -397,9 +385,6 @@ fn benchmark_default_fit_probe_budget(font_context: &FontContext<'_>) -> Benchma
             atomic_items: 0,
             exclusions: 1,
             geometry_segments: 0,
-            projected_units: 0,
-            visible_unit_drafts: 0,
-            unit_member_refs: 0,
         },
         counters,
     );
@@ -486,7 +471,7 @@ fn benchmark_content_exact_fit(font_context: &FontContext<'_>) -> BenchmarkResul
     print_result(
         "content-exact-fit-209-grid",
         elapsed.as_micros(),
-        InputStats {
+        FixtureInputStats {
             input_bytes: 1,
             canonical_nodes: 2,
             resolved_runs: 1,
@@ -495,9 +480,6 @@ fn benchmark_content_exact_fit(font_context: &FontContext<'_>) -> BenchmarkResul
             atomic_items: 1,
             exclusions: 0,
             geometry_segments: 0,
-            projected_units: 0,
-            visible_unit_drafts: 0,
-            unit_member_refs: 0,
         },
         counters,
     );
@@ -508,8 +490,8 @@ fn benchmark_unit_map_projection(
     font_context: &FontContext<'_>,
     ruby_count: usize,
 ) -> BenchmarkResult {
-    let rich_text = unit_map_rich_text(ruby_count);
-    let request = unit_map_request(&rich_text);
+    let rich_text = build_unit_map_rich_text(ruby_count);
+    let request = build_unit_map_request(&rich_text);
     let layout_result = layout_text_with_unit_metadata(&request, font_context)?;
 
     reset_work();
@@ -528,13 +510,17 @@ fn benchmark_unit_map_projection(
         .iter()
         .map(|unit| unit.members.len())
         .sum::<usize>();
+    let counters = snapshot_work();
     assert_eq!(unit_map.units.len(), projected_units);
     assert_eq!(unit_member_refs, projected_units);
     assert!(unit_map.units.iter().all(|unit| !unit.members.is_empty()));
+    assert_eq!(counters.unit_map_projected_units, projected_units);
+    assert_eq!(counters.unit_map_visible_drafts, projected_units);
+    assert_eq!(counters.unit_map_member_refs, unit_member_refs);
     print_result(
         &format!("unit-map-ruby-{ruby_count}"),
         elapsed.as_micros(),
-        InputStats {
+        FixtureInputStats {
             input_bytes: ruby_count * 6,
             canonical_nodes: ruby_count * 3,
             resolved_runs: ruby_count * 2,
@@ -543,16 +529,13 @@ fn benchmark_unit_map_projection(
             atomic_items: ruby_count,
             exclusions: 0,
             geometry_segments: 0,
-            projected_units,
-            visible_unit_drafts: unit_map.units.len(),
-            unit_member_refs,
         },
-        snapshot_work(),
+        counters,
     );
     Ok(())
 }
 
-fn unit_map_rich_text(ruby_count: usize) -> Vec<RichTextNodeInput> {
+fn build_unit_map_rich_text(ruby_count: usize) -> Vec<RichTextNodeInput> {
     let ruby_style = RichTextStyleInput {
         font_family: vec!["Noto".to_string()],
         font_weight: 400,
@@ -589,7 +572,7 @@ fn unit_map_rich_text(ruby_count: usize) -> Vec<RichTextNodeInput> {
         .collect()
 }
 
-fn unit_map_request(rich_text: &[RichTextNodeInput]) -> TextLayoutRequest<'_> {
+fn build_unit_map_request(rich_text: &[RichTextNodeInput]) -> TextLayoutRequest<'_> {
     TextLayoutRequest {
         text: "",
         spans: None,
@@ -625,7 +608,7 @@ fn unit_map_request(rich_text: &[RichTextNodeInput]) -> TextLayoutRequest<'_> {
 }
 
 fn main() -> BenchmarkResult {
-    let registry = registry()?;
+    let registry = build_font_registry()?;
     let families = vec!["Noto".to_string()];
     let style = FontStyle::Normal;
     let font_context = FontContext {

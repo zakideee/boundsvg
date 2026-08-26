@@ -5,6 +5,7 @@ use std::cell::RefCell;
 /// Count deterministic units of text-layout work for regression benchmarks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TextWorkCounters {
+    // Planning work
     /// Calls into the selected shaping backend.
     pub backend_shape_calls: usize,
     /// Glyphs returned by shaping backends.
@@ -19,6 +20,16 @@ pub struct TextWorkCounters {
     pub region_queries: usize,
     /// Intervals returned by distinct geometry-provider queries.
     pub returned_regions: usize,
+
+    // Unit map work
+    /// Authored source units projected for request-aware unit mapping.
+    pub unit_map_projected_units: usize,
+    /// Visible cluster drafts produced before ruby-unit coalescing.
+    pub unit_map_visible_drafts: usize,
+    /// Glyph-member references copied into unit-map output.
+    pub unit_map_member_refs: usize,
+
+    // Output materialization
     /// Lines copied into public output.
     pub materialized_lines: usize,
     /// Glyphs copied into public output.
@@ -67,6 +78,15 @@ pub fn record_region_query(returned_regions: usize) {
     update(|counters| {
         counters.region_queries += 1;
         counters.returned_regions += returned_regions;
+    });
+}
+
+/// Record one completed unit-map construction.
+pub fn record_unit_map_work(projected_units: usize, visible_drafts: usize, member_refs: usize) {
+    update(|counters| {
+        counters.unit_map_projected_units += projected_units;
+        counters.unit_map_visible_drafts += visible_drafts;
+        counters.unit_map_member_refs += member_refs;
     });
 }
 

@@ -215,22 +215,28 @@ fn materialize_span_fragments(req: &TextLayoutRequest<'_>, layout_result: &mut T
         req.white_space,
         req.tab_size,
     );
-    let mut source_end = 0_u32;
-    let span_ranges = spans
-        .iter()
-        .enumerate()
-        .map(|(span_index, span)| {
-            let source_start = source_end;
-            let span_text = normalized_span_texts
-                .as_ref()
-                .map_or(span.text.as_str(), |texts| texts[span_index].as_str());
-            source_end = source_end.saturating_add(
-                u32::try_from(super::super::grapheme::grapheme_split(span_text).len())
-                    .unwrap_or(u32::MAX),
-            );
-            (source_start, source_end, span)
-        })
-        .collect::<Vec<_>>();
+    let source_unit_count = normalized_span_texts.as_ref().map_or_else(
+        || {
+            spans
+                .iter()
+                .map(|span| super::super::grapheme::grapheme_split(&span.text).len())
+                .sum()
+        },
+        |texts| {
+            texts
+                .iter()
+                .map(|text| super::super::grapheme::grapheme_split(text).len())
+                .sum()
+        },
+    );
+    let mut source_unit_owners = Vec::with_capacity(source_unit_count);
+    for (span_index, span) in spans.iter().enumerate() {
+        let span_text = normalized_span_texts
+            .as_ref()
+            .map_or(span.text.as_str(), |texts| texts[span_index].as_str());
+        let span_unit_count = super::super::grapheme::grapheme_split(span_text).len();
+        source_unit_owners.extend(std::iter::repeat_n(span, span_unit_count));
+    }
 
     for line in &mut layout_result.lines {
         let Some(positioned_glyphs) = line.positioned_glyphs.as_deref() else {
@@ -246,12 +252,10 @@ fn materialize_span_fragments(req: &TextLayoutRequest<'_>, layout_result: &mut T
         let mut previous_cluster: Option<MaterializedClusterIdentity<'_>> = None;
         let mut cluster_start_in_fragment = 0_u32;
         for glyph in positioned_glyphs {
-            let span = glyph.source_start.and_then(|source_start| {
-                span_ranges
-                    .iter()
-                    .find(|(start, end, _)| *start <= source_start && source_start < *end)
-                    .map(|(_, _, span)| *span)
-            });
+            let span = glyph
+                .source_start
+                .and_then(|source_start| usize::try_from(source_start).ok())
+                .and_then(|source_start| source_unit_owners.get(source_start).copied());
             let style =
                 text_run_style_for_glyph(req, layout_result.chosen_font_size_px, glyph, span);
             if fragments

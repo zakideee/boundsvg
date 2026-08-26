@@ -310,17 +310,28 @@ fn build_text_unit_map_internal(
 ) -> Result<TextUnitMap, TextUnitMapError> {
     let candidates = collect_candidates(lines, writing_mode)?;
     let line_ids = build_line_ids(lines.len(), &candidates, writing_mode);
-    let mut units = match kind {
+    let (mut units, _visible_draft_count) = match kind {
         TextUnitKind::Cluster => {
             let mut drafts = build_cluster_drafts(&candidates, &line_ids);
+            let visible_draft_count = drafts.len();
             if let Some(projection) = source_projection {
                 append_omitted_cluster_drafts(&mut drafts, projection, lines.len());
             }
-            finalize_cluster_units(drafts, ruby)
+            (finalize_cluster_units(drafts, ruby), visible_draft_count)
         }
-        TextUnitKind::Line => build_line_units(candidates, &line_ids),
+        TextUnitKind::Line => {
+            let drafts = build_line_units(candidates, &line_ids);
+            let visible_draft_count = drafts.len();
+            (drafts, visible_draft_count)
+        }
     };
     assign_orders(&mut units);
+    #[cfg(any(test, feature = "phase-trace"))]
+    crate::phase_trace::record_unit_map_work(
+        source_projection.map_or(0, |projection| projection.units.len()),
+        _visible_draft_count,
+        units.iter().map(|draft| draft.entry.members.len()).sum(),
+    );
     Ok(TextUnitMap {
         kind,
         ruby,
