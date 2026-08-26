@@ -934,8 +934,10 @@ fn fit_rich_text_exact_grid(
     let (chosen_size, fit_overflow) = if should_shrink {
         text_flow::fit_shrink_with(
             req.font_size_px,
-            req.min_font_size_px.unwrap_or(8.0),
-            req.shrink_epsilon_px.unwrap_or(0.25),
+            req.min_font_size_px
+                .unwrap_or(text_flow::DEFAULT_MIN_FONT_SIZE),
+            req.shrink_epsilon_px
+                .unwrap_or(text_flow::DEFAULT_FIT_EPSILON),
             req.shrink_max_iterations.unwrap_or(12),
             text_flow::FitSearchKind::Uncertified,
             req.fit_max_probes,
@@ -944,8 +946,10 @@ fn fit_rich_text_exact_grid(
     } else {
         text_flow::fit_grow_with(
             req.font_size_px,
-            req.max_font_size_px.unwrap_or(req.font_size_px * 4.0),
-            req.grow_epsilon_px.unwrap_or(0.25),
+            req.max_font_size_px
+                .unwrap_or(req.font_size_px * text_flow::DEFAULT_GROW_MULTIPLIER),
+            req.grow_epsilon_px
+                .unwrap_or(text_flow::DEFAULT_FIT_EPSILON),
             req.grow_max_iterations.unwrap_or(12),
             text_flow::FitSearchKind::Uncertified,
             req.fit_max_probes,

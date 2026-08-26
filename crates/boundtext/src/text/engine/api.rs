@@ -501,18 +501,20 @@ fn ensure_text_fit_budget(req: &TextLayoutRequest<'_>) -> Result<(), crate::Text
     let (lower, upper, step) = match req.fit {
         FitMode::Shrink => (
             req.min_font_size_px
-                .unwrap_or(8.0)
+                .unwrap_or(super::super::flow::DEFAULT_MIN_FONT_SIZE)
                 .max(f64::EPSILON)
                 .min(req.font_size_px),
             req.font_size_px,
-            req.shrink_epsilon_px.unwrap_or(0.25),
+            req.shrink_epsilon_px
+                .unwrap_or(super::super::flow::DEFAULT_FIT_EPSILON),
         ),
         FitMode::Grow => (
             req.font_size_px,
             req.max_font_size_px
-                .unwrap_or(req.font_size_px * 4.0)
+                .unwrap_or(req.font_size_px * super::super::flow::DEFAULT_GROW_MULTIPLIER)
                 .max(req.font_size_px),
-            req.grow_epsilon_px.unwrap_or(0.25),
+            req.grow_epsilon_px
+                .unwrap_or(super::super::flow::DEFAULT_FIT_EPSILON),
         ),
         FitMode::None => return Ok(()),
     };

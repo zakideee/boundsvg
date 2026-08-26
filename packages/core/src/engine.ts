@@ -1513,7 +1513,7 @@ export class Engine {
     if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
-    this.assertWasmFontAliasesRegistered(vnode);
+    this.assertVNodeFontAliasesRegistered(vnode);
 
     return computeLayout(vnode, {
       computeLayoutFn: this.options.computeLayoutFn,
@@ -1616,8 +1616,8 @@ export class Engine {
       this.options.compileLayoutTransitionFn,
       "compileLayoutTransitionFn",
     );
-    this.assertWasmFontAliasesRegistered(referenceVNode);
-    this.assertWasmFontAliasesRegistered(targetVNode);
+    this.assertVNodeFontAliasesRegistered(referenceVNode);
+    this.assertVNodeFontAliasesRegistered(targetVNode);
     let envelopeJson: string;
     try {
       envelopeJson = compileLayoutTransitionFn(
@@ -1986,7 +1986,7 @@ export class Engine {
    * Reject unresolved authored aliases before authoritative Rust layout can
    * replace their identity with a generic shaping failure.
    */
-  private assertWasmFontAliasesRegistered(vnode: VNode): void {
+  private assertVNodeFontAliasesRegistered(vnode: VNode): void {
     const visit = (node: VNode, position: NodePosition): void => {
       const { id: nodeId } = generateNodeId(node, position);
       if (node.type === "Text" || node.type === "TextOnPath") {
@@ -2017,7 +2017,7 @@ export class Engine {
     },
   ): CompiledScene {
     const renderToIrFn = this.requireWasmBackendFn(this.options.renderToIrFn, "renderToIrFn");
-    this.assertWasmFontAliasesRegistered(vnode);
+    this.assertVNodeFontAliasesRegistered(vnode);
     let envelopeJson: string;
     try {
       envelopeJson = renderToIrFn(
@@ -2079,7 +2079,7 @@ export class Engine {
     if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
-    this.assertWasmFontAliasesRegistered(vnode);
+    this.assertVNodeFontAliasesRegistered(vnode);
     let envelopeJson: string;
     try {
       envelopeJson = renderToSvgFn(
@@ -2341,7 +2341,7 @@ export class Engine {
     if (!stableRenderOpts?.skipValidation) {
       validate(vnode);
     }
-    this.assertWasmFontAliasesRegistered(vnode);
+    this.assertVNodeFontAliasesRegistered(vnode);
 
     // Layout once (matching the TS backend's single compile); the emit at
     // the applied scale reuses this IR so callback-driven registry changes

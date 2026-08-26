@@ -360,6 +360,9 @@ pub struct PositionedGlyph {
     pub decoration_source_start: Option<u32>,
     #[serde(skip)]
     pub decoration_source_end: Option<u32>,
+    /// Internal namespace for decoration-local source coordinates. Ruby
+    /// annotations also use it to keep equal text on distinct annotation
+    /// levels from collapsing into one unit-map identity.
     #[serde(skip)]
     pub decoration_level: Option<u32>,
     #[serde(skip)]
