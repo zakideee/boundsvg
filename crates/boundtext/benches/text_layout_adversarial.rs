@@ -1,4 +1,4 @@
-//! Deterministic adversarial benchmark for exact ellipsis, fit, and UnitMap work.
+//! Deterministic adversarial benchmark for exact ellipsis, fit, and `UnitMap` work.
 
 use std::time::Instant;
 
@@ -508,72 +508,8 @@ fn benchmark_unit_map_projection(
     font_context: &FontContext<'_>,
     ruby_count: usize,
 ) -> BenchmarkResult {
-    let ruby_style = RichTextStyleInput {
-        font_family: vec!["Noto".to_string()],
-        font_weight: 400,
-        font_style: FontStyle::Normal,
-        font_size_px: 24.0,
-        line_height: None,
-        line_height_px: None,
-        letter_spacing_px: Some(0.0),
-        language: Some("ja".to_string()),
-        color: None,
-        text_strokes: None,
-        text_shadows: None,
-        font_variation_settings: None,
-        font_feature_settings: None,
-        text_orientation: None,
-        text_decoration: None,
-    };
-    let rich_text = (0..ruby_count)
-        .map(|_| RichTextNodeInput::Ruby {
-            ruby_position: Some("over".to_string()),
-            ruby_align: Some("center".to_string()),
-            ruby_gap_px: None,
-            ruby_offset_px: None,
-            ruby_line_sizing: None,
-            style: ruby_style.clone(),
-            base: vec![RichTextNodeInput::Text {
-                text: "漢".to_string(),
-            }],
-            rt: vec![RichTextNodeInput::Text {
-                text: "か".to_string(),
-            }],
-            rt_levels: Vec::new(),
-        })
-        .collect::<Vec<_>>();
-    let request = TextLayoutRequest {
-        text: "",
-        spans: None,
-        rich_text: Some(&rich_text),
-        font_size_px: 24.0,
-        line_height: None,
-        line_height_px: None,
-        letter_spacing_px: 0.0,
-        text_indent: None,
-        max_width: 1_000_000.0,
-        max_height: None,
-        wrap: WrapMode::Char,
-        white_space: WhiteSpaceMode::Normal,
-        tab_size: 4,
-        fit: FitMode::None,
-        max_lines: None,
-        ellipsis: false,
-        language: Language::Ja,
-        writing_mode: WritingMode::HorizontalTb,
-        text_orientation: TextOrientation::Mixed,
-        uax14_breaks: None,
-        hanging_punctuation: false,
-        font_variation_settings: Vec::new(),
-        font_feature_settings: Vec::new(),
-        min_font_size_px: None,
-        shrink_epsilon_px: None,
-        shrink_max_iterations: None,
-        max_font_size_px: None,
-        grow_epsilon_px: None,
-        grow_max_iterations: None,
-        fit_max_probes: None,
-    };
+    let rich_text = unit_map_rich_text(ruby_count);
+    let request = unit_map_request(&rich_text);
     let layout_result = layout_text_with_unit_metadata(&request, font_context)?;
 
     reset_work();
@@ -614,6 +550,78 @@ fn benchmark_unit_map_projection(
         snapshot_work(),
     );
     Ok(())
+}
+
+fn unit_map_rich_text(ruby_count: usize) -> Vec<RichTextNodeInput> {
+    let ruby_style = RichTextStyleInput {
+        font_family: vec!["Noto".to_string()],
+        font_weight: 400,
+        font_style: FontStyle::Normal,
+        font_size_px: 24.0,
+        line_height: None,
+        line_height_px: None,
+        letter_spacing_px: Some(0.0),
+        language: Some("ja".to_string()),
+        color: None,
+        text_strokes: None,
+        text_shadows: None,
+        font_variation_settings: None,
+        font_feature_settings: None,
+        text_orientation: None,
+        text_decoration: None,
+    };
+    (0..ruby_count)
+        .map(|_| RichTextNodeInput::Ruby {
+            ruby_position: Some("over".to_string()),
+            ruby_align: Some("center".to_string()),
+            ruby_gap_px: None,
+            ruby_offset_px: None,
+            ruby_line_sizing: None,
+            style: ruby_style.clone(),
+            base: vec![RichTextNodeInput::Text {
+                text: "漢".to_string(),
+            }],
+            rt: vec![RichTextNodeInput::Text {
+                text: "か".to_string(),
+            }],
+            rt_levels: Vec::new(),
+        })
+        .collect()
+}
+
+fn unit_map_request(rich_text: &[RichTextNodeInput]) -> TextLayoutRequest<'_> {
+    TextLayoutRequest {
+        text: "",
+        spans: None,
+        rich_text: Some(rich_text),
+        font_size_px: 24.0,
+        line_height: None,
+        line_height_px: None,
+        letter_spacing_px: 0.0,
+        text_indent: None,
+        max_width: 1_000_000.0,
+        max_height: None,
+        wrap: WrapMode::Char,
+        white_space: WhiteSpaceMode::Normal,
+        tab_size: 4,
+        fit: FitMode::None,
+        max_lines: None,
+        ellipsis: false,
+        language: Language::Ja,
+        writing_mode: WritingMode::HorizontalTb,
+        text_orientation: TextOrientation::Mixed,
+        uax14_breaks: None,
+        hanging_punctuation: false,
+        font_variation_settings: Vec::new(),
+        font_feature_settings: Vec::new(),
+        min_font_size_px: None,
+        shrink_epsilon_px: None,
+        shrink_max_iterations: None,
+        max_font_size_px: None,
+        grow_epsilon_px: None,
+        grow_max_iterations: None,
+        fit_max_probes: None,
+    }
 }
 
 fn main() -> BenchmarkResult {

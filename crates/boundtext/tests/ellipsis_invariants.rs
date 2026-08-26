@@ -901,62 +901,73 @@ fn equal_ruby_annotation_levels_remain_distinct_units() {
         assert_eq!(annotation_units.len(), 2, "{writing_mode:?}");
         assert_ne!(annotation_units[0].unit_id, annotation_units[1].unit_id);
         assert!(unit_map.units.iter().all(|unit| !unit.members.is_empty()));
-
-        let omitted_rich_text = vec![
-            RichTextNodeInput::Text {
-                text: "AAAA".to_string(),
-            },
-            rich_text[0].clone(),
-        ];
-        let mut omitted_request = layout_request("", 50.0);
-        omitted_request.rich_text = Some(&omitted_rich_text);
-        omitted_request.writing_mode = writing_mode;
-        omitted_request.max_height = Some(50.0);
-        let omitted_layout = layout_text_with_unit_metadata(&omitted_request, &font_context)
-            .expect("omitted multi-level ruby layout");
-        let omitted_unit_map = build_text_unit_map_for_request(
-            &omitted_layout,
-            &omitted_request,
+        assert_omitted_annotation_levels_remain_distinct(
             &font_context,
-            TextUnitKind::Cluster,
-            TextUnitRubyMode::Separate,
-        )
-        .expect("omitted multi-level ruby unit map");
-        assert!(
-            omitted_layout
-                .display_text
-                .as_deref()
-                .is_some_and(|text| text.ends_with('\u{2026}')),
-            "{writing_mode:?}: {:?}",
-            omitted_layout.display_text
-        );
-        assert_eq!(omitted_unit_map.units.len(), 7, "{writing_mode:?}");
-        assert_eq!(
-            omitted_unit_map
-                .units
-                .iter()
-                .map(|unit| unit.unit_id.as_str())
-                .collect::<std::collections::BTreeSet<_>>()
-                .len(),
-            7,
-            "{writing_mode:?}"
-        );
-        assert!(
-            omitted_unit_map
-                .units
-                .iter()
-                .filter(|unit| unit.members.is_empty())
-                .count()
-                >= 3,
-            "{writing_mode:?}: display={:?}, members={:?}",
-            omitted_layout.display_text,
-            omitted_unit_map
-                .units
-                .iter()
-                .map(|unit| unit.members.len())
-                .collect::<Vec<_>>()
+            &rich_text[0],
+            writing_mode,
         );
     }
+}
+
+fn assert_omitted_annotation_levels_remain_distinct(
+    font_context: &FontContext<'_>,
+    ruby_node: &RichTextNodeInput,
+    writing_mode: WritingMode,
+) {
+    let omitted_rich_text = vec![
+        RichTextNodeInput::Text {
+            text: "AAAA".to_string(),
+        },
+        ruby_node.clone(),
+    ];
+    let mut omitted_request = layout_request("", 50.0);
+    omitted_request.rich_text = Some(&omitted_rich_text);
+    omitted_request.writing_mode = writing_mode;
+    omitted_request.max_height = Some(50.0);
+    let omitted_layout = layout_text_with_unit_metadata(&omitted_request, font_context)
+        .expect("omitted multi-level ruby layout");
+    let omitted_unit_map = build_text_unit_map_for_request(
+        &omitted_layout,
+        &omitted_request,
+        font_context,
+        TextUnitKind::Cluster,
+        TextUnitRubyMode::Separate,
+    )
+    .expect("omitted multi-level ruby unit map");
+    assert!(
+        omitted_layout
+            .display_text
+            .as_deref()
+            .is_some_and(|text| text.ends_with('\u{2026}')),
+        "{writing_mode:?}: {:?}",
+        omitted_layout.display_text
+    );
+    assert_eq!(omitted_unit_map.units.len(), 7, "{writing_mode:?}");
+    assert_eq!(
+        omitted_unit_map
+            .units
+            .iter()
+            .map(|unit| unit.unit_id.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        7,
+        "{writing_mode:?}"
+    );
+    assert!(
+        omitted_unit_map
+            .units
+            .iter()
+            .filter(|unit| unit.members.is_empty())
+            .count()
+            >= 3,
+        "{writing_mode:?}: display={:?}, members={:?}",
+        omitted_layout.display_text,
+        omitted_unit_map
+            .units
+            .iter()
+            .map(|unit| unit.members.len())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
