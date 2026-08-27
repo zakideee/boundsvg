@@ -36,7 +36,7 @@ import {
   type VNode,
 } from "@boundsvg/react";
 import { type BoundSvgConfig, BoundSvgProvider, useBoundSvg } from "@boundsvg/react/provider";
-import { useRenderToPngAsync, useRenderToSvgAsync } from "@boundsvg/react/worker";
+import { useRenderToAnimatedSvgAsync, useRenderToPngAsync } from "@boundsvg/react/worker";
 import { type MaterializedFrameInput, WorkerPool } from "@boundsvg/worker";
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -1078,8 +1078,10 @@ function WorkerTestContent() {
   const vnode = useMemo(() => buildTestVNode(), []);
   const routeParity = useRouteParity(status, workerEngine, vnode);
 
-  const svgResult = useRenderToSvgAsync(vnode);
-  const pngResult = useRenderToPngAsync(vnode);
+  const svgResult = useRenderToAnimatedSvgAsync(vnode, {
+    playback: { mode: "independent" },
+  });
+  const pngResult = useRenderToPngAsync(vnode, { timeMs: 0 });
 
   return (
     <div>
