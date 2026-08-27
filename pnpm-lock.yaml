@@ -15,7 +15,7 @@ importers:
         specifier: ^0.5.2
         version: 0.5.2
       '@changesets/cli':
-        specifier: ^2.29.8
+        specifier: 2.29.8
         version: 2.29.8(@types/node@22.19.11)
       '@j178/prek':
         specifier: ^0.3.4

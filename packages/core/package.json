@@ -1,6 +1,6 @@
 {
   "name": "@boundsvg/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Core layout engine for boundsvg — JSX to SVG/PNG/WebP/GIF rendering pipeline",
   "keywords": [
     "svg",

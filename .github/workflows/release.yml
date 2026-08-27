@@ -8,6 +8,10 @@ on:
         description: "Publish unpublished package versions to npm"
         type: boolean
         default: false
+      publish-crates:
+        description: "Publish unpublished crate versions to crates.io"
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -15,7 +19,7 @@ concurrency:
 
 jobs:
   release:
-    if: ${{ !inputs.publish }}
+    if: ${{ !inputs.publish && !inputs['publish-crates'] }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -72,8 +76,13 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
-          registry-url: "https://registry.npmjs.org"
+          node-version: 22.14.0
+
+      # Trusted publishing requires npm 11.5.1 or newer. Do not pass
+      # registry-url to setup-node here: it writes an empty-token entry that
+      # takes precedence over npm's OIDC exchange when no classic token exists.
+      - name: Install OIDC-capable npm CLI
+        run: npm install --global npm@11.19.0
 
       - run: pnpm install --frozen-lockfile --ignore-scripts
 
@@ -95,5 +104,74 @@ jobs:
       - name: Publish to npm
         run: pnpm -r publish --no-git-checks
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
+
+  crates-publish:
+    if: ${{ inputs['publish-crates'] }}
+    runs-on: ubuntu-latest
+    environment: crates-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.0
+
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      - name: Publish crates in dependency order
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          crate_version() {
+            cargo metadata --locked --no-deps --format-version 1 \
+              | jq -er --arg crate "$1" '.packages[] | select(.name == $crate) | .version'
+          }
+
+          crate_available() {
+            cargo info --registry crates-io "$1@$2" >/dev/null 2>&1
+          }
+
+          wait_for_crate() {
+            local crate="$1"
+            local version="$2"
+            local attempt
+
+            for attempt in {1..30}; do
+              if crate_available "$crate" "$version"; then
+                return 0
+              fi
+              sleep 10
+            done
+
+            echo "${crate}@${version} did not become available from the crates.io index" >&2
+            return 1
+          }
+
+          publish_crate() {
+            local crate="$1"
+            local version
+            version="$(crate_version "$crate")"
+
+            if crate_available "$crate" "$version"; then
+              echo "${crate}@${version} is already published; skipping"
+              return 0
+            fi
+
+            cargo publish --locked --package "$crate"
+            wait_for_crate "$crate" "$version"
+          }
+
+          publish_crate boundshape
+          publish_crate boundtext
+          publish_crate boundsvg

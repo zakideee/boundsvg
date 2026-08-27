@@ -20,11 +20,17 @@ The changeset file (`.changeset/<random-name>.md`) should be committed with your
 
 ## For maintainers
 
-When changesets have accumulated on `main`, dispatching the release workflow (manual `workflow_dispatch`) opens a **"chore: version packages"** PR that:
+The nine public npm packages form one fixed release group. When changesets have accumulated on
+`main`, dispatching the release workflow with publishing disabled opens a
+**"chore: version packages"** PR that:
 
-- Bumps versions in `package.json`
-- Syncs `crates/boundsvg/Cargo.toml` version with `@boundsvg/core`
+- Bumps all nine public package versions together
 - Updates `CHANGELOG.md` for each affected package
 - Removes consumed changeset files
 
-Merging that PR applies the version bumps. Publishing to npm is not yet enabled.
+The public Rust crates use independent SemVer. Update their package versions and internal dependency
+requirements explicitly in the same release PR, then run `pnpm check:release-coherence`.
+
+After that PR is merged and verified, dispatching the workflow with publishing enabled publishes the
+npm packages through the protected `npm-publish` environment. A separate crate-publishing dispatch
+publishes the Rust crates in dependency order through the protected `crates-publish` environment.
