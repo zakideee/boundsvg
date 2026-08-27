@@ -117,8 +117,15 @@ function assertInternalDependencyVersions(manifest, candidateVersions) {
       if (!candidateVersion) {
         continue;
       }
+      const candidateMatch = /^(\d+)\.(\d+)\.(\d+)$/.exec(candidateVersion);
+      const sameMinorRange =
+        candidateMatch === null
+          ? undefined
+          : `>=${candidateMatch[1]}.${candidateMatch[2]}.0 <${candidateMatch[1]}.${Number(candidateMatch[2]) + 1}.0`;
       const accepted =
-        dependencies === peers ? [candidateVersion, `^${candidateVersion}`] : [candidateVersion];
+        dependencies === peers
+          ? [candidateVersion, `^${candidateVersion}`, sameMinorRange]
+          : [candidateVersion];
       if (!accepted.includes(specification)) {
         fail(
           `${manifest.name} requires ${dependencyName}@${String(specification)}, expected candidate ${candidateVersion}`,

@@ -1,5 +1,66 @@
 # @boundsvg/core
 
+## 0.2.0
+
+### Minor Changes
+
+- [#18](https://github.com/zakideee/boundsvg/pull/18) [`27659af`](https://github.com/zakideee/boundsvg/commit/27659af778e8d9644eab42cb5800a2aeadd19d0b) Thanks [@zakideee](https://github.com/zakideee)! - **Breaking (Rust):** Prevent unbounded recursive Shape processing by rejecting authored and resolved geometry trees deeper than 48 levels with a stable validation error before recursion or WASM serialization. `boundshape::resolve_symbol_geometry` now returns `Result<GeometryDoc, ShapeError>`, and `ShapeError` is non-exhaustive. Rust callers must handle the resolution result and include a wildcard arm when matching shape errors. Programmatically generated trees at depth 49 or greater must be flattened; associative boolean chains can use one n-ary boolean node instead. The synchronized 0.2 video package requires the 0.2 core line.
+
+- [#18](https://github.com/zakideee/boundsvg/pull/18) [`27659af`](https://github.com/zakideee/boundsvg/commit/27659af778e8d9644eab42cb5800a2aeadd19d0b) Thanks [@zakideee](https://github.com/zakideee)! - **Output-affecting:** Use one authoritative text-layout contract for horizontal and vertical
+  plain/rich text, exclusion flow, shrink/grow fit, and `maxLines` ellipsis. Ellipsis now selects the
+  longest exact legal prefix without splitting grapheme clusters or atomic rich items, re-shapes
+  contextual text at the retained end, preserves source/style/decoration identity, and excludes output
+  and warnings owned only by the omitted suffix.
+
+  `kinsoku_unresolved` now remains a diagnostic for a forced but physically
+  contained break and does not by itself trigger ellipsis. When the same plan
+  also violates width, height, or `maxLines`, the physical `overflow` or
+  `cannot_fit` status takes precedence.
+
+  Ordinary spans now use the canonical rich planner. Paint-only boundaries keep
+  one shaping run (an indivisible cross-boundary cluster uses its source-start
+  paint), and nested decorated spans remain fragmentable with all owner keys in
+  normal and exclusion-flow output. Fit scales font size and letter spacing
+  together; explicit pixel line height remains absolute. Positioned glyph
+  `clusterStart` / `clusterEnd` values for ordinary spans are now document-global
+  UTF-8 byte offsets instead of run-local offsets. Ruby annotations continue to
+  use annotation-level local offsets because they are shaped from a separate
+  source string; use `sourceRole` or UnitMap identity across source namespaces.
+  Nested atomic children and multiple styled ruby segments now keep continuous
+  source/cluster coordinates, while equal annotation text on different ruby
+  levels remains distinct UnitMap identity.
+  Unregistered aliases are now rejected before authoritative WASM text layout
+  on every render and layout-transition route, preserving
+  `FONT_ALIAS_NOT_REGISTERED`; when an input has multiple fatal defects, this
+  structured font diagnosis may now precede a shaping failure.
+
+  Add the positive-integer `fitMaxProbes` Text prop for deterministic exact-grid
+  fit when content (including negative tracking) or flow geometry is not
+  monotone-certified. Exact ellipsis, fit, and geometry work now fail with
+  structured resource-limit errors instead of returning approximate or partial
+  output. The bundled WASM DTO schema advances to 26 and must be rebuilt with the
+  matching `@boundsvg/core` package.
+
+  **Breaking (Rust):** `boundtext::layout_text` and `layout_text_with_unit_metadata` now return
+  `Result<_, TextLayoutError>`, and the physical `FlowRegionSource` trait is replaced by the fallible
+  logical-axis `RegionProvider` contract. Rust callers must migrate `Option` handling and provider
+  implementations as documented in `crates/boundtext/README.md`.
+  `FlowLayoutResult` also adds `inline_box_decorations`; direct struct constructors must initialize
+  or forward that field. Flow shrinkwrap geometry/resource failures now keep their structured text
+  error codes through the WASM bridge; the older direct Rust preformatted-text shrinkwrap helpers
+  continue to return `Option` pending a separate SemVer decision.
+  The `boundtext` default feature set now includes `unicode-full`, changing direct
+  default-feature Rust builds from per-code-point fallback boundaries to UAX #29
+  extended grapheme clusters. Custom no-default builds must enable
+  `unicode-full` explicitly to receive the same boundary guarantee.
+
+### Patch Changes
+
+- [#18](https://github.com/zakideee/boundsvg/pull/18) [`27659af`](https://github.com/zakideee/boundsvg/commit/27659af778e8d9644eab42cb5800a2aeadd19d0b) Thanks [@zakideee](https://github.com/zakideee)! - **Output-affecting:** Preserve intrinsic one-line Text sizing when a Flex layout feeds a measured
+  width back through the f32 layout boundary, keeping resolved text height aligned with its layout box.
+- Updated dependencies []:
+  - @boundsvg/shape@0.2.0
+
 ## 0.1.0
 
 Initial public release.

@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "boundshape"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "schemars",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "boundsvg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "boundshape",
  "boundtext",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "boundtext"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "boundshape",
  "rustybuzz",

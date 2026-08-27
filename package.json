@@ -48,6 +48,7 @@
     "bench:smoke": "pnpm --filter @boundsvg/bench bench:smoke",
     "typecheck": "pnpm --filter @boundsvg/shape build && pnpm --filter @boundsvg/core build && pnpm --filter @boundsvg/browser build && pnpm --filter @boundsvg/worker build && pnpm --filter @boundsvg/video build && pnpm --filter @boundsvg/react build && pnpm --filter @boundsvg/cli build && pnpm --filter @boundsvg/extras build && pnpm --filter @boundsvg/testing build && pnpm --filter @boundsvg/bench typecheck && pnpm check:public-declarations && tsc --build --noEmit tsconfig.check.json && tsc -p packages/core/tsconfig.type-tests.json --noEmit && tsc -p packages/react/tsconfig.type-tests.json --noEmit",
     "check:public-declarations": "node scripts/check-public-declarations.mjs",
+    "check:release-coherence": "node scripts/check-release-coherence.mjs",
     "check:third-party-source-overrides": "node scripts/check-third-party-source-overrides.mjs",
     "test:third-party-source-overrides": "node --test scripts/check-third-party-source-overrides.test.mjs",
     "knip": "knip",
@@ -58,12 +59,12 @@
     "format": "biome format --write . && prettier --write '**/*.md' '**/*.yml' '**/*.yaml' '**/*.html' --ignore-unknown",
     "format:check": "biome check . && prettier --check '**/*.md' '**/*.yml' '**/*.yaml' '**/*.html' --ignore-unknown",
     "changeset": "changeset",
-    "version": "changeset version && bash scripts/sync-cargo-version.sh"
+    "version": "changeset version"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.2",
     "@changesets/changelog-github": "^0.5.2",
-    "@changesets/cli": "^2.29.8",
+    "@changesets/cli": "2.29.8",
     "@j178/prek": "^0.3.4",
     "@playwright/test": "^1.58.2",
     "@types/node": "^22.0.0",

@@ -98,6 +98,7 @@ const tasks = [];
 const STATIC_CHECK_IDS = new Set([
   "biome",
   "prettier",
+  "release-coherence",
   "typecheck-build-chain",
   "third-party-source-overrides",
 ]);
@@ -124,6 +125,10 @@ const shapeBoundaryChanged =
 
 addTask("third-party-source-overrides", "third-party source policy applies to every change", [
   ["pnpm", ["check:third-party-source-overrides"]],
+]);
+
+addTask("release-coherence", "release metadata must remain internally consistent", [
+  ["pnpm", ["check:release-coherence"]],
 ]);
 
 if (all) {

@@ -1,6 +1,6 @@
 {
   "name": "@boundsvg/extras",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unstyled utility components for boundsvg layouts",
   "keywords": [
     "svg",
