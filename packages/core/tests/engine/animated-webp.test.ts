@@ -172,7 +172,7 @@ describe("renderToAnimatedWebp", () => {
     expect(captured[0]?.frames).toHaveLength(timesMs.length);
     for (const [index, timeMs] of timesMs.entries()) {
       expect(captured[0]?.frames[index]).toEqual({
-        svg: engine.renderCompiledToSvg(compiled, { animation: "static", timeMs }),
+        svg: engine.renderCompiledToSvg(compiled, { timeMs }),
         durationMs: [300, 400, 300, 100][index],
       });
     }
@@ -676,9 +676,7 @@ describe("renderToAnimatedWebp", () => {
     expect(svgs).toHaveLength(2);
     // At t=100 ms of a 1000 ms fade the box is still mostly transparent, so
     // the second frame must not equal the fully opaque end state.
-    expect(svgs[1]).not.toBe(
-      engine.renderToSvg(createFadingScene(), { animation: "static", timeMs: 1000 }),
-    );
+    expect(svgs[1]).not.toBe(engine.renderToSvg(createFadingScene(), { timeMs: 1000 }));
   });
 
   it("reports WEBP_NO_ENCODER when no animated encoder is wired", () => {

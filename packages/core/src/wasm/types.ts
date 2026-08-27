@@ -54,8 +54,12 @@ export type WasmEngineInstance = {
   /** Compute layout, build the IR, and emit SVG in one call:
    *  returns `{ svg, ir, warnings }` JSON */
   render_to_svg?(inputJson: string, optionsJson: string): string;
+  /** Compute layout, build IR, and emit declarative animated SVG. */
+  render_to_animated_svg?(inputJson: string, optionsJson: string): string;
   /** Emit an SVG string from a public-IR JSON payload */
   emit_svg_from_ir?(irJson: string, optionsJson: string): string;
+  /** Emit declarative animated SVG from a public-IR JSON payload. */
+  emit_animated_svg_from_ir?(irJson: string, optionsJson: string): string;
   /** Resolve every text outline and return a public-IR envelope. */
   resolve_ir?(irJson: string, optionsJson: string): string;
   /** Run the bounded raster outline preflight. */
@@ -72,6 +76,8 @@ export type WasmEngineInstance = {
   render_raster_scene_to_svg?(scene: WasmRasterSceneInstance, optionsJson: string): string;
   /** Resolve outlines and emit SVG without returning resolved IR. */
   resolve_and_emit_svg_from_ir?(irJson: string, optionsJson: string): string;
+  /** Resolve outlines and emit declarative animated SVG. */
+  resolve_and_emit_animated_svg_from_ir?(irJson: string, optionsJson: string): string;
   /** Sample per-node animation opacity/transform from a public-IR payload. */
   sample_animation_state?(irJson: string, timeMs: number): string;
   /** Parse and retain an outline-resolved public IR for repeated sampling. */

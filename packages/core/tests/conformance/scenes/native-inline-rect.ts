@@ -155,6 +155,7 @@ function buildNativeInlineRectScene(): VNode {
 }
 
 export const nativeInlineRectScene: ConformanceScene = {
+  animatedSvg: true,
   id: "native-inline-rect",
   build: buildNativeInlineRectScene,
   width: WIDTH,

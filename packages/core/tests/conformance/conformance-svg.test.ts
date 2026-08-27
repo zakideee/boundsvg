@@ -22,7 +22,12 @@ describe("conformance SVG snapshots", () => {
   it.each(
     CONFORMANCE_SCENES.map((scene) => [scene.id, scene] as const),
   )("%s renders a stable normalized SVG", (_id, scene) => {
-    const svg = engine.renderToSvg(scene.build(), scene.renderOptions);
+    const svg = scene.animatedSvg
+      ? engine.renderToAnimatedSvg(scene.build(), {
+          ...scene.renderOptions,
+          playback: { mode: "independent" },
+        })
+      : engine.renderToSvg(scene.build(), scene.renderOptions);
     expect(svg).toContain(`viewBox="0 0 ${scene.width} ${scene.height}"`);
     expect(normalizeSvg(svg)).toMatchSnapshot();
   });

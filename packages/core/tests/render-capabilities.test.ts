@@ -961,22 +961,25 @@ describe("public render capability contract", () => {
     const requestedScale = decodeContractNumber(fixture.requestedScale);
     const resolution = resolveRasterScale({ width, height, requestedScale });
     const scene = createElement("Canvas", { width, height, background: "#2563eb" });
-    const options = {
+    const rasterOptions = {
+      scale: requestedScale,
+      rasterOversizeBehavior: "auto-adjust" as const,
+    };
+    const animatedRasterOptions = {
+      ...rasterOptions,
       timesMs: [0],
       frameDurationsMs: [20],
       iterations: "infinite" as const,
-      scale: requestedScale,
-      rasterOversizeBehavior: "auto-adjust" as const,
     };
     const expected = {
       width: resolution.outputWidth,
       height: resolution.outputHeight,
     };
 
-    expect(pngSize(engine.renderToPng(scene, options))).toEqual(expected);
-    expect(webpSize(engine.renderToWebp(scene, options))).toEqual(expected);
+    expect(pngSize(engine.renderToPng(scene, rasterOptions))).toEqual(expected);
+    expect(webpSize(engine.renderToWebp(scene, rasterOptions))).toEqual(expected);
     for (const frame of engine.renderFrames(scene, {
-      ...options,
+      ...rasterOptions,
       timesMs: [0, 20],
       format: "png",
     })) {
@@ -985,13 +988,13 @@ describe("public render capability contract", () => {
         expect(pngSize(frame.data)).toEqual(expected);
       }
     }
-    const layered = engine.renderToLayeredPng(scene, options);
+    const layered = engine.renderToLayeredPng(scene, rasterOptions);
     expect({ width: layered.pixelWidth, height: layered.pixelHeight }).toEqual(expected);
     for (const layer of layered.layers) {
       expect(pngSize(layer.png)).toEqual(expected);
     }
-    expect(gifSize(engine.renderToAnimatedGif(scene, options))).toEqual(expected);
-    expect(webpSize(engine.renderToAnimatedWebp(scene, options))).toEqual(expected);
+    expect(gifSize(engine.renderToAnimatedGif(scene, animatedRasterOptions))).toEqual(expected);
+    expect(webpSize(engine.renderToAnimatedWebp(scene, animatedRasterOptions))).toEqual(expected);
   }, 60_000);
 
   it("keeps the public frame cap in step with the Rust trust boundary", () => {

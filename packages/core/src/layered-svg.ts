@@ -110,8 +110,8 @@ export type LayeredPngResult = {
 type RenderLayeredSvgOptions = {
   debug?: boolean | DebugOverlayConfig;
   resourceIdPrefix?: string;
+  nodeIdMetadata?: "include" | "omit";
   scale?: number;
-  animation?: "declarative" | "static";
   timeMs?: number;
   generator?: {
     name: string;
@@ -154,13 +154,8 @@ export type LayerEmitOptions = {
   scale?: number;
   debug?: boolean | DebugOverlayConfig;
   resourceIdPrefix?: string;
-  animation?: "declarative" | "static";
+  nodeIdMetadata?: "include" | "omit";
   timeMs?: number;
-  /**
-   * Forwarded by the compiled emit path. Layered rendering never sets it —
-   * `LayeredSvgOptions` deliberately does not accept a reduced-motion mode.
-   */
-  reducedMotion?: "keep" | "pause";
   generator?: {
     name: string;
     version: string;
@@ -282,8 +277,8 @@ export function renderLayeredSvg(input: RenderLayeredSvgInput): LayeredSvgResult
       {
         debug: options?.debug ?? ir.debug,
         resourceIdPrefix: layerResourceIdPrefix,
+        nodeIdMetadata: options?.nodeIdMetadata,
         scale: options?.scale,
-        animation: options?.animation,
         timeMs: options?.timeMs,
         generator: options?.generator,
       },
@@ -849,7 +844,7 @@ function wrapWithTransformAncestors(
   return wrappedNode;
 }
 
-function hasAnimatedNode(node: IRNode): boolean {
+export function hasAnimatedNode(node: IRNode): boolean {
   if (node.type === "text") {
     return node.unitAnimation !== undefined;
   }

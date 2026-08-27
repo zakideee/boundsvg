@@ -206,7 +206,7 @@ describe("renderToAnimatedGif", () => {
     expect(captured[0]?.frames).toHaveLength(timesMs.length);
     for (const [index, timeMs] of timesMs.entries()) {
       expect(captured[0]?.frames[index]).toEqual({
-        svg: engine.renderCompiledToSvg(compiled, { animation: "static", timeMs }),
+        svg: engine.renderCompiledToSvg(compiled, { timeMs }),
         durationMs: [300, 400, 300, 100][index],
       });
     }

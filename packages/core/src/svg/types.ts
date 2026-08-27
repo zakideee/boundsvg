@@ -2,7 +2,7 @@
  * Debug overlay option types for SVG emission.
  *
  * The overlay itself is rendered by the WASM emitter; these types describe
- * the `debug` render option carried through `RenderOptions` / `EmitOptions`.
+ * the `debug` render option carried through format-specific output options.
  */
 
 export type DebugOverlayPart = "specified" | "layout" | "actual" | "baseline";

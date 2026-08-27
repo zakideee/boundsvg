@@ -12,7 +12,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { IR, IRNode } from "../../src/ir/types.js";
 import { createResourceIdPrefix } from "../../src/svg/resource-id.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
-import { createFontedWasmHandle, emitSvgFromIrViaHandle } from "../helpers/wasm-render-engine.js";
+import {
+  createFontedWasmHandle,
+  emitAnimatedSvgFromIrViaHandle,
+  emitSvgFromIrViaHandle,
+} from "../helpers/wasm-render-engine.js";
 
 let handle: WasmEngineHandle;
 
@@ -183,6 +187,97 @@ function makeIdentifierNamespaceIR(): IR {
   );
 }
 
+function makeNodeMetadataIR(): IR {
+  return makeIR(
+    [
+      {
+        type: "group",
+        nodeId: "group-node",
+        bbox: { x: 0, y: 0, w: 40, h: 40 },
+        meta: { scope: "kept-meta" },
+        children: [
+          {
+            type: "rect",
+            nodeId: "rect-node",
+            bbox: { x: 1, y: 1, w: 10, h: 8 },
+            fill: "#ef4444",
+          },
+          {
+            type: "rect",
+            nodeId: "rounded-rect-node",
+            bbox: { x: 14, y: 1, w: 10, h: 8 },
+            fill: "#f59e0b",
+            borderRadius: 2,
+          },
+        ],
+      },
+      {
+        type: "text",
+        nodeId: "text-node",
+        bbox: { x: 0, y: 44, w: 20, h: 12 },
+        lines: [{ text: "A", glyphs: [], width: 8, baselineY: 9 }],
+        font: "Fixture",
+        fontSizePx: 10,
+        color: "#111827",
+        textAlign: "start",
+        layoutBox: { x: 0, y: 44, w: 20, h: 12 },
+        lineHeightPx: 12,
+        glyphPaths: [
+          {
+            nodeId: "text-node",
+            d: "M0 44H8V52Z",
+            fill: "#111827",
+            glyphIds: [1],
+            text: "A",
+            bbox: { x: 0, y: 44, w: 8, h: 8 },
+          },
+        ],
+      },
+      {
+        type: "image",
+        nodeId: "image-node",
+        bbox: { x: 24, y: 44, w: 8, h: 8 },
+        src: "data:image/png;base64,AA==",
+        preserveAspectRatio: "xMidYMid meet",
+      },
+      {
+        type: "path",
+        nodeId: "path-node",
+        bbox: { x: 36, y: 44, w: 8, h: 8 },
+        pathData: "M0 0H8V8Z",
+        fill: "#22c55e",
+      },
+      {
+        type: "svg",
+        nodeId: "svg-node",
+        bbox: { x: 48, y: 44, w: 8, h: 8 },
+        svgContent:
+          '<path data-boundsvg-node-id="raw-authored" data-boundsvg-part-id="raw-part" d="M0 0H1"/>',
+        svgViewBox: "0 0 1 1",
+        preserveAspectRatio: "xMidYMid meet",
+      },
+      {
+        type: "shape",
+        nodeId: "shape-node",
+        bbox: { x: 60, y: 44, w: 8, h: 8 },
+        shapeParts: [{ partId: "shape-part", d: "M60 44H68V52Z" }],
+        fill: "#3b82f6",
+      },
+    ],
+    [
+      "rect-node",
+      "rounded-rect-node",
+      "text-node",
+      "image-node",
+      "path-node",
+      "svg-node",
+      "shape-node",
+    ],
+    80,
+    64,
+  );
+}
+
 type GeneratedIdentifierInventory = {
   ids: Set<string>;
   classes: Set<string>;
@@ -235,6 +330,44 @@ describe("emit_svg_from_ir", () => {
     expect(svg).toContain('viewBox="0 0 800 600"');
     expect(svg).toContain("<svg");
     expect(svg).toContain("</svg>");
+  });
+
+  it("omits only generated node metadata across every emitter site", () => {
+    const ir = makeNodeMetadataIR();
+    const irBefore = JSON.stringify(ir);
+    const generator = { name: "metadata-test", version: "0.3.0" };
+    const defaultSvg = emitSvgFromIrViaHandle(handle, ir, { generator });
+    const includedSvg = emitSvgFromIrViaHandle(handle, ir, {
+      generator,
+      nodeIdMetadata: "include",
+    });
+    const omittedSvg = emitSvgFromIrViaHandle(handle, ir, {
+      generator,
+      nodeIdMetadata: "omit",
+    });
+
+    expect(includedSvg).toBe(defaultSvg);
+    for (const nodeId of [
+      "root",
+      "group-node",
+      "rect-node",
+      "rounded-rect-node",
+      "text-node",
+      "image-node",
+      "path-node",
+      "svg-node",
+      "shape-node",
+    ]) {
+      expect(defaultSvg).toContain(`data-boundsvg-node-id="${nodeId}"`);
+      expect(omittedSvg).not.toContain(`data-boundsvg-node-id="${nodeId}"`);
+    }
+    expect(omittedSvg).toContain('data-boundsvg-node-id="raw-authored"');
+    expect(omittedSvg).toContain('data-boundsvg-part-id="raw-part"');
+    expect(omittedSvg).toContain('data-boundsvg-part-id="shape-part"');
+    expect(omittedSvg).toContain('data-boundsvg-meta-scope="kept-meta"');
+    expect(omittedSvg).toContain('data-boundsvg-generator="metadata-test"');
+    expect(omittedSvg).toContain('data-boundsvg-generator-version="0.3.0"');
+    expect(JSON.stringify(ir)).toBe(irBefore);
   });
 
   it("emits rect with fill", () => {
@@ -394,7 +527,11 @@ describe("emit_svg_from_ir", () => {
       20,
       20,
     );
-    const svg = emitSvgFromIrViaHandle(handle, ir, { reducedMotion: "pause", timeMs: 50 });
+    const svg = emitAnimatedSvgFromIrViaHandle(handle, ir, {
+      playback: { mode: "independent" },
+      reducedMotion: "pause",
+      timeMs: 50,
+    });
     expect(svg.match(/<style>/g)).toHaveLength(1);
     expect(svg).toContain("@keyframes");
     expect(svg).toContain("prefers-reduced-motion");
@@ -839,12 +976,14 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIdentifierNamespaceIR();
     const prefixA = createResourceIdPrefix("scope-a-000");
     const prefixB = createResourceIdPrefix("scope-b-000");
-    const svgA = emitSvgFromIrViaHandle(handle, ir, {
+    const svgA = emitAnimatedSvgFromIrViaHandle(handle, ir, {
       debug: true,
+      playback: { mode: "independent" },
       resourceIdPrefix: prefixA,
     });
-    const svgB = emitSvgFromIrViaHandle(handle, ir, {
+    const svgB = emitAnimatedSvgFromIrViaHandle(handle, ir, {
       debug: true,
+      playback: { mode: "independent" },
       resourceIdPrefix: prefixB,
     });
     const inventoryA = generatedIdentifierInventory(svgA);
@@ -900,9 +1039,13 @@ describe("emit_svg_from_ir", () => {
 
   it("keeps the comprehensive generated-token fixture byte-identical without a prefix", () => {
     const ir = makeIdentifierNamespaceIR();
-    const omitted = emitSvgFromIrViaHandle(handle, ir, { debug: true });
-    const explicitEmpty = emitSvgFromIrViaHandle(handle, ir, {
+    const omitted = emitAnimatedSvgFromIrViaHandle(handle, ir, {
       debug: true,
+      playback: { mode: "independent" },
+    });
+    const explicitEmpty = emitAnimatedSvgFromIrViaHandle(handle, ir, {
+      debug: true,
+      playback: { mode: "independent" },
       resourceIdPrefix: "",
     });
 

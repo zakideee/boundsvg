@@ -1,4 +1,4 @@
-import type { RenderOptions } from "../../../src/engine.js";
+import type { RenderIrOptions } from "../../../src/engine.js";
 import type { VNode } from "../../../src/vnode/types.js";
 
 /**
@@ -15,7 +15,9 @@ export type ConformanceScene = {
   width: number;
   height: number;
   /** Emit options this scene must always render with (e.g. glyph path mode). */
-  renderOptions?: RenderOptions;
+  renderOptions?: RenderIrOptions;
+  /** The SVG snapshot uses the declarative animated-SVG entry point. */
+  animatedSvg?: true;
   /** RecoverableError codes this scene intentionally produces. */
   allowedWarningCodes?: readonly string[];
 };

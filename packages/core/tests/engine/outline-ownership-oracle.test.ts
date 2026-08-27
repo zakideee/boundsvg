@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { RenderOptions } from "../../src/engine.js";
+import type { RenderSvgOptions } from "../../src/engine.js";
 import type { IRNode } from "../../src/ir/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { VNode } from "../../src/vnode/types.js";
@@ -92,7 +92,7 @@ function fallbackMissingTransformScene(): VNode {
 const oracleCases: ReadonlyArray<{
   id: string;
   build: () => VNode;
-  options: RenderOptions;
+  options: RenderSvgOptions;
 }> = [
   {
     id: "vertical-ruby-merged",
@@ -107,12 +107,12 @@ const oracleCases: ReadonlyArray<{
   {
     id: "text-on-path-merged",
     build: () => scene("native-text-on-path"),
-    options: { textPathMode: "merged", animation: "static", timeMs: 350 },
+    options: { textPathMode: "merged", timeMs: 350 },
   },
   {
     id: "unit-animation-glyphs",
     build: () => scene("native-text-unit-animation"),
-    options: { textPathMode: "glyphs", animation: "static", timeMs: 480 },
+    options: { textPathMode: "glyphs", timeMs: 480 },
   },
   {
     id: "fallback-missing-transform-glyphs",
@@ -180,7 +180,10 @@ describe("outline ownership frozen oracle", () => {
       const engine = createEngineFromHandle(handle);
       const vnode = oracleCase.build();
       const rendered = engine.renderToSvgAndIR(vnode, oracleCase.options);
-      const outlines = engine.renderToTextOutlines(vnode, oracleCase.options);
+      const outlines = engine.renderToTextOutlines(vnode, {
+        textPathMode: oracleCase.options.textPathMode,
+        showMissingGlyphs: oracleCase.options.showMissingGlyphs,
+      });
       const actual: OracleResult = {
         svgSha256: sha256(rendered.svg),
         rootSha256: sha256(rendered.ir.root),

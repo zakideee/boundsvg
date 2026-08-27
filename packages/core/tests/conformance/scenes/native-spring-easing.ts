@@ -94,6 +94,7 @@ function buildNativeSpringEasingScene(): VNode {
 }
 
 export const nativeSpringEasingScene: ConformanceScene = {
+  animatedSvg: true,
   id: "native-spring-easing",
   build: buildNativeSpringEasingScene,
   width: WIDTH,

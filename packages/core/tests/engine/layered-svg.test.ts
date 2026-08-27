@@ -907,7 +907,6 @@ describe("Engine.renderToLayeredPng()", () => {
     let callbackCalls = 0;
     const renderOptions: LayeredPngOptions = {
       scale: 1,
-      resourceIdPrefix: "before-prefix",
       generator: { name: "before-generator", version: "1.0.0" },
       validateComposition: { enabled: true },
     };
@@ -915,7 +914,6 @@ describe("Engine.renderToLayeredPng()", () => {
       callbackCalls += 1;
       textNode.props.layer = "after";
       renderOptions.scale = Number.MAX_VALUE;
-      renderOptions.resourceIdPrefix = "after-prefix";
       renderOptions.generator = { name: "after-generator", version: "9.9.9" };
       renderOptions.validateComposition = { enabled: false };
       engineOptions.emitSvgFromIrFn = replacementEmitter;
@@ -960,7 +958,7 @@ describe("Engine.renderToLayeredPng()", () => {
       emittedResourceIdPrefixes.add(emitOptions.resourceIdPrefix);
       expect(emitOptions.scale).toBe(0.768);
     }
-    expect(emittedResourceIdPrefixes).toEqual(new Set(["before-prefixlayer-0-", "before-prefix"]));
+    expect(emittedResourceIdPrefixes).toEqual(new Set([undefined]));
   }, 30_000);
 
   it("does not pass png background to layer rasterization", () => {

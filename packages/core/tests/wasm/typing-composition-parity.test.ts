@@ -290,12 +290,10 @@ describe("typing and composition real-WASM parity", () => {
         expect(text.textDecorations ?? []).toEqual([]);
       }
 
-      const directSvg = engine.renderToSvg(direct, { animation: "static" });
+      const directSvg = engine.renderToSvg(direct, {});
       renderedSvgs.push(directSvg);
-      expect(engine.renderToSvg(materialized, { animation: "static" })).toBe(directSvg);
-      expect(engine.renderToPng(materialized, { animation: "static" })).toEqual(
-        engine.renderToPng(direct, { animation: "static" }),
-      );
+      expect(engine.renderToSvg(materialized, {})).toBe(directSvg);
+      expect(engine.renderToPng(materialized, {})).toEqual(engine.renderToPng(direct, {}));
       expect(directSvg).toContain(`aria-label="${expectedText}"`);
     }
 
@@ -330,12 +328,8 @@ describe("typing and composition real-WASM parity", () => {
     expect(caret.bbox).toMatchObject({ w: 3, h: 18 });
 
     const materialized = fromSceneDocument(toSceneDocument(decoratedScene));
-    expect(engine.renderToSvg(materialized, { animation: "static" })).toBe(
-      engine.renderToSvg(decoratedScene, { animation: "static" }),
-    );
-    expect(engine.renderToPng(materialized, { animation: "static" })).toEqual(
-      engine.renderToPng(decoratedScene, { animation: "static" }),
-    );
+    expect(engine.renderToSvg(materialized, {})).toBe(engine.renderToSvg(decoratedScene, {}));
+    expect(engine.renderToPng(materialized, {})).toEqual(engine.renderToPng(decoratedScene, {}));
   });
 
   it("keeps ligature and combining cluster identity across decoration-only boundaries", () => {

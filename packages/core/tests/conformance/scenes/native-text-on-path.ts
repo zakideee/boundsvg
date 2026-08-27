@@ -237,5 +237,5 @@ export const nativeTextOnPathScene: ConformanceScene = {
   build: buildNativeTextOnPathScene,
   width: WIDTH,
   height: HEIGHT,
-  renderOptions: { animation: "static", timeMs: 350 },
+  renderOptions: { timeMs: 350 },
 };

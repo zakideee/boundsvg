@@ -425,7 +425,10 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
   it("keeps declarative SVG and static PNG on the same sampled base pose", () => {
     const scene = animatedCameraScene();
     for (const timeMs of [0, 50, 100]) {
-      const declarativeSvg = engine.renderToSvg(scene, { timeMs });
+      const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+        playback: { mode: "independent" },
+        timeMs,
+      });
       const rasterizedDeclarative = rasterHandle.createSvgToPngFn()(declarativeSvg);
       expect(rasterizedDeclarative).toEqual(engine.renderToPng(scene, { timeMs }));
     }
@@ -498,12 +501,10 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
       layer: "hairline",
     });
     const layered = engine.renderToLayeredSvg(canvasScene, {
-      animation: "static",
       validateComposition: { enabled: true },
     });
-    const baseline = engine.renderToLayeredSvg(transformScene, { animation: "static" });
+    const baseline = engine.renderToLayeredSvg(transformScene, {});
     const png = engine.renderToLayeredPng(canvasScene, {
-      animation: "static",
       validateComposition: { enabled: true },
     });
 
@@ -547,6 +548,7 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
               durationMs: 100,
             },
           }),
+          { timeMs: 0 },
         ),
       "CANVAS_STROKE_UNSUPPORTED_TRANSFORM",
       "hairline",
@@ -562,7 +564,6 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
 
   it("uses fallback width zero for a sampled zero-scale keyframe", () => {
     const svg = engine.renderToSvg(animatedCameraScene(0), {
-      animation: "static",
       timeMs: 100,
     });
     expect(svg).toContain('stroke-width="0"');
@@ -627,7 +628,10 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
       ),
     ).toEqual(["0.625", "0.769231", "1"]);
     for (const timeMs of [0, 50, 100]) {
-      const declarativeSvg = engine.renderToSvg(scene, { timeMs });
+      const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+        playback: { mode: "independent" },
+        timeMs,
+      });
       expect(declarativeSvg).toContain("vector-effect: non-scaling-stroke");
       expect(rasterHandle.createSvgToPngFn()(declarativeSvg)).toEqual(
         engine.renderToPng(scene, { timeMs }),
@@ -681,11 +685,11 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
     });
     const canvasLayered = engine.renderToLayeredSvg(
       stablePathStrokeScene({ cameraScale: 1.6, strokeScaling: "canvas", layer: "path" }),
-      { animation: "static", validateComposition: { enabled: true } },
+      { validateComposition: { enabled: true } },
     );
     const transformLayered = engine.renderToLayeredSvg(
       stablePathStrokeScene({ cameraScale: 1.6, strokeScaling: "transform", layer: "path" }),
-      { animation: "static" },
+      {},
     );
 
     expect(String.fromCharCode(...webp.slice(0, 4))).toBe("RIFF");
@@ -759,6 +763,7 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
               durationMs: 100,
             },
           }),
+          { timeMs: 0 },
         ),
       "CANVAS_STROKE_UNSUPPORTED_TRANSFORM",
       "hairline-path",

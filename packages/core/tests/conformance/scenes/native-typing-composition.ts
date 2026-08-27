@@ -251,6 +251,7 @@ function buildNativeTypingCompositionScene(): VNode {
 }
 
 export const nativeTypingCompositionScene: ConformanceScene = {
+  animatedSvg: true,
   id: "native-typing-composition",
   build: buildNativeTypingCompositionScene,
   width: WIDTH,

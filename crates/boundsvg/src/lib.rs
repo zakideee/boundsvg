@@ -155,6 +155,9 @@ struct RenderSvgOptionsInput {
     /// Prefix applied to boundsvg-generated resource IDs in `<defs>`.
     #[serde(default)]
     resource_id_prefix: Option<String>,
+    /// Whether generated node identity metadata is serialized.
+    #[serde(default)]
+    node_id_metadata: Option<NodeIdMetadataInput>,
     /// Text outline grouping mode ("merged" | "glyphs"); default "merged".
     /// `render_to_ir` also reads it for Text nodes with unit animation.
     #[serde(default)]
@@ -194,6 +197,130 @@ struct RenderSvgOptionsInput {
     generator: Option<output_generator::OutputGenerator>,
 }
 
+/// Public static-SVG transport options. Declarative playback and reduced
+/// motion fields are intentionally absent from this DTO.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StaticSvgOptionsInput {
+    #[serde(default)]
+    scale: Option<f64>,
+    #[serde(default)]
+    debug: Option<DebugOverlayInput>,
+    #[serde(default)]
+    rasterizer_compat: Option<bool>,
+    #[serde(default)]
+    resource_id_prefix: Option<String>,
+    #[serde(default)]
+    node_id_metadata: Option<NodeIdMetadataInput>,
+    #[serde(default)]
+    text_path_mode: Option<String>,
+    #[serde(default)]
+    show_missing_glyphs: Option<bool>,
+    #[serde(default)]
+    time_ms: Option<f64>,
+    #[serde(default)]
+    return_resolved_ir: Option<bool>,
+    #[serde(default)]
+    preserve_resolved_unit_outlines: Option<bool>,
+    #[serde(default)]
+    enforce_png_outline_glyph_limit: bool,
+    #[serde(default)]
+    generator: Option<output_generator::OutputGenerator>,
+}
+
+/// Declarative animated-SVG playback contract.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AnimatedSvgPlaybackInput {
+    mode: AnimatedSvgPlaybackModeInput,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AnimatedSvgPlaybackModeInput {
+    Independent,
+}
+
+/// Public declarative animated-SVG transport options.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AnimatedSvgOptionsInput {
+    playback: AnimatedSvgPlaybackInput,
+    #[serde(default)]
+    scale: Option<f64>,
+    #[serde(default)]
+    debug: Option<DebugOverlayInput>,
+    #[serde(default)]
+    rasterizer_compat: Option<bool>,
+    #[serde(default)]
+    resource_id_prefix: Option<String>,
+    #[serde(default)]
+    node_id_metadata: Option<NodeIdMetadataInput>,
+    #[serde(default)]
+    text_path_mode: Option<String>,
+    #[serde(default)]
+    show_missing_glyphs: Option<bool>,
+    #[serde(default)]
+    time_ms: Option<f64>,
+    #[serde(default)]
+    reduced_motion: Option<ReducedMotionInput>,
+    #[serde(default)]
+    return_resolved_ir: Option<bool>,
+    #[serde(default)]
+    preserve_resolved_unit_outlines: Option<bool>,
+    #[serde(default)]
+    enforce_png_outline_glyph_limit: bool,
+    #[serde(default)]
+    generator: Option<output_generator::OutputGenerator>,
+}
+
+impl From<StaticSvgOptionsInput> for RenderSvgOptionsInput {
+    fn from(options: StaticSvgOptionsInput) -> Self {
+        Self {
+            scale: options.scale,
+            debug: options.debug,
+            rasterizer_compat: options.rasterizer_compat,
+            resource_id_prefix: options.resource_id_prefix,
+            node_id_metadata: options.node_id_metadata,
+            text_path_mode: options.text_path_mode,
+            show_missing_glyphs: options.show_missing_glyphs,
+            animation: Some(AnimationRenderModeInput::Static),
+            time_ms: options.time_ms,
+            return_resolved_ir: options.return_resolved_ir,
+            preserve_resolved_unit_outlines: options.preserve_resolved_unit_outlines,
+            enforce_png_outline_glyph_limit: options.enforce_png_outline_glyph_limit,
+            generator: options.generator,
+            ..Self::default()
+        }
+    }
+}
+
+impl From<AnimatedSvgOptionsInput> for RenderSvgOptionsInput {
+    fn from(options: AnimatedSvgOptionsInput) -> Self {
+        let AnimatedSvgPlaybackInput { mode } = options.playback;
+        match mode {
+            AnimatedSvgPlaybackModeInput::Independent => {}
+        }
+        Self {
+            scale: options.scale,
+            debug: options.debug,
+            rasterizer_compat: options.rasterizer_compat,
+            resource_id_prefix: options.resource_id_prefix,
+            node_id_metadata: options.node_id_metadata,
+            text_path_mode: options.text_path_mode,
+            show_missing_glyphs: options.show_missing_glyphs,
+            animation: Some(AnimationRenderModeInput::Declarative),
+            time_ms: options.time_ms,
+            reduced_motion: options.reduced_motion,
+            return_resolved_ir: options.return_resolved_ir,
+            preserve_resolved_unit_outlines: options.preserve_resolved_unit_outlines,
+            enforce_png_outline_glyph_limit: options.enforce_png_outline_glyph_limit,
+            generator: options.generator,
+            ..Self::default()
+        }
+    }
+}
+
 /// Compile-only options for layout transitions. Authored animation tracks are
 /// always retained, so `sampleAnimation` is deliberately not accepted.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -212,6 +339,16 @@ const PNG_MAX_OUTLINE_GLYPHS: usize = 16_384;
 struct RenderToIrOutput<'a> {
     ir: &'a ir::types::Ir,
     warnings: &'a [ir::types::RenderWarning],
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderToSvgOutput<'a> {
+    svg: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ir: Option<&'a serde_json::value::RawValue>,
+    warnings: &'a [ir::types::RenderWarning],
+    text_node_ids: Vec<&'a str>,
 }
 
 fn collect_text_node_ids<'a>(node: &'a ir::types::IrNode, target: &mut Vec<&'a str>) {
@@ -258,6 +395,14 @@ enum ReducedMotionInput {
     Pause,
 }
 
+#[derive(Debug, Clone, Copy, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum NodeIdMetadataInput {
+    #[default]
+    Include,
+    Omit,
+}
+
 /// Wire shape of the TS `boolean | DebugOverlayConfig` debug option.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(untagged)]
@@ -282,6 +427,56 @@ fn parse_render_svg_options(options_json: &str) -> Result<RenderSvgOptionsInput,
     }
     serde_json::from_str(options_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid SVG emit options JSON: {e}")))
+}
+
+fn parse_static_svg_options(options_json: &str) -> Result<StaticSvgOptionsInput, JsValue> {
+    if options_json.trim().is_empty() {
+        return Ok(StaticSvgOptionsInput::default());
+    }
+    serde_json::from_str(options_json).map_err(|error| {
+        render_error_envelope(
+            "UNSUPPORTED_RENDER_OPTION",
+            &format!("Invalid static SVG render options: {error}"),
+            Some("validate"),
+            None,
+        )
+    })
+}
+
+fn parse_animated_svg_options(options_json: &str) -> Result<AnimatedSvgOptionsInput, JsValue> {
+    let raw_options: serde_json::Value = serde_json::from_str(options_json).map_err(|error| {
+        render_error_envelope(
+            "UNSUPPORTED_RENDER_OPTION",
+            &format!("Invalid animated SVG render options: {error}"),
+            Some("validate"),
+            None,
+        )
+    })?;
+    let playback_supported = raw_options
+        .get("playback")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|playback| {
+            playback.len() == 1
+                && playback
+                    .get("mode")
+                    .is_some_and(|mode| mode == "independent")
+        });
+    if !playback_supported {
+        return Err(render_error_envelope(
+            "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
+            "Animated SVG playback must be exactly { mode: \"independent\" }.",
+            Some("validate"),
+            None,
+        ));
+    }
+    serde_json::from_value(raw_options).map_err(|error| {
+        render_error_envelope(
+            "UNSUPPORTED_RENDER_OPTION",
+            &format!("Invalid animated SVG render options: {error}"),
+            Some("validate"),
+            None,
+        )
+    })
 }
 
 fn text_decoration_wire_error(
@@ -584,6 +779,32 @@ fn to_outline_resolve_options(
     }
 }
 
+fn to_svg_emit_options(options: &RenderSvgOptionsInput) -> svg_emit::emitter::SvgEmitOptions {
+    svg_emit::emitter::SvgEmitOptions {
+        node_id_metadata: match options.node_id_metadata.unwrap_or_default() {
+            NodeIdMetadataInput::Include => svg_emit::emitter::NodeIdMetadata::Include,
+            NodeIdMetadataInput::Omit => svg_emit::emitter::NodeIdMetadata::Omit,
+        },
+    }
+}
+
+fn assert_static_animation_time(
+    ir: &ir::types::Ir,
+    options: &RenderSvgOptionsInput,
+) -> Result<(), JsValue> {
+    ir::animation::validate_animations(ir)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+    if options.time_ms.is_none() && ir::animation::has_animations(ir) {
+        return Err(render_error_envelope(
+            "STATIC_ANIMATION_TIME_REQUIRED",
+            "Static SVG output requires an explicit timeMs when the scene contains animation.",
+            Some("emit"),
+            None,
+        ));
+    }
+    Ok(())
+}
+
 fn parse_emit_ir(ir_json: &str) -> Result<ir::types::Ir, JsValue> {
     #[cfg(test)]
     pipeline_phase_trace::record_emit_ir_parse();
@@ -615,7 +836,79 @@ fn emit_prepared_ir(
         to_paint_scene_options(options).map_err(|e| engine_error_to_render_envelope(&e))?;
     let paint_scene = scene::resolve_paint_scene(&sampled_ir, &paint_options)
         .map_err(|e| engine_error_to_render_envelope(&e))?;
-    svg_emit::emitter::emit_svg_scene(&paint_scene).map_err(|e| engine_error_to_render_envelope(&e))
+    svg_emit::emitter::emit_svg_scene(&paint_scene, to_svg_emit_options(options))
+        .map_err(|e| engine_error_to_render_envelope(&e))
+}
+
+fn render_layout_to_svg(
+    input_json: &str,
+    options: &RenderSvgOptionsInput,
+    registry: &FontRegistry,
+    require_static_time: bool,
+) -> Result<String, JsValue> {
+    let input = parse_layout_input(input_json)?;
+    let output = layout::compute_full_layout_with_registry(&input, registry)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+    let node_outputs: std::collections::HashMap<String, layout::LayoutNodeOutput> = output
+        .nodes
+        .into_iter()
+        .map(|node| (node.node_id.clone(), node))
+        .collect();
+    let mut built_ir = ir::builder::build_ir(&input.root, &node_outputs)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+    svg_emit::text_decoration_resolver::resolve_text_decoration_skip_ink(
+        &mut built_ir.root,
+        registry,
+        &mut built_ir.warnings,
+    )
+    .map_err(|error| engine_error_to_render_envelope(&error))?;
+    svg_emit::outline_resolver::resolve_animated_text_outlines(
+        &mut built_ir.root,
+        registry,
+        &to_outline_resolve_options(options),
+    )
+    .map_err(|error| engine_error_to_render_envelope(&error))?;
+    if require_static_time {
+        assert_static_animation_time(&built_ir, options)?;
+    }
+    let mut sampled_ir = ir::animation::sample_animation(&built_ir, options.time_ms.unwrap_or(0.0))
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+
+    let mut outline_options = to_outline_resolve_options(options);
+    outline_options.preserve_resolved_unit_outlines = true;
+    svg_emit::outline_resolver::resolve_text_outlines(
+        &mut sampled_ir.root,
+        registry,
+        &outline_options,
+    )
+    .map_err(|error| engine_error_to_render_envelope(&error))?;
+
+    let paint_options =
+        to_paint_scene_options(options).map_err(|error| engine_error_to_render_envelope(&error))?;
+    let paint_scene = scene::resolve_paint_scene(&sampled_ir, &paint_options)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+    let svg = svg_emit::emitter::emit_svg_scene(&paint_scene, to_svg_emit_options(options))
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+
+    let resolved_ir_raw = if options.return_resolved_ir.unwrap_or(false) {
+        Some(
+            serde_json::value::to_raw_value(&sampled_ir).map_err(|error| {
+                JsValue::from_str(&format!("Failed to serialize IR output: {error}"))
+            })?,
+        )
+    } else {
+        None
+    };
+    let mut text_node_ids = Vec::new();
+    collect_text_node_ids(&sampled_ir.root, &mut text_node_ids);
+
+    serde_json::to_string(&RenderToSvgOutput {
+        svg: &svg,
+        ir: resolved_ir_raw.as_deref(),
+        warnings: &sampled_ir.warnings,
+        text_node_ids,
+    })
+    .map_err(|error| JsValue::from_str(&format!("Failed to serialize SVG output: {error}")))
 }
 
 /// Serialize an error as the structured JSON envelope the TS engine
@@ -720,8 +1013,17 @@ fn resolve_emit_ir(
     options_json: &str,
     registry: &FontRegistry,
 ) -> Result<(ir::types::Ir, RenderSvgOptionsInput), JsValue> {
-    let mut parsed_ir = parse_emit_ir(ir_json)?;
     let options = parse_render_svg_options(options_json)?;
+    let parsed_ir = resolve_emit_ir_with_options(ir_json, &options, registry)?;
+    Ok((parsed_ir, options))
+}
+
+fn resolve_emit_ir_with_options(
+    ir_json: &str,
+    options: &RenderSvgOptionsInput,
+    registry: &FontRegistry,
+) -> Result<ir::types::Ir, JsValue> {
+    let mut parsed_ir = parse_emit_ir(ir_json)?;
     if options.enforce_png_outline_glyph_limit {
         assert_png_outline_glyph_limit(&parsed_ir)?;
     }
@@ -733,7 +1035,7 @@ fn resolve_emit_ir(
         &to_outline_resolve_options(&options),
     )
     .map_err(|error| engine_error_to_render_envelope(&error))?;
-    Ok((parsed_ir, options))
+    Ok(parsed_ir)
 }
 
 fn assert_raster_scene_owner(scene: &BoundSvgRasterScene, owner: &Arc<()>) -> Result<(), JsValue> {
@@ -978,7 +1280,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 26;
+pub const WASM_SCHEMA_VERSION: u32 = 27;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -1318,77 +1620,26 @@ impl BoundSvgEngine {
     /// fails, the canvas size or scale is invalid, or a referenced font is
     /// missing.
     pub fn render_to_svg(&self, input_json: &str, options_json: &str) -> Result<String, JsValue> {
-        #[derive(serde::Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct RenderToSvgOutput<'a> {
-            svg: &'a str,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            ir: Option<&'a serde_json::value::RawValue>,
-            warnings: &'a [ir::types::RenderWarning],
-            text_node_ids: Vec<&'a str>,
-        }
-
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let input = parse_layout_input(input_json)?;
-            let options = parse_render_svg_options(options_json)?;
-            let output = layout::compute_full_layout_with_registry(&input, &self.registry)
-                .map_err(|e| engine_error_to_render_envelope(&e))?;
-            let node_outputs: std::collections::HashMap<String, layout::LayoutNodeOutput> = output
-                .nodes
-                .into_iter()
-                .map(|node| (node.node_id.clone(), node))
-                .collect();
-            let mut built_ir = ir::builder::build_ir(&input.root, &node_outputs)
-                .map_err(|e| engine_error_to_render_envelope(&e))?;
-            svg_emit::text_decoration_resolver::resolve_text_decoration_skip_ink(
-                &mut built_ir.root,
-                &self.registry,
-                &mut built_ir.warnings,
-            )
-            .map_err(|e| engine_error_to_render_envelope(&e))?;
-            svg_emit::outline_resolver::resolve_animated_text_outlines(
-                &mut built_ir.root,
-                &self.registry,
-                &to_outline_resolve_options(&options),
-            )
-            .map_err(|e| engine_error_to_render_envelope(&e))?;
-            let mut sampled_ir =
-                ir::animation::sample_animation(&built_ir, options.time_ms.unwrap_or(0.0))
-                    .map_err(|e| engine_error_to_render_envelope(&e))?;
+            let options = RenderSvgOptionsInput::from(parse_static_svg_options(options_json)?);
+            render_layout_to_svg(input_json, &options, &self.registry, true)
+        }))
+    }
 
-            let mut outline_options = to_outline_resolve_options(&options);
-            outline_options.preserve_resolved_unit_outlines = true;
-            svg_emit::outline_resolver::resolve_text_outlines(
-                &mut sampled_ir.root,
-                &self.registry,
-                &outline_options,
-            )
-            .map_err(|e| engine_error_to_render_envelope(&e))?;
-
-            let paint_options = to_paint_scene_options(&options)
-                .map_err(|e| engine_error_to_render_envelope(&e))?;
-            let paint_scene = scene::resolve_paint_scene(&sampled_ir, &paint_options)
-                .map_err(|e| engine_error_to_render_envelope(&e))?;
-            let svg = svg_emit::emitter::emit_svg_scene(&paint_scene)
-                .map_err(|e| engine_error_to_render_envelope(&e))?;
-
-            let resolved_ir_raw = if options.return_resolved_ir.unwrap_or(false) {
-                Some(serde_json::value::to_raw_value(&sampled_ir).map_err(|e| {
-                    JsValue::from_str(&format!("Failed to serialize IR output: {e}"))
-                })?)
-            } else {
-                None
-            };
-            let mut text_node_ids = Vec::new();
-            collect_text_node_ids(&sampled_ir.root, &mut text_node_ids);
-
-            serde_json::to_string(&RenderToSvgOutput {
-                svg: &svg,
-                ir: resolved_ir_raw.as_deref(),
-                warnings: &sampled_ir.warnings,
-                text_node_ids,
-            })
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize SVG output: {e}")))
+    /// Compute layout and emit a declarative animated SVG document.
+    ///
+    /// # Errors
+    ///
+    /// Returns `JsValue` for invalid input or options, unsupported playback,
+    /// layout/IR failures, or SVG emission failures.
+    pub fn render_to_animated_svg(
+        &self,
+        input_json: &str,
+        options_json: &str,
+    ) -> Result<String, JsValue> {
+        catch_unwind_to_js(AssertUnwindSafe(|| {
+            let options = RenderSvgOptionsInput::from(parse_animated_svg_options(options_json)?);
+            render_layout_to_svg(input_json, &options, &self.registry, false)
         }))
     }
 
@@ -1413,7 +1664,26 @@ impl BoundSvgEngine {
     pub fn emit_svg_from_ir(&self, ir_json: &str, options_json: &str) -> Result<String, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let parsed_ir = parse_emit_ir(ir_json)?;
-            let options = parse_render_svg_options(options_json)?;
+            let options = RenderSvgOptionsInput::from(parse_static_svg_options(options_json)?);
+            assert_static_animation_time(&parsed_ir, &options)?;
+            emit_prepared_ir(&parsed_ir, &options)
+        }))
+    }
+
+    /// Emit a declarative animated SVG document from public IR.
+    ///
+    /// # Errors
+    ///
+    /// Returns `JsValue` if the IR/options payload is invalid, playback is
+    /// unsupported, or SVG emission fails.
+    pub fn emit_animated_svg_from_ir(
+        &self,
+        ir_json: &str,
+        options_json: &str,
+    ) -> Result<String, JsValue> {
+        catch_unwind_to_js(AssertUnwindSafe(|| {
+            let parsed_ir = parse_emit_ir(ir_json)?;
+            let options = RenderSvgOptionsInput::from(parse_animated_svg_options(options_json)?);
             emit_prepared_ir(&parsed_ir, &options)
         }))
     }
@@ -1575,7 +1845,27 @@ impl BoundSvgEngine {
         options_json: &str,
     ) -> Result<String, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let (parsed_ir, options) = resolve_emit_ir(ir_json, options_json, &self.registry)?;
+            let options = RenderSvgOptionsInput::from(parse_static_svg_options(options_json)?);
+            let parsed_ir = resolve_emit_ir_with_options(ir_json, &options, &self.registry)?;
+            assert_static_animation_time(&parsed_ir, &options)?;
+            emit_prepared_ir(&parsed_ir, &options)
+        }))
+    }
+
+    /// Resolve text outlines and emit a declarative animated SVG.
+    ///
+    /// # Errors
+    ///
+    /// Returns `JsValue` for invalid IR/options, unsupported playback,
+    /// outline materialization failure, or SVG emission failure.
+    pub fn resolve_and_emit_animated_svg_from_ir(
+        &self,
+        ir_json: &str,
+        options_json: &str,
+    ) -> Result<String, JsValue> {
+        catch_unwind_to_js(AssertUnwindSafe(|| {
+            let options = RenderSvgOptionsInput::from(parse_animated_svg_options(options_json)?);
+            let parsed_ir = resolve_emit_ir_with_options(ir_json, &options, &self.registry)?;
             emit_prepared_ir(&parsed_ir, &options)
         }))
     }
