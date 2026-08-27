@@ -1032,7 +1032,7 @@ fn resolve_emit_ir_with_options(
     svg_emit::outline_resolver::resolve_text_outlines(
         &mut parsed_ir.root,
         registry,
-        &to_outline_resolve_options(&options),
+        &to_outline_resolve_options(options),
     )
     .map_err(|error| engine_error_to_render_envelope(&error))?;
     Ok(parsed_ir)
