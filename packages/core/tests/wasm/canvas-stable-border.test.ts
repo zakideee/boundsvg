@@ -468,10 +468,12 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
     const scene = animatedCameraScene();
     const webp = engine.renderToWebp(scene, { timeMs: 50 });
     const animatedWebp = engine.renderToAnimatedWebp(scene, {
+      iterations: "infinite",
       timesMs: [0, 50, 100],
       frameDurationsMs: [50, 50, 50],
     });
     const gif = engine.renderToAnimatedGif(scene, {
+      iterations: "infinite",
       timesMs: [0, 50, 100],
       frameDurationsMs: [50, 50, 50],
     });
@@ -668,10 +670,12 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
     const scene = animatedPathStrokeScene();
     const webp = engine.renderToWebp(scene, { timeMs: 50 });
     const animatedWebp = engine.renderToAnimatedWebp(scene, {
+      iterations: "infinite",
       timesMs: [0, 50, 100],
       frameDurationsMs: [50, 50, 50],
     });
     const gif = engine.renderToAnimatedGif(scene, {
+      iterations: "infinite",
       timesMs: [0, 50, 100],
       frameDurationsMs: [50, 50, 50],
     });

@@ -640,7 +640,7 @@ function addPortableScenarios(scenarios: TimedScenario[], engine: Engine, profil
         engine.renderCompiledToAnimatedWebp(compiled, {
           timesMs,
           frameDurationsMs: [300, 400, 300, 100],
-          loop: 2,
+          iterations: 2,
         }),
       summarize: summarizeBytes,
       ...animated,
@@ -651,7 +651,7 @@ function addPortableScenarios(scenarios: TimedScenario[], engine: Engine, profil
         engine.renderCompiledToAnimatedGif(compiled, {
           timesMs,
           frameDurationsMs: [300, 400, 300, 100],
-          loop: 2,
+          iterations: 2,
         }),
       summarize: summarizeBytes,
       ...animated,

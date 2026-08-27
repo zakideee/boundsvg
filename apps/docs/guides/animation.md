@@ -564,7 +564,9 @@ pending/buffered results by concurrency, and supports `AbortSignal`. See the
 [`@boundsvg/worker` API](/api/worker).
 
 `renderToAnimatedWebp` and `renderToAnimatedGif` package the same sampling into
-a single animated file — see [PNG, WebP & GIF Export](/guides/png-export).
+a single animated file. Their required `iterations` option controls total
+container plays independently of each node animation's own iteration setting —
+see [PNG, WebP & GIF Export](/guides/png-export).
 There is still no APNG API; for MP4 see [Video Export](/guides/video-export),
 or pass sampled PNG frames to an external encoder for any other movie format.
 

@@ -101,6 +101,7 @@ describe("renderToAnimatedWebp", () => {
 
   it("emits an animated extended-format WebP", () => {
     const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 500,
       fps: 10,
     });
@@ -134,7 +135,7 @@ describe("renderToAnimatedWebp", () => {
     const options = {
       timesMs: [0, 250, 900],
       frameDurationsMs: [250, 650, 100],
-      loop: 3,
+      iterations: 3,
     } as const;
     const compiledWebp = engine.renderCompiledToAnimatedWebp(compiled, options);
     expect(compileCount).toBe(0);
@@ -159,7 +160,7 @@ describe("renderToAnimatedWebp", () => {
     const webp = engine.renderCompiledToAnimatedWebp(compiled, {
       timesMs,
       frameDurationsMs: [300, 400, 300, 100],
-      loop: 2,
+      iterations: 2,
     });
 
     expect(readChunkId(webp, 0)).toBe("RIFF");
@@ -167,6 +168,7 @@ describe("renderToAnimatedWebp", () => {
     expect(readVp8xCanvasSize(webp)).toEqual({ width: 480, height: 480 });
     expect(readFrameDurations(webp)).toEqual([300, 400, 300, 100]);
     expect(readLoopCount(webp)).toBe(2);
+    expect(captured[0]?.iterations).toBe(2);
     expect(captured[0]?.frames).toHaveLength(timesMs.length);
     for (const [index, timeMs] of timesMs.entries()) {
       expect(captured[0]?.frames[index]).toEqual({
@@ -178,6 +180,7 @@ describe("renderToAnimatedWebp", () => {
 
   it("derives frame count and duration from fps and durationMs", () => {
     const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 500,
       fps: 10,
     });
@@ -188,6 +191,7 @@ describe("renderToAnimatedWebp", () => {
 
   it("samples at least two frames even for a very short duration", () => {
     const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 1,
       fps: 10,
     });
@@ -208,7 +212,9 @@ describe("renderToAnimatedWebp", () => {
     ];
 
     for (const { durationMs, fps } of cases) {
-      const durations = readFrameDurations(engine.renderToAnimatedWebp(scene, { durationMs, fps }));
+      const durations = readFrameDurations(
+        engine.renderToAnimatedWebp(scene, { iterations: "infinite", durationMs, fps }),
+      );
       expect(
         durations.reduce((sum, frameDurationMs) => sum + frameDurationMs, 0),
         `${durationMs} ms at ${fps} fps`,
@@ -218,6 +224,7 @@ describe("renderToAnimatedWebp", () => {
 
   it("honors an explicit timesMs / frameDurationsMs schedule", () => {
     const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
       timesMs: [0, 250, 900],
       frameDurationsMs: [250, 650, 100],
     });
@@ -225,18 +232,24 @@ describe("renderToAnimatedWebp", () => {
     expect(readFrameDurations(webp)).toEqual([250, 650, 100]);
   });
 
-  it("defaults to looping forever and honors an explicit loop count", () => {
+  it("stores total plays directly in the ANIM field", () => {
     const engine = createEngine();
     const scene = createFadingScene();
 
-    expect(readLoopCount(engine.renderToAnimatedWebp(scene, { durationMs: 200, fps: 10 }))).toBe(0);
-    expect(
-      readLoopCount(engine.renderToAnimatedWebp(scene, { durationMs: 200, fps: 10, loop: 4 })),
-    ).toBe(4);
+    for (const [iterations, expectedField] of [
+      ["infinite", 0],
+      [1, 1],
+      [65_535, 65_535],
+    ] as const) {
+      expect(
+        readLoopCount(engine.renderToAnimatedWebp(scene, { durationMs: 200, fps: 10, iterations })),
+      ).toBe(expectedField);
+    }
   });
 
   it("samples distinct frames from an animated scene", () => {
     const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 1000,
       fps: 4,
     });
@@ -250,8 +263,16 @@ describe("renderToAnimatedWebp", () => {
 
   it("produces identical bytes for identical input", () => {
     const engine = createEngine();
-    const first = engine.renderToAnimatedWebp(createFadingScene(), { durationMs: 400, fps: 10 });
-    const second = engine.renderToAnimatedWebp(createFadingScene(), { durationMs: 400, fps: 10 });
+    const first = engine.renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
+      durationMs: 400,
+      fps: 10,
+    });
+    const second = engine.renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
+      durationMs: 400,
+      fps: 10,
+    });
 
     expect(Array.from(second)).toEqual(Array.from(first));
   });
@@ -259,7 +280,11 @@ describe("renderToAnimatedWebp", () => {
   it("works for a scene with no animation", () => {
     const still = createElement("Canvas", { width: 20, height: 10, background: "#0f172a" });
 
-    const webp = createEngine().renderToAnimatedWebp(still, { durationMs: 300, fps: 10 });
+    const webp = createEngine().renderToAnimatedWebp(still, {
+      iterations: "infinite",
+      durationMs: 300,
+      fps: 10,
+    });
 
     expect(readChunkId(webp, 12)).toBe("VP8X");
     expect(readFrameDurations(webp)).toEqual([100, 100, 100]);
@@ -274,7 +299,12 @@ describe("renderToAnimatedWebp", () => {
       },
     });
 
-    engine.renderToAnimatedWebp(createFadingScene(), { durationMs: 200, fps: 10, scale: 2 });
+    engine.renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
+      durationMs: 200,
+      fps: 10,
+      scale: 2,
+    });
 
     const input = captured[0];
     expect(input?.options.scale).toBeUndefined();
@@ -287,18 +317,35 @@ describe("renderToAnimatedWebp", () => {
     const cases: Array<[string, () => unknown]> = [
       [
         "mismatched frameDurationsMs length",
-        () => engine.renderToAnimatedWebp(scene, { timesMs: [0, 100], frameDurationsMs: [50] }),
+        () =>
+          engine.renderToAnimatedWebp(scene, {
+            iterations: "infinite",
+            timesMs: [0, 100],
+            frameDurationsMs: [50],
+          }),
       ],
-      ["missing frameDurationsMs", () => engine.renderToAnimatedWebp(scene, { timesMs: [0, 100] })],
+      [
+        "missing frameDurationsMs",
+        () => engine.renderToAnimatedWebp(scene, { iterations: "infinite", timesMs: [0, 100] }),
+      ],
       [
         "non-integer frame duration",
-        () => engine.renderToAnimatedWebp(scene, { timesMs: [0], frameDurationsMs: [16.5] }),
+        () =>
+          engine.renderToAnimatedWebp(scene, {
+            iterations: "infinite",
+            timesMs: [0],
+            frameDurationsMs: [16.5],
+          }),
       ],
-      ["missing durationMs", () => engine.renderToAnimatedWebp(scene, { fps: 10 })],
+      [
+        "missing durationMs",
+        () => engine.renderToAnimatedWebp(scene, { iterations: "infinite", fps: 10 }),
+      ],
       [
         "timesMs combined with fps",
         () =>
           engine.renderToAnimatedWebp(scene, {
+            iterations: "infinite",
             timesMs: [0],
             frameDurationsMs: [100],
             fps: 10,
@@ -321,7 +368,11 @@ describe("renderToAnimatedWebp", () => {
     const engine = createEngine();
 
     try {
-      engine.renderToAnimatedWebp(createFadingScene(), { durationMs: 20_000, fps: 60 });
+      engine.renderToAnimatedWebp(createFadingScene(), {
+        iterations: "infinite",
+        durationMs: 20_000,
+        fps: 60,
+      });
       expect.unreachable("301+ frames must be rejected");
     } catch (error) {
       expect(error).toBeInstanceOf(FatalError);
@@ -333,6 +384,7 @@ describe("renderToAnimatedWebp", () => {
     // 60 fps: a rounded 1000/fps would emit 17 ms per frame and run ahead of
     // the 16.667 ms sample grid. Telescoped boundaries must total the span.
     const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 1000,
       fps: 60,
     });
@@ -350,6 +402,7 @@ describe("renderToAnimatedWebp", () => {
 
     try {
       engine.renderToAnimatedWebp(scene, {
+        iterations: "infinite",
         timesMs: overCap,
         frameDurationsMs: overCap.map(() => 10),
       });
@@ -359,25 +412,52 @@ describe("renderToAnimatedWebp", () => {
     }
 
     try {
-      engine.renderToAnimatedWebp(scene, { timesMs: [0], frameDurationsMs: [60_001] });
+      engine.renderToAnimatedWebp(scene, {
+        iterations: "infinite",
+        timesMs: [0],
+        frameDurationsMs: [60_001],
+      });
       expect.unreachable("a duration past 60000 ms must be rejected");
     } catch (error) {
       expect((error as FatalError).code).toBe("ANIMATED_WEBP_INVALID_SCHEDULE");
     }
   });
 
-  it("rejects an out-of-range loop count", () => {
-    const engine = createEngine();
+  it("requires a valid total play count before sampling or encoding", () => {
+    let encodeCount = 0;
+    const engine = createEngine({
+      svgsToAnimatedWebpFn: () => {
+        encodeCount += 1;
+        return new Uint8Array([1]);
+      },
+    });
+    const invalidIterations: unknown[] = [
+      undefined,
+      0,
+      -1,
+      1.5,
+      65_536,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      "forever",
+    ];
 
-    for (const loop of [-1, 1.5, 70_000]) {
+    for (const iterations of invalidIterations) {
       try {
-        engine.renderToAnimatedWebp(createFadingScene(), { durationMs: 200, loop });
-        expect.unreachable(`loop ${String(loop)} must be rejected`);
+        engine.renderToAnimatedWebp(createFadingScene(), {
+          durationMs: 200,
+          iterations,
+        } as RenderAnimatedWebpOptions);
+        expect.unreachable(`iterations ${String(iterations)} must be rejected`);
       } catch (error) {
-        expect(error, String(loop)).toBeInstanceOf(FatalError);
-        expect((error as FatalError).code, String(loop)).toBe("ANIMATED_WEBP_INVALID_SCHEDULE");
+        expect(error, String(iterations)).toBeInstanceOf(FatalError);
+        expect((error as FatalError).code, String(iterations)).toBe(
+          "ANIMATED_WEBP_INVALID_SCHEDULE",
+        );
       }
     }
+    expect(encodeCount).toBe(0);
   });
 
   it("rejects an invalid scale the way renderToWebp does", () => {
@@ -385,7 +465,11 @@ describe("renderToAnimatedWebp", () => {
 
     for (const scale of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       try {
-        engine.renderToAnimatedWebp(createFadingScene(), { durationMs: 200, scale });
+        engine.renderToAnimatedWebp(createFadingScene(), {
+          iterations: "infinite",
+          durationMs: 200,
+          scale,
+        });
         expect.unreachable(`scale ${String(scale)} must be rejected`);
       } catch (error) {
         expect((error as FatalError).code, String(scale)).toBe("PNG_INVALID_SCALE");
@@ -399,6 +483,7 @@ describe("renderToAnimatedWebp", () => {
 
     try {
       engine.renderToAnimatedWebp(oversized, {
+        iterations: "infinite",
         durationMs: 200,
         fps: 10,
         scale: 2,
@@ -415,6 +500,7 @@ describe("renderToAnimatedWebp", () => {
     const engine = createEngine();
 
     engine.renderToAnimatedWebp(createElement("Canvas", { width: 2000, height: 500 }), {
+      iterations: "infinite",
       durationMs: 200,
       fps: 10,
       scale: 4,
@@ -441,6 +527,7 @@ describe("renderToAnimatedWebp", () => {
       const options = {
         timesMs: [0],
         frameDurationsMs: [100],
+        iterations: "infinite",
         scale: 4,
         onPngResolutionAdjusted: (warning: { requestedScale: number; appliedScale: number }) =>
           adjustments.push(warning),
@@ -489,6 +576,7 @@ describe("renderToAnimatedWebp", () => {
       engine.renderCompiledToAnimatedWebp(compiled, {
         timesMs: [0, 1],
         frameDurationsMs: [1, 1],
+        iterations: "infinite",
       }),
     ).toThrowError(expect.objectContaining({ code: "ANIMATED_WEBP_PAYLOAD_LIMIT" }));
     expect(encodeCount).toBe(0);
@@ -504,7 +592,11 @@ describe("renderToAnimatedWebp", () => {
     );
     expect(rustSource).toContain("const MIN_FRAME_DURATION_MS: u32 = 1;");
     expect(rustSource).toContain("const MAX_FRAME_DURATION_MS: u32 = 60_000;");
-    expect(rustSource).toContain("const MAX_LOOP_COUNT: u32 = 65_535;");
+    const webpSource = fs.readFileSync(
+      path.resolve(__dirname, "../../../../crates/boundsvg/src/webp_anim.rs"),
+      "utf8",
+    );
+    expect(webpSource).toContain("const MAX_WEBP_ITERATIONS: u32 = 65_535;");
   });
 
   it("encodes a single frame exactly as renderToWebp does", () => {
@@ -515,6 +607,7 @@ describe("renderToAnimatedWebp", () => {
     const still = createElement("Canvas", { width: 40, height: 24, background: "#0f172a" });
 
     const animated = engine.renderToAnimatedWebp(still, {
+      iterations: "infinite",
       timesMs: [0],
       frameDurationsMs: [100],
       scale: 2,
@@ -532,17 +625,23 @@ describe("renderToAnimatedWebp", () => {
     const engine = createEngine();
     const scene = createFadingScene();
     const cases: Array<[string, RenderAnimatedWebpOptions]> = [
-      ["fps below the range", { durationMs: 200, fps: 0 }],
-      ["fps above the range", { durationMs: 200, fps: 61 }],
-      ["non-finite fps", { durationMs: 200, fps: Number.NaN }],
-      ["zero durationMs", { durationMs: 0 }],
-      ["negative durationMs", { durationMs: -5 }],
-      ["non-finite durationMs", { durationMs: Number.POSITIVE_INFINITY }],
-      ["empty timesMs", { timesMs: [], frameDurationsMs: [] }],
-      ["negative sample time", { timesMs: [-1], frameDurationsMs: [100] }],
-      ["non-finite sample time", { timesMs: [Number.NaN], frameDurationsMs: [100] }],
-      ["frameDurationsMs without timesMs", { durationMs: 200, frameDurationsMs: [100] }],
-      ["zero frame duration", { timesMs: [0], frameDurationsMs: [0] }],
+      ["fps below the range", { durationMs: 200, fps: 0, iterations: "infinite" }],
+      ["fps above the range", { durationMs: 200, fps: 61, iterations: "infinite" }],
+      ["non-finite fps", { durationMs: 200, fps: Number.NaN, iterations: "infinite" }],
+      ["zero durationMs", { durationMs: 0, iterations: "infinite" }],
+      ["negative durationMs", { durationMs: -5, iterations: "infinite" }],
+      ["non-finite durationMs", { durationMs: Number.POSITIVE_INFINITY, iterations: "infinite" }],
+      ["empty timesMs", { timesMs: [], frameDurationsMs: [], iterations: "infinite" }],
+      ["negative sample time", { timesMs: [-1], frameDurationsMs: [100], iterations: "infinite" }],
+      [
+        "non-finite sample time",
+        { timesMs: [Number.NaN], frameDurationsMs: [100], iterations: "infinite" },
+      ],
+      [
+        "frameDurationsMs without timesMs",
+        { durationMs: 200, frameDurationsMs: [100], iterations: "infinite" },
+      ],
+      ["zero frame duration", { timesMs: [0], frameDurationsMs: [0], iterations: "infinite" }],
     ];
 
     for (const [label, options] of cases) {
@@ -567,7 +666,11 @@ describe("renderToAnimatedWebp", () => {
 
     // Below one frame period the two-frame floor would otherwise sample the
     // second frame at 1000/fps — far past the animation the caller asked for.
-    engine.renderToAnimatedWebp(createFadingScene(), { durationMs: 100, fps: 1 });
+    engine.renderToAnimatedWebp(createFadingScene(), {
+      iterations: "infinite",
+      durationMs: 100,
+      fps: 1,
+    });
 
     const svgs = captured[0]?.frames.map((frame) => frame.svg) ?? [];
     expect(svgs).toHaveLength(2);
@@ -582,7 +685,7 @@ describe("renderToAnimatedWebp", () => {
     const engine = createEngineFromHandle(handle);
 
     try {
-      engine.renderToAnimatedWebp(createFadingScene(), { durationMs: 200 });
+      engine.renderToAnimatedWebp(createFadingScene(), { iterations: "infinite", durationMs: 200 });
       expect.unreachable("renderToAnimatedWebp must fail without an encoder");
     } catch (error) {
       expect(error).toBeInstanceOf(FatalError);

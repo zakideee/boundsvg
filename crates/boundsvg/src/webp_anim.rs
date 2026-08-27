@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use crate::error::EngineError;
 use crate::raster_anim::{
-    AnimationCanvas, AnimationEncodeInput, rasterize_animation_frames, validate_animation_input,
+    AnimatedRasterIterations, AnimationCanvas, AnimationEncodeInput, rasterize_animation_frames,
+    validate_animation_input,
 };
 use crate::webp_encode::{append_riff_chunk, finalize_riff_size, pixmap_to_rgba, rgba_to_webp};
 
@@ -45,6 +46,10 @@ const MAX_CANVAS_EDGE: u32 = 1 << 24;
 /// producing a catchable error.
 const MAX_ANIMATED_WEBP_BYTES: usize = 256 * 1024 * 1024;
 
+/// WebP's ANIM field stores the total play count directly in a u16; zero is
+/// reserved for infinite playback.
+const MAX_WEBP_ITERATIONS: u32 = 65_535;
+
 /// Encode pre-sampled SVG frames as an animated lossless WebP.
 ///
 /// # Errors
@@ -57,6 +62,7 @@ pub fn encode_animated_webp(
     font_data: &[Arc<Vec<u8>>],
 ) -> Result<Vec<u8>, EngineError> {
     validate_animation_input(input)?;
+    let loop_count = webp_loop_count(input.iterations)?;
     let options = input.options.clone().unwrap_or_default();
     if let Some(generator) = &options.generator {
         generator.validate()?;
@@ -124,7 +130,7 @@ pub fn encode_animated_webp(
     header.extend_from_slice(&0u32.to_le_bytes());
     header.extend_from_slice(b"WEBP");
     write_vp8x_chunk(&mut header, canvas, options.generator.is_some());
-    write_anim_chunk(&mut header, input.resolved_loop_count());
+    write_anim_chunk(&mut header, loop_count);
     debug_assert_eq!(header.len(), HEADER_LEN);
     out[..HEADER_LEN].copy_from_slice(&header);
     finalize_riff_size(&mut out)?;
@@ -182,16 +188,30 @@ fn write_vp8x_chunk(out: &mut Vec<u8>, canvas: AnimationCanvas, has_xmp: bool) {
     push_u24(out, canvas.height - 1);
 }
 
-fn write_anim_chunk(out: &mut Vec<u8>, loop_count: u32) {
+fn webp_loop_count(iterations: AnimatedRasterIterations) -> Result<u16, EngineError> {
+    match iterations {
+        AnimatedRasterIterations::Infinite(_) => Ok(0),
+        AnimatedRasterIterations::Finite(iteration_count)
+            if (1..=MAX_WEBP_ITERATIONS).contains(&iteration_count) =>
+        {
+            u16::try_from(iteration_count).map_err(|_| {
+                EngineError::Rasterize(format!(
+                    "Animated WebP iterations must be 1..={MAX_WEBP_ITERATIONS} or infinite, got {iteration_count}"
+                ))
+            })
+        }
+        AnimatedRasterIterations::Finite(iteration_count) => Err(EngineError::Rasterize(format!(
+            "Animated WebP iterations must be 1..={MAX_WEBP_ITERATIONS} or infinite, got {iteration_count}"
+        ))),
+    }
+}
+
+fn write_anim_chunk(out: &mut Vec<u8>, loop_count: u16) {
     push_chunk_header(out, *b"ANIM", 6);
     // Background color BGRA. Always fully transparent: a caller-supplied
     // background is already baked into every frame's pixels.
     out.extend_from_slice(&[0, 0, 0, 0]);
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "validate_animation_input caps loop_count at u16::MAX"
-    )]
-    out.extend_from_slice(&(loop_count as u16).to_le_bytes());
+    out.extend_from_slice(&loop_count.to_le_bytes());
 }
 
 fn write_anmf_chunk(
@@ -241,7 +261,7 @@ mod tests {
     use image_webp::{LoopCount, WebPDecoder};
 
     use super::*;
-    use crate::raster_anim::AnimationFrameInput;
+    use crate::raster_anim::{AnimatedRasterInfinite, AnimationFrameInput};
 
     fn solid_svg(width: u32, height: u32, fill: &str) -> String {
         format!(
@@ -249,7 +269,11 @@ mod tests {
         )
     }
 
-    fn two_frame_input(loop_count: Option<u32>) -> AnimationEncodeInput {
+    fn infinite() -> AnimatedRasterIterations {
+        AnimatedRasterIterations::Infinite(AnimatedRasterInfinite::Infinite)
+    }
+
+    fn two_frame_input(iterations: AnimatedRasterIterations) -> AnimationEncodeInput {
         AnimationEncodeInput {
             frames: vec![
                 AnimationFrameInput {
@@ -261,7 +285,7 @@ mod tests {
                     duration_ms: 250,
                 },
             ],
-            loop_count,
+            iterations,
             options: None,
         }
     }
@@ -279,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_animated_webp_roundtrip() {
-        let bytes = encode(&two_frame_input(None));
+        let bytes = encode(&two_frame_input(infinite()));
         let mut decoder = WebPDecoder::new(Cursor::new(&bytes)).expect("decodable animation");
 
         assert!(decoder.is_animated());
@@ -296,8 +320,8 @@ mod tests {
     }
 
     #[test]
-    fn test_animated_webp_finite_loop_count() {
-        let bytes = encode(&two_frame_input(Some(3)));
+    fn test_animated_webp_total_play_count() {
+        let bytes = encode(&two_frame_input(AnimatedRasterIterations::Finite(3)));
         let decoder = WebPDecoder::new(Cursor::new(&bytes)).expect("decodable animation");
         assert_eq!(
             decoder.loop_count(),
@@ -306,8 +330,27 @@ mod tests {
     }
 
     #[test]
+    fn webp_iterations_use_the_exact_container_field_bounds() {
+        assert_eq!(webp_loop_count(infinite()).expect("infinite"), 0);
+        assert_eq!(
+            webp_loop_count(AnimatedRasterIterations::Finite(1)).expect("one play"),
+            1
+        );
+        assert_eq!(
+            webp_loop_count(AnimatedRasterIterations::Finite(MAX_WEBP_ITERATIONS))
+                .expect("maximum plays"),
+            u16::MAX
+        );
+        for iteration_count in [0, MAX_WEBP_ITERATIONS + 1] {
+            let error = webp_loop_count(AnimatedRasterIterations::Finite(iteration_count))
+                .expect_err("out-of-range total plays");
+            assert!(error.to_string().contains("Animated WebP iterations"));
+        }
+    }
+
+    #[test]
     fn test_animated_webp_chunk_layout() {
-        let bytes = encode(&two_frame_input(None));
+        let bytes = encode(&two_frame_input(infinite()));
         assert_eq!(&bytes[0..4], b"RIFF");
         assert_eq!(
             u32::from_le_bytes(bytes[4..8].try_into().expect("4 bytes")) as usize,
@@ -334,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_extract_vp8l_chunk_rejects_foreign_input() {
-        let mut extra_chunk = encode(&two_frame_input(None));
+        let mut extra_chunk = encode(&two_frame_input(infinite()));
         // An animated file starts with VP8X, not VP8L.
         assert!(extract_vp8l_chunk(&extra_chunk).is_err());
 
@@ -355,14 +398,14 @@ mod tests {
     #[test]
     fn test_animated_webp_deterministic() {
         assert_eq!(
-            encode(&two_frame_input(None)),
-            encode(&two_frame_input(None))
+            encode(&two_frame_input(infinite())),
+            encode(&two_frame_input(infinite()))
         );
     }
 
     #[test]
     fn test_animated_webp_embeds_one_generator_xmp_chunk() {
-        let mut input = two_frame_input(None);
+        let mut input = two_frame_input(infinite());
         input.options = Some(crate::rasterize::RasterizeOptions {
             generator: Some(generator()),
             ..Default::default()
@@ -397,7 +440,7 @@ mod tests {
                     duration_ms: 100,
                 },
             ],
-            loop_count: None,
+            iterations: infinite(),
             options: None,
         };
         let error = encode_animated_webp(&input, &[], &[]).expect_err("size mismatch is invalid");
@@ -417,7 +460,7 @@ mod tests {
     fn test_animated_webp_rejects_invalid_input() {
         let empty = AnimationEncodeInput {
             frames: vec![],
-            loop_count: None,
+            iterations: infinite(),
             options: None,
         };
         assert!(encode_animated_webp(&empty, &[], &[]).is_err());
@@ -427,7 +470,7 @@ mod tests {
                 svg: solid_svg(8, 4, "#ff0000"),
                 duration_ms: 0,
             }],
-            loop_count: None,
+            iterations: infinite(),
             options: None,
         };
         assert!(encode_animated_webp(&zero_duration, &[], &[]).is_err());
@@ -435,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_animated_webp_applies_shared_rasterize_options() {
-        let mut input = two_frame_input(None);
+        let mut input = two_frame_input(infinite());
         input.options = Some(crate::rasterize::RasterizeOptions {
             background: None,
             scale: Some(2.0),

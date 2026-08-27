@@ -148,7 +148,7 @@ async function runScenario(scenario: BrowserScenario): Promise<BrowserScenarioRe
       const options = {
         timesMs: [...CHECKPOINT_TIMES_MS],
         frameDurationsMs: [...CHECKPOINT_DURATIONS_MS],
-        loop: 2,
+        iterations: 2,
       };
       const bytes =
         scenario.kind === "animated-webp"

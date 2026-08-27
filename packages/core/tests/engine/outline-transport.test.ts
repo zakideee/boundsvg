@@ -250,6 +250,7 @@ describe("outline ownership transport budget", () => {
 
     reset(counts);
     engine.renderToAnimatedWebp(lightScene, {
+      iterations: "infinite",
       timesMs: [0, 10],
       frameDurationsMs: [10, 10],
     });
@@ -262,6 +263,7 @@ describe("outline ownership transport budget", () => {
 
     reset(counts);
     engine.renderToAnimatedGif(lightScene, {
+      iterations: "infinite",
       timesMs: [0, 10],
       frameDurationsMs: [20, 20],
     });

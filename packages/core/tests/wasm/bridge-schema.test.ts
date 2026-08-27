@@ -749,6 +749,8 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       "BorderRadiusInputValue",
       "AnimationEasing",
       "AnimationIterations",
+      "AnimatedRasterInfinite",
+      "AnimatedRasterIterations",
       "ReducedMotionInput",
       "DebugOverlayInput",
       "FlowExclusionMargin",
@@ -761,7 +763,7 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       rustDtos.size,
     );
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(124);
+    expect(rustDtos.size).toBe(126);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
@@ -769,7 +771,7 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
         0,
       ),
     ).toBe(833);
-    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(72);
+    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(75);
   });
 
   it("keeps struct wire fields and requiredness directionally compatible", () => {
@@ -964,6 +966,21 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
     ]);
     expect(rustDtos.get("AnimationIterations")?.serdeAttributes).toContain("untagged");
     expect(rustDtos.get("AnimationIterations")?.variants).toHaveLength(2);
+
+    expect(rustDtos.get("AnimatedRasterIterations")?.serdeAttributes).toContain("untagged");
+    expect(rustDtos.get("AnimatedRasterIterations")?.variants).toHaveLength(2);
+    expect(rustDtos.get("AnimatedRasterInfinite")?.variants.map((variant) => variant.name)).toEqual(
+      ["infinite"],
+    );
+    const animatedRasterIterationTypes = declarationType(program, checker, {
+      file: wasmIndexFile,
+      typeName: "AnimationEncodeInput",
+      path: ["iterations"],
+    });
+    expect(
+      animatedRasterIterationTypes.some((type) => (type.flags & ts.TypeFlags.NumberLike) !== 0),
+    ).toBe(true);
+    expect(stringLiterals(animatedRasterIterationTypes)).toEqual(["infinite"]);
   });
 
   it("keeps the untagged margin scalar/object arms aligned", () => {

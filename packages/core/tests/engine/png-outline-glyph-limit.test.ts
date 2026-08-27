@@ -293,6 +293,7 @@ describe("PNG outline glyph limit", () => {
         label: "animated GIF",
         render: () =>
           engine.renderToAnimatedGif(scene, {
+            iterations: "infinite",
             timesMs: [0],
             frameDurationsMs: [20],
             ...rasterOptions,
@@ -302,6 +303,7 @@ describe("PNG outline glyph limit", () => {
         label: "animated WebP",
         render: () =>
           engine.renderToAnimatedWebp(scene, {
+            iterations: "infinite",
             timesMs: [0],
             frameDurationsMs: [20],
             ...rasterOptions,
@@ -354,12 +356,14 @@ describe("PNG outline glyph limit", () => {
             return engine.renderToLayeredPng(scene, commonOptions);
           case "animated GIF":
             return engine.renderToAnimatedGif(scene, {
+              iterations: "infinite",
               timesMs: [0],
               frameDurationsMs: [20],
               ...commonOptions,
             });
           case "animated WebP":
             return engine.renderToAnimatedWebp(scene, {
+              iterations: "infinite",
               timesMs: [0],
               frameDurationsMs: [20],
               ...commonOptions,

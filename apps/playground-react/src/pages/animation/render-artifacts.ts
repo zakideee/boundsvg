@@ -108,7 +108,12 @@ export function downloadAnimatedArtifact({
   const { animation: _animation, timeMs: _timeMs, ...rasterOptions } = renderOptions;
   let bytes: Uint8Array;
   try {
-    const animatedOptions = { ...rasterOptions, durationMs, fps: ANIMATED_EXPORT_FPS };
+    const animatedOptions = {
+      ...rasterOptions,
+      durationMs,
+      fps: ANIMATED_EXPORT_FPS,
+      iterations: "infinite" as const,
+    };
     bytes =
       format === "gif"
         ? engine.renderToAnimatedGif(input, animatedOptions)

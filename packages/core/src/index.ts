@@ -8,6 +8,7 @@ export { buildAnimationTrack } from "./animation-track.js";
 export { parseColor } from "./color.js";
 // Engine
 export type {
+  AnimatedRasterIterations,
   AnimationAffineMatrix,
   AnimationStateSample,
   CompiledScene,

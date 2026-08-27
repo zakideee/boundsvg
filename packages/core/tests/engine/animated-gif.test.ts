@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { resolveAnimationFrameSchedule, resolveGifDelaysCs } from "../../src/animation-schedule.js";
+import type { RenderAnimatedGifOptions } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { AnimationEncodeInput, WasmEngineHandle } from "../../src/wasm/index.js";
@@ -139,6 +140,7 @@ describe("renderToAnimatedGif", () => {
 
   it("emits an animated GIF at the canvas size", () => {
     const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 500,
       fps: 10,
     });
@@ -168,7 +170,7 @@ describe("renderToAnimatedGif", () => {
     const options = {
       timesMs: [0, 250, 900],
       frameDurationsMs: [250, 650, 100],
-      loop: 3,
+      iterations: 3,
     } as const;
     const compiledGif = engine.renderCompiledToAnimatedGif(compiled, options);
     expect(compileCount).toBe(0);
@@ -193,13 +195,14 @@ describe("renderToAnimatedGif", () => {
     const gif = engine.renderCompiledToAnimatedGif(compiled, {
       timesMs,
       frameDurationsMs: [300, 400, 300, 100],
-      loop: 2,
+      iterations: 2,
     });
 
     expect(readSignature(gif)).toBe("GIF89a");
     expect(readCanvasSize(gif)).toEqual({ width: 480, height: 480 });
     expect(readFrameDelaysCs(gif)).toEqual([30, 40, 30, 10]);
-    expect(readLoopCount(gif)).toBe(2);
+    expect(readLoopCount(gif)).toBe(1);
+    expect(captured[0]?.iterations).toBe(2);
     expect(captured[0]?.frames).toHaveLength(timesMs.length);
     for (const [index, timeMs] of timesMs.entries()) {
       expect(captured[0]?.frames[index]).toEqual({
@@ -211,6 +214,7 @@ describe("renderToAnimatedGif", () => {
 
   it("derives centisecond delays from the frame schedule", () => {
     const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 500,
       fps: 10,
     });
@@ -222,6 +226,7 @@ describe("renderToAnimatedGif", () => {
   it("keeps the total delay equal to the animation length", () => {
     // 33/34 ms frames: independent rounding would lose a centisecond per pair.
     const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 1000,
       fps: 30,
     });
@@ -231,18 +236,26 @@ describe("renderToAnimatedGif", () => {
     expect(delays.reduce((sum, delay) => sum + delay, 0)).toBe(100);
   });
 
-  it("defaults to looping forever and honors an explicit loop count", () => {
+  it("maps total plays to the GIF repeat extension", () => {
     const engine = createEngine();
     const scene = createFadingScene();
 
-    expect(readLoopCount(engine.renderToAnimatedGif(scene, { durationMs: 200, fps: 10 }))).toBe(0);
-    expect(
-      readLoopCount(engine.renderToAnimatedGif(scene, { durationMs: 200, fps: 10, loop: 4 })),
-    ).toBe(4);
+    for (const [iterations, expectedField] of [
+      ["infinite", 0],
+      [1, undefined],
+      [2, 1],
+      [65_535, 65_534],
+      [65_536, 65_535],
+    ] as const) {
+      expect(
+        readLoopCount(engine.renderToAnimatedGif(scene, { durationMs: 200, fps: 10, iterations })),
+      ).toBe(expectedField);
+    }
   });
 
   it("applies scale through the shared emitted-root dimensions", () => {
     const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 200,
       fps: 10,
       scale: 2,
@@ -266,6 +279,7 @@ describe("renderToAnimatedGif", () => {
       const options = {
         timesMs: [0],
         frameDurationsMs: [100],
+        iterations: "infinite",
         scale: 4,
         onPngResolutionAdjusted: (warning: { requestedScale: number; appliedScale: number }) =>
           adjustments.push(warning),
@@ -289,8 +303,16 @@ describe("renderToAnimatedGif", () => {
 
   it("produces identical bytes for identical input", () => {
     const engine = createEngine();
-    const first = engine.renderToAnimatedGif(createFadingScene(), { durationMs: 400, fps: 10 });
-    const second = engine.renderToAnimatedGif(createFadingScene(), { durationMs: 400, fps: 10 });
+    const first = engine.renderToAnimatedGif(createFadingScene(), {
+      iterations: "infinite",
+      durationMs: 400,
+      fps: 10,
+    });
+    const second = engine.renderToAnimatedGif(createFadingScene(), {
+      iterations: "infinite",
+      durationMs: 400,
+      fps: 10,
+    });
 
     expect(Array.from(second)).toEqual(Array.from(first));
   });
@@ -300,25 +322,62 @@ describe("renderToAnimatedGif", () => {
     const scene = createFadingScene();
 
     try {
-      engine.renderToAnimatedGif(scene, { timesMs: [0, 100] });
+      engine.renderToAnimatedGif(scene, { iterations: "infinite", timesMs: [0, 100] });
       expect.unreachable("a schedule without frameDurationsMs must be rejected");
     } catch (error) {
       expect((error as FatalError).code).toBe("ANIMATED_GIF_INVALID_SCHEDULE");
     }
 
     try {
-      engine.renderToAnimatedGif(scene, { durationMs: 20_000, fps: 60 });
+      engine.renderToAnimatedGif(scene, { iterations: "infinite", durationMs: 20_000, fps: 60 });
       expect.unreachable("301+ frames must be rejected");
     } catch (error) {
       expect((error as FatalError).code).toBe("ANIMATED_GIF_TOO_MANY_FRAMES");
     }
   });
 
+  it("requires a valid total play count before sampling or encoding", () => {
+    let encodeCount = 0;
+    const engine = createEngine({
+      svgsToAnimatedGifFn: () => {
+        encodeCount += 1;
+        return new Uint8Array([1]);
+      },
+    });
+    const invalidIterations: unknown[] = [
+      undefined,
+      0,
+      -1,
+      1.5,
+      65_537,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      "forever",
+    ];
+
+    for (const iterations of invalidIterations) {
+      try {
+        engine.renderToAnimatedGif(createFadingScene(), {
+          durationMs: 200,
+          iterations,
+        } as RenderAnimatedGifOptions);
+        expect.unreachable(`iterations ${String(iterations)} must be rejected`);
+      } catch (error) {
+        expect(error, String(iterations)).toBeInstanceOf(FatalError);
+        expect((error as FatalError).code, String(iterations)).toBe(
+          "ANIMATED_GIF_INVALID_SCHEDULE",
+        );
+      }
+    }
+    expect(encodeCount).toBe(0);
+  });
+
   it("reports GIF_NO_ENCODER when no encoder is wired", () => {
     const engine = createEngineFromHandle(handle);
 
     try {
-      engine.renderToAnimatedGif(createFadingScene(), { durationMs: 200 });
+      engine.renderToAnimatedGif(createFadingScene(), { iterations: "infinite", durationMs: 200 });
       expect.unreachable("renderToAnimatedGif must fail without an encoder");
     } catch (error) {
       expect(error).toBeInstanceOf(FatalError);
@@ -342,7 +401,11 @@ describe("renderToAnimatedGif", () => {
         { durationMs, fps },
         { invalidSchedule: "x", tooManyFrames: "y" },
       );
-      const gif = engine.renderToAnimatedGif(createFadingScene(), { durationMs, fps });
+      const gif = engine.renderToAnimatedGif(createFadingScene(), {
+        iterations: "infinite",
+        durationMs,
+        fps,
+      });
       expect(readFrameDelaysCs(gif), `${durationMs} ms at ${fps} fps`).toEqual(
         resolveGifDelaysCs(schedule.frameDurationsMs),
       );
@@ -354,6 +417,7 @@ describe("renderToAnimatedGif", () => {
     // explicit schedule is the only route to mixed short and long frames.
     const frameDurationsMs = [5, 5, 190, 5, 1];
     const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
+      iterations: "infinite",
       timesMs: [0, 5, 10, 200, 205],
       frameDurationsMs,
     });
@@ -367,7 +431,11 @@ describe("renderToAnimatedGif", () => {
 
     for (const scale of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       try {
-        engine.renderToAnimatedGif(createFadingScene(), { durationMs: 200, scale });
+        engine.renderToAnimatedGif(createFadingScene(), {
+          iterations: "infinite",
+          durationMs: 200,
+          scale,
+        });
         expect.unreachable(`scale ${String(scale)} must be rejected`);
       } catch (error) {
         expect((error as FatalError).code, String(scale)).toBe("PNG_INVALID_SCALE");
@@ -399,6 +467,7 @@ describe("renderToAnimatedGif", () => {
   it("tells a sampled caller to change the schedule, not the frames", () => {
     const messages: string[] = [];
     createEngine().renderToAnimatedGif(createFadingScene(), {
+      iterations: "infinite",
       durationMs: 150,
       fps: 1,
       onWarning: (warning) => messages.push(warning.message),
@@ -409,6 +478,7 @@ describe("renderToAnimatedGif", () => {
 
     const explicit: string[] = [];
     createEngine().renderToAnimatedGif(createFadingScene(), {
+      iterations: "infinite",
       timesMs: [0],
       frameDurationsMs: [15],
       onWarning: (warning) => explicit.push(warning.message),
@@ -421,6 +491,7 @@ describe("renderToAnimatedGif", () => {
     const warnCodes = (options: Parameters<typeof engine.renderToAnimatedGif>[1]): string[] => {
       const codes: string[] = [];
       engine.renderToAnimatedGif(createFadingScene(), {
+        iterations: "infinite",
         ...options,
         onWarning: (warning) => codes.push(warning.code),
       });
@@ -468,11 +539,13 @@ describe("renderToAnimatedGif", () => {
     const compiledWarnings: string[] = [];
 
     const source = engine.renderToAnimatedGif(scene, {
+      iterations: "infinite",
       ...options,
       onWarning: (warning) => sourceWarnings.push(warning.code),
     });
     const prepared = engine.renderCompiledToAnimatedGif(compiled, {
       ...options,
+      iterations: "infinite",
       onWarning: (warning) => compiledWarnings.push(warning.code),
     });
 

@@ -648,6 +648,7 @@ describe("public render capability contract", () => {
         label: "animated GIF",
         run: () =>
           engine.renderToAnimatedGif(scene, {
+            iterations: "infinite",
             durationMs: 20,
             fps: 50,
             scale: requestedScale,
@@ -657,6 +658,7 @@ describe("public render capability contract", () => {
         label: "animated WebP",
         run: () =>
           engine.renderToAnimatedWebp(scene, {
+            iterations: "infinite",
             durationMs: 20,
             fps: 50,
             scale: requestedScale,
@@ -714,6 +716,7 @@ describe("public render capability contract", () => {
             label: "animated GIF",
             run: () =>
               engine.renderToAnimatedGif(input, {
+                iterations: "infinite",
                 timesMs: [0],
                 frameDurationsMs: [20],
               }),
@@ -722,6 +725,7 @@ describe("public render capability contract", () => {
             label: "animated WebP",
             run: () =>
               engine.renderToAnimatedWebp(input, {
+                iterations: "infinite",
                 timesMs: [0],
                 frameDurationsMs: [20],
               }),
@@ -771,6 +775,7 @@ describe("public render capability contract", () => {
         label: "animated GIF",
         run: () =>
           engine.renderToAnimatedGif(sceneNode, {
+            iterations: "infinite",
             timesMs: [0],
             frameDurationsMs: [20],
           }),
@@ -779,6 +784,7 @@ describe("public render capability contract", () => {
         label: "animated WebP",
         run: () =>
           engine.renderToAnimatedWebp(sceneNode, {
+            iterations: "infinite",
             timesMs: [0],
             frameDurationsMs: [20],
           }),
@@ -878,6 +884,7 @@ describe("public render capability contract", () => {
             run: () =>
               gifSize(
                 engine.renderToAnimatedGif(scene, {
+                  iterations: "infinite",
                   ...commonOptions,
                   timesMs: [0],
                   frameDurationsMs: [20],
@@ -889,6 +896,7 @@ describe("public render capability contract", () => {
             run: () =>
               webpSize(
                 engine.renderToAnimatedWebp(scene, {
+                  iterations: "infinite",
                   ...commonOptions,
                   timesMs: [0],
                   frameDurationsMs: [20],
@@ -956,6 +964,7 @@ describe("public render capability contract", () => {
     const options = {
       timesMs: [0],
       frameDurationsMs: [20],
+      iterations: "infinite" as const,
       scale: requestedScale,
       rasterOversizeBehavior: "auto-adjust" as const,
     };

@@ -742,12 +742,17 @@ describe("WorkerEngine", () => {
         }
       });
 
-      const gif = await engine.renderToAnimatedGif(SCENE, { durationMs: 400, fps: 10 });
+      const gif = await engine.renderToAnimatedGif(SCENE, {
+        durationMs: 400,
+        fps: 10,
+        iterations: "infinite",
+      });
       expect(gif).toEqual(gifBytes);
       const gifRequest = requests.find((req) => req.type === "render-animated-gif");
       expect(gifRequest?.type === "render-animated-gif" && gifRequest.options).toEqual({
         durationMs: 400,
         fps: 10,
+        iterations: "infinite",
       });
       engine.dispose();
     });
@@ -765,9 +770,9 @@ describe("WorkerEngine", () => {
         }
       });
 
-      await expect(engine.renderToAnimatedGif(SCENE, { durationMs: 400 })).rejects.toThrow(
-        FatalError,
-      );
+      await expect(
+        engine.renderToAnimatedGif(SCENE, { iterations: "infinite", durationMs: 400 }),
+      ).rejects.toThrow(FatalError);
       engine.dispose();
     });
   });
@@ -794,13 +799,17 @@ describe("WorkerEngine", () => {
         }
       });
 
-      const webp = await engine.renderToAnimatedWebp(SCENE, { durationMs: 500, fps: 10, loop: 2 });
+      const webp = await engine.renderToAnimatedWebp(SCENE, {
+        durationMs: 500,
+        fps: 10,
+        iterations: 2,
+      });
       expect(webp).toEqual(animatedBytes);
       const animatedRequest = requests.find((req) => req.type === "render-animated-webp");
       expect(animatedRequest?.type === "render-animated-webp" && animatedRequest.options).toEqual({
         durationMs: 500,
         fps: 10,
-        loop: 2,
+        iterations: 2,
       });
       engine.dispose();
     });
@@ -822,9 +831,9 @@ describe("WorkerEngine", () => {
         }
       });
 
-      await expect(engine.renderToAnimatedWebp(SCENE, { durationMs: 500 })).rejects.toThrow(
-        FatalError,
-      );
+      await expect(
+        engine.renderToAnimatedWebp(SCENE, { iterations: "infinite", durationMs: 500 }),
+      ).rejects.toThrow(FatalError);
       engine.dispose();
     });
   });
@@ -847,6 +856,7 @@ describe("WorkerEngine", () => {
       const pending = engine.renderLayoutTransitionToAnimatedWebp(input, {
         durationMs: 300,
         fps: 10,
+        iterations: 2,
         textPathMode: "glyphs",
       });
       const firstState = input.states.A;
@@ -862,6 +872,7 @@ describe("WorkerEngine", () => {
         expect(request.options).toMatchObject({
           durationMs: 300,
           fps: 10,
+          iterations: 2,
           textPathMode: "glyphs",
         });
       }
@@ -892,6 +903,7 @@ describe("WorkerEngine", () => {
       await expect(
         engine.renderLayoutTransitionToAnimatedGif(TRANSITION, {
           durationMs: 300,
+          iterations: "infinite",
           onWarning: (warning) => warningCodes.push(warning.code),
         }),
       ).resolves.toEqual(bytes);
@@ -913,7 +925,10 @@ describe("WorkerEngine", () => {
       });
 
       await expect(
-        engine.renderLayoutTransitionToAnimatedWebp(TRANSITION, { durationMs: 300 }),
+        engine.renderLayoutTransitionToAnimatedWebp(TRANSITION, {
+          durationMs: 300,
+          iterations: "infinite",
+        }),
       ).rejects.toMatchObject({ code: "LAYOUT_TRANSITION_INCOMPATIBLE" });
       engine.dispose();
     });
@@ -924,7 +939,10 @@ describe("WorkerEngine", () => {
       mockWorker.postMessage.mockImplementation(() => {});
 
       await expect(
-        engine.renderLayoutTransitionToAnimatedGif(TRANSITION, { durationMs: 300 }),
+        engine.renderLayoutTransitionToAnimatedGif(TRANSITION, {
+          durationMs: 300,
+          iterations: "infinite",
+        }),
       ).rejects.toMatchObject({
         code: "WORKER_REQUEST_TIMEOUT",
         context: expect.objectContaining({

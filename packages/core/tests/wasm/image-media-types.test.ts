@@ -60,6 +60,7 @@ describe("Image mediaType raster formats", () => {
       mediaType: "image/gif",
       encode: (): Uint8Array =>
         engine.renderToAnimatedGif(solidScene(FILL), {
+          iterations: "infinite",
           timesMs: [0],
           frameDurationsMs: [100],
         }),

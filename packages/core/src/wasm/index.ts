@@ -489,7 +489,7 @@ export function createWasmShapeFn(fontData: Uint8Array): ShapeFn {
  */
 export type AnimationEncodeInput = {
   frames: Array<{ svg: string; durationMs: number }>;
-  loopCount: number;
+  iterations: number | "infinite";
   options: PngRenderOptions;
 };
 

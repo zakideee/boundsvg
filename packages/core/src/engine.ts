@@ -1,9 +1,11 @@
 import {
   type AnimationScheduleErrorCodes,
   type AnimationScheduleOptions,
-  assertAnimationLoopCount,
+  assertAnimationIterations,
   GIF_DELAY_UNIT_MS,
   GIF_MIN_FRAME_MS,
+  MAX_ANIMATED_GIF_ITERATIONS,
+  MAX_ANIMATED_WEBP_ITERATIONS,
   type ResolvedAnimationSchedule,
   resolveAnimationFrameSchedule,
   resolveGifDelaysCs,
@@ -53,7 +55,7 @@ import { projectResolvedTextOutlines } from "./text/outline-projection.js";
 import { assertRichTextNodeDepth } from "./text/rich-text-limits.js";
 import type { RichTextNode, TextOutlineNode, TextPathMode } from "./text/types.js";
 import { validate } from "./validate/index.js";
-import type { VNode } from "./vnode/types.js";
+import type { AnimationSpec, VNode } from "./vnode/types.js";
 import type {
   AnimationEncodeInput,
   IntrinsicInlineSizeInput,
@@ -312,14 +314,14 @@ function assertValidAnimationRenderOptions(
  * the completed animated container, not every temporary SVG frame.
  */
 function toAnimationFrameRenderOptions(
-  options: RenderAnimatedWebpOptions,
+  options: RenderAnimatedWebpOptions | RenderAnimatedGifOptions,
 ): Omit<RenderOptions, "animation" | "timeMs" | "scale" | "generator"> {
   const {
     timesMs: _timesMs,
     frameDurationsMs: _frameDurationsMs,
     fps: _fps,
     durationMs: _durationMs,
-    loop: _loop,
+    iterations: _iterations,
     scale: _scale,
     generator: _generator,
     ...renderOptions
@@ -737,14 +739,20 @@ type AnimationErrorCodes = AnimationScheduleErrorCodes & {
   payloadLimit: string;
 };
 
+/** Total number of animated-raster plays, or an unbounded animation. */
+export type AnimatedRasterIterations = NonNullable<AnimationSpec["iterations"]>;
+
 export type RenderAnimatedWebpOptions = Omit<RenderOptions, "animation" | "timeMs"> &
   AnimationScheduleOptions & {
-    /** Loop count, 0..=65535. 0 (the default) loops forever. */
-    loop?: number;
+    /** Total play count, 1..=65535, or `"infinite"`. */
+    iterations: AnimatedRasterIterations;
   };
 
-/** Animated GIF takes the same schedule and raster options as animated WebP. */
-export type RenderAnimatedGifOptions = RenderAnimatedWebpOptions;
+export type RenderAnimatedGifOptions = Omit<RenderOptions, "animation" | "timeMs"> &
+  AnimationScheduleOptions & {
+    /** Total play count, 1..=65536, or `"infinite"`. */
+    iterations: AnimatedRasterIterations;
+  };
 
 /** Animated WebP options for a scene whose compile-time choices are already fixed. */
 export type RenderCompiledAnimatedWebpOptions = Omit<
@@ -777,7 +785,8 @@ function snapshotRasterOptions<
     | EmitOptions
     | LayeredPngOptions
     | RenderFramesOptions
-    | RenderAnimatedWebpOptions,
+    | RenderAnimatedWebpOptions
+    | RenderAnimatedGifOptions,
 >(options: Options): Options {
   const debug = options.debug;
   return {
@@ -1242,7 +1251,11 @@ export class Engine {
       tooManyFrames: "ANIMATED_WEBP_TOO_MANY_FRAMES",
       payloadLimit: "ANIMATED_WEBP_PAYLOAD_LIMIT",
     };
-    assertAnimationLoopCount(stableRenderOpts.loop, codes.invalidSchedule);
+    assertAnimationIterations(stableRenderOpts.iterations, {
+      maxIterations: MAX_ANIMATED_WEBP_ITERATIONS,
+      code: codes.invalidSchedule,
+      formatName: "Animated WebP",
+    });
     const schedule = resolveAnimationFrameSchedule(stableRenderOpts, codes);
 
     const frames = frameProducer(
@@ -1320,7 +1333,11 @@ export class Engine {
       tooManyFrames: "ANIMATED_GIF_TOO_MANY_FRAMES",
       payloadLimit: "ANIMATED_GIF_PAYLOAD_LIMIT",
     };
-    assertAnimationLoopCount(stableRenderOpts.loop, codes.invalidSchedule);
+    assertAnimationIterations(stableRenderOpts.iterations, {
+      maxIterations: MAX_ANIMATED_GIF_ITERATIONS,
+      code: codes.invalidSchedule,
+      formatName: "Animated GIF",
+    });
     const schedule = resolveAnimationFrameSchedule(stableRenderOpts, codes);
     const timingWarning = this.createGifTimingAdjustmentWarning(schedule.frameDurationsMs, {
       sampled: stableRenderOpts.timesMs === undefined,
@@ -1389,7 +1406,7 @@ export class Engine {
    */
   private buildAnimationEncodeInput(
     sampledFrames: Iterable<Frame>,
-    renderOpts: RenderAnimatedWebpOptions,
+    renderOpts: RenderAnimatedWebpOptions | RenderAnimatedGifOptions,
     plan: {
       schedule: ResolvedAnimationSchedule;
       codes: AnimationErrorCodes;
@@ -1439,7 +1456,7 @@ export class Engine {
       frameIndex += 1;
     }
 
-    return { frames, loopCount: renderOpts.loop ?? 0, options: rasterOptions };
+    return { frames, iterations: renderOpts.iterations, options: rasterOptions };
   }
 
   layoutTextFlow(input: TextFlowInput): TextFlowResult {

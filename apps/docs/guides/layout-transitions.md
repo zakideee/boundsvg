@@ -118,8 +118,16 @@ import { renderCompiledToMp4 } from "@boundsvg/video";
 renderCompiledToSvg(compiled); // animated SVG
 renderCompiledToPng(compiled, { animation: "static", timeMs: 300 }); // a poster
 renderCompiledFrames(compiled, { timesMs: [0, 100, 200], format: "png" });
-renderCompiledToAnimatedWebp(compiled, { durationMs: 1000, fps: 30 });
-renderCompiledToAnimatedGif(compiled, { durationMs: 1000, fps: 25 });
+renderCompiledToAnimatedWebp(compiled, {
+  durationMs: 1000,
+  fps: 30,
+  iterations: "infinite",
+});
+renderCompiledToAnimatedGif(compiled, {
+  durationMs: 1000,
+  fps: 25,
+  iterations: 1,
+});
 await renderCompiledToMp4(engine, compiled, {
   durationMs: 1000,
   frameRate: 30,

@@ -552,7 +552,7 @@ export class WorkerEngine {
       id: this.nextId++,
       type: "render-animated-webp",
       scene,
-      options: workerOptions ?? {},
+      options: { ...workerOptions, iterations: options.iterations },
     };
 
     const response = await this.send(request);
@@ -583,7 +583,7 @@ export class WorkerEngine {
       id: this.nextId++,
       type: "render-layout-transition-animated-webp",
       transition,
-      options: workerOptions ?? {},
+      options: { ...workerOptions, iterations: options.iterations },
     };
     const response = await this.send(request);
     if (response.type === "error") {
@@ -612,7 +612,7 @@ export class WorkerEngine {
       id: this.nextId++,
       type: "render-animated-gif",
       scene,
-      options: workerOptions ?? {},
+      options: { ...workerOptions, iterations: options.iterations },
     };
 
     const response = await this.send(request);
@@ -643,7 +643,7 @@ export class WorkerEngine {
       id: this.nextId++,
       type: "render-layout-transition-animated-gif",
       transition,
-      options: workerOptions ?? {},
+      options: { ...workerOptions, iterations: options.iterations },
     };
     const response = await this.send(request);
     if (response.type === "error") {

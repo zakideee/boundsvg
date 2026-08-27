@@ -155,6 +155,7 @@ function renderFormat(
     ...options,
     durationMs: preset.animationDurationMs ?? 0,
     fps: ANIMATION_FPS,
+    iterations: "infinite" as const,
   };
   return format === "gif"
     ? engine.renderToAnimatedGif(vnode, animated)

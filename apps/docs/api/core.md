@@ -485,7 +485,11 @@ Samples a declarative animation into static frames and muxes them into an
 animated lossless WebP. Every frame is a full-canvas replacement.
 
 ```ts
-const webp = engine.renderToAnimatedWebp(node, { durationMs: 2000, fps: 20 });
+const webp = engine.renderToAnimatedWebp(node, {
+  durationMs: 2000,
+  fps: 20,
+  iterations: "infinite",
+});
 ```
 
 ### `engine.renderToAnimatedGif(input, options)`
@@ -494,21 +498,30 @@ The same sampling, written as an animated GIF. Lossy — 256 colors per frame an
 1-bit alpha — but still byte-deterministic.
 
 ```ts
-const gif = engine.renderToAnimatedGif(node, { durationMs: 2000, fps: 20 });
+const gif = engine.renderToAnimatedGif(node, {
+  durationMs: 2000,
+  fps: 20,
+  iterations: 3,
+});
 ```
 
 ### `RenderAnimatedWebpOptions` / `RenderAnimatedGifOptions`
 
 Everything in `RenderOptions` except `animation` and `timeMs`, plus the frame
-schedule. The two option types are identical.
+schedule and a required total-play count. The two option types are structurally
+identical, but their container limits differ.
 
-| Option             | Type                | Default | Description                                                               |
-| ------------------ | ------------------- | ------- | ------------------------------------------------------------------------- |
-| `durationMs`       | `number` (> 0)      | —       | Total animation length. Required unless `timesMs` is given                |
-| `fps`              | `number` (1–60)     | `20`    | Sampling rate. Rejected when `timesMs` is given                           |
-| `timesMs`          | `readonly number[]` | —       | Explicit sample times. Mutually exclusive with `fps` / `durationMs`       |
-| `frameDurationsMs` | `readonly number[]` | —       | Per-frame display durations. Required with `timesMs`, and the same length |
-| `loop`             | `number` (0–65535)  | `0`     | Loop count; `0` loops forever                                             |
+| Option             | Type                   | Default | Description                                                                  |
+| ------------------ | ---------------------- | ------- | ---------------------------------------------------------------------------- |
+| `durationMs`       | `number` (> 0)         | —       | Total animation length. Required unless `timesMs` is given                   |
+| `fps`              | `number` (1–60)        | `20`    | Sampling rate. Rejected when `timesMs` is given                              |
+| `timesMs`          | `readonly number[]`    | —       | Explicit sample times. Mutually exclusive with `fps` / `durationMs`          |
+| `frameDurationsMs` | `readonly number[]`    | —       | Per-frame display durations. Required with `timesMs`, and the same length    |
+| `iterations`       | `number \| "infinite"` | —       | Required total plays. WebP: 1–65535; GIF: 1–65536; `"infinite"` is unbounded |
+
+`iterations` counts total plays, not repeats after the first play. For GIF,
+`iterations: 1` omits the repeat extension; finite `N >= 2` stores `N - 1` in
+that extension. Animated WebP stores finite `N` directly.
 
 Schedule derivation, fixed by tests:
 
@@ -1054,7 +1067,11 @@ const webp = renderToWebp(node, { scale: 2 });
 Render a declarative animation to an animated WebP using the default engine.
 
 ```ts
-const webp = renderToAnimatedWebp(node, { durationMs: 2000, fps: 20 });
+const webp = renderToAnimatedWebp(node, {
+  durationMs: 2000,
+  fps: 20,
+  iterations: "infinite",
+});
 ```
 
 ### `renderToAnimatedGif(input, options)`
@@ -1062,7 +1079,11 @@ const webp = renderToAnimatedWebp(node, { durationMs: 2000, fps: 20 });
 Render a declarative animation to an animated GIF using the default engine.
 
 ```ts
-const gif = renderToAnimatedGif(node, { durationMs: 2000, fps: 20 });
+const gif = renderToAnimatedGif(node, {
+  durationMs: 2000,
+  fps: 20,
+  iterations: 1,
+});
 ```
 
 ### `renderToIR(input, options?)`
