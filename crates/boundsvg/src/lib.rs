@@ -978,7 +978,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 25;
+pub const WASM_SCHEMA_VERSION: u32 = 26;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -1069,13 +1069,15 @@ pub fn compile_shape_paths(json_input: &str) -> Result<String, JsValue> {
 ///
 /// # Errors
 ///
-/// Returns `JsValue` if the input JSON is invalid or serialization fails.
+/// Returns `JsValue` if the input JSON is invalid, symbol resolution fails,
+/// the resolved geometry exceeds its depth limit, or serialization fails.
 #[wasm_bindgen]
 pub fn resolve_symbol_geometry(json_input: &str) -> Result<String, JsValue> {
     catch_unwind_to_js(AssertUnwindSafe(|| {
         let input: ResolveSymbolGeometryInput = serde_json::from_str(json_input)
             .map_err(|e| JsValue::from_str(&format!("Invalid symbol resolve input: {e}")))?;
-        let geometry = boundshape::resolve_symbol_geometry(&input.definition, &input.options);
+        let geometry = boundshape::resolve_symbol_geometry(&input.definition, &input.options)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         serde_json::to_string(&geometry)
             .map_err(|e| JsValue::from_str(&format!("Failed to serialize symbol geometry: {e}")))
     }))
@@ -1670,9 +1672,11 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let input: flow::TextFlowWithExclusionsInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid exclusion flow input: {e}")))?;
-            let result = flow::layout_text_flow_with_exclusions(&input, &self.registry)
-                .map_err(|e| JsValue::from_str(&e))?;
-            serde_json::to_string(&result).map_err(|e| {
+            let flow_layout = flow::layout_text_flow_with_exclusions(&input, &self.registry)
+                .map_err(|error| {
+                    render_error_envelope(error.code(), &error.to_string(), Some("text"), None)
+                })?;
+            serde_json::to_string(&flow_layout).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize exclusion flow result: {e}"))
             })
         }))
@@ -1703,9 +1707,10 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let input: flow::ShrinkwrapTextInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap input: {e}")))?;
-            let result =
-                flow::shrinkwrap_text(&input, &self.registry).map_err(|e| JsValue::from_str(&e))?;
-            serde_json::to_string(&result).map_err(|e| {
+            let shrinkwrap = flow::shrinkwrap_text(&input, &self.registry).map_err(|error| {
+                render_error_envelope(error.code(), &error.to_string(), Some("text"), None)
+            })?;
+            serde_json::to_string(&shrinkwrap).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize shrinkwrap result: {e}"))
             })
         }))
@@ -1721,9 +1726,11 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let input: flow::ShrinkwrapFlowInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap flow input: {e}")))?;
-            let result =
-                flow::shrinkwrap_flow(&input, &self.registry).map_err(|e| JsValue::from_str(&e))?;
-            serde_json::to_string(&result).map_err(|e| {
+            let flow_shrinkwrap =
+                flow::shrinkwrap_flow(&input, &self.registry).map_err(|error| {
+                    render_error_envelope(error.code(), &error.to_string(), Some("text"), None)
+                })?;
+            serde_json::to_string(&flow_shrinkwrap).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize shrinkwrap flow result: {e}"))
             })
         }))

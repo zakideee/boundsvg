@@ -327,14 +327,14 @@ pub fn build_horizontal_result_with_constraints(
     let total_height = truncated_lines.len() as f64 * line_height_px;
     let has_overflow = total_line_count > truncated_lines.len();
 
-    let overflow = if kinsoku_unresolved {
-        TextOverflow::kinsoku_unresolved()
-    } else if has_overflow {
+    let overflow = if has_overflow {
         TextOverflow::overflow("lines truncated by maxLines")
     } else if let Some(constraint_overflow) =
         detect_constraint_overflow(max_line_width, total_height, max_width, max_height)
     {
         constraint_overflow
+    } else if kinsoku_unresolved {
+        TextOverflow::kinsoku_unresolved()
     } else {
         TextOverflow::none()
     };

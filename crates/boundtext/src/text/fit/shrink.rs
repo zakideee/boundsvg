@@ -1,11 +1,10 @@
-use super::super::ellipsis;
 use super::super::kinsoku::{get_hanging_chars, get_kinsoku_profile};
 use super::super::paragraph;
 use super::super::types::{TextLayoutRequest, TextOverflow, TextSpanInput};
 use super::common::{
     DEFAULT_EPSILON, DEFAULT_MAX_ITERATIONS, DEFAULT_MIN_FONT_SIZE, build_result,
     collect_warnings_from_lines, fit_build_shaped, fit_build_shaped_failure, language_to_str,
-    layout_at_size, measure_fits_at_size, resolve_line_height, text_fits,
+    layout_at_size, measure_fits_at_size, resolve_line_height, scaled_letter_spacing,
 };
 use crate::font::FontContext;
 use crate::font::shaping::ShapeOptions;
@@ -64,7 +63,7 @@ fn fit_shrink_internal(
     min_font_size_px: Option<f64>,
     shrink_epsilon_px: Option<f64>,
     shrink_max_iterations: Option<usize>,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Option<crate::text::types::TextLayoutResult> {
     let min_size = min_font_size_px
         .unwrap_or(DEFAULT_MIN_FONT_SIZE)
@@ -97,15 +96,15 @@ fn fit_shrink_internal(
             req.uax14_breaks,
             req.letter_spacing_px,
         ) {
-            return fit_shrink_shaped(
+            return Some(fit_shrink_shaped(
                 req,
                 font_ctx,
                 &pp,
                 min_size,
                 epsilon,
                 max_iter,
-                include_unit_metadata,
-            );
+                should_include_unit_metadata,
+            ));
         }
     }
 
@@ -164,19 +163,15 @@ fn fit_shrink_internal(
     )?;
     if !min_fits {
         // Try ellipsis fallback at min size when enabled
-        if req.ellipsis {
-            return shrink_ellipsis_fallback(
-                req,
-                font_ctx,
-                min_size,
-                &shape_options,
-                kinsoku_profile,
-                hanging_chars,
-                include_unit_metadata,
-            );
+        if req.ellipsis
+            && req.max_lines.is_some()
+            && let Some(result) =
+                layout_ellipsis_at_size(req, font_ctx, min_size, should_include_unit_metadata)
+        {
+            return Some(result);
         }
         // Cannot fit even at min size
-        let (lines, lh, kinsoku_unresolved) = layout_at_size(
+        let (lines, lh, _) = layout_at_size(
             req,
             font_ctx,
             min_size,
@@ -184,11 +179,7 @@ fn fit_shrink_internal(
             kinsoku_profile,
             hanging_chars,
         )?;
-        let overflow = if kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::cannot_fit()
-        };
+        let overflow = TextOverflow::cannot_fit();
         let warnings = collect_warnings_from_lines(&lines, primary_alias);
         return Some(build_result(lines, min_size, lh, overflow, warnings));
     }
@@ -237,144 +228,33 @@ fn fit_shrink_internal(
     Some(build_result(lines, best_size, lh, overflow, warnings))
 }
 
-/// Ellipsis fallback when shrink cannot fit at min font size.
-pub(super) fn shrink_ellipsis_fallback(
-    req: &TextLayoutRequest,
+fn layout_ellipsis_at_size(
+    req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     font_size_px: f64,
-    shape_options: &ShapeOptions,
-    kinsoku_profile: Option<&crate::text::kinsoku::KinsokuProfile>,
-    hanging_chars: Option<&[char]>,
-    include_unit_metadata: bool,
+    should_include_unit_metadata: bool,
 ) -> Option<crate::text::types::TextLayoutResult> {
-    let line_metrics = super::common::resolve_line_metrics(req, font_ctx, font_size_px);
-    let line_height_px = line_metrics.line_height_px;
-    let primary_alias = font_ctx.families.first().map_or("", |s| s.as_str());
-
-    // Single-line ellipsis uses the same condition as the normal layout path.
-    if req.max_lines == Some(1) {
-        let ellipsis_line = if include_unit_metadata {
-            ellipsis::apply_ellipsis_with_unit_metadata(
-                req.text,
-                req.max_width,
-                font_ctx,
-                font_size_px,
-                req.letter_spacing_px,
-                line_height_px,
-                line_metrics.baseline_offset_px,
-                kinsoku_profile,
-                shape_options,
-            )
-        } else {
-            ellipsis::apply_ellipsis(
-                req.text,
-                req.max_width,
-                font_ctx,
-                font_size_px,
-                req.letter_spacing_px,
-                line_height_px,
-                line_metrics.baseline_offset_px,
-                kinsoku_profile,
-                shape_options,
-            )
-        };
-        if let Some(ellipsis_line) = ellipsis_line {
-            let ellipsis_lines = vec![ellipsis_line];
-            if text_fits(
-                &ellipsis_lines,
-                req.max_width,
-                req.max_lines,
-                req.max_height,
-                line_height_px,
-            ) {
-                let warnings = collect_warnings_from_lines(&ellipsis_lines, primary_alias);
-                return Some(build_result(
-                    ellipsis_lines,
-                    font_size_px,
-                    line_height_px,
-                    TextOverflow::overflow("ellipsis applied at min font size"),
-                    warnings,
-                ));
-            }
-        }
-    }
-
-    // Multi-line ellipsis
-    if let Some(max_lines) = req.max_lines {
-        if max_lines > 1 {
-            let (lines, lh, _) = layout_at_size(
-                req,
-                font_ctx,
-                font_size_px,
-                shape_options,
-                kinsoku_profile,
-                hanging_chars,
-            )?;
-            let ellipsis_lines = if include_unit_metadata {
-                ellipsis::apply_multiline_ellipsis_with_unit_metadata(
-                    &lines,
-                    max_lines,
-                    req.max_width,
-                    font_ctx,
-                    font_size_px,
-                    req.letter_spacing_px,
-                    lh,
-                    line_metrics.baseline_offset_px,
-                    kinsoku_profile,
-                    shape_options,
-                )
-            } else {
-                ellipsis::apply_multiline_ellipsis(
-                    &lines,
-                    max_lines,
-                    req.max_width,
-                    font_ctx,
-                    font_size_px,
-                    req.letter_spacing_px,
-                    lh,
-                    line_metrics.baseline_offset_px,
-                    kinsoku_profile,
-                    shape_options,
-                )
-            };
-            if let Some(ellipsis_lines) = ellipsis_lines {
-                if text_fits(
-                    &ellipsis_lines,
-                    req.max_width,
-                    req.max_lines,
-                    req.max_height,
-                    lh,
-                ) {
-                    let warnings = collect_warnings_from_lines(&ellipsis_lines, primary_alias);
-                    return Some(build_result(
-                        ellipsis_lines,
-                        font_size_px,
-                        lh,
-                        TextOverflow::overflow("ellipsis applied at min font size"),
-                        warnings,
-                    ));
-                }
-            }
-        }
-    }
-
-    // Even ellipsis didn't help
-    let (lines, lh, _) = layout_at_size(
-        req,
-        font_ctx,
+    let final_request = TextLayoutRequest {
         font_size_px,
-        shape_options,
-        kinsoku_profile,
-        hanging_chars,
-    )?;
-    let warnings = collect_warnings_from_lines(&lines, primary_alias);
-    Some(build_result(
-        lines,
-        font_size_px,
-        lh,
-        TextOverflow::cannot_fit(),
-        warnings,
-    ))
+        letter_spacing_px: scaled_letter_spacing(req, font_size_px),
+        fit: super::super::types::FitMode::None,
+        min_font_size_px: None,
+        shrink_epsilon_px: None,
+        shrink_max_iterations: None,
+        max_font_size_px: None,
+        grow_epsilon_px: None,
+        grow_max_iterations: None,
+        ..req.clone()
+    };
+    let mut layout_result = if should_include_unit_metadata {
+        super::super::engine::layout_text_with_unit_metadata(&final_request, font_ctx).ok()?
+    } else {
+        super::super::engine::layout_text(&final_request, font_ctx).ok()?
+    };
+    if layout_result.lines.is_empty() {
+        layout_result.overflow = TextOverflow::cannot_fit();
+    }
+    Some(layout_result)
 }
 
 // ---------------------------------------------------------------------------
@@ -390,8 +270,8 @@ fn fit_shrink_shaped(
     min_size: f64,
     epsilon: f64,
     max_iter: usize,
-    include_unit_metadata: bool,
-) -> Option<crate::text::types::TextLayoutResult> {
+    should_include_unit_metadata: bool,
+) -> crate::text::types::TextLayoutResult {
     // Step 1: does original size already fit?
     let lh = resolve_line_height(req, font_ctx, req.font_size_px);
     let measurement = paragraph::measure_paragraph(
@@ -403,13 +283,13 @@ fn fit_shrink_shaped(
         req.has_forced_newline_breaks(),
     );
     if measurement.fits(req.max_width, req.max_lines, req.max_height, lh) {
-        return Some(fit_build_shaped(
+        return fit_build_shaped(
             req,
             font_ctx,
             pp,
             req.font_size_px,
             measurement.kinsoku_unresolved,
-        ));
+        );
     }
 
     // Step 2: does min size fit?
@@ -424,33 +304,16 @@ fn fit_shrink_shaped(
     );
     if !m_min.fits(req.max_width, req.max_lines, req.max_height, lh_min) {
         // Ellipsis fallback still needs re-shaping (truncated text) — use existing path.
-        if req.ellipsis {
-            let kinsoku_profile = get_kinsoku_profile(Some(language_to_str(req.language)));
-            let hanging_chars = get_hanging_chars(req.hanging_punctuation);
-            let shape_options = ShapeOptions {
-                font_variation_settings: req.font_variation_settings.clone(),
-                font_feature_settings: req.font_feature_settings.clone(),
-                ..ShapeOptions::default()
-            };
-            return shrink_ellipsis_fallback(
-                req,
-                font_ctx,
-                min_size,
-                &shape_options,
-                kinsoku_profile,
-                hanging_chars,
-                include_unit_metadata,
-            );
+        if req.ellipsis
+            && req.max_lines.is_some()
+            && let Some(result) =
+                layout_ellipsis_at_size(req, font_ctx, min_size, should_include_unit_metadata)
+        {
+            return result;
         }
         // Cannot fit even at min size — return all lines without truncation.
-        let overflow = if m_min.kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::cannot_fit()
-        };
-        return Some(fit_build_shaped_failure(
-            pp, req, font_ctx, min_size, overflow,
-        ));
+        let overflow = TextOverflow::cannot_fit();
+        return fit_build_shaped_failure(pp, req, font_ctx, min_size, overflow);
     }
 
     // Step 3: binary search — measure_paragraph only (no shaping)
@@ -490,11 +353,5 @@ fn fit_shrink_shaped(
         req.effective_wrap(),
         req.has_forced_newline_breaks(),
     );
-    Some(fit_build_shaped(
-        req,
-        font_ctx,
-        pp,
-        best_size,
-        m_best.kinsoku_unresolved,
-    ))
+    fit_build_shaped(req, font_ctx, pp, best_size, m_best.kinsoku_unresolved)
 }

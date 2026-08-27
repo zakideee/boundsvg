@@ -14,13 +14,73 @@ use crate::text::types::{
     collect_notdef_from_glyphs,
 };
 
+fn shape_vertical_ellipsis_candidate(
+    font_ctx: &FontContext<'_>,
+    prefix: &str,
+    font_size_px: f64,
+    letter_spacing_px: f64,
+    shape_options: &ShapeOptions,
+) -> Option<Vec<crate::font::shaping::GlyphInfo>> {
+    let mut prefix_glyphs = shape_text_vertical(
+        font_ctx,
+        prefix,
+        font_size_px,
+        letter_spacing_px,
+        shape_options,
+    )?;
+    let mut marker_glyphs = shape_text_vertical(
+        font_ctx,
+        "\u{2026}",
+        font_size_px,
+        letter_spacing_px,
+        shape_options,
+    )?;
+    if !prefix_glyphs.is_empty()
+        && !marker_glyphs.is_empty()
+        && letter_spacing_px != 0.0
+        && let Some(last_prefix_glyph) = prefix_glyphs.last_mut()
+    {
+        last_prefix_glyph.y_advance = crate::font::shaping::add_vertical_inline_tracking(
+            last_prefix_glyph.y_advance,
+            letter_spacing_px,
+        );
+    }
+    let marker_cluster_offset = u32::try_from(prefix.len()).unwrap_or(u32::MAX);
+    for marker_glyph in &mut marker_glyphs {
+        marker_glyph.cluster = marker_glyph.cluster.saturating_add(marker_cluster_offset);
+    }
+    prefix_glyphs.extend(marker_glyphs);
+    Some(prefix_glyphs)
+}
+
+fn mark_vertical_ellipsis(columns: &mut [Line], marker_cluster_start: u32) {
+    for glyph in columns
+        .iter_mut()
+        .filter_map(|column| column.positioned_glyphs.as_mut())
+        .flatten()
+    {
+        if glyph.cluster_end <= marker_cluster_start {
+            continue;
+        }
+        glyph.source_start = None;
+        glyph.source_end = None;
+        glyph.source_role = None;
+        glyph.decoration_source_start = None;
+        glyph.decoration_source_end = None;
+        glyph.synthetic_kind = Some("ellipsis".to_string());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Perform full vertical text layout: shaping -> column breaking -> result building.
+/// Perform legacy direct vertical layout: shaping -> column breaking -> result building.
 ///
-/// This is the Rust equivalent of TS `layoutVerticalText()`.
+/// Checked callers should use [`crate::text::engine::layout_text`], which routes
+/// fit and ellipsis through the canonical planner with typed work limits. This
+/// `Option`-returning helper retains its pre-existing direct behavior until a
+/// separate breaking Rust API migration.
 #[must_use]
 pub fn layout_vertical_text(
     req: &crate::text::types::TextLayoutRequest,
@@ -108,58 +168,84 @@ pub fn layout_vertical_text(
 
     // Enforce maxLines (max number of columns)
     let total_column_count = columns.len();
+    let mut projected_display_text = None;
+    let mut selected_warnings = warnings;
+    let mut has_selected_kinsoku_violation = kinsoku_unresolved;
     let truncated_columns = if let Some(max) = req.max_lines {
         if columns.len() > max {
             let mut kept: Vec<Line> = columns.into_iter().take(max).collect();
             if req.ellipsis && max > 0 {
-                // Apply a vertical-aware ellipsis: re-lay-out progressively
-                // shorter text until "<prefix>…" fits within `max` columns.
-                // Re-running the same shape/break machinery keeps positions
-                // consistent with a first-class layout of the final text.
-                let kept_text: String = kept.iter().map(|c| c.text.as_str()).collect();
-                let clusters = grapheme_split(&kept_text);
-                for cut in (0..=clusters.len()).rev() {
-                    let candidate: String = clusters[..cut].concat() + "\u{2026}";
-                    let Some(cand_glyphs) = shape_text_vertical(
-                        font_ctx,
-                        &candidate,
-                        req.font_size_px,
-                        req.letter_spacing_px,
-                        &shape_options,
-                    ) else {
-                        continue;
-                    };
-                    let VerticalBreakResult {
-                        columns: mut cand_columns,
-                        kinsoku_unresolved: _,
-                    } = break_vertical_columns(
+                let clusters = grapheme_split(text);
+                let cluster_refs = clusters.iter().map(String::as_str).collect::<Vec<_>>();
+                let legal_candidates = (0..clusters.len()).filter(|keep| {
+                    kinsoku_profile.is_none_or(|profile| {
+                        crate::text::kinsoku::is_valid_ellipsis_boundary(
+                            &cluster_refs,
+                            *keep,
+                            profile,
+                        )
+                    })
+                });
+                let selected = crate::text::ellipsis_plan::select_longest_fitting(
+                    legal_candidates,
+                    |keep| {
+                        let prefix = clusters[..keep].concat();
+                        let candidate = format!("{prefix}\u{2026}");
+                        let cand_glyphs = shape_vertical_ellipsis_candidate(
+                            font_ctx,
+                            &prefix,
+                            req.font_size_px,
+                            req.letter_spacing_px,
+                            &shape_options,
+                        )?;
+                        let marker_cluster_start = u32::try_from(prefix.len()).unwrap_or(u32::MAX);
+                        let VerticalBreakResult {
+                            mut columns,
+                            kinsoku_unresolved,
+                        } = break_vertical_columns(
+                            &cand_glyphs,
+                            &candidate,
+                            max_column_height,
+                            req.effective_wrap(),
+                            req.font_size_px,
+                            line_height_px,
+                            kinsoku_profile,
+                            req.uax14_breaks,
+                            hanging_chars,
+                            false,
+                        );
+                        mark_vertical_ellipsis(&mut columns, marker_cluster_start);
+                        Some((candidate, cand_glyphs, columns, kinsoku_unresolved))
+                    },
+                    |(_, _, candidate_columns, _)| {
+                        candidate_columns.len() <= max
+                            && candidate_columns
+                                .iter()
+                                .all(|column| column.width <= max_column_height + 0.01)
+                            && candidate_columns.len() as f64 * line_height_px
+                                <= req.max_width + 0.01
+                    },
+                );
+                if let Some((
+                    _keep,
+                    (display_text, cand_glyphs, mut columns, candidate_kinsoku_unresolved),
+                )) = selected
+                {
+                    apply_variation_settings_to_lines(&mut columns, &req.font_variation_settings);
+                    apply_feature_settings_to_lines(&mut columns, &req.font_feature_settings);
+                    selected_warnings = build_notdef_warnings(&collect_notdef_from_glyphs(
                         &cand_glyphs,
-                        &candidate,
-                        max_column_height,
-                        req.effective_wrap(),
-                        req.font_size_px,
-                        line_height_px,
-                        kinsoku_profile,
-                        req.uax14_breaks,
-                        hanging_chars,
-                        false,
-                    );
-                    let fits = cand_columns.len() <= max
-                        && cand_columns
-                            .iter()
-                            .all(|c| c.width <= max_column_height + 0.01);
-                    if fits {
-                        apply_variation_settings_to_lines(
-                            &mut cand_columns,
-                            &req.font_variation_settings,
-                        );
-                        apply_feature_settings_to_lines(
-                            &mut cand_columns,
-                            &req.font_feature_settings,
-                        );
-                        kept = cand_columns;
-                        break;
-                    }
+                        &display_text,
+                        primary_alias,
+                    ));
+                    has_selected_kinsoku_violation = candidate_kinsoku_unresolved;
+                    projected_display_text = Some(display_text);
+                    kept = columns;
+                } else {
+                    selected_warnings = Vec::new();
+                    has_selected_kinsoku_violation = false;
+                    projected_display_text = Some(String::new());
+                    kept.clear();
                 }
             }
             kept
@@ -170,14 +256,19 @@ pub fn layout_vertical_text(
         columns
     };
 
-    Some(build_vertical_result_with_constraints(
+    let mut layout_result = build_vertical_result_with_constraints(
         truncated_columns,
         total_column_count,
         line_height_px,
         req.font_size_px,
-        kinsoku_unresolved,
+        has_selected_kinsoku_violation,
         Some(req.max_width),
         req.max_height,
-        warnings,
-    ))
+        selected_warnings,
+    );
+    if let Some(display_text) = projected_display_text {
+        layout_result.source_text = Some(text.to_string());
+        layout_result.display_text = Some(display_text);
+    }
+    Some(layout_result)
 }

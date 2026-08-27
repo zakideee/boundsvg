@@ -108,6 +108,41 @@ describe("layout enum contracts", () => {
   });
 });
 
+describe("text work-limit contracts", () => {
+  function textWithFitMaxProbes(fitMaxProbes: number): ReturnType<typeof createElement> {
+    return createElement(
+      "Canvas",
+      { width: 300, height: 200 },
+      createElement(
+        "Text",
+        {
+          font: "Fixture",
+          fontSizePx: 16,
+          width: 120,
+          height: 80,
+          flowExclusions: [],
+          fitMaxProbes,
+        },
+        "text",
+      ),
+    );
+  }
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ])("rejects fitMaxProbes = %s", (fitMaxProbes) => {
+    expect(() => validate(textWithFitMaxProbes(fitMaxProbes))).toThrow(/fitMaxProbes/);
+  });
+
+  it("accepts a positive integer fitMaxProbes", () => {
+    expect(() => validate(textWithFitMaxProbes(4096))).not.toThrow();
+  });
+});
+
 describe("grid contracts", () => {
   it("rejects grid placements with trailing garbage", () => {
     expect(() => validate(canvasWith({ gridColumn: "2junk" }, "Grid"))).toThrow(/gridColumn/);

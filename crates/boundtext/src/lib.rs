@@ -16,4 +16,4 @@ pub mod phase_trace;
 pub mod schema;
 pub mod text;
 
-pub use error::BoundtextError;
+pub use error::{BoundtextError, TextLayoutError};

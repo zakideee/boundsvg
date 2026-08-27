@@ -51,6 +51,7 @@ fn make_req(text: &str, font_size_px: f64, max_width: f64) -> TextLayoutRequest<
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     }
 }
 
@@ -154,6 +155,7 @@ fn parity_plain_wrap_japanese() {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
 
         // The existing layout path now uses the shaped path internally
@@ -253,6 +255,7 @@ fn parity_single_line_no_wrap() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
 
     let existing = layout_text(&req, &font_ctx).expect("layout");
@@ -2069,6 +2072,7 @@ fn layout_text_smoke_still_works_with_paragraph_module_split() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
 
     let result = layout_text(&req, &font_ctx).expect("layout");

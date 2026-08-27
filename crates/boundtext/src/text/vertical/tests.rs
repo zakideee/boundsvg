@@ -364,6 +364,7 @@ fn test_vertical_text_fits() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
     // 2 columns * 20px line_height = 40px total width <= 100px -> width OK
     // Each column height 20px <= 30px max_height -> OK
@@ -423,6 +424,7 @@ fn test_vertical_text_does_not_fit_width() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
     assert!(!vertical_text_fits(&columns, &req, 20.0, true));
 }
@@ -675,6 +677,7 @@ fn test_vertical_grow_overflow_when_initial_does_not_fit() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
 
     let result = layout_vertical_text(&req, &font_ctx).expect("should produce a result");
@@ -730,6 +733,7 @@ fn test_vertical_shrink_returns_early_when_fits() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
 
     let result = layout_vertical_text(&req, &font_ctx).expect("should produce a result");
@@ -804,6 +808,7 @@ fn parity_req(text: &'static str) -> TextLayoutRequest<'static> {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     }
 }
 

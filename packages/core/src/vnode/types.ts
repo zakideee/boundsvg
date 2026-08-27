@@ -520,6 +520,8 @@ export type TextProps = {
   maxFontSizePx?: number;
   growEpsilonPx?: number;
   growMaxIterations?: number;
+  /** Maximum exact-grid fit evaluations for uncertified content or geometry. */
+  fitMaxProbes?: number;
   // Flex item
   flexGrow?: number;
   flexShrink?: number;

@@ -1650,15 +1650,17 @@
           "type": "string"
         },
         "clusterStart": {
+          "description": "Inclusive UTF-8 byte offset in the glyph's shaping source. Content and\nruby-base glyphs use the normalized base document; ruby annotations use\ntheir annotation level's local text.",
           "type": "integer",
           "minimum": 0
         },
         "clusterEnd": {
+          "description": "Exclusive UTF-8 byte offset in the same shaping source. The cluster\nrange is not a cross-role identity; use the source role or the unit map\nwhen comparing glyphs from different source namespaces.",
           "type": "integer",
           "minimum": 0
         },
         "sourceStart": {
-          "description": "Grapheme range in the logical base text. Unlike `cluster_*`, these\noffsets remain stable across rich-text runs. Ruby annotations point to\nthe range of the base text they annotate.",
+          "description": "Grapheme range in the logical base text, stable for selection across\nrich-text runs. Ruby annotations point to the base-text range they\nannotate.",
           "type": [
             "integer",
             "null"

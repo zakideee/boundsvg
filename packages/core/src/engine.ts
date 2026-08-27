@@ -1513,6 +1513,7 @@ export class Engine {
     if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
+    this.assertVNodeFontAliasesRegistered(vnode);
 
     return computeLayout(vnode, {
       computeLayoutFn: this.options.computeLayoutFn,
@@ -1615,6 +1616,8 @@ export class Engine {
       this.options.compileLayoutTransitionFn,
       "compileLayoutTransitionFn",
     );
+    this.assertVNodeFontAliasesRegistered(referenceVNode);
+    this.assertVNodeFontAliasesRegistered(targetVNode);
     let envelopeJson: string;
     try {
       envelopeJson = compileLayoutTransitionFn(
@@ -1939,18 +1942,13 @@ export class Engine {
     });
   }
 
-  /**
-   * Replicate the TS backend's post-layout text diagnostics on a wasm-built
-   * IR: unregistered font aliases fail first, then text nodes whose content
-   * produced no layout (no text node in the IR) fail as TEXT_NO_LAYOUT.
-   */
+  /** Require every authored text node with content to survive WASM layout. */
   private assertWasmTextContracts(vnode: VNode, irTextNodeIds: ReadonlySet<string>): void {
     const visit = (node: VNode, position: NodePosition): void => {
       const { id: nodeId } = generateNodeId(node, position);
       if (node.type === "Text") {
         const fontUsage = collectTextFontAliases(node);
         if (fontUsage.hasText) {
-          this.assertFontAliasesRegistered(fontUsage.aliases, nodeId);
           if (!irTextNodeIds.has(nodeId)) {
             throw new FatalError(
               "TEXT_NO_LAYOUT",
@@ -1964,14 +1962,37 @@ export class Engine {
         return;
       }
       if (node.type === "TextOnPath") {
-        const fontUsage = collectTextFontAliases(node);
-        this.assertFontAliasesRegistered(fontUsage.aliases, nodeId);
         if (!irTextNodeIds.has(nodeId)) {
           throw new FatalError(
             "TEXT_NO_LAYOUT",
             `TextOnPath node "${nodeId}" has content but computeLayoutFn produced no textLayout.`,
             { stage: "text", nodeId },
           );
+        }
+        return;
+      }
+      let siblingIndex = 0;
+      for (const child of node.children) {
+        if (typeof child !== "string") {
+          visit(child, { depth: position.depth + 1, siblingIndex, parentNodeId: nodeId });
+          siblingIndex += 1;
+        }
+      }
+    };
+    visit(vnode, { depth: 0, siblingIndex: 0 });
+  }
+
+  /**
+   * Reject unresolved authored aliases before authoritative Rust layout can
+   * replace their identity with a generic shaping failure.
+   */
+  private assertVNodeFontAliasesRegistered(vnode: VNode): void {
+    const visit = (node: VNode, position: NodePosition): void => {
+      const { id: nodeId } = generateNodeId(node, position);
+      if (node.type === "Text" || node.type === "TextOnPath") {
+        const fontUsage = collectTextFontAliases(node);
+        if (fontUsage.hasText || node.type === "TextOnPath") {
+          this.assertFontAliasesRegistered(fontUsage.aliases, nodeId);
         }
         return;
       }
@@ -1996,6 +2017,7 @@ export class Engine {
     },
   ): CompiledScene {
     const renderToIrFn = this.requireWasmBackendFn(this.options.renderToIrFn, "renderToIrFn");
+    this.assertVNodeFontAliasesRegistered(vnode);
     let envelopeJson: string;
     try {
       envelopeJson = renderToIrFn(
@@ -2057,6 +2079,7 @@ export class Engine {
     if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
+    this.assertVNodeFontAliasesRegistered(vnode);
     let envelopeJson: string;
     try {
       envelopeJson = renderToSvgFn(
@@ -2318,6 +2341,7 @@ export class Engine {
     if (!stableRenderOpts?.skipValidation) {
       validate(vnode);
     }
+    this.assertVNodeFontAliasesRegistered(vnode);
 
     // Layout once (matching the TS backend's single compile); the emit at
     // the applied scale reuses this IR so callback-driven registry changes

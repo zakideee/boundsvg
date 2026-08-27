@@ -82,6 +82,11 @@ const ITEM_MACRO_ALLOWLIST: &[SourceAllowance] = &[
         reason: "generates cfg(test) performance counters, not a wire DTO",
     },
     SourceAllowance {
+        source: "crates/boundtext/src/phase_trace.rs",
+        item: "thread_local@d84770b901b77b8f",
+        reason: "generates hidden benchmark counters, not a wire DTO",
+    },
+    SourceAllowance {
         source: "crates/boundtext/src/font/backend_rustybuzz.rs",
         item: "self_cell@9abaf6da1176dbb1",
         reason: "generates a self-referential rustybuzz font holder, not a wire DTO",

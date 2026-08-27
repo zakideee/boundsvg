@@ -224,20 +224,16 @@ describe("Text animateUnits", () => {
     const plain = findText(plainIr.root, "fit-units");
 
     expect(animated.fontSizePx).toBe(plain.fontSizePx);
-    expect(animated.lines.map(({ positionedGlyphs: _positionedGlyphs, ...line }) => line)).toEqual(
-      plain.lines,
-    );
+    expect(animated.lines).toEqual(plain.lines);
     for (const [lineIndex, animatedLine] of animated.lines.entries()) {
       const plainLine = plain.lines[lineIndex];
-      expect(animatedLine.positionedGlyphs).toHaveLength(plainLine?.glyphs.length ?? 0);
+      expect(animatedLine.positionedGlyphs).toHaveLength(plainLine?.positionedGlyphs?.length ?? 0);
       for (const [glyphIndex, positionedGlyph] of (animatedLine.positionedGlyphs ?? []).entries()) {
-        const plainGlyph = plainLine?.glyphs[glyphIndex];
+        const plainGlyph = plainLine?.positionedGlyphs?.[glyphIndex];
         if (!plainGlyph) {
           throw new TypeError(`Missing plain glyph ${lineIndex}:${glyphIndex}`);
         }
-        const { cluster, ...plainShaping } = plainGlyph;
-        expect(positionedGlyph).toMatchObject(plainShaping);
-        expect(positionedGlyph.clusterStart).toBe(cluster);
+        expect(positionedGlyph).toEqual(plainGlyph);
       }
     }
     expect(animated.bbox).toEqual(plain.bbox);
@@ -578,6 +574,88 @@ describe("Text animateUnits", () => {
     expect(separate.unitMap?.units.length).toBeGreaterThan(withBase.unitMap?.units.length ?? 0);
     const svg = engine.renderToSvg(buildRubyScene("separate"), { animation: "static", timeMs: 50 });
     expect(svg.match(/aria-label=/g)).toHaveLength(1);
+  });
+
+  it("keeps preceding content from creating empty ruby-annotation units", () => {
+    const scene = createElement(
+      "Canvas",
+      { width: 240, height: 100 },
+      createElement(
+        "Text",
+        {
+          id: "ruby-after-content",
+          font: "NotoSansJP",
+          fontSizePx: 36,
+          animateUnits: {
+            by: "cluster",
+            animation: UNIT_TRACK,
+            delayStepMs: 20,
+            order: "logical",
+            ruby: "separate",
+          },
+        },
+        "AB",
+        createElement("Ruby", {}, "漢", createElement("Rt", { fontSizePx: 16 }, "かん")),
+      ),
+    );
+    const text = findText(engine.renderToIR(scene, { timeMs: 25 }).root, "ruby-after-content");
+    const units = text.unitMap?.units ?? [];
+
+    expect(units).toHaveLength(5);
+    expect(units.every((unit) => unit.members.length > 0)).toBe(true);
+    expect(units.map((unit) => unit.logicalOrder)).toEqual([0, 1, 2, 3, 4]);
+    expect(text.unitAnimationSamples).toHaveLength(5);
+  });
+
+  it("keeps nested inline and multi-level ruby source units distinct", () => {
+    const scene = createElement(
+      "Canvas",
+      { width: 320, height: 140 },
+      createElement(
+        "Text",
+        {
+          id: "nested-rich-units",
+          font: "NotoSansJP",
+          fontSizePx: 36,
+          animateUnits: {
+            by: "cluster",
+            animation: UNIT_TRACK,
+            order: "logical",
+            ruby: "separate",
+          },
+        },
+        createElement(
+          "InlineBox",
+          {},
+          "AB",
+          createElement("InlineBox", { color: "#60a5fa" }, "CD"),
+        ),
+        createElement(
+          "Ruby",
+          { rubyPosition: "alternate" },
+          createElement("Inline", { color: "#fca5a5" }, "漢"),
+          createElement("Inline", { color: "#fde68a" }, "字"),
+          createElement(
+            "Rt",
+            { fontSizePx: 16 },
+            createElement("Inline", { color: "#fca5a5" }, "か"),
+            createElement("Inline", { color: "#fde68a" }, "ん"),
+          ),
+          createElement("Rt", { fontSizePx: 16 }, "かん"),
+        ),
+      ),
+    );
+    const text = findText(engine.renderToIR(scene, { timeMs: 25 }).root, "nested-rich-units");
+    const units = text.unitMap?.units ?? [];
+    const annotationUnits = units.filter((unit) =>
+      unit.members.some((member) => member.sourceRole === "rubyAnnotation"),
+    );
+
+    expect(units).toHaveLength(10);
+    expect(annotationUnits).toHaveLength(4);
+    expect(new Set(units.map((unit) => unit.unitId))).toHaveProperty("size", 10);
+    expect(units.every((unit) => unit.members.length > 0)).toBe(true);
+    expect(text.unitAnimationSamples).toHaveLength(10);
   });
 
   it.each([

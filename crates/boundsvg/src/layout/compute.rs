@@ -70,8 +70,10 @@ fn compute_layout_inner_combined(
         measure_call_count: 0,
         measure_cache: HashMap::new(),
         measure_cache_hits: 0,
+        shrink_to_fit_widths: HashMap::new(),
         shaped_cache: HashMap::new(),
         text_results: HashMap::new(),
+        text_errors: HashMap::new(),
     };
     compute_layout_core(input, context)
 }
@@ -89,8 +91,10 @@ fn compute_layout_inner(
         measure_call_count: 0,
         measure_cache: HashMap::new(),
         measure_cache_hits: 0,
+        shrink_to_fit_widths: HashMap::new(),
         shaped_cache: HashMap::new(),
         text_results: HashMap::new(),
+        text_errors: HashMap::new(),
     };
     compute_layout_core(input, context)
 }

@@ -63,8 +63,8 @@ When adding a feature, decide its home first:
 Several sample scenes are authored twice — once in `apps/playground-core/src/presets/` with the
 core function API, once in `apps/playground-react/src/pages/templates/` as JSX (currently:
 `decoration-path-fit`, `font-fallback`, `inline-primitives`, `rich-text-on-path`,
-`text-on-path-basics`, `text-path-motion`, `typing-ime-timeline`, `variable-font`). When changing
-one copy, update the other in the same change.
+`text-on-path-basics`, `text-path-motion`, `typing-ime-timeline`, `variable-font`,
+`vertical-rich-ellipsis`). When changing one copy, update the other in the same change.
 
 ## Coding Conventions
 

@@ -62,6 +62,7 @@ pub(crate) fn measure_intrinsic_inline_size(
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
 
     let result = rich::measure_intrinsic_inline_size(&req, &font_ctx)

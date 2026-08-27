@@ -33,9 +33,14 @@ version = "1.12"
 optional = true
 
 [features]
-default = ["rustybuzz-backend", "ttfparser-backend"]
+default = ["rustybuzz-backend", "ttfparser-backend", "unicode-full"]
 phase-trace = []
 rustybuzz-backend = ["dep:rustybuzz", "dep:self_cell"]
 schema = ["dep:schemars", "boundshape/schema"]
 ttfparser-backend = ["dep:ttf-parser", "dep:self_cell"]
 unicode-full = ["unicode-segmentation"]
+
+[[bench]]
+name = "text_layout_adversarial"
+harness = false
+required-features = ["phase-trace"]

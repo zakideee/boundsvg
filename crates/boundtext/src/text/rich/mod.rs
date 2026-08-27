@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::font::FontContext;
 use crate::font::backend::{FontFace, GlyphBBox};
 use crate::font::line_metrics::{LineMetrics, resolve_line_metrics_for_style};
@@ -11,17 +13,19 @@ mod flow_layout;
 mod line_layout;
 mod prepare;
 
+use super::fit::selected_font_size_scale;
 use super::flow as text_flow;
 use super::grapheme::grapheme_split;
 use super::kinsoku::KinsokuProfile;
 use super::types::{
     FitMode, InlineRectInput, IntrinsicInlineSizes, Language, PositionedGlyph,
     RichTextDecorationRunInput, TextBBox, TextDecorationGlyphGeometry, TextDecorationInput,
-    TextLayoutRequest, TextLayoutResult, TextOrientation, TextOverflow, TextWarning, WrapMode,
+    TextLayoutRequest, TextLayoutResult, TextOrientation, TextOverflow, TextWarning,
+    WhiteSpaceMode, WrapMode, is_text_fit_certified_monotone, validate_rich_text_resources,
 };
 #[cfg(test)]
-use super::types::{RichTextNodeInput, RichTextStyleInput, WhiteSpaceMode};
-pub(crate) use flow_layout::layout_rich_flow_with_regions;
+use super::types::{RichTextNodeInput, RichTextStyleInput};
+pub(crate) use flow_layout::{layout_rich_flow_with_regions, source_text_for_flow_projection};
 #[cfg(test)]
 use line_layout::{
     assemble_horizontal_line, assemble_vertical_line, break_tokens_horizontal,
@@ -29,8 +33,8 @@ use line_layout::{
 };
 use line_layout::{effective_line_width, layout_horizontal_tokens, layout_vertical_tokens};
 use prepare::{
-    build_default_style, collect_notdef_warnings_from_tokens, expand_tabs_in_nodes,
-    flatten_rich_nodes_with_warnings,
+    build_default_style, collect_notdef_warnings_from_tokens, collect_owned_warnings,
+    expand_tabs_in_nodes, flatten_rich_nodes_with_warnings,
 };
 
 /// Maximum nesting depth for `InlineBox` (outer + 2 nested).
@@ -74,6 +78,8 @@ struct RichRuby {
     ruby_line_sizing: RubyLineSizing,
     base: Vec<RichSegment>,
     rt_levels: Vec<Vec<RichSegment>>,
+    /// Recoverable diagnostics owned by this atomic ruby node.
+    warnings: Vec<TextWarning>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +92,8 @@ struct RichInlineBox {
     border_radius: Option<f64>,
     /// Caller-assigned provenance key echoed on the emitted decoration fragment.
     span_key: Option<String>,
+    /// Recoverable diagnostics owned by this atomic box and its descendants.
+    warnings: Vec<TextWarning>,
 }
 
 #[derive(Debug, Clone)]
@@ -235,6 +243,20 @@ struct NestedInlineRect {
     rect: InlineRectInput,
 }
 
+/// One fragmentable decoration ancestor carried by a layout token.
+///
+/// Memberships are stored in document-tree order (outermost first). Keeping
+/// the complete ancestry is what lets nested decorated spans fragment without
+/// turning their children into one atomic token.
+#[derive(Debug, Clone, PartialEq)]
+struct DecorationMembership {
+    span_id: u32,
+    /// Extra advance at the authored start of this span.
+    start_advance: f64,
+    /// Extra advance at the authored end of this span.
+    end_advance: f64,
+}
+
 #[derive(Debug, Clone)]
 struct LayoutToken {
     text: String,
@@ -253,18 +275,45 @@ struct LayoutToken {
     inline_box_decoration: Option<InlineBoxDecorationInput>,
     /// Decorations from nested `InlineBoxes`, with offsets relative to this token's content start.
     nested_decorations: Vec<NestedInlineBoxDecoration>,
-    /// Fragmentable decoration span tracking.
-    decoration_span_id: Option<u32>,
-    /// Extra advance for decoration start (`padding_inline`[0] + `border_width`).
-    /// Non-zero only on the first token of a decoration span.
-    decoration_start_advance: f64,
-    /// Extra advance for decoration end (`padding_inline`[1] + `border_width`).
-    /// Non-zero only on the last token of a decoration span.
-    decoration_end_advance: f64,
+    /// Complete fragmentable decoration ancestry (outermost first).
+    decoration_memberships: Vec<DecorationMembership>,
     flow_ruby: Option<text_flow::FlowRubyAnnotation>,
     /// letterSpacing to re-add after this token when it is not stream-final.
     /// Per-token shaping drops inter-token tracking; see `build_tokens`.
     trailing_tracking_px: f64,
+}
+
+fn decoration_memberships(span_ids: &[u32]) -> Vec<DecorationMembership> {
+    span_ids
+        .iter()
+        .map(|span_id| DecorationMembership {
+            span_id: *span_id,
+            start_advance: 0.0,
+            end_advance: 0.0,
+        })
+        .collect()
+}
+
+fn token_decoration_start_advance(token: &LayoutToken) -> f64 {
+    token
+        .decoration_memberships
+        .iter()
+        .map(|membership| membership.start_advance)
+        .sum()
+}
+
+fn has_decoration_span(token: &LayoutToken, span_id: u32) -> bool {
+    token
+        .decoration_memberships
+        .iter()
+        .any(|membership| membership.span_id == span_id)
+}
+
+fn token_decoration_membership(token: &LayoutToken, span_id: u32) -> Option<&DecorationMembership> {
+    token
+        .decoration_memberships
+        .iter()
+        .find(|membership| membership.span_id == span_id)
 }
 
 /// Inline box decoration with advance-direction offset relative to line start.
@@ -341,11 +390,19 @@ fn extend_kinsoku_edges(
     }
 }
 
+/// Perform legacy direct rich-text layout.
+///
+/// Checked callers should use [`crate::text::engine::layout_text`] so resource,
+/// fit, and ellipsis failures retain their typed identity. This helper keeps its
+/// pre-existing `Option` contract until a separate breaking Rust API migration.
 #[must_use]
 pub fn layout_rich_text(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
 ) -> Option<TextLayoutResult> {
+    if let Some(nodes) = req.rich_text {
+        validate_rich_text_resources(nodes).ok()?;
+    }
     if req.fit == FitMode::Shrink {
         return fit_rich_text(req, font_ctx, true);
     }
@@ -353,7 +410,19 @@ pub fn layout_rich_text(
         return fit_rich_text(req, font_ctx, false);
     }
 
-    layout_rich_text_at_font_size(req, font_ctx, req.font_size_px)
+    layout_rich_text_at_font_size(req, font_ctx, req.font_size_px, true)
+}
+
+/// Project an already-fitted complete document at its settled font size.
+///
+/// The authoritative engine uses this after proving complete-document
+/// overflow so fit probes are not repeated during ellipsis projection.
+pub(crate) fn layout_rich_text_at_selected_font_size(
+    req: &TextLayoutRequest,
+    font_ctx: &FontContext<'_>,
+    chosen_font_size_px: f64,
+) -> Option<TextLayoutResult> {
+    layout_rich_text_at_font_size(req, font_ctx, chosen_font_size_px, true)
 }
 
 /// Build the flattened inline-node list (with whitespace normalization) and
@@ -377,7 +446,7 @@ fn build_normalized_inline_nodes(
             rich_nodes,
             &default_style,
             &mut inline_nodes,
-            chosen_font_size_px / req.font_size_px,
+            selected_font_size_scale(req.font_size_px, chosen_font_size_px),
             &mut flatten_warnings,
         );
     } else if !req.text.is_empty() {
@@ -665,11 +734,18 @@ fn prepare_rich_text(
 ///   In horizontal text this is physical line width; in vertical text this is
 ///   physical column height. Newline-only tokens act as separators.
 /// - `min_content_inline_size`: the largest single unbreakable token.
+///
+/// This legacy direct helper reports preparation and resource failure as
+/// `None`. A typed measurement authority requires a separate Rust API
+/// migration.
 #[must_use]
 pub fn measure_intrinsic_inline_size(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
 ) -> Option<IntrinsicInlineSizes> {
+    if let Some(nodes) = req.rich_text {
+        validate_rich_text_resources(nodes).ok()?;
+    }
     let prepared = prepare_rich_text(req, font_ctx, req.font_size_px)?;
 
     if prepared.tokens.is_empty() {
@@ -680,20 +756,30 @@ pub fn measure_intrinsic_inline_size(
         });
     }
 
-    // min-content: largest single unbreakable token, including decoration
-    // advance if the token is the first/last of a decoration span.
+    // min-content: largest single unbreakable token, including every nested
+    // decoration edge authored on that token.
     let mut min_content_inline_size = prepared
         .tokens
         .iter()
         .filter(|token| token.text != "\n")
-        .map(|token| token.advance + token.decoration_start_advance + token.decoration_end_advance)
+        .map(|token| {
+            token.advance
+                + token
+                    .decoration_memberships
+                    .iter()
+                    .map(|membership| membership.start_advance + membership.end_advance)
+                    .sum::<f64>()
+        })
         .fold(0.0_f64, f64::max);
     let text_indent = req.text_indent.unwrap_or(0.0);
     if let Some(first_token) = prepared.tokens.first().filter(|token| token.text != "\n") {
         min_content_inline_size = min_content_inline_size.max(
             first_token.advance
-                + first_token.decoration_start_advance
-                + first_token.decoration_end_advance
+                + first_token
+                    .decoration_memberships
+                    .iter()
+                    .map(|membership| membership.start_advance + membership.end_advance)
+                    .sum::<f64>()
                 + text_indent,
         );
     }
@@ -735,70 +821,206 @@ pub fn measure_intrinsic_inline_size(
 fn fit_rich_text(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-    shrink: bool,
+    should_shrink: bool,
 ) -> Option<TextLayoutResult> {
-    let epsilon = if shrink {
+    if !is_text_fit_certified_monotone(req) {
+        return fit_rich_text_exact_grid(req, font_ctx, should_shrink);
+    }
+    let epsilon = if should_shrink {
         req.shrink_epsilon_px.unwrap_or(0.25)
     } else {
         req.grow_epsilon_px.unwrap_or(0.25)
     };
-    let iterations = if shrink {
+    let iterations = if should_shrink {
         req.shrink_max_iterations.unwrap_or(12)
     } else {
         req.grow_max_iterations.unwrap_or(12)
     };
 
-    let mut lo = if shrink {
-        req.min_font_size_px.unwrap_or(8.0)
-    } else {
-        req.font_size_px
-    };
-    let mut hi = if shrink {
-        req.font_size_px
-    } else {
-        req.max_font_size_px.unwrap_or(req.font_size_px * 4.0)
-    };
-    let mut best: Option<TextLayoutResult> = None;
+    let initial_size = req.font_size_px;
+    let mut initial = fit_rich_probe(req, font_ctx, initial_size)?;
+    let is_initial_fit = is_rich_text_fit(req, &initial);
 
+    if should_shrink {
+        if is_initial_fit {
+            return Some(initial);
+        }
+        let min_size = req
+            .min_font_size_px
+            .unwrap_or(8.0)
+            .max(f64::EPSILON)
+            .min(initial_size);
+        let mut at_min = fit_rich_probe(req, font_ctx, min_size)?;
+        if !is_rich_text_fit(req, &at_min) {
+            if req.ellipsis
+                && req.max_lines.is_some()
+                && let Some(mut ellipsized) = apply_rich_ellipsis(req, font_ctx, min_size)
+            {
+                if ellipsized.lines.is_empty() {
+                    ellipsized.overflow = TextOverflow::cannot_fit();
+                }
+                return Some(ellipsized);
+            }
+            if at_min.overflow.overflow_type != "kinsoku_unresolved" {
+                at_min.overflow = TextOverflow::cannot_fit();
+            }
+            return Some(at_min);
+        }
+
+        let mut lo = min_size;
+        let mut hi = initial_size;
+        for _ in 0..iterations {
+            if hi - lo < epsilon {
+                break;
+            }
+            let mid = f64::midpoint(lo, hi);
+            let candidate = fit_rich_probe(req, font_ctx, mid)?;
+            if is_rich_text_fit(req, &candidate) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        return fit_rich_probe(req, font_ctx, lo);
+    }
+
+    if !is_initial_fit {
+        // Grow eligibility is decided from the complete document. Ellipsis
+        // is only a final display projection at the unchanged authored size;
+        // it must never make an overflowing initial size eligible to grow.
+        if req.ellipsis
+            && req.max_lines.is_some()
+            && let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, initial_size)
+        {
+            return Some(ellipsized);
+        }
+        if initial.overflow.overflow_type != "kinsoku_unresolved" {
+            initial.overflow =
+                TextOverflow::overflow("initial font size does not fit; cannot grow");
+        }
+        return Some(initial);
+    }
+    let max_size = req
+        .max_font_size_px
+        .unwrap_or(initial_size * 4.0)
+        .max(initial_size);
+    let at_max = fit_rich_probe(req, font_ctx, max_size)?;
+    if is_rich_text_fit(req, &at_max) {
+        return Some(at_max);
+    }
+
+    let mut lo = initial_size;
+    let mut hi = max_size;
     for _ in 0..iterations {
         if hi - lo < epsilon {
             break;
         }
-        let mid = (lo + hi) * 0.5;
-        let candidate = layout_rich_text_at_font_size(req, font_ctx, mid)?;
-        let fits = rich_text_fits(req, &candidate);
-        if fits {
-            best = Some(candidate.clone());
+        let mid = f64::midpoint(lo, hi);
+        let candidate = fit_rich_probe(req, font_ctx, mid)?;
+        if is_rich_text_fit(req, &candidate) {
             lo = mid;
         } else {
             hi = mid;
         }
     }
-
-    best.or_else(|| layout_rich_text_at_font_size(req, font_ctx, lo))
+    fit_rich_probe(req, font_ctx, lo)
 }
 
-fn rich_text_fits(req: &TextLayoutRequest, result: &TextLayoutResult) -> bool {
-    if result.bbox.w > req.max_width + 0.001 {
+fn fit_rich_text_exact_grid(
+    req: &TextLayoutRequest,
+    font_ctx: &FontContext<'_>,
+    should_shrink: bool,
+) -> Option<TextLayoutResult> {
+    let is_fit_at_size = |candidate| {
+        layout_rich_text_at_font_size(req, font_ctx, candidate, false)
+            .map(|layout_result| is_rich_text_fit(req, &layout_result))
+            .ok_or_else(|| {
+                crate::BoundtextError::FlowLayout(
+                    "Failed to prepare exact-grid text fit candidate".to_string(),
+                )
+            })
+    };
+    let (chosen_size, fit_overflow) = if should_shrink {
+        text_flow::fit_shrink_with(
+            req.font_size_px,
+            req.min_font_size_px
+                .unwrap_or(text_flow::DEFAULT_MIN_FONT_SIZE),
+            req.shrink_epsilon_px
+                .unwrap_or(text_flow::DEFAULT_FIT_EPSILON),
+            req.shrink_max_iterations.unwrap_or(12),
+            text_flow::FitSearchKind::Uncertified,
+            req.fit_max_probes,
+            is_fit_at_size,
+        )
+    } else {
+        text_flow::fit_grow_with(
+            req.font_size_px,
+            req.max_font_size_px
+                .unwrap_or(req.font_size_px * text_flow::DEFAULT_GROW_MULTIPLIER),
+            req.grow_epsilon_px
+                .unwrap_or(text_flow::DEFAULT_FIT_EPSILON),
+            req.grow_max_iterations.unwrap_or(12),
+            text_flow::FitSearchKind::Uncertified,
+            req.fit_max_probes,
+            is_fit_at_size,
+        )
+    }
+    .ok()?;
+
+    let mut layout_result = layout_rich_text_at_font_size(req, font_ctx, chosen_size, true)?;
+    if fit_overflow.is_none() || layout_result.overflow.overflow_type == "kinsoku_unresolved" {
+        return Some(layout_result);
+    }
+    let is_ellipsis_applied = req.ellipsis
+        && req.max_lines.is_some()
+        && layout_result.overflow.reason.as_deref() == Some("ellipsis applied");
+    if should_shrink {
+        if is_ellipsis_applied {
+            if layout_result.lines.is_empty() {
+                layout_result.overflow = TextOverflow::cannot_fit();
+            }
+        } else {
+            layout_result.overflow = TextOverflow::cannot_fit();
+        }
+    } else if !is_ellipsis_applied {
+        layout_result.overflow =
+            TextOverflow::overflow("initial font size does not fit; cannot grow");
+    }
+    Some(layout_result)
+}
+
+fn fit_rich_probe(
+    req: &TextLayoutRequest,
+    font_ctx: &FontContext<'_>,
+    font_size_px: f64,
+) -> Option<TextLayoutResult> {
+    #[cfg(any(test, feature = "phase-trace"))]
+    crate::phase_trace::record_fit_probe();
+    layout_rich_text_at_font_size(req, font_ctx, font_size_px, false)
+}
+
+fn is_rich_text_fit(req: &TextLayoutRequest, layout_result: &TextLayoutResult) -> bool {
+    if layout_result.bbox.w > req.max_width {
         return false;
     }
     if let Some(max_h) = req.max_height {
-        if result.bbox.h > max_h + 0.001 {
+        if layout_result.bbox.h > max_h {
             return false;
         }
     }
     if let Some(max_lines) = req.max_lines {
-        if result.lines.len() > max_lines {
+        if layout_result.lines.len() > max_lines {
             return false;
         }
     }
-    result.overflow.overflow_type == "none"
+    !layout_result.overflow.is_constraint_overflow()
 }
 
 fn layout_rich_text_at_font_size(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     chosen_font_size_px: f64,
+    should_apply_ellipsis_projection: bool,
 ) -> Option<TextLayoutResult> {
     let prepared = prepare_rich_text(req, font_ctx, chosen_font_size_px)?;
 
@@ -822,38 +1044,39 @@ fn layout_rich_text_at_font_size(
             inline_rects: Vec::new(),
         });
     }
-    if req.is_vertical() {
+    let layout_result = if req.is_vertical() {
         layout_vertical_tokens(
             req,
             &prepared.tokens,
             &prepared.decoration_spans,
             chosen_font_size_px,
             prepared.warnings,
-        )
+        )?
     } else {
-        let result = layout_horizontal_tokens(
+        layout_horizontal_tokens(
             req,
             &prepared.tokens,
             &prepared.decoration_spans,
             chosen_font_size_px,
             prepared.warnings,
-        )?;
-        // maxLines + ellipsis: relayout with truncated inline nodes.
-        // (Vertical rich content still truncates without an ellipsis —
-        // known residual, same as the vertical inline paths.)
-        if req.ellipsis && req.max_lines.is_some() && result.overflow.overflow_type != "none" {
-            if let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px) {
-                return Some(ellipsized);
-            }
-        }
-        Some(result)
+        )?
+    };
+
+    // Horizontal and vertical rich text share one display-projection step.
+    if should_apply_ellipsis_projection
+        && req.ellipsis
+        && req.max_lines.is_some()
+        && !is_rich_text_fit(req, &layout_result)
+        && let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px)
+    {
+        return Some(ellipsized);
     }
+    Some(layout_result)
 }
 
-/// Apply ellipsis to rich text by relayout: truncate the flattened inline
-/// nodes at grapheme granularity (ruby and inline boxes are atomic — kept
-/// whole or dropped), append "…" styled as the last kept segment, and
-/// binary-search the largest kept prefix that fits within `maxLines`.
+/// Apply ellipsis to rich text by exact relayout. Candidates are legal logical
+/// prefixes (ruby and atomic inlines are kept whole or dropped) and are tried
+/// longest-first, without assuming monotone prefix advances.
 fn apply_rich_ellipsis(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -866,84 +1089,134 @@ fn apply_rich_ellipsis(
         return None;
     }
 
-    let max_width = req.max_width.max(1.0);
+    let source_text = collect_inline_source_text(&inline_nodes);
     let probe = |keep: usize| -> Option<TextLayoutResult> {
-        let (mut truncated, _consumed) = truncate_inline_nodes(&inline_nodes, keep);
-        let ellipsis_style =
-            last_segment_style(&truncated).unwrap_or_else(|| default_style.clone());
-        truncated.push(RichInlineNode::Segment(RichSegment {
-            text: "\u{2026}".to_string(),
-            style: ellipsis_style,
-            combine: false,
-            decoration_runs: Vec::new(),
-        }));
-        let (tokens, decoration_spans) = build_tokens(
+        #[cfg(any(test, feature = "phase-trace"))]
+        crate::phase_trace::record_ellipsis_candidate();
+        let ellipsis_style = first_omitted_style(&inline_nodes, keep)
+            .or_else(|| last_segment_style(&inline_nodes))
+            .unwrap_or_else(|| default_style.clone());
+        let truncated = project_inline_nodes_with_ellipsis(
+            &inline_nodes,
+            keep,
+            RichSegment {
+                text: "\u{2026}".to_string(),
+                style: ellipsis_style,
+                combine: false,
+                decoration_runs: Vec::new(),
+            },
+            req.white_space != WhiteSpaceMode::PreWrap,
+        );
+        let display_text = collect_inline_source_text(&truncated);
+        let (mut tokens, decoration_spans) = build_ellipsis_tokens(
             &truncated,
             req,
             font_ctx.registry,
             font_ctx.fallback_registry,
             &default_style,
         )?;
+        mark_last_token_as_synthetic_ellipsis(&mut tokens);
+        let mut warnings = collect_notdef_warnings_from_tokens(&tokens);
+        warnings.extend(collect_owned_warnings(&truncated));
         let probe_req = TextLayoutRequest {
             max_lines: None,
             ellipsis: false,
             ..req.clone()
         };
-        layout_horizontal_tokens(
-            &probe_req,
-            &tokens,
-            &decoration_spans,
-            chosen_font_size_px,
-            Vec::new(),
-        )
-    };
-    let fits = |result: &TextLayoutResult| {
-        result.lines.len() <= max_lines && result.bbox.w <= max_width + 0.01
-    };
-
-    // Binary search the largest keep count whose relayout fits. Keeping
-    // everything is known not to fit (the caller checked overflow).
-    let mut lo = 0usize;
-    let mut hi = total - 1;
-    let mut best: Option<(usize, TextLayoutResult)> = None;
-    while lo <= hi {
-        let mid = lo + (hi - lo) / 2;
-        let candidate = probe(mid)?;
-        if fits(&candidate) {
-            best = Some((mid, candidate));
-            lo = mid + 1;
+        let mut candidate_layout = if req.is_vertical() {
+            layout_vertical_tokens(
+                &probe_req,
+                &tokens,
+                &decoration_spans,
+                chosen_font_size_px,
+                warnings,
+            )?
         } else {
-            if mid == 0 {
-                break;
-            }
-            hi = mid - 1;
-        }
-    }
-    let (keep, mut result) = match best {
-        Some(found) => found,
-        // Even "…" alone overflows — return it as the best effort.
-        None => (0, probe(0)?),
+            layout_horizontal_tokens(
+                &probe_req,
+                &tokens,
+                &decoration_spans,
+                chosen_font_size_px,
+                warnings,
+            )?
+        };
+        candidate_layout.source_text = Some(source_text.clone());
+        candidate_layout.display_text = Some(display_text);
+        Some(candidate_layout)
+    };
+    let is_candidate_fit = |candidate_layout: &TextLayoutResult| {
+        candidate_layout.lines.len() <= max_lines
+            && candidate_layout.bbox.w <= req.max_width + 0.01
+            && req
+                .max_height
+                .is_none_or(|max_height| candidate_layout.bbox.h <= max_height + 0.01)
+            && !candidate_layout.overflow.is_constraint_overflow()
     };
 
-    // Back up past tail-prohibited characters (same contract as plain).
-    if let Some(profile) =
-        crate::text::kinsoku::get_kinsoku_profile(Some(language_to_str(req.language)))
-    {
-        let graphemes = collect_inline_graphemes(&inline_nodes);
-        let grapheme_refs: Vec<&str> = graphemes.iter().map(String::as_str).collect();
-        let mut adjusted = keep;
-        while adjusted > 0
-            && !crate::text::kinsoku::is_valid_ellipsis_boundary(&grapheme_refs, adjusted, profile)
-        {
-            adjusted -= 1;
-        }
-        if adjusted != keep {
-            result = probe(adjusted)?;
-        }
+    let legal_prefixes = legal_ellipsis_prefixes_for_request(req, &inline_nodes, total);
+    if let Some((_keep, mut selected)) = super::ellipsis_plan::select_longest_fitting(
+        legal_prefixes.iter().copied(),
+        &probe,
+        is_candidate_fit,
+    ) {
+        selected.overflow = TextOverflow::overflow("ellipsis applied");
+        return Some(selected);
     }
 
-    result.overflow = TextOverflow::overflow("ellipsis applied");
-    Some(result)
+    let mut empty_projection = probe(0)?;
+    empty_projection.lines.clear();
+    empty_projection.bbox.w = 0.0;
+    empty_projection.bbox.h = 0.0;
+    empty_projection.display_text = Some(String::new());
+    empty_projection.warnings.clear();
+    empty_projection.inline_box_decorations.clear();
+    empty_projection.text_decorations.clear();
+    empty_projection.inline_rects.clear();
+    empty_projection.overflow = TextOverflow::overflow("ellipsis applied");
+    Some(empty_projection)
+}
+
+/// Return the maximum number of exact candidate layouts needed by the
+/// authoritative projection. The extra probe covers the marker-only result
+/// retained when no legal candidate fits.
+pub(crate) fn ellipsis_candidate_upper_bound(
+    req: &TextLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+) -> usize {
+    let (inline_nodes, _, _) = build_inline_nodes(req, font_ctx, req.font_size_px);
+    let total = count_inline_graphemes(&inline_nodes);
+    if total == 0 {
+        return 0;
+    }
+    legal_ellipsis_prefixes_for_request(req, &inline_nodes, total)
+        .len()
+        .saturating_add(1)
+}
+
+fn legal_ellipsis_prefixes_for_request(
+    req: &TextLayoutRequest<'_>,
+    inline_nodes: &[RichInlineNode],
+    total: usize,
+) -> Vec<usize> {
+    let graphemes = collect_inline_graphemes(inline_nodes);
+    let grapheme_refs: Vec<&str> = graphemes.iter().map(String::as_str).collect();
+    let word_boundaries =
+        prepare_ellipsis_word_boundaries(&graphemes, req.effective_wrap(), req.uax14_breaks);
+    let profile = crate::text::kinsoku::get_kinsoku_profile(Some(language_to_str(req.language)));
+    legal_ellipsis_prefixes(inline_nodes)
+        .into_iter()
+        .filter(|keep| *keep < total)
+        .filter(|keep| is_ellipsis_boundary_allowed_by_wrap(word_boundaries.as_ref(), *keep))
+        .filter(|keep| {
+            profile.is_none_or(|active_profile| {
+                crate::text::kinsoku::is_valid_ellipsis_boundary(
+                    &grapheme_refs,
+                    *keep,
+                    active_profile,
+                )
+            })
+        })
+        .collect()
 }
 
 /// Count the grapheme budget of inline nodes: segment text by graphemes,
@@ -957,11 +1230,266 @@ fn count_inline_graphemes(nodes: &[RichInlineNode]) -> usize {
                 .base
                 .iter()
                 .map(|seg| grapheme_split(&seg.text).len())
-                .sum(),
+                .sum::<usize>()
+                .max(1),
             RichInlineNode::InlineBox(_) | RichInlineNode::InlineRect(_) => 1,
             RichInlineNode::DecoratedSpan(span) => count_inline_graphemes(&span.children),
         })
         .sum()
+}
+
+fn legal_ellipsis_prefixes(nodes: &[RichInlineNode]) -> Vec<usize> {
+    fn append(nodes: &[RichInlineNode], cursor: &mut usize, output: &mut Vec<usize>) {
+        for node in nodes {
+            match node {
+                RichInlineNode::Segment(segment) => {
+                    for _ in grapheme_split(&segment.text) {
+                        *cursor += 1;
+                        output.push(*cursor);
+                    }
+                }
+                RichInlineNode::Ruby(_)
+                | RichInlineNode::InlineBox(_)
+                | RichInlineNode::InlineRect(_) => {
+                    *cursor += count_inline_graphemes(std::slice::from_ref(node));
+                    output.push(*cursor);
+                }
+                RichInlineNode::DecoratedSpan(span) => {
+                    append(&span.children, cursor, output);
+                }
+            }
+        }
+    }
+
+    let mut output = vec![0];
+    let mut cursor = 0;
+    append(nodes, &mut cursor, &mut output);
+    output
+}
+
+/// Precompute the byte offsets needed to filter every word-wrapped ellipsis
+/// candidate without rescanning or reallocating the complete source text.
+struct EllipsisWordBoundaries {
+    grapheme_end_offsets: Vec<usize>,
+    break_offsets: Vec<usize>,
+}
+
+fn prepare_ellipsis_word_boundaries(
+    graphemes: &[String],
+    wrap: WrapMode,
+    supplied_uax14_breaks: Option<&[usize]>,
+) -> Option<EllipsisWordBoundaries> {
+    if wrap != WrapMode::Word {
+        return None;
+    }
+
+    #[cfg(any(test, feature = "phase-trace"))]
+    crate::phase_trace::record_ellipsis_word_boundary_preparation();
+
+    let mut grapheme_end_offsets = Vec::with_capacity(graphemes.len());
+    let mut byte_offset = 0usize;
+    for grapheme in graphemes {
+        byte_offset = byte_offset.saturating_add(grapheme.len());
+        grapheme_end_offsets.push(byte_offset);
+    }
+
+    let mut break_offsets = match supplied_uax14_breaks {
+        Some(supplied) if !supplied.is_empty() => supplied.to_vec(),
+        _ => crate::text::linebreak::uax14_break_opportunities(&graphemes.concat()),
+    };
+    break_offsets.sort_unstable();
+    break_offsets.dedup();
+
+    Some(EllipsisWordBoundaries {
+        grapheme_end_offsets,
+        break_offsets,
+    })
+}
+
+/// Determine whether a normalized logical boundary is legal for the prepared
+/// wrapping policy. Character and no-wrap ellipsis pass `None` and may stop at
+/// any EGC; word wrapping supplies its precomputed UAX #14 byte offsets.
+fn is_ellipsis_boundary_allowed_by_wrap(
+    word_boundaries: Option<&EllipsisWordBoundaries>,
+    keep: usize,
+) -> bool {
+    if keep == 0 || word_boundaries.is_none() {
+        return true;
+    }
+    word_boundaries
+        .and_then(|boundaries| {
+            boundaries
+                .grapheme_end_offsets
+                .get(keep - 1)
+                .map(|offset| (boundaries, offset))
+        })
+        .is_some_and(|(boundaries, offset)| boundaries.break_offsets.binary_search(offset).is_ok())
+}
+
+fn collect_inline_source_text(nodes: &[RichInlineNode]) -> String {
+    let mut source = String::new();
+    for node in nodes {
+        match node {
+            RichInlineNode::Segment(segment) => source.push_str(&segment.text),
+            RichInlineNode::Ruby(ruby) => {
+                for segment in &ruby.base {
+                    source.push_str(&segment.text);
+                }
+            }
+            RichInlineNode::InlineBox(inline_box) => {
+                source.push_str(&collect_inline_source_text(&inline_box.children));
+            }
+            RichInlineNode::InlineRect(_) => {}
+            RichInlineNode::DecoratedSpan(span) => {
+                source.push_str(&collect_inline_source_text(&span.children));
+            }
+        }
+    }
+    source
+}
+
+fn build_inline_source_projection(
+    nodes: &[RichInlineNode],
+) -> super::unit_map::TextSourceProjection {
+    use super::unit_map::{TextSourceProjection, TextSourceUnit, TextUnitSourceRole};
+
+    fn append_segment(
+        segment: &RichSegment,
+        role: TextUnitSourceRole,
+        annotation_level: Option<u32>,
+        source_cursor: &mut u32,
+        byte_cursor: &mut u32,
+        authored_order: &mut u32,
+        output: &mut Vec<TextSourceUnit>,
+    ) {
+        for grapheme in grapheme_split(&segment.text) {
+            let source_start = *source_cursor;
+            let cluster_start = *byte_cursor;
+            *source_cursor = source_cursor.saturating_add(1);
+            *byte_cursor =
+                byte_cursor.saturating_add(u32::try_from(grapheme.len()).unwrap_or(u32::MAX));
+            output.push(TextSourceUnit {
+                source_start,
+                source_end: *source_cursor,
+                cluster_start,
+                cluster_end: *byte_cursor,
+                source_role: role,
+                annotation_level,
+                authored_order: *authored_order,
+            });
+            *authored_order = authored_order.saturating_add(1);
+        }
+    }
+
+    fn append_nodes(
+        nodes: &[RichInlineNode],
+        source_cursor: &mut u32,
+        byte_cursor: &mut u32,
+        authored_order: &mut u32,
+        output: &mut Vec<TextSourceUnit>,
+    ) {
+        for node in nodes {
+            match node {
+                RichInlineNode::Segment(segment) => append_segment(
+                    segment,
+                    TextUnitSourceRole::Content,
+                    None,
+                    source_cursor,
+                    byte_cursor,
+                    authored_order,
+                    output,
+                ),
+                RichInlineNode::Ruby(ruby) => {
+                    let base_start = *source_cursor;
+                    for segment in &ruby.base {
+                        append_segment(
+                            segment,
+                            TextUnitSourceRole::RubyBase,
+                            None,
+                            source_cursor,
+                            byte_cursor,
+                            authored_order,
+                            output,
+                        );
+                    }
+                    let base_end = *source_cursor;
+                    if base_start == base_end {
+                        output.push(TextSourceUnit {
+                            source_start: base_start,
+                            source_end: base_end,
+                            cluster_start: *byte_cursor,
+                            cluster_end: *byte_cursor,
+                            source_role: TextUnitSourceRole::RubyBase,
+                            annotation_level: None,
+                            authored_order: *authored_order,
+                        });
+                        *authored_order = authored_order.saturating_add(1);
+                    }
+                    for (level_index, level) in ruby.rt_levels.iter().enumerate() {
+                        let mut annotation_byte_cursor = 0_u32;
+                        for segment in level {
+                            for grapheme in grapheme_split(&segment.text) {
+                                let cluster_start = annotation_byte_cursor;
+                                annotation_byte_cursor = annotation_byte_cursor.saturating_add(
+                                    u32::try_from(grapheme.len()).unwrap_or(u32::MAX),
+                                );
+                                output.push(TextSourceUnit {
+                                    source_start: base_start,
+                                    source_end: base_end,
+                                    cluster_start,
+                                    cluster_end: annotation_byte_cursor,
+                                    source_role: TextUnitSourceRole::RubyAnnotation,
+                                    annotation_level: Some(
+                                        u32::try_from(level_index).unwrap_or(u32::MAX),
+                                    ),
+                                    authored_order: *authored_order,
+                                });
+                                *authored_order = authored_order.saturating_add(1);
+                            }
+                        }
+                    }
+                }
+                RichInlineNode::InlineBox(inline_box) => append_nodes(
+                    &inline_box.children,
+                    source_cursor,
+                    byte_cursor,
+                    authored_order,
+                    output,
+                ),
+                RichInlineNode::DecoratedSpan(span) => append_nodes(
+                    &span.children,
+                    source_cursor,
+                    byte_cursor,
+                    authored_order,
+                    output,
+                ),
+                RichInlineNode::InlineRect(_) => {}
+            }
+        }
+    }
+
+    let mut units = Vec::new();
+    let mut source_cursor = 0_u32;
+    let mut byte_cursor = 0_u32;
+    let mut authored_order = 0_u32;
+    append_nodes(
+        nodes,
+        &mut source_cursor,
+        &mut byte_cursor,
+        &mut authored_order,
+        &mut units,
+    );
+    TextSourceProjection { units }
+}
+
+/// Build the immutable authored-unit projection used by output metadata.
+pub(crate) fn build_source_projection(
+    req: &TextLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    chosen_font_size_px: f64,
+) -> super::unit_map::TextSourceProjection {
+    let (inline_nodes, _, _) = build_inline_nodes(req, font_ctx, chosen_font_size_px);
+    build_inline_source_projection(&inline_nodes)
 }
 
 /// Flatten inline-node text into a grapheme list aligned with
@@ -972,8 +1500,12 @@ fn collect_inline_graphemes(nodes: &[RichInlineNode]) -> Vec<String> {
         match node {
             RichInlineNode::Segment(seg) => out.extend(grapheme_split(&seg.text)),
             RichInlineNode::Ruby(ruby) => {
+                let initial_len = out.len();
                 for seg in &ruby.base {
                     out.extend(grapheme_split(&seg.text));
+                }
+                if out.len() == initial_len {
+                    out.push("\u{FFFC}".to_string());
                 }
             }
             // Object replacement character: atomic, never tail-prohibited.
@@ -988,57 +1520,262 @@ fn collect_inline_graphemes(nodes: &[RichInlineNode]) -> Vec<String> {
     out
 }
 
-/// Keep a `keep`-grapheme prefix of the inline nodes. Ruby and inline boxes
-/// are atomic: they are kept whole when their full budget fits, otherwise
-/// dropped. Returns the truncated nodes and the consumed grapheme count.
-fn truncate_inline_nodes(nodes: &[RichInlineNode], keep: usize) -> (Vec<RichInlineNode>, usize) {
-    let mut out = Vec::new();
-    let mut remaining = keep;
-    for node in nodes {
-        if remaining == 0 {
-            break;
+/// Build the selected authored prefix plus a structurally separate marker.
+/// Fragmentable decoration ancestry is retained, while the marker is inserted
+/// beside (never inside) an omitted atomic node.
+fn project_inline_nodes_with_ellipsis(
+    nodes: &[RichInlineNode],
+    keep: usize,
+    marker: RichSegment,
+    should_trim_collapsible_tail: bool,
+) -> Vec<RichInlineNode> {
+    fn is_collapsible_whitespace(grapheme: &str) -> bool {
+        !grapheme.is_empty()
+            && grapheme
+                .chars()
+                .all(|character| matches!(character, ' ' | '\t' | '\n' | '\r'))
+    }
+
+    fn trim_tail(nodes: &mut Vec<RichInlineNode>) {
+        loop {
+            let Some(last) = nodes.last_mut() else {
+                return;
+            };
+            match last {
+                RichInlineNode::Segment(segment) => {
+                    let graphemes = grapheme_split(&segment.text);
+                    let retained_count = graphemes
+                        .iter()
+                        .rposition(|grapheme| !is_collapsible_whitespace(grapheme))
+                        .map_or(0, |index| index + 1);
+                    if retained_count == graphemes.len() {
+                        return;
+                    }
+                    let retained = graphemes[..retained_count].concat();
+                    segment.decoration_runs =
+                        truncate_decoration_runs(&segment.decoration_runs, retained.len());
+                    segment.text = retained;
+                    if segment.text.is_empty() {
+                        nodes.pop();
+                    } else {
+                        return;
+                    }
+                }
+                RichInlineNode::DecoratedSpan(span) => {
+                    trim_tail(&mut span.children);
+                    if span.children.is_empty() {
+                        nodes.pop();
+                    } else {
+                        return;
+                    }
+                }
+                RichInlineNode::Ruby(_)
+                | RichInlineNode::InlineBox(_)
+                | RichInlineNode::InlineRect(_) => return,
+            }
         }
-        match node {
-            RichInlineNode::Segment(seg) => {
-                let graphemes = grapheme_split(&seg.text);
-                if graphemes.len() <= remaining {
-                    remaining -= graphemes.len();
-                    out.push(node.clone());
-                } else {
-                    out.push(RichInlineNode::Segment(RichSegment {
-                        text: graphemes[..remaining].concat(),
-                        style: seg.style.clone(),
-                        combine: seg.combine,
-                        decoration_runs: seg.decoration_runs.clone(),
-                    }));
-                    remaining = 0;
-                }
+    }
+
+    fn append_marker(
+        output: &mut Vec<RichInlineNode>,
+        marker: &mut Option<RichSegment>,
+        should_trim_collapsible_tail: bool,
+    ) {
+        if should_trim_collapsible_tail {
+            trim_tail(output);
+        }
+        if let Some(marker_segment) = marker.take() {
+            output.push(RichInlineNode::Segment(marker_segment));
+        }
+    }
+
+    fn project(
+        nodes: &[RichInlineNode],
+        remaining: &mut usize,
+        marker: &mut Option<RichSegment>,
+        should_trim_collapsible_tail: bool,
+    ) -> Vec<RichInlineNode> {
+        let mut output = Vec::new();
+        for node in nodes {
+            let units = count_inline_graphemes(std::slice::from_ref(node));
+            if units <= *remaining {
+                *remaining -= units;
+                output.push(node.clone());
+                continue;
             }
-            RichInlineNode::Ruby(_)
-            | RichInlineNode::InlineBox(_)
-            | RichInlineNode::InlineRect(_) => {
-                let unit = count_inline_graphemes(std::slice::from_ref(node));
-                if unit <= remaining {
-                    remaining -= unit;
-                    out.push(node.clone());
-                } else {
-                    // Atomic node does not fit the budget — drop it and stop.
-                    remaining = 0;
+
+            match node {
+                RichInlineNode::Segment(segment) => {
+                    if *remaining > 0 {
+                        let graphemes = grapheme_split(&segment.text);
+                        let prefix = graphemes[..*remaining].concat();
+                        output.push(RichInlineNode::Segment(RichSegment {
+                            decoration_runs: truncate_decoration_runs(
+                                &segment.decoration_runs,
+                                prefix.len(),
+                            ),
+                            text: prefix,
+                            style: segment.style.clone(),
+                            combine: segment.combine,
+                        }));
+                    }
+                    *remaining = 0;
+                    append_marker(&mut output, marker, should_trim_collapsible_tail);
                 }
-            }
-            RichInlineNode::DecoratedSpan(span) => {
-                let (children, consumed) = truncate_inline_nodes(&span.children, remaining);
-                remaining -= consumed;
-                if !children.is_empty() {
-                    out.push(RichInlineNode::DecoratedSpan(RichDecoratedSpan {
+                RichInlineNode::DecoratedSpan(span) => {
+                    let children = project(
+                        &span.children,
+                        remaining,
+                        marker,
+                        should_trim_collapsible_tail,
+                    );
+                    output.push(RichInlineNode::DecoratedSpan(RichDecoratedSpan {
                         children,
                         ..span.clone()
                     }));
                 }
+                RichInlineNode::Ruby(_)
+                | RichInlineNode::InlineBox(_)
+                | RichInlineNode::InlineRect(_) => {
+                    *remaining = 0;
+                    append_marker(&mut output, marker, should_trim_collapsible_tail);
+                }
             }
+            break;
         }
+        append_marker(&mut output, marker, should_trim_collapsible_tail);
+        output
     }
-    (out, keep - remaining)
+
+    let mut remaining = keep;
+    let mut marker = Some(marker);
+    project(
+        nodes,
+        &mut remaining,
+        &mut marker,
+        should_trim_collapsible_tail,
+    )
+}
+
+fn truncate_decoration_runs(
+    runs: &[RichTextDecorationRunInput],
+    prefix_bytes: usize,
+) -> Vec<RichTextDecorationRunInput> {
+    let mut remaining = prefix_bytes;
+    let mut output = Vec::new();
+    for run in runs {
+        if remaining == 0 {
+            break;
+        }
+        let keep = remaining.min(run.text.len());
+        if !run.text.is_char_boundary(keep) {
+            return Vec::new();
+        }
+        output.push(RichTextDecorationRunInput {
+            text: run.text[..keep].to_string(),
+            text_decoration: run.text_decoration.clone(),
+        });
+        remaining -= keep;
+    }
+    if remaining == 0 { output } else { Vec::new() }
+}
+
+fn segment_style_at_byte_offset(
+    segment: &RichSegment,
+    byte_offset: usize,
+    has_matching_decoration_runs: bool,
+) -> ResolvedStyle {
+    let mut style = segment.style.clone();
+    if !has_matching_decoration_runs {
+        return style;
+    }
+    let mut cursor = 0_usize;
+    for run in &segment.decoration_runs {
+        let end = cursor.saturating_add(run.text.len());
+        if byte_offset < end {
+            style.text_decoration.clone_from(&run.text_decoration);
+            break;
+        }
+        cursor = end;
+    }
+    style
+}
+
+fn segment_style_at_grapheme(segment: &RichSegment, grapheme_index: usize) -> ResolvedStyle {
+    let byte_offset = grapheme_byte_ranges(&segment.text)
+        .get(grapheme_index)
+        .map_or(segment.text.len(), |(byte_start, _)| *byte_start);
+    segment_style_at_byte_offset(
+        segment,
+        byte_offset,
+        prepare::has_matching_decoration_runs(segment),
+    )
+}
+
+fn segment_styles_for_graphemes(segment: &RichSegment, graphemes: &[String]) -> Vec<ResolvedStyle> {
+    let has_matching_decoration_runs = prepare::has_matching_decoration_runs(segment);
+    if !has_matching_decoration_runs {
+        return vec![segment.style.clone(); graphemes.len()];
+    }
+
+    let mut styles = Vec::with_capacity(graphemes.len());
+    let mut byte_offset = 0_usize;
+    let mut decoration_run_index = 0_usize;
+    let mut decoration_run_end = segment.decoration_runs[0].text.len();
+    for grapheme in graphemes {
+        while byte_offset >= decoration_run_end
+            && decoration_run_index + 1 < segment.decoration_runs.len()
+        {
+            decoration_run_index += 1;
+            decoration_run_end = decoration_run_end
+                .saturating_add(segment.decoration_runs[decoration_run_index].text.len());
+        }
+        let mut style = segment.style.clone();
+        style
+            .text_decoration
+            .clone_from(&segment.decoration_runs[decoration_run_index].text_decoration);
+        styles.push(style);
+        byte_offset = byte_offset.saturating_add(grapheme.len());
+    }
+    styles
+}
+
+fn first_omitted_style(nodes: &[RichInlineNode], keep: usize) -> Option<ResolvedStyle> {
+    let mut cursor = 0;
+    for node in nodes {
+        let units = count_inline_graphemes(std::slice::from_ref(node));
+        if keep >= cursor + units {
+            cursor += units;
+            continue;
+        }
+        return match node {
+            RichInlineNode::Segment(segment) => Some(segment_style_at_grapheme(
+                segment,
+                keep.saturating_sub(cursor),
+            )),
+            RichInlineNode::Ruby(ruby) => ruby.base.first().map(|segment| segment.style.clone()),
+            RichInlineNode::InlineBox(inline_box) => first_omitted_style(&inline_box.children, 0),
+            RichInlineNode::InlineRect(rect) => Some(rect.style.clone()),
+            RichInlineNode::DecoratedSpan(span) => {
+                first_omitted_style(&span.children, keep.saturating_sub(cursor))
+            }
+        };
+    }
+    None
+}
+
+fn mark_last_token_as_synthetic_ellipsis(tokens: &mut [LayoutToken]) {
+    let Some(marker) = tokens.last_mut() else {
+        return;
+    };
+    for glyph in &mut marker.glyphs {
+        glyph.source_start = None;
+        glyph.source_end = None;
+        glyph.source_role = None;
+        glyph.decoration_source_start = None;
+        glyph.decoration_source_end = None;
+        glyph.synthetic_kind = Some("ellipsis".to_string());
+    }
 }
 
 /// Style of the last text segment in document order (for the "…" segment).
@@ -1070,20 +1807,59 @@ fn build_tokens(
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
 ) -> Option<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
-    let mut tokens = Vec::new();
-    let mut decoration_spans: Vec<DecorationSpanMeta> = Vec::new();
-    let mut next_span_id: u32 = 0;
-
-    build_tokens_inner(
+    build_tokens_with_options(
         nodes,
         req,
         font_registry,
         fallback_registry,
         default_style,
-        &mut tokens,
+        false,
+    )
+}
+
+fn build_ellipsis_tokens(
+    nodes: &[RichInlineNode],
+    req: &TextLayoutRequest,
+    font_registry: &FontRegistry,
+    fallback_registry: Option<&FontRegistry>,
+    default_style: &ResolvedStyle,
+) -> Option<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
+    build_tokens_with_options(
+        nodes,
+        req,
+        font_registry,
+        fallback_registry,
+        default_style,
+        true,
+    )
+}
+
+fn build_tokens_with_options(
+    nodes: &[RichInlineNode],
+    req: &TextLayoutRequest,
+    font_registry: &FontRegistry,
+    fallback_registry: Option<&FontRegistry>,
+    default_style: &ResolvedStyle,
+    should_isolate_trailing_segment: bool,
+) -> Option<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
+    let mut flat_items = Vec::new();
+    let mut decoration_spans: Vec<DecorationSpanMeta> = Vec::new();
+    let mut next_span_id: u32 = 0;
+
+    flatten_build_items(
+        nodes,
+        &mut flat_items,
         &mut decoration_spans,
         &mut next_span_id,
-        None,
+        &[],
+    )?;
+    let mut tokens = build_flat_items(
+        &flat_items,
+        req,
+        font_registry,
+        fallback_registry,
+        default_style,
+        should_isolate_trailing_segment,
     )?;
 
     // Whole-string letterSpacing parity: per-token shaping drops the
@@ -1103,18 +1879,16 @@ fn build_tokens(
         }
     }
 
-    // Convert the run-local ranges assigned while shaping into one logical
-    // grapheme address space for the complete rich-text node.
+    // Convert base-text ranges into one logical address space for the complete
+    // rich-text node. Ruby annotations keep annotation-level cluster ranges:
+    // they shape a separate source string and their public source role provides
+    // the namespace needed to distinguish them from base glyphs.
     let mut source_cursor = 0_u32;
+    let mut byte_cursor = 0_u32;
     for token in &mut tokens {
-        for glyph in &mut token.glyphs {
-            if let Some(source_start) = glyph.source_start.as_mut() {
-                *source_start += source_cursor;
-            }
-            if let Some(source_end) = glyph.source_end.as_mut() {
-                *source_end += source_cursor;
-            }
-        }
+        offset_glyph_source_identity(&mut token.glyphs, source_cursor, byte_cursor);
+        byte_cursor =
+            byte_cursor.saturating_add(u32::try_from(token.text.len()).unwrap_or(u32::MAX));
         source_cursor = source_cursor
             .saturating_add(u32::try_from(grapheme_split(&token.text).len()).unwrap_or(u32::MAX));
     }
@@ -1122,189 +1896,108 @@ fn build_tokens(
     Some((tokens, decoration_spans))
 }
 
-fn build_tokens_inner(
-    nodes: &[RichInlineNode],
-    req: &TextLayoutRequest,
-    font_registry: &FontRegistry,
-    fallback_registry: Option<&FontRegistry>,
-    default_style: &ResolvedStyle,
-    tokens: &mut Vec<LayoutToken>,
+fn offset_glyph_source_identity(
+    glyphs: &mut [PositionedGlyph],
+    source_offset: u32,
+    cluster_byte_offset: u32,
+) {
+    for glyph in glyphs {
+        if glyph.source_role.as_deref() != Some("rubyAnnotation") {
+            glyph.cluster_start = glyph.cluster_start.saturating_add(cluster_byte_offset);
+            glyph.cluster_end = glyph.cluster_end.saturating_add(cluster_byte_offset);
+        }
+        if let Some(source_start) = glyph.source_start.as_mut() {
+            *source_start = source_start.saturating_add(source_offset);
+        }
+        if let Some(source_end) = glyph.source_end.as_mut() {
+            *source_end = source_end.saturating_add(source_offset);
+        }
+        // Ruby annotation decoration ranges intentionally stay local to
+        // their annotation level. `source_*` identifies the ruby base in
+        // the complete rich-text stream, while `decoration_source_*`
+        // projects into the annotation text for that level.
+    }
+}
+
+enum FlatBuildItem<'a> {
+    Segment {
+        segment: &'a RichSegment,
+        memberships: Vec<DecorationMembership>,
+    },
+    Atomic {
+        node: &'a RichInlineNode,
+        memberships: Vec<DecorationMembership>,
+    },
+}
+
+impl FlatBuildItem<'_> {
+    fn memberships_mut(&mut self) -> &mut Vec<DecorationMembership> {
+        match self {
+            Self::Segment { memberships, .. } | Self::Atomic { memberships, .. } => memberships,
+        }
+    }
+}
+
+fn flatten_build_items<'a>(
+    nodes: &'a [RichInlineNode],
+    items: &mut Vec<FlatBuildItem<'a>>,
     decoration_spans: &mut Vec<DecorationSpanMeta>,
     next_span_id: &mut u32,
-    current_span_id: Option<u32>,
+    current_span_ids: &[u32],
 ) -> Option<()> {
     for node in nodes {
         match node {
             RichInlineNode::Segment(segment) => {
-                if segment.text.is_empty() {
-                    continue;
-                }
-                if req.is_vertical() && segment.combine {
-                    let mut token = build_vertical_combine_token(
+                if !segment.text.is_empty() {
+                    items.push(FlatBuildItem::Segment {
                         segment,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?;
-                    if let Some(id) = current_span_id {
-                        token.decoration_span_id = Some(id);
-                    }
-                    tokens.push(token);
-                    continue;
-                }
-
-                let segment_tokens = if segment.combine || req.wrap == WrapMode::None {
-                    let mut token = if req.is_vertical() {
-                        build_vertical_plain_token(
-                            &segment.text,
-                            &segment.style,
-                            req,
-                            font_registry,
-                            fallback_registry,
-                            default_style,
-                        )?
-                    } else {
-                        build_horizontal_plain_token(
-                            &segment.text,
-                            &segment.style,
-                            req,
-                            font_registry,
-                            fallback_registry,
-                            default_style,
-                        )?
-                    };
-                    token.trailing_tracking_px = segment.style.letter_spacing_px;
-                    vec![token]
-                } else {
-                    build_fragmentable_plain_tokens(
-                        segment,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                };
-
-                for mut token in segment_tokens {
-                    if let Some(id) = current_span_id {
-                        token.decoration_span_id = Some(id);
-                    }
-                    tokens.push(token);
+                        memberships: decoration_memberships(current_span_ids),
+                    });
                 }
             }
-            RichInlineNode::Ruby(ruby) => {
-                let mut token = if req.is_vertical() {
-                    build_vertical_ruby_token(
-                        ruby,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                } else {
-                    build_horizontal_ruby_token(
-                        ruby,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                };
-                if let Some(id) = current_span_id {
-                    token.decoration_span_id = Some(id);
-                }
-                tokens.push(token);
+            RichInlineNode::Ruby(_)
+            | RichInlineNode::InlineBox(_)
+            | RichInlineNode::InlineRect(_) => {
+                items.push(FlatBuildItem::Atomic {
+                    node,
+                    memberships: decoration_memberships(current_span_ids),
+                });
             }
-            RichInlineNode::InlineBox(ibox) => {
-                let mut token = if req.is_vertical() {
-                    build_vertical_inline_box_token(
-                        ibox,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                } else {
-                    build_horizontal_inline_box_token(
-                        ibox,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                };
-                if let Some(id) = current_span_id {
-                    token.decoration_span_id = Some(id);
-                }
-                tokens.push(token);
-            }
-            RichInlineNode::InlineRect(rect) => {
-                let mut token = build_inline_rect_token(
-                    rect,
-                    font_registry,
-                    fallback_registry,
-                    req.is_vertical(),
-                );
-                if let Some(id) = current_span_id {
-                    token.decoration_span_id = Some(id);
-                }
-                tokens.push(token);
-            }
-            RichInlineNode::DecoratedSpan(dspan) => {
-                if current_span_id.is_some() {
-                    let mut token = if req.is_vertical() {
-                        build_vertical_atomic_decorated_span_token(
-                            dspan,
-                            req,
-                            font_registry,
-                            fallback_registry,
-                            default_style,
-                        )?
-                    } else {
-                        build_horizontal_atomic_decorated_span_token(
-                            dspan,
-                            req,
-                            font_registry,
-                            fallback_registry,
-                            default_style,
-                        )?
-                    };
-                    token.decoration_span_id = current_span_id;
-                    tokens.push(token);
-                    continue;
-                }
-
+            RichInlineNode::DecoratedSpan(decorated_span) => {
                 let span_id = *next_span_id;
-                *next_span_id += 1;
+                *next_span_id = next_span_id.checked_add(1)?;
                 decoration_spans.push(DecorationSpanMeta {
-                    background: dspan.background.clone(),
-                    border_color: dspan.border_color.clone(),
-                    border_width: dspan.border_width,
-                    border_radius: dspan.border_radius,
-                    span_key: dspan.span_key.clone(),
+                    background: decorated_span.background.clone(),
+                    border_color: decorated_span.border_color.clone(),
+                    border_width: decorated_span.border_width,
+                    border_radius: decorated_span.border_radius,
+                    span_key: decorated_span.span_key.clone(),
                 });
 
-                let first_token_idx = tokens.len();
-                build_tokens_inner(
-                    &dspan.children,
-                    req,
-                    font_registry,
-                    fallback_registry,
-                    default_style,
-                    tokens,
+                let first_item_index = items.len();
+                let mut child_span_ids = current_span_ids.to_vec();
+                child_span_ids.push(span_id);
+                flatten_build_items(
+                    &decorated_span.children,
+                    items,
                     decoration_spans,
                     next_span_id,
-                    Some(span_id),
+                    &child_span_ids,
                 )?;
-                let last_token_idx = tokens.len();
-
-                // Set decoration start/end advance on first/last tokens of this span
-                if first_token_idx < last_token_idx {
-                    let start_extra = dspan.padding_inline[0] + dspan.border_width;
-                    let end_extra = dspan.padding_inline[1] + dspan.border_width;
-                    tokens[first_token_idx].decoration_start_advance = start_extra;
-                    tokens[last_token_idx - 1].decoration_end_advance = end_extra;
+                let last_item_index = items.len();
+                if first_item_index < last_item_index {
+                    let first_membership = items[first_item_index]
+                        .memberships_mut()
+                        .iter_mut()
+                        .find(|membership| membership.span_id == span_id)?;
+                    first_membership.start_advance =
+                        decorated_span.padding_inline[0] + decorated_span.border_width;
+                    let last_membership = items[last_item_index - 1]
+                        .memberships_mut()
+                        .iter_mut()
+                        .find(|membership| membership.span_id == span_id)?;
+                    last_membership.end_advance =
+                        decorated_span.padding_inline[1] + decorated_span.border_width;
                 }
             }
         }
@@ -1312,63 +2005,253 @@ fn build_tokens_inner(
     Some(())
 }
 
-fn build_fragmentable_plain_tokens(
-    segment: &RichSegment,
+fn memberships_for_grapheme(
+    memberships: &[DecorationMembership],
+    grapheme_index: usize,
+    grapheme_count: usize,
+) -> Vec<DecorationMembership> {
+    memberships
+        .iter()
+        .cloned()
+        .map(|mut membership| {
+            if grapheme_index > 0 {
+                membership.start_advance = 0.0;
+            }
+            if grapheme_index + 1 < grapheme_count {
+                membership.end_advance = 0.0;
+            }
+            membership
+        })
+        .collect()
+}
+
+fn build_flat_items(
+    items: &[FlatBuildItem<'_>],
+    req: &TextLayoutRequest,
+    font_registry: &FontRegistry,
+    fallback_registry: Option<&FontRegistry>,
+    default_style: &ResolvedStyle,
+    should_isolate_trailing_segment: bool,
+) -> Option<Vec<LayoutToken>> {
+    let mut tokens = Vec::new();
+    let mut item_index = 0usize;
+    while item_index < items.len() {
+        match &items[item_index] {
+            FlatBuildItem::Segment {
+                segment,
+                memberships,
+            } => {
+                if segment.combine {
+                    let mut token = if req.is_vertical() {
+                        build_vertical_combine_token(
+                            segment,
+                            req,
+                            font_registry,
+                            fallback_registry,
+                            default_style,
+                        )?
+                    } else {
+                        let mut token = build_horizontal_plain_token(
+                            &segment.text,
+                            &segment.style,
+                            req,
+                            font_registry,
+                            fallback_registry,
+                            default_style,
+                        )?;
+                        token.trailing_tracking_px = segment.style.letter_spacing_px;
+                        token
+                    };
+                    token.decoration_memberships.clone_from(memberships);
+                    tokens.push(token);
+                    item_index += 1;
+                    continue;
+                }
+
+                let mut run_end = item_index + 1;
+                while let Some(FlatBuildItem::Segment {
+                    segment: next_segment,
+                    ..
+                }) = items.get(run_end)
+                {
+                    if (should_isolate_trailing_segment && run_end + 1 == items.len())
+                        || next_segment.combine
+                        || !prepare::are_resolved_styles_shaping_equivalent(
+                            &segment.style,
+                            &next_segment.style,
+                        )
+                    {
+                        break;
+                    }
+                    run_end += 1;
+                }
+                let segment_run = items[item_index..run_end]
+                    .iter()
+                    .filter_map(|run_item| match run_item {
+                        FlatBuildItem::Segment { segment, .. } => Some(*segment),
+                        FlatBuildItem::Atomic { .. } => None,
+                    })
+                    .collect::<Vec<_>>();
+                let mut segment_tokens = build_fragmentable_segment_run(
+                    &segment_run,
+                    req,
+                    font_registry,
+                    fallback_registry,
+                    default_style,
+                )?;
+                let expanded_memberships = items[item_index..run_end]
+                    .iter()
+                    .flat_map(|run_item| match run_item {
+                        FlatBuildItem::Segment {
+                            segment,
+                            memberships,
+                        } => {
+                            let grapheme_count = grapheme_split(&segment.text).len();
+                            (0..grapheme_count)
+                                .map(|grapheme_index| {
+                                    memberships_for_grapheme(
+                                        memberships,
+                                        grapheme_index,
+                                        grapheme_count,
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                        FlatBuildItem::Atomic { .. } => Vec::new(),
+                    })
+                    .collect::<Vec<_>>();
+                if segment_tokens.len() != expanded_memberships.len() {
+                    return None;
+                }
+                for (token, memberships) in segment_tokens.iter_mut().zip(expanded_memberships) {
+                    token.decoration_memberships = memberships;
+                }
+                tokens.extend(segment_tokens);
+                item_index = run_end;
+                continue;
+            }
+            FlatBuildItem::Atomic { node, memberships } => {
+                let mut token = match node {
+                    RichInlineNode::Ruby(ruby) => {
+                        if req.is_vertical() {
+                            build_vertical_ruby_token(
+                                ruby,
+                                req,
+                                font_registry,
+                                fallback_registry,
+                                default_style,
+                            )?
+                        } else {
+                            build_horizontal_ruby_token(
+                                ruby,
+                                req,
+                                font_registry,
+                                fallback_registry,
+                                default_style,
+                            )?
+                        }
+                    }
+                    RichInlineNode::InlineBox(inline_box) => {
+                        if req.is_vertical() {
+                            build_vertical_inline_box_token(
+                                inline_box,
+                                req,
+                                font_registry,
+                                fallback_registry,
+                                default_style,
+                            )?
+                        } else {
+                            build_horizontal_inline_box_token(
+                                inline_box,
+                                req,
+                                font_registry,
+                                fallback_registry,
+                                default_style,
+                            )?
+                        }
+                    }
+                    RichInlineNode::InlineRect(rect) => build_inline_rect_token(
+                        rect,
+                        font_registry,
+                        fallback_registry,
+                        req.is_vertical(),
+                    ),
+                    RichInlineNode::Segment(_) | RichInlineNode::DecoratedSpan(_) => return None,
+                };
+                token.decoration_memberships.clone_from(memberships);
+                tokens.push(token);
+            }
+        }
+        item_index += 1;
+    }
+    Some(tokens)
+}
+
+fn build_fragmentable_segment_run(
+    segments: &[&RichSegment],
     req: &TextLayoutRequest,
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
 ) -> Option<Vec<LayoutToken>> {
-    let graphemes = grapheme_split(&segment.text);
-    if graphemes.is_empty() {
+    if segments.is_empty() {
         return Some(Vec::new());
     }
 
-    // Newlines remain mandatory standalone tokens, while each surrounding
-    // text chunk keeps its own contextual shaping.
-    let mut tokens = Vec::with_capacity(graphemes.len());
-    let mut chunk = Vec::new();
-    for grapheme in graphemes {
-        if grapheme == "\n" {
-            append_fragmentable_plain_chunk(
-                &mut tokens,
-                &chunk,
-                segment,
-                req,
-                font_registry,
-                fallback_registry,
-                default_style,
-            )?;
-            chunk.clear();
-            let mut newline_token = if req.is_vertical() {
-                build_vertical_plain_token(
-                    &grapheme,
-                    &segment.style,
+    let segment_graphemes = segments
+        .iter()
+        .map(|segment| grapheme_split(&segment.text))
+        .collect::<Vec<_>>();
+    let capacity = segment_graphemes.iter().map(Vec::len).sum();
+    let mut tokens = Vec::with_capacity(capacity);
+    let mut chunk_graphemes = Vec::new();
+    let mut chunk_styles = Vec::new();
+    for (segment, graphemes) in segments.iter().zip(segment_graphemes) {
+        let paint_styles = segment_styles_for_graphemes(segment, &graphemes);
+        for (grapheme, paint_style) in graphemes.into_iter().zip(paint_styles) {
+            if grapheme == "\n" {
+                append_fragmentable_mixed_chunk(
+                    &mut tokens,
+                    &chunk_graphemes,
+                    &chunk_styles,
                     req,
                     font_registry,
                     fallback_registry,
                     default_style,
-                )?
+                )?;
+                chunk_graphemes.clear();
+                chunk_styles.clear();
+                let mut newline_token = if req.is_vertical() {
+                    build_vertical_plain_token(
+                        &grapheme,
+                        &paint_style,
+                        req,
+                        font_registry,
+                        fallback_registry,
+                        default_style,
+                    )?
+                } else {
+                    build_horizontal_plain_token(
+                        &grapheme,
+                        &paint_style,
+                        req,
+                        font_registry,
+                        fallback_registry,
+                        default_style,
+                    )?
+                };
+                newline_token.trailing_tracking_px = paint_style.letter_spacing_px;
+                tokens.push(newline_token);
             } else {
-                build_horizontal_plain_token(
-                    &grapheme,
-                    &segment.style,
-                    req,
-                    font_registry,
-                    fallback_registry,
-                    default_style,
-                )?
-            };
-            newline_token.trailing_tracking_px = segment.style.letter_spacing_px;
-            tokens.push(newline_token);
-        } else {
-            chunk.push(grapheme);
+                chunk_graphemes.push(grapheme);
+                chunk_styles.push(paint_style);
+            }
         }
     }
-    append_fragmentable_plain_chunk(
+    append_fragmentable_mixed_chunk(
         &mut tokens,
-        &chunk,
-        segment,
+        &chunk_graphemes,
+        &chunk_styles,
         req,
         font_registry,
         fallback_registry,
@@ -1377,24 +2260,24 @@ fn build_fragmentable_plain_tokens(
     Some(tokens)
 }
 
-fn append_fragmentable_plain_chunk(
+fn append_fragmentable_mixed_chunk(
     tokens: &mut Vec<LayoutToken>,
     graphemes: &[String],
-    segment: &RichSegment,
+    styles: &[ResolvedStyle],
     req: &TextLayoutRequest,
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
 ) -> Option<()> {
-    if graphemes.is_empty() {
+    if graphemes.is_empty() || graphemes.len() != styles.len() {
         return Some(());
     }
 
     let text = graphemes.concat();
-    if let Some(contextual_tokens) = build_contextually_shaped_plain_tokens(
+    if let Some(contextual_tokens) = build_contextually_shaped_mixed_tokens(
         &text,
         graphemes,
-        &segment.style,
+        styles,
         req,
         font_registry,
         fallback_registry,
@@ -1403,11 +2286,11 @@ fn append_fragmentable_plain_chunk(
         return Some(());
     }
 
-    for grapheme in graphemes {
+    for (grapheme, style) in graphemes.iter().zip(styles) {
         let mut token = if req.is_vertical() {
             build_vertical_plain_token(
                 grapheme,
-                &segment.style,
+                style,
                 req,
                 font_registry,
                 fallback_registry,
@@ -1416,38 +2299,39 @@ fn append_fragmentable_plain_chunk(
         } else {
             build_horizontal_plain_token(
                 grapheme,
-                &segment.style,
+                style,
                 req,
                 font_registry,
                 fallback_registry,
                 default_style,
             )?
         };
-        token.trailing_tracking_px = segment.style.letter_spacing_px;
+        token.trailing_tracking_px = style.letter_spacing_px;
         tokens.push(token);
     }
     Some(())
 }
 
-fn build_contextually_shaped_plain_tokens(
+fn build_contextually_shaped_mixed_tokens(
     text: &str,
     graphemes: &[String],
-    style: &ResolvedStyle,
+    styles: &[ResolvedStyle],
     req: &TextLayoutRequest,
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
 ) -> Option<Vec<LayoutToken>> {
+    let shaping_style = styles.first()?;
     let shaped = shape_text(
         font_registry,
         fallback_registry,
-        style,
+        shaping_style,
         text,
         req.is_vertical(),
     )?;
-    distribute_contextually_shaped_plain_tokens(
+    distribute_contextually_shaped_mixed_tokens(
         text,
         graphemes,
-        style,
+        styles,
         req,
         font_registry,
         fallback_registry,
@@ -1455,6 +2339,7 @@ fn build_contextually_shaped_plain_tokens(
     )
 }
 
+#[cfg(test)]
 fn distribute_contextually_shaped_plain_tokens(
     text: &str,
     graphemes: &[String],
@@ -1464,11 +2349,31 @@ fn distribute_contextually_shaped_plain_tokens(
     fallback_registry: Option<&FontRegistry>,
     shaped: &[GlyphInfo],
 ) -> Option<Vec<LayoutToken>> {
-    if shaped.is_empty()
-        || shaped
-            .windows(2)
-            .any(|pair| pair[0].cluster > pair[1].cluster)
-    {
+    let styles = vec![style.clone(); graphemes.len()];
+    distribute_contextually_shaped_mixed_tokens(
+        text,
+        graphemes,
+        &styles,
+        req,
+        font_registry,
+        fallback_registry,
+        shaped,
+    )
+}
+
+fn distribute_contextually_shaped_mixed_tokens(
+    text: &str,
+    graphemes: &[String],
+    styles: &[ResolvedStyle],
+    req: &TextLayoutRequest,
+    font_registry: &FontRegistry,
+    fallback_registry: Option<&FontRegistry>,
+    shaped: &[GlyphInfo],
+) -> Option<Vec<LayoutToken>> {
+    if graphemes.len() != styles.len() {
+        return None;
+    }
+    if shaped.is_empty() {
         return None;
     }
 
@@ -1480,19 +2385,34 @@ fn distribute_contextually_shaped_plain_tokens(
         byte_offsets.push(byte_offset);
     }
 
+    // HarfBuzz returns Arabic and other RTL-script clusters in visual order.
+    // The rich planner is intentionally logical-order-only (full bidi is a
+    // separate feature), so index glyph groups by their source cluster before
+    // fragmenting. This keeps contextual forms from the whole-run shape while
+    // making token order follow authored grapheme order.
+    let mut glyphs_by_cluster: BTreeMap<usize, Vec<GlyphInfo>> = BTreeMap::new();
+    for glyph in shaped {
+        let cluster = usize::try_from(glyph.cluster).ok()?;
+        if cluster >= text.len() || !text.is_char_boundary(cluster) {
+            return None;
+        }
+        glyphs_by_cluster
+            .entry(cluster)
+            .or_default()
+            .push(glyph.clone());
+    }
+    let cluster_starts = glyphs_by_cluster.keys().copied().collect::<Vec<_>>();
+
     let mut tokens = Vec::with_capacity(graphemes.len());
-    let mut glyph_index = 0usize;
     for (index, grapheme) in graphemes.iter().enumerate() {
+        let style = &styles[index];
         let start = byte_offsets[index];
         let end = byte_offsets[index + 1];
         let start_u32 = u32::try_from(start).ok()?;
-        let glyph_start = glyph_index;
-        while glyph_index < shaped.len()
-            && usize::try_from(shaped[glyph_index].cluster).is_ok_and(|cluster| cluster < end)
-        {
-            glyph_index += 1;
-        }
-        let mut grapheme_glyphs = shaped[glyph_start..glyph_index].to_vec();
+        let mut grapheme_glyphs = glyphs_by_cluster
+            .range(start..end)
+            .flat_map(|(_, glyphs)| glyphs.iter().cloned())
+            .collect::<Vec<_>>();
         for glyph in &mut grapheme_glyphs {
             debug_assert!(glyph.cluster >= start_u32);
             glyph.cluster -= start_u32;
@@ -1504,9 +2424,10 @@ fn distribute_contextually_shaped_plain_tokens(
         // path while preserving grapheme-based cursor and ellipsis indices.
         // Consequently, a glyph's cluster_end may exceed token.text.len();
         // glyph.text retains the complete cluster source for positioning.
-        let next_cluster = shaped
-            .get(glyph_index)
-            .and_then(|glyph| usize::try_from(glyph.cluster).ok())
+        let next_cluster_index = cluster_starts.partition_point(|cluster| *cluster <= start);
+        let next_cluster = cluster_starts
+            .get(next_cluster_index)
+            .copied()
             .unwrap_or(text.len());
         let glyph_source_end = end.max(next_cluster).min(text.len());
         let glyph_source_text = if grapheme_glyphs.is_empty() {
@@ -1535,7 +2456,7 @@ fn distribute_contextually_shaped_plain_tokens(
         token.text.clone_from(grapheme);
         if index + 1 == graphemes.len() {
             // Whole-run shaping already includes internal tracking. Only the
-            // segment boundary still needs the stream-level compensation.
+            // shaping-run boundary still needs the stream-level compensation.
             token.trailing_tracking_px = style.letter_spacing_px;
         }
         tokens.push(token);
@@ -1588,9 +2509,7 @@ fn build_inline_rect_token(
         }],
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
-        decoration_span_id: None,
-        decoration_start_advance: 0.0,
-        decoration_end_advance: 0.0,
+        decoration_memberships: Vec::new(),
         flow_ruby: None,
         trailing_tracking_px: 0.0,
     }
@@ -1619,9 +2538,7 @@ fn build_horizontal_plain_token_from_glyphs(
         inline_rects: Vec::new(),
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
-        decoration_span_id: None,
-        decoration_start_advance: 0.0,
-        decoration_end_advance: 0.0,
+        decoration_memberships: Vec::new(),
         flow_ruby: None,
         trailing_tracking_px: 0.0,
     }
@@ -1668,9 +2585,7 @@ fn build_vertical_plain_token_from_glyphs(
         inline_rects: Vec::new(),
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
-        decoration_span_id: None,
-        decoration_start_advance: 0.0,
-        decoration_end_advance: 0.0,
+        decoration_memberships: Vec::new(),
         flow_ruby: None,
         trailing_tracking_px: 0.0,
     }
@@ -1733,9 +2648,7 @@ fn build_vertical_combine_token(
         inline_rects: Vec::new(),
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
-        decoration_span_id: None,
-        decoration_start_advance: 0.0,
-        decoration_end_advance: 0.0,
+        decoration_memberships: Vec::new(),
         flow_ruby: None,
         // The combined run is one atomic typographic character, but tracking
         // still belongs at its boundary with the following token.
@@ -1879,9 +2792,7 @@ fn build_horizontal_ruby_token(
         inline_rects: Vec::new(),
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
-        decoration_span_id: None,
-        decoration_start_advance: 0.0,
-        decoration_end_advance: 0.0,
+        decoration_memberships: Vec::new(),
         flow_ruby: Some(build_flow_ruby_annotation(ruby)),
         trailing_tracking_px: 0.0,
     })
@@ -2148,8 +3059,12 @@ fn build_atomic_box_token_inner(
     let mut inline_rects: Vec<NestedInlineRect> = Vec::new();
     let mut kinsoku_start = None;
     let mut kinsoku_end = None;
+    let mut source_cursor = 0_u32;
+    let mut byte_cursor = 0_u32;
 
     for child in children {
+        let source_glyph_start = glyphs.len();
+        let child_text_start = text.len();
         match child {
             RichInlineNode::Segment(seg) => {
                 let (child_start, child_end) = segment_kinsoku_edges(std::slice::from_ref(seg));
@@ -2343,6 +3258,16 @@ fn build_atomic_box_token_inner(
                 }
             }
         }
+        offset_glyph_source_identity(
+            &mut glyphs[source_glyph_start..],
+            source_cursor,
+            byte_cursor,
+        );
+        let child_text = &text[child_text_start..];
+        byte_cursor =
+            byte_cursor.saturating_add(u32::try_from(child_text.len()).unwrap_or(u32::MAX));
+        source_cursor = source_cursor
+            .saturating_add(u32::try_from(grapheme_split(child_text).len()).unwrap_or(u32::MAX));
     }
 
     let (cross_size, reference_offset) = if child_metrics.is_empty() {
@@ -2404,9 +3329,7 @@ fn build_atomic_box_token_inner(
             span_key,
         }),
         nested_decorations,
-        decoration_span_id: None,
-        decoration_start_advance: 0.0,
-        decoration_end_advance: 0.0,
+        decoration_memberships: Vec::new(),
         flow_ruby: None,
         trailing_tracking_px: 0.0,
     })
@@ -2549,9 +3472,7 @@ fn build_vertical_ruby_token(
         inline_rects: Vec::new(),
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
-        decoration_span_id: None,
-        decoration_start_advance: 0.0,
-        decoration_end_advance: 0.0,
+        decoration_memberships: Vec::new(),
         flow_ruby: Some(build_flow_ruby_annotation(ruby)),
         trailing_tracking_px: 0.0,
     })
@@ -3271,6 +4192,7 @@ fn shape_segment_run_horizontal(
     let mut glyphs = Vec::new();
     let mut cursor_x = start_x;
     let mut source_cursor = 0_u32;
+    let mut byte_cursor = 0_u32;
     for (segment_index, segment) in segments.iter().enumerate() {
         let mut shaped = shape_text(
             font_registry,
@@ -3295,19 +4217,23 @@ fn shape_segment_run_horizontal(
             baseline_y,
         );
         for glyph in &mut positioned {
+            glyph.cluster_start = glyph.cluster_start.saturating_add(byte_cursor);
+            glyph.cluster_end = glyph.cluster_end.saturating_add(byte_cursor);
             if let Some(source_start) = glyph.source_start.as_mut() {
-                *source_start += source_cursor;
+                *source_start = source_start.saturating_add(source_cursor);
             }
             if let Some(source_end) = glyph.source_end.as_mut() {
-                *source_end += source_cursor;
+                *source_end = source_end.saturating_add(source_cursor);
             }
             if let Some(source_start) = glyph.decoration_source_start.as_mut() {
-                *source_start += source_cursor;
+                *source_start = source_start.saturating_add(source_cursor);
             }
             if let Some(source_end) = glyph.decoration_source_end.as_mut() {
-                *source_end += source_cursor;
+                *source_end = source_end.saturating_add(source_cursor);
             }
         }
+        byte_cursor =
+            byte_cursor.saturating_add(u32::try_from(segment.text.len()).unwrap_or(u32::MAX));
         source_cursor = source_cursor
             .saturating_add(u32::try_from(grapheme_split(&segment.text).len()).unwrap_or(u32::MAX));
         cursor_x += shaped.iter().map(|glyph| glyph.x_advance).sum::<f64>();
@@ -3326,6 +4252,7 @@ fn shape_segment_run_vertical(
     let mut glyphs = Vec::new();
     let mut cursor_y = start_y;
     let mut source_cursor = 0_u32;
+    let mut byte_cursor = 0_u32;
     for (segment_index, segment) in segments.iter().enumerate() {
         let mut shaped = shape_text(
             font_registry,
@@ -3345,19 +4272,23 @@ fn shape_segment_run_vertical(
         let mut positioned =
             position_vertical_glyphs(&segment.text, &shaped, &segment.style, center_x, cursor_y);
         for glyph in &mut positioned {
+            glyph.cluster_start = glyph.cluster_start.saturating_add(byte_cursor);
+            glyph.cluster_end = glyph.cluster_end.saturating_add(byte_cursor);
             if let Some(source_start) = glyph.source_start.as_mut() {
-                *source_start += source_cursor;
+                *source_start = source_start.saturating_add(source_cursor);
             }
             if let Some(source_end) = glyph.source_end.as_mut() {
-                *source_end += source_cursor;
+                *source_end = source_end.saturating_add(source_cursor);
             }
             if let Some(source_start) = glyph.decoration_source_start.as_mut() {
-                *source_start += source_cursor;
+                *source_start = source_start.saturating_add(source_cursor);
             }
             if let Some(source_end) = glyph.decoration_source_end.as_mut() {
-                *source_end += source_cursor;
+                *source_end = source_end.saturating_add(source_cursor);
             }
         }
+        byte_cursor =
+            byte_cursor.saturating_add(u32::try_from(segment.text.len()).unwrap_or(u32::MAX));
         source_cursor = source_cursor
             .saturating_add(u32::try_from(grapheme_split(&segment.text).len()).unwrap_or(u32::MAX));
         cursor_y += shaped.iter().map(glyph_advance_in_vertical).sum::<f64>();
@@ -3723,6 +4654,7 @@ mod tests {
             shrink_max_iterations: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         }
     }
 
@@ -4199,9 +5131,7 @@ mod tests {
             inline_rects: Vec::new(),
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         }
@@ -6057,6 +6987,7 @@ mod tests {
             border_color: None,
             border_radius: None,
             span_key: None,
+            warnings: Vec::new(),
         };
         let inline_box_token = build_horizontal_inline_box_token(
             &inline_box,
@@ -6077,6 +7008,7 @@ mod tests {
             ruby_line_sizing: RubyLineSizing::Css,
             base: mixed_segments(),
             rt_levels: Vec::new(),
+            warnings: Vec::new(),
         };
         let ruby_token =
             build_horizontal_ruby_token(&ruby, &request, &registry, None, &default_style)
@@ -6104,6 +7036,7 @@ mod tests {
             border_color: Some("#ccc".to_string()),
             border_radius: Some(4.0),
             span_key: None,
+            warnings: Vec::new(),
         };
 
         let reserved = ibox.padding_inline[0] + ibox.padding_inline[1] + ibox.border_width * 2.0;
@@ -6135,9 +7068,7 @@ mod tests {
                     span_key: None,
                 }),
                 nested_decorations: Vec::new(),
-                decoration_span_id: None,
-                decoration_start_advance: 0.0,
-                decoration_end_advance: 0.0,
+                decoration_memberships: Vec::new(),
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -6193,9 +7124,7 @@ mod tests {
                     span_key: None,
                 }),
                 nested_decorations: Vec::new(),
-                decoration_span_id: None,
-                decoration_start_advance: 0.0,
-                decoration_end_advance: 0.0,
+                decoration_memberships: Vec::new(),
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -6333,9 +7262,7 @@ mod tests {
                 span_key: None,
             }),
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -6370,9 +7297,7 @@ mod tests {
                     span_key: None,
                 }),
                 nested_decorations: Vec::new(),
-                decoration_span_id: None,
-                decoration_start_advance: 0.0,
-                decoration_end_advance: 0.0,
+                decoration_memberships: Vec::new(),
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -6423,9 +7348,7 @@ mod tests {
                     span_key: None,
                 }),
                 nested_decorations: Vec::new(),
-                decoration_span_id: None,
-                decoration_start_advance: 0.0,
-                decoration_end_advance: 0.0,
+                decoration_memberships: Vec::new(),
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -6475,9 +7398,7 @@ mod tests {
                 span_key: None,
             }),
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -6528,9 +7449,7 @@ mod tests {
             inline_rects: Vec::new(),
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -6553,9 +7472,7 @@ mod tests {
                 span_key: None,
             }),
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -6598,9 +7515,7 @@ mod tests {
                     span_key: None,
                 }),
                 nested_decorations: Vec::new(),
-                decoration_span_id: None,
-                decoration_start_advance: 0.0,
-                decoration_end_advance: 0.0,
+                decoration_memberships: Vec::new(),
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -6636,6 +7551,7 @@ mod tests {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
 
         let result = layout_vertical_tokens(&req, &tokens, &[], 16.0, Vec::new())
@@ -6679,9 +7595,7 @@ mod tests {
             inline_rects: Vec::new(),
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -6704,9 +7618,7 @@ mod tests {
                 span_key: None,
             }),
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -6741,6 +7653,7 @@ mod tests {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
 
         let tokens = vec![wide_plain, narrow_ibox];
@@ -6791,6 +7704,7 @@ mod tests {
             border_color: Some("#ccc".to_string()),
             border_radius: Some(4.0),
             span_key: None,
+            warnings: Vec::new(),
         };
 
         let req = TextLayoutRequest {
@@ -6854,6 +7768,7 @@ mod tests {
             border_color: None,
             border_radius: None,
             span_key: None,
+            warnings: Vec::new(),
         };
         let request = TextLayoutRequest {
             font_size_px,
@@ -6937,6 +7852,7 @@ mod tests {
                         combine: false,
                         decoration_runs: Vec::new(),
                     }]],
+                    warnings: Vec::new(),
                 }),
             ],
             padding_inline: [4.0, 4.0],
@@ -6945,6 +7861,7 @@ mod tests {
             border_color: Some("#ccc".to_string()),
             border_radius: Some(4.0),
             span_key: None,
+            warnings: Vec::new(),
         };
 
         let req = test_request();
@@ -7052,9 +7969,11 @@ mod tests {
                     inline_rects: Vec::new(),
                     inline_box_decoration: None,
                     nested_decorations: Vec::new(),
-                    decoration_span_id: Some(span_id),
-                    decoration_start_advance: if is_first { start_extra } else { 0.0 },
-                    decoration_end_advance: if is_last { end_extra } else { 0.0 },
+                    decoration_memberships: vec![DecorationMembership {
+                        span_id,
+                        start_advance: if is_first { start_extra } else { 0.0 },
+                        end_advance: if is_last { end_extra } else { 0.0 },
+                    }],
                     flow_ruby: None,
                     trailing_tracking_px: 0.0,
                 }
@@ -7106,9 +8025,7 @@ mod tests {
             inline_rects: Vec::new(),
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -7123,9 +8040,11 @@ mod tests {
             inline_rects: Vec::new(),
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
-            decoration_span_id: Some(0),
-            decoration_start_advance: 5.0,
-            decoration_end_advance: 5.0,
+            decoration_memberships: vec![DecorationMembership {
+                span_id: 0,
+                start_advance: 5.0,
+                end_advance: 5.0,
+            }],
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -7140,9 +8059,7 @@ mod tests {
             inline_rects: Vec::new(),
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -7403,9 +8320,7 @@ mod tests {
                 inline_rects: Vec::new(),
                 inline_box_decoration: None,
                 nested_decorations: Vec::new(),
-                decoration_span_id: None,
-                decoration_start_advance: 0.0,
-                decoration_end_advance: 0.0,
+                decoration_memberships: Vec::new(),
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -7420,9 +8335,11 @@ mod tests {
                 inline_rects: Vec::new(),
                 inline_box_decoration: None,
                 nested_decorations: Vec::new(),
-                decoration_span_id: Some(0),
-                decoration_start_advance: 5.0,
-                decoration_end_advance: 5.0,
+                decoration_memberships: vec![DecorationMembership {
+                    span_id: 0,
+                    start_advance: 5.0,
+                    end_advance: 5.0,
+                }],
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -7437,9 +8354,7 @@ mod tests {
                 inline_rects: Vec::new(),
                 inline_box_decoration: None,
                 nested_decorations: Vec::new(),
-                decoration_span_id: None,
-                decoration_start_advance: 0.0,
-                decoration_end_advance: 0.0,
+                decoration_memberships: Vec::new(),
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -7522,6 +8437,7 @@ mod tests {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
 
         let result = layout_horizontal_tokens(&req, &tokens, &meta, 16.0, Vec::new())
@@ -7587,6 +8503,7 @@ mod tests {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
 
         let result = layout_vertical_tokens(&req, &tokens, &meta, 16.0, Vec::new())
@@ -7634,9 +8551,11 @@ mod tests {
                 inline_rects: Vec::new(),
                 inline_box_decoration: None,
                 nested_decorations: Vec::new(),
-                decoration_span_id: Some(0),
-                decoration_start_advance: 0.0,
-                decoration_end_advance: 0.0,
+                decoration_memberships: vec![DecorationMembership {
+                    span_id: 0,
+                    start_advance: 0.0,
+                    end_advance: 0.0,
+                }],
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -7660,9 +8579,7 @@ mod tests {
                     span_key: None,
                 }),
                 nested_decorations: Vec::new(),
-                decoration_span_id: None,
-                decoration_start_advance: 0.0,
-                decoration_end_advance: 0.0,
+                decoration_memberships: Vec::new(),
                 flow_ruby: None,
                 trailing_tracking_px: 0.0,
             },
@@ -8215,9 +9132,7 @@ mod tests {
                 span_key: None,
             }),
             nested_decorations: vec![nested_deco],
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         };
@@ -8230,5 +9145,80 @@ mod tests {
         assert_eq!(line.decorations[1].background.as_deref(), Some("#inner"));
         // Nested decoration offset = token start (0) + nested offset (5)
         assert!((line.decorations[1].offset - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn word_ellipsis_only_accepts_supplied_uax14_boundaries() {
+        let graphemes = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let word_boundaries =
+            prepare_ellipsis_word_boundaries(&graphemes, WrapMode::Word, Some(&[2]))
+                .expect("word wrapping prepares a boundary set");
+
+        assert!(is_ellipsis_boundary_allowed_by_wrap(
+            Some(&word_boundaries),
+            2,
+        ));
+        assert!(!is_ellipsis_boundary_allowed_by_wrap(
+            Some(&word_boundaries),
+            1,
+        ));
+        assert!(is_ellipsis_boundary_allowed_by_wrap(None, 1));
+    }
+
+    #[test]
+    fn word_ellipsis_prepares_uax14_boundaries_once_for_the_candidate_set() {
+        let nodes = vec![RichInlineNode::Segment(RichSegment {
+            text: "あ".repeat(1_025),
+            style: test_resolved_style(16.0),
+            combine: false,
+            decoration_runs: Vec::new(),
+        })];
+        let request = TextLayoutRequest {
+            wrap: WrapMode::Word,
+            ..test_request()
+        };
+
+        crate::phase_trace::reset_work();
+        let legal_prefixes = legal_ellipsis_prefixes_for_request(&request, &nodes, 1_025);
+        let counters = crate::phase_trace::snapshot_work();
+
+        assert_eq!(legal_prefixes.len(), 1_025);
+        assert_eq!(counters.ellipsis_word_boundary_preparations, 1);
+    }
+
+    #[test]
+    fn selected_font_size_scale_rejects_invalid_or_non_finite_ratios() {
+        assert_eq!(selected_font_size_scale(20.0, 10.0), 0.5);
+        assert_eq!(selected_font_size_scale(0.0, 10.0), 1.0);
+        assert_eq!(selected_font_size_scale(f64::NAN, 10.0), 1.0);
+        assert_eq!(selected_font_size_scale(20.0, f64::INFINITY), 1.0);
+        assert_eq!(selected_font_size_scale(1e-300, 1e10), 1.0);
+        let subnormal_scale = selected_font_size_scale(1e10, 1e-300);
+        assert!(subnormal_scale.is_finite());
+        assert!(subnormal_scale > 0.0);
+        assert_eq!(selected_font_size_scale(20.0, 0.0), 1.0);
+    }
+
+    #[test]
+    fn normal_whitespace_drops_the_collapsible_tail_before_the_marker() {
+        let style = test_resolved_style(16.0);
+        let nodes = vec![RichInlineNode::Segment(RichSegment {
+            text: "hello ".to_string(),
+            style: style.clone(),
+            combine: false,
+            decoration_runs: Vec::new(),
+        })];
+        let marker = RichSegment {
+            text: "\u{2026}".to_string(),
+            style,
+            combine: false,
+            decoration_runs: Vec::new(),
+        };
+
+        let normal = project_inline_nodes_with_ellipsis(&nodes, 6, marker.clone(), true);
+        let pre_wrap = project_inline_nodes_with_ellipsis(&nodes, 6, marker, false);
+
+        assert_eq!(collect_inline_source_text(&normal), "hello\u{2026}");
+        assert_eq!(collect_inline_source_text(&pre_wrap), "hello \u{2026}");
     }
 }

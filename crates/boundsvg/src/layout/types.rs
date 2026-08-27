@@ -145,6 +145,9 @@ pub struct TextInput {
     pub grow_epsilon_px: Option<f64>,
     #[serde(default)]
     pub grow_max_iterations: Option<usize>,
+    /// Work limit for an uncertified exact-grid fit search.
+    #[serde(default)]
+    pub fit_max_probes: Option<usize>,
     #[serde(default)]
     pub ellipsis: Option<bool>,
     #[serde(default)]

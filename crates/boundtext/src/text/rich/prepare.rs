@@ -1,5 +1,6 @@
 use crate::font::FontStyle;
 use crate::font::shaping::{format_css_font_feature_settings, format_css_font_variation_settings};
+use crate::text::fit::selected_font_size_scale;
 use crate::text::grapheme::grapheme_split;
 use crate::text::types::{RichTextNodeInput, RichTextStyleInput, TextWarning};
 
@@ -28,7 +29,7 @@ pub(super) fn prepare_rich_text(
             rich_nodes,
             &default_style,
             &mut inline_nodes,
-            chosen_font_size_px / req.font_size_px,
+            selected_font_size_scale(req.font_size_px, chosen_font_size_px),
             &mut flatten_warnings,
         );
     } else if !req.text.is_empty() {
@@ -195,6 +196,25 @@ fn resolved_styles_have_equal_layout(left: &ResolvedStyle, right: &ResolvedStyle
         && left.text_orientation == right.text_orientation
 }
 
+/// Determine whether two resolved styles share one `HarfBuzz` shaping run.
+/// Paint fields are deliberately excluded; the glyph cluster that starts at a
+/// paint boundary keeps the paint of its source-start grapheme after the
+/// shared run is distributed.
+pub(super) fn are_resolved_styles_shaping_equivalent(
+    left: &ResolvedStyle,
+    right: &ResolvedStyle,
+) -> bool {
+    left.font_families == right.font_families
+        && left.font_weight == right.font_weight
+        && left.font_style == right.font_style
+        && left.font_size_px == right.font_size_px
+        && left.letter_spacing_px == right.letter_spacing_px
+        && left.language == right.language
+        && left.font_variation_settings == right.font_variation_settings
+        && left.font_feature_settings == right.font_feature_settings
+        && left.text_orientation == right.text_orientation
+}
+
 pub(super) fn build_default_style(
     req: &TextLayoutRequest,
     default_font_families: &[String],
@@ -202,11 +222,7 @@ pub(super) fn build_default_style(
     default_font_style: &FontStyle,
     chosen_font_size_px: f64,
 ) -> ResolvedStyle {
-    let scale = if req.font_size_px > 0.0 {
-        chosen_font_size_px / req.font_size_px
-    } else {
-        1.0
-    };
+    let scale = selected_font_size_scale(req.font_size_px, chosen_font_size_px);
     ResolvedStyle {
         font_families: if default_font_families.is_empty() {
             vec!["default".to_string()]
@@ -303,7 +319,7 @@ fn collapse_whitespace_walk(
     for node in nodes {
         match node {
             RichInlineNode::Segment(seg) => {
-                if decoration_runs_match_text(seg) {
+                if has_matching_decoration_runs(seg) {
                     let mut collapsed = String::with_capacity(seg.text.len());
                     for run in &mut seg.decoration_runs {
                         let mut collapsed_run = String::with_capacity(run.text.len());
@@ -367,7 +383,7 @@ fn trim_trailing_collapsed_space(nodes: &mut [RichInlineNode]) -> bool {
                 }
                 if seg.text.ends_with(' ') {
                     seg.text.pop();
-                    if decoration_runs_match_text_with_trailing_space(seg) {
+                    if has_matching_decoration_runs_with_trailing_space(seg) {
                         for run in seg.decoration_runs.iter_mut().rev() {
                             if run.text.ends_with(' ') {
                                 run.text.pop();
@@ -403,7 +419,7 @@ pub(super) fn expand_tabs_in_nodes(nodes: &mut [RichInlineNode], tab_size: u32) 
         match node {
             RichInlineNode::Segment(seg) => {
                 if seg.text.contains('\t') || seg.text.contains('\r') {
-                    if decoration_runs_match_text(seg) {
+                    if has_matching_decoration_runs(seg) {
                         expand_tabs_in_decoration_runs(seg, tab_size);
                     } else {
                         seg.text = expand_tabs(&seg.text, tab_size);
@@ -421,17 +437,18 @@ pub(super) fn expand_tabs_in_nodes(nodes: &mut [RichInlineNode], tab_size: u32) 
     }
 }
 
-fn decoration_runs_match_text(segment: &RichSegment) -> bool {
-    decoration_runs_match_value(&segment.decoration_runs, &segment.text)
+/// Return whether decoration-run text exactly partitions the segment text.
+pub(super) fn has_matching_decoration_runs(segment: &RichSegment) -> bool {
+    has_matching_decoration_run_value(&segment.decoration_runs, &segment.text)
 }
 
-fn decoration_runs_match_text_with_trailing_space(segment: &RichSegment) -> bool {
+fn has_matching_decoration_runs_with_trailing_space(segment: &RichSegment) -> bool {
     let mut text_with_space = segment.text.clone();
     text_with_space.push(' ');
-    decoration_runs_match_value(&segment.decoration_runs, &text_with_space)
+    has_matching_decoration_run_value(&segment.decoration_runs, &text_with_space)
 }
 
-fn decoration_runs_match_value(
+fn has_matching_decoration_run_value(
     runs: &[crate::text::types::RichTextDecorationRunInput],
     text: &str,
 ) -> bool {
@@ -534,6 +551,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
                 flatten_ruby_segments(base, &ruby_style, &mut base_nodes, scale);
                 let rt_level_nodes = flatten_ruby_levels(rt, rt_levels, &ruby_style, scale);
                 if !base_nodes.is_empty() && !rt_level_nodes.is_empty() {
+                    let warning_start = warnings.len();
                     for rt_nodes in &rt_level_nodes {
                         push_long_ruby_annotation_warning(&base_nodes, rt_nodes, warnings);
                     }
@@ -549,6 +567,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
                         ruby_line_sizing: resolve_ruby_line_sizing(ruby_line_sizing.as_deref()),
                         base: base_nodes,
                         rt_levels: rt_level_nodes,
+                        warnings: warnings[warning_start..].to_vec(),
                     }));
                 }
             }
@@ -564,6 +583,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
             } => {
                 let box_style = resolve_style(style, current_style, scale);
                 let mut child_nodes = Vec::new();
+                let warning_start = warnings.len();
                 flatten_inline_box_children(
                     children,
                     &box_style,
@@ -580,6 +600,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
                     border_color: border_color.clone(),
                     border_radius: *border_radius,
                     span_key: span_key.clone(),
+                    warnings: warnings[warning_start..].to_vec(),
                 }));
             }
             RichTextNodeInput::InlineRect { rect } => {
@@ -682,6 +703,7 @@ fn flatten_inline_box_children(
                 flatten_ruby_segments(base, &ruby_style, &mut base_nodes, scale);
                 let rt_level_nodes = flatten_ruby_levels(rt, rt_levels, &ruby_style, scale);
                 if !base_nodes.is_empty() && !rt_level_nodes.is_empty() {
+                    let warning_start = warnings.len();
                     for rt_nodes in &rt_level_nodes {
                         push_long_ruby_annotation_warning(&base_nodes, rt_nodes, warnings);
                     }
@@ -697,6 +719,7 @@ fn flatten_inline_box_children(
                         ruby_line_sizing: resolve_ruby_line_sizing(ruby_line_sizing.as_deref()),
                         base: base_nodes,
                         rt_levels: rt_level_nodes,
+                        warnings: warnings[warning_start..].to_vec(),
                     }));
                 }
             }
@@ -722,6 +745,7 @@ fn flatten_inline_box_children(
                 } else {
                     let box_style = resolve_style(style, current_style, scale);
                     let mut child_nodes = Vec::new();
+                    let warning_start = warnings.len();
                     flatten_inline_box_children(
                         children,
                         &box_style,
@@ -738,6 +762,7 @@ fn flatten_inline_box_children(
                         border_color: border_color.clone(),
                         border_radius: *border_radius,
                         span_key: span_key.clone(),
+                        warnings: warnings[warning_start..].to_vec(),
                     }));
                 }
             }
@@ -781,8 +806,8 @@ fn flatten_inline_box_children(
 }
 
 /// Flatten `DecoratedSpan` children.
-/// Ruby and `InlineBox` are allowed. Nested `DecoratedSpan` is represented as an
-/// atomic child decoration when embedded inside another `DecoratedSpan`.
+/// Ruby and `InlineBox` retain their atomic semantics. Nested `DecoratedSpan`
+/// nodes remain fragmentable and carry their complete decoration ancestry.
 ///
 /// The match body is identical to `flatten_rich_nodes_with_warnings`; this
 /// function exists to keep call-site semantics clear.
@@ -951,4 +976,30 @@ pub(super) fn collect_notdef_warnings_from_tokens(tokens: &[LayoutToken]) -> Vec
         ));
     }
     crate::text::types::build_notdef_warnings(&all_notdef)
+}
+
+/// Collect recoverable diagnostics from the authored nodes retained by one
+/// canonical display projection.
+///
+/// Ruby and inline boxes are atomic. An inline box stores the diagnostics of
+/// its complete subtree, so the collector deliberately does not descend into
+/// its children and cannot duplicate nested warnings. Decorated spans remain
+/// fragmentable and are traversed in authored order.
+pub(super) fn collect_owned_warnings(nodes: &[RichInlineNode]) -> Vec<TextWarning> {
+    fn append(nodes: &[RichInlineNode], output: &mut Vec<TextWarning>) {
+        for node in nodes {
+            match node {
+                RichInlineNode::Segment(_) | RichInlineNode::InlineRect(_) => {}
+                RichInlineNode::Ruby(ruby) => output.extend(ruby.warnings.iter().cloned()),
+                RichInlineNode::InlineBox(inline_box) => {
+                    output.extend(inline_box.warnings.iter().cloned());
+                }
+                RichInlineNode::DecoratedSpan(span) => append(&span.children, output),
+            }
+        }
+    }
+
+    let mut warnings = Vec::new();
+    append(nodes, &mut warnings);
+    warnings
 }

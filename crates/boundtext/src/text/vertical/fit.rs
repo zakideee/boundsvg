@@ -113,7 +113,7 @@ fn layout_vertical_at_size(
         font_ctx,
         text,
         font_size_px,
-        req.letter_spacing_px,
+        crate::text::fit::scaled_letter_spacing(req, font_size_px),
         &shape_options,
     )?;
 
@@ -228,11 +228,13 @@ pub(super) fn fit_vertical_shrink(
         at_min.line_height_px,
         at_min.all_placed,
     ) {
-        let overflow = if at_min.kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::cannot_fit()
-        };
+        if req.ellipsis
+            && req.max_lines.is_some()
+            && let Some(layout_result) = layout_vertical_ellipsis_at_size(req, font_ctx, min_size)
+        {
+            return Some(layout_result);
+        }
+        let overflow = TextOverflow::cannot_fit();
         return Some(build_vertical_fit_result(at_min, min_size, overflow));
     }
 
@@ -270,6 +272,30 @@ pub(super) fn fit_vertical_shrink(
     Some(build_vertical_fit_result(at_best, best_size, overflow))
 }
 
+fn layout_vertical_ellipsis_at_size(
+    req: &TextLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    font_size_px: f64,
+) -> Option<TextLayoutResult> {
+    let final_request = TextLayoutRequest {
+        font_size_px,
+        letter_spacing_px: crate::text::fit::scaled_letter_spacing(req, font_size_px),
+        fit: crate::text::types::FitMode::None,
+        min_font_size_px: None,
+        shrink_epsilon_px: None,
+        shrink_max_iterations: None,
+        max_font_size_px: None,
+        grow_epsilon_px: None,
+        grow_max_iterations: None,
+        ..req.clone()
+    };
+    let mut layout_result = super::layout_vertical_text(&final_request, font_ctx)?;
+    if layout_result.lines.is_empty() {
+        layout_result.overflow = TextOverflow::cannot_fit();
+    }
+    Some(layout_result)
+}
+
 /// Grow-to-fit for vertical text with boundary evaluation.
 ///
 /// Same algorithm as horizontal `fit_grow`: evaluate boundaries first,
@@ -293,11 +319,7 @@ pub(super) fn fit_vertical_grow(
         at_initial.line_height_px,
         at_initial.all_placed,
     ) {
-        let overflow = if at_initial.kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::overflow("initial font size does not fit; cannot grow")
-        };
+        let overflow = TextOverflow::overflow("initial font size does not fit; cannot grow");
         return Some(build_vertical_fit_result(
             at_initial,
             req.font_size_px,

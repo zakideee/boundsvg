@@ -4,6 +4,11 @@ import { DEFAULT_FONT_WEIGHT } from "../font/types.js";
 import type { LayeredCompositionValidationResult } from "../layered-svg.js";
 import type { ComputeLayoutTransportFn } from "../layout/backend.js";
 import type { ResolvedRasterScale } from "../render-capabilities.js";
+import {
+  assertGeometryTreeDepth,
+  assertResolvedSymbolGeometryDepth,
+  MAX_GEOMETRY_TREE_DEPTH,
+} from "../shape/geometry-depth.js";
 import type {
   CompiledShapePathPart,
   Contour,
@@ -42,7 +47,7 @@ let wasmModule: WasmModule | null = null;
  * `crates/boundsvg/src/lib.rs`; both sides change in the same commit.
  * Bump whenever a WASM-boundary DTO shape or export signature changes.
  */
-export const EXPECTED_WASM_SCHEMA_VERSION = 25;
+export const EXPECTED_WASM_SCHEMA_VERSION = 26;
 
 function assertWasmSchemaVersion(preloaded: WasmModule): void {
   const readSchemaVersion = preloaded.wasm_schema_version;
@@ -144,6 +149,30 @@ function parseWasmJson<T>(
   return parsed;
 }
 
+function wrapWasmStructuredTextError(error: unknown): FatalError {
+  if (error instanceof FatalError) {
+    return error;
+  }
+  const text =
+    typeof error === "string" ? error : String((error as { message?: unknown })?.message ?? error);
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (isObjectLike(parsed)) {
+      const code = getStringProperty(parsed, "code");
+      const message = getStringProperty(parsed, "message");
+      const stage = getStringProperty(parsed, "stage");
+      if (code !== undefined && message !== undefined) {
+        return new FatalError(code, message, {
+          stage: stage ?? "text",
+        });
+      }
+    }
+  } catch {
+    // Preserve legacy unstructured WASM failures under one stable fatal code.
+  }
+  return new FatalError("TEXT_LAYOUT_FAILED", text, { stage: "text" });
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -238,40 +267,66 @@ function isGeometryViewBox(value: unknown): value is GeometryDoc["viewBox"] {
   return typeof width === "number" && typeof height === "number";
 }
 
-function isGeometryNode(value: unknown): boolean {
-  if (!isObjectLike(value)) {
+type UnknownGeometryDepthFrame = {
+  node: unknown;
+  depth: number;
+};
+
+const geometryBooleanOps = new Set(["union", "subtract", "intersect", "xor"]);
+
+function pushGeometryArrayChildren(
+  children: unknown,
+  depth: number,
+  pending: UnknownGeometryDepthFrame[],
+): boolean {
+  if (!Array.isArray(children)) {
     return false;
   }
-  const kind = getStringProperty(value, "kind");
-  if (!kind) {
-    return false;
+  for (const child of children) {
+    pending.push({ node: child, depth: depth + 1 });
   }
+  return true;
+}
+
+function pushGeometryNodeChildren(
+  node: object,
+  depth: number,
+  pending: UnknownGeometryDepthFrame[],
+): boolean {
+  const kind = getStringProperty(node, "kind");
   switch (kind) {
     case "path":
-      return typeof getStringProperty(value, "d") === "string";
-    case "group": {
-      const children = Reflect.get(value, "children");
-      return Array.isArray(children) && children.every(isGeometryNode);
-    }
+      return typeof getStringProperty(node, "d") === "string";
+    case "group":
+      return pushGeometryArrayChildren(Reflect.get(node, "children"), depth, pending);
     case "transform":
+      if (!isObjectLike(Reflect.get(node, "transform"))) {
+        return false;
+      }
+      pending.push({ node: Reflect.get(node, "child"), depth: depth + 1 });
+      return true;
+    case "boolean":
       return (
-        isObjectLike(Reflect.get(value, "transform")) && isGeometryNode(Reflect.get(value, "child"))
+        geometryBooleanOps.has(getStringProperty(node, "op") ?? "") &&
+        pushGeometryArrayChildren(Reflect.get(node, "children"), depth, pending)
       );
-    case "boolean": {
-      const operation = getStringProperty(value, "op");
-      const children = Reflect.get(value, "children");
-      return (
-        (operation === "union" ||
-          operation === "subtract" ||
-          operation === "intersect" ||
-          operation === "xor") &&
-        Array.isArray(children) &&
-        children.every(isGeometryNode)
-      );
-    }
     default:
       return false;
   }
+}
+
+function isGeometryNode(value: unknown): boolean {
+  const pending: UnknownGeometryDepthFrame[] = [{ node: value, depth: 0 }];
+  while (pending.length > 0) {
+    const frame = pending.pop();
+    if (!frame || !isObjectLike(frame.node) || frame.depth > MAX_GEOMETRY_TREE_DEPTH) {
+      return false;
+    }
+    if (!pushGeometryNodeChildren(frame.node, frame.depth, pending)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isGeometryDoc(value: unknown): value is GeometryDoc {
@@ -670,6 +725,7 @@ export function isShapeWasmAvailable(): boolean {
 }
 
 export function wasmCompileShapeSvg(geometry: GeometryDoc, options?: ShapeCompileOptions): string {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.compile_shape_svg !== "function") {
     throw new FatalError(
@@ -694,6 +750,7 @@ export function wasmHitTestShapeParts(
   point: { x: number; y: number },
   options?: GeometryHitTestOptions,
 ): GeometryPartHit[] {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.hit_test_shape_parts !== "function") {
     throw new FatalError(
@@ -711,6 +768,7 @@ export function wasmCompileShapePaths(
   geometry: GeometryDoc,
   options?: ShapeCompileOptions,
 ): CompiledShapePathPart[] {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.compile_shape_paths !== "function") {
     throw new FatalError(
@@ -748,6 +806,7 @@ export function wasmResolveSymbolGeometry(
   definition: SymbolDefinition,
   options: ShapeSymbolResolutionOptions,
 ): GeometryDoc {
+  assertResolvedSymbolGeometryDepth(definition, options);
   const wasm = getWasm();
   if (typeof wasm.resolve_symbol_geometry !== "function") {
     throw new FatalError(
@@ -771,6 +830,7 @@ export function wasmResolveSymbolGeometry(
 }
 
 export function wasmEvaluateShapeParts(geometry: GeometryDoc): GeometryPart[] {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.evaluate_shape_parts !== "function") {
     throw new FatalError(
@@ -784,6 +844,7 @@ export function wasmEvaluateShapeParts(geometry: GeometryDoc): GeometryPart[] {
 }
 
 export function wasmEvaluateShapeRegion(geometry: GeometryDoc): Region {
+  assertGeometryTreeDepth(geometry);
   const wasm = getWasm();
   if (typeof wasm.evaluate_shape_region !== "function") {
     throw new FatalError(
@@ -825,6 +886,8 @@ export function wasmRenderShapeRegionSvg(region: Region, options?: ShapeCompileO
 }
 
 export function wasmDivideShapeRegions(lhs: GeometryDoc, rhs: GeometryDoc): DivideRegions {
+  assertGeometryTreeDepth(lhs);
+  assertGeometryTreeDepth(rhs);
   const wasm = getWasm();
   if (typeof wasm.divide_shape_regions !== "function") {
     throw new FatalError(
@@ -851,6 +914,8 @@ export function wasmComputeShapeIntersections(
   lhs: GeometryDoc,
   rhs: GeometryDoc,
 ): GeometryIntersection[] {
+  assertGeometryTreeDepth(lhs);
+  assertGeometryTreeDepth(rhs);
   const wasm = getWasm();
   if (typeof wasm.compute_shape_intersections !== "function") {
     throw new FatalError(
@@ -1797,8 +1862,12 @@ export class WasmEngineHandle {
         { stage: "wasm" },
       );
     }
-    const json = this.instance.layout_text_flow_with_exclusions(JSON.stringify(input));
-    return decodeTextFlowWithExclusionsResult(json);
+    try {
+      const json = this.instance.layout_text_flow_with_exclusions(JSON.stringify(input));
+      return decodeTextFlowWithExclusionsResult(json);
+    } catch (error) {
+      throw wrapWasmStructuredTextError(error);
+    }
   }
 
   measureTextBlock(input: MeasureTextBlockInput): MeasureTextBlockResult {
@@ -1823,8 +1892,12 @@ export class WasmEngineHandle {
         { stage: "wasm" },
       );
     }
-    const json = this.instance.shrinkwrap_text(JSON.stringify(input));
-    return decodeShrinkwrapTextResult(json);
+    try {
+      const json = this.instance.shrinkwrap_text(JSON.stringify(input));
+      return decodeShrinkwrapTextResult(json);
+    } catch (error) {
+      throw wrapWasmStructuredTextError(error);
+    }
   }
 
   shrinkwrapFlow(input: ShrinkwrapFlowInput): ShrinkwrapFlowResult {
@@ -1836,8 +1909,12 @@ export class WasmEngineHandle {
         { stage: "wasm" },
       );
     }
-    const json = this.instance.shrinkwrap_flow(JSON.stringify(input));
-    return decodeShrinkwrapFlowResult(json);
+    try {
+      const json = this.instance.shrinkwrap_flow(JSON.stringify(input));
+      return decodeShrinkwrapFlowResult(json);
+    } catch (error) {
+      throw wrapWasmStructuredTextError(error);
+    }
   }
 
   measureIntrinsicInlineSize(input: IntrinsicInlineSizeInput): IntrinsicInlineSizeResult {
@@ -1999,6 +2076,8 @@ export type TextFlowWithExclusionsInput = {
   maxFontSizePx?: number;
   fitEpsilonPx?: number;
   fitMaxIterations?: number;
+  /** Maximum exact-grid probes when content or flow geometry is not monotone-certified. */
+  fitMaxProbes?: number;
   spans?: TextMeasureSpan[];
   richText?: RichTextNode[];
   writingMode?: "horizontal-tb" | "vertical-rl";

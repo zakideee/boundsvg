@@ -19,7 +19,8 @@ use boundtext::text::types::{
 };
 
 const FONT_SIZE_PX: f64 = 48.0;
-const MAX_WIDTH: f64 = 400.0;
+/// Inline constraint that forces the fixture through ellipsis projection.
+const WIDTH_MAX: f64 = 430.0;
 const TEXT: &str = "The quick brown fox jumps over the lazy dog";
 
 fn variable_font_registry() -> FontRegistry {
@@ -56,7 +57,7 @@ fn ellipsis_request(variations: Vec<VariationSetting>) -> TextLayoutRequest<'sta
         line_height_px: None,
         letter_spacing_px: 0.0,
         text_indent: None,
-        max_width: MAX_WIDTH,
+        max_width: WIDTH_MAX,
         max_height: None,
         wrap: WrapMode::Word,
         white_space: WhiteSpaceMode::Normal,
@@ -77,6 +78,7 @@ fn ellipsis_request(variations: Vec<VariationSetting>) -> TextLayoutRequest<'sta
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     }
 }
 
@@ -105,9 +107,9 @@ fn single_line_ellipsis_fits_the_box_at_the_requested_variation() {
     let rendered_width: f64 = shaped.glyphs.iter().map(|glyph| glyph.x_advance).sum();
 
     assert!(
-        rendered_width <= MAX_WIDTH,
+        rendered_width <= WIDTH_MAX,
         "ellipsized line overflows its box by {:.2}px: truncation was measured without the variation settings",
-        rendered_width - MAX_WIDTH,
+        rendered_width - WIDTH_MAX,
     );
     assert!(
         (line.width - rendered_width).abs() < 0.5,

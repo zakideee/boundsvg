@@ -1,24 +1,43 @@
+use crate::BoundtextError;
 use crate::font::FontContext;
 use crate::text::kinsoku::{
     add_bounded_intentional_overflow_px, get_hanging_chars, get_kinsoku_profile,
     intentional_hanging_overflow_px, is_single_hanging_grapheme, is_valid_break_boundary,
 };
 use crate::text::paragraph::LayoutOverflowReason;
-use crate::text::types::{FitMode, TextLayoutRequest, TextWarning, WrapMode};
+use crate::text::types::{
+    FitMode, InlineBoxDecoration, TextLayoutRequest, TextWarning, WrapMode,
+    is_rich_text_fit_certified_monotone,
+};
 
 use super::TextOrientation;
 use super::line_layout::{
-    build_uax14_break_set_for_tokens, effective_line_width, kinsoku_profile_at_boundary,
-    resolve_break_pos_for_rich, token_uses_ja_kinsoku, update_last_normal_break,
+    assemble_horizontal_line, assemble_vertical_line, build_uax14_break_set_for_tokens,
+    effective_line_width, kinsoku_profile_at_boundary, resolve_break_pos_for_rich,
+    resolve_fragment_border_radius, resolve_fragment_border_radius_vertical, token_uses_ja_kinsoku,
+    update_last_normal_break,
 };
 use super::{prepare::prepare_rich_text, text_flow};
 use crate::text::flow::FLOW_BOTTOM_EPSILON;
 
+/// Resolve rich flow through one geometry-provider and projection pipeline.
+///
+/// # Errors
+///
+/// Returns a typed resource, fit, provider, shaping, or placement failure.
 pub(crate) fn layout_rich_flow_with_regions(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl text_flow::FlowRegionSource,
-) -> Result<text_flow::FlowLayoutResult, String> {
+    region_provider: &impl text_flow::RegionProvider,
+) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
+    let content_search_kind = if req.letter_spacing_px < 0.0
+        || req.line_height.is_some_and(|value| value < 0.0)
+        || !is_rich_text_fit_certified_monotone(req.rich_text)
+    {
+        text_flow::FitSearchKind::Uncertified
+    } else {
+        region_provider.fit_search_kind()
+    };
     let (settled_font_size, fit_overflow) = match req.fit {
         Some("shrink") => {
             let min_size = req
@@ -28,11 +47,21 @@ pub(crate) fn layout_rich_flow_with_regions(
             let max_iter = req
                 .fit_max_iterations
                 .unwrap_or(text_flow::DEFAULT_FIT_MAX_ITERATIONS);
-            text_flow::fit_shrink_with(req.font_size_px, min_size, epsilon, max_iter, |candidate| {
-                layout_rich_flow_at_font_size(req, font_ctx, regions_source, candidate).is_some_and(
-                    |result| result.exhausted && text_flow::flow_layout_is_contained(&result),
-                )
-            })
+            text_flow::fit_shrink_with(
+                req.font_size_px,
+                min_size,
+                epsilon,
+                max_iter,
+                content_search_kind,
+                req.fit_max_probes,
+                |candidate| {
+                    layout_rich_flow_at_font_size(req, font_ctx, region_provider, candidate, false)
+                        .map(|flow_layout| {
+                            flow_layout.exhausted
+                                && text_flow::flow_layout_is_contained(&flow_layout)
+                        })
+                },
+            )
         }
         Some("grow") => {
             let max_size = req
@@ -42,34 +71,80 @@ pub(crate) fn layout_rich_flow_with_regions(
             let max_iter = req
                 .fit_max_iterations
                 .unwrap_or(text_flow::DEFAULT_FIT_MAX_ITERATIONS);
-            text_flow::fit_grow_with(req.font_size_px, max_size, epsilon, max_iter, |candidate| {
-                layout_rich_flow_at_font_size(req, font_ctx, regions_source, candidate).is_some_and(
-                    |result| result.exhausted && text_flow::flow_layout_is_contained(&result),
-                )
-            })
+            text_flow::fit_grow_with(
+                req.font_size_px,
+                max_size,
+                epsilon,
+                max_iter,
+                content_search_kind,
+                req.fit_max_probes,
+                |candidate| {
+                    layout_rich_flow_at_font_size(req, font_ctx, region_provider, candidate, false)
+                        .map(|flow_layout| {
+                            flow_layout.exhausted
+                                && text_flow::flow_layout_is_contained(&flow_layout)
+                        })
+                },
+            )
         }
-        _ => (req.font_size_px, None),
-    };
+        _ => Ok((req.font_size_px, None)),
+    }?;
 
-    let mut result =
-        layout_rich_flow_at_font_size(req, font_ctx, regions_source, settled_font_size)
-            .ok_or_else(|| "Failed to prepare rich-text flow layout".to_string())?;
-    result.chosen_font_size_px = if req.fit.is_some() {
+    let mut flow_layout =
+        layout_rich_flow_at_font_size(req, font_ctx, region_provider, settled_font_size, true)?;
+    flow_layout.chosen_font_size_px = if req.fit.is_some() {
         Some(settled_font_size)
     } else {
         None
     };
-    result.overflow_reason = fit_overflow.or(result.overflow_reason);
-    Ok(result)
+    flow_layout.overflow_reason = fit_overflow.or(flow_layout.overflow_reason);
+    Ok(flow_layout)
 }
 
 fn layout_rich_flow_at_font_size(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl text_flow::FlowRegionSource,
+    region_provider: &impl text_flow::RegionProvider,
     chosen_font_size_px: f64,
-) -> Option<text_flow::FlowLayoutResult> {
-    let text_req = TextLayoutRequest {
+    should_apply_ellipsis_projection: bool,
+) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
+    let text_req = text_layout_request_for_flow(req);
+
+    let prepared =
+        prepare_rich_text(&text_req, font_ctx, chosen_font_size_px).ok_or_else(|| {
+            BoundtextError::FlowLayout("Failed to prepare rich-text flow layout".to_string())
+        })?;
+    let min_region = req.min_region_width.unwrap_or(chosen_font_size_px);
+    let flow_layout = layout_prepared_rich_flow(
+        req,
+        font_ctx,
+        region_provider,
+        &prepared.tokens,
+        &prepared.decoration_spans,
+        &prepared.warnings,
+        min_region,
+        chosen_font_size_px,
+    )?;
+    if should_apply_ellipsis_projection && req.ellipsis && !flow_layout.exhausted {
+        Ok(apply_rich_flow_ellipsis(
+            req,
+            &text_req,
+            font_ctx,
+            region_provider,
+            min_region,
+            chosen_font_size_px,
+            flow_layout.overflow_reason,
+        )?
+        .unwrap_or(flow_layout))
+    } else {
+        Ok(flow_layout)
+    }
+}
+
+fn text_layout_request_for_flow<'a>(
+    req: &text_flow::FlowLayoutRequest<'a>,
+) -> TextLayoutRequest<'a> {
+    TextLayoutRequest {
         text: req.text,
         spans: None,
         rich_text: req.rich_text,
@@ -99,51 +174,40 @@ fn layout_rich_flow_at_font_size(
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
-    };
-
-    let prepared = prepare_rich_text(&text_req, font_ctx, chosen_font_size_px)?;
-    let min_region = req.min_region_width.unwrap_or(chosen_font_size_px);
-    let result = layout_prepared_rich_flow(
-        req,
-        font_ctx,
-        regions_source,
-        &prepared.tokens,
-        &prepared.warnings,
-        min_region,
-        chosen_font_size_px,
-    );
-    if req.ellipsis && !result.exhausted && !result.lines.is_empty() {
-        apply_rich_flow_ellipsis(
-            req,
-            &text_req,
-            font_ctx,
-            regions_source,
-            &prepared.warnings,
-            min_region,
-            chosen_font_size_px,
-            result.overflow_reason,
-        )
-        .or(Some(result))
-    } else {
-        Some(result)
+        fit_max_probes: None,
     }
+}
+
+/// Materialize the normalized authored text for a resolved flow projection.
+/// This follows the same logical-document construction as candidate layout and
+/// runs only after ellipsis has selected the committed output.
+pub(crate) fn source_text_for_flow_projection(
+    req: &text_flow::FlowLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    chosen_font_size_px: f64,
+) -> String {
+    let text_req = text_layout_request_for_flow(req);
+    let (inline_nodes, _, _) = super::build_inline_nodes(&text_req, font_ctx, chosen_font_size_px);
+    super::collect_inline_source_text(&inline_nodes)
 }
 
 fn layout_prepared_rich_flow(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl text_flow::FlowRegionSource,
+    region_provider: &impl text_flow::RegionProvider,
     tokens: &[super::LayoutToken],
+    decoration_spans: &[super::DecorationSpanMeta],
     warnings: &[TextWarning],
     min_region: f64,
     chosen_font_size_px: f64,
-) -> text_flow::FlowLayoutResult {
+) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
     if req.writing_mode == crate::text::types::WritingMode::VerticalRl {
         layout_rich_flow_vertical(
             req,
             font_ctx,
-            regions_source,
+            region_provider,
             tokens,
+            decoration_spans,
             warnings,
             min_region,
             chosen_font_size_px,
@@ -152,8 +216,9 @@ fn layout_prepared_rich_flow(
         layout_rich_flow_horizontal(
             req,
             font_ctx,
-            regions_source,
+            region_provider,
             tokens,
+            decoration_spans,
             warnings,
             min_region,
             chosen_font_size_px,
@@ -161,105 +226,297 @@ fn layout_prepared_rich_flow(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "rich flow ellipsis needs the original request, prepared style context, and regions"
-)]
 fn apply_rich_flow_ellipsis(
     req: &text_flow::FlowLayoutRequest<'_>,
     text_req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl text_flow::FlowRegionSource,
-    warnings: &[TextWarning],
+    region_provider: &impl text_flow::RegionProvider,
     min_region: f64,
     chosen_font_size_px: f64,
     overflow_reason: Option<text_flow::FlowOverflowReason>,
-) -> Option<text_flow::FlowLayoutResult> {
+) -> Result<Option<text_flow::FlowLayoutResult>, BoundtextError> {
     let (inline_nodes, default_style, _) =
         super::build_inline_nodes(text_req, font_ctx, chosen_font_size_px);
     let total = super::count_inline_graphemes(&inline_nodes);
     if total == 0 {
-        return None;
+        return Ok(None);
     }
 
-    let probe = |keep: usize| -> Option<text_flow::FlowLayoutResult> {
-        let (mut truncated, _) = super::truncate_inline_nodes(&inline_nodes, keep);
-        let ellipsis_style =
-            super::last_segment_style(&truncated).unwrap_or_else(|| default_style.clone());
-        truncated.push(super::RichInlineNode::Segment(super::RichSegment {
-            text: "\u{2026}".to_string(),
-            style: ellipsis_style,
-            combine: false,
-            decoration_runs: Vec::new(),
-        }));
-        let (tokens, _) = super::build_tokens(
+    let probe = |keep: usize| -> Result<Option<text_flow::FlowLayoutResult>, BoundtextError> {
+        #[cfg(any(test, feature = "phase-trace"))]
+        crate::phase_trace::record_ellipsis_candidate();
+        let ellipsis_style = super::first_omitted_style(&inline_nodes, keep)
+            .or_else(|| super::last_segment_style(&inline_nodes))
+            .unwrap_or_else(|| default_style.clone());
+        let truncated = super::project_inline_nodes_with_ellipsis(
+            &inline_nodes,
+            keep,
+            super::RichSegment {
+                text: "\u{2026}".to_string(),
+                style: ellipsis_style,
+                combine: false,
+                decoration_runs: Vec::new(),
+            },
+            req.white_space != crate::text::types::WhiteSpaceMode::PreWrap,
+        );
+        let (mut tokens, decoration_spans) = super::build_ellipsis_tokens(
             &truncated,
             text_req,
             font_ctx.registry,
             font_ctx.fallback_registry,
             &default_style,
-        )?;
-        Some(layout_prepared_rich_flow(
+        )
+        .ok_or_else(|| {
+            BoundtextError::FlowLayout("Failed to prepare ellipsis candidate".to_string())
+        })?;
+        super::mark_last_token_as_synthetic_ellipsis(&mut tokens);
+        let mut candidate_warnings = super::collect_notdef_warnings_from_tokens(&tokens);
+        candidate_warnings.extend(super::collect_owned_warnings(&truncated));
+        layout_prepared_rich_flow(
             req,
             font_ctx,
-            regions_source,
+            region_provider,
             &tokens,
-            warnings,
+            &decoration_spans,
+            &candidate_warnings,
             min_region,
             chosen_font_size_px,
-        ))
+        )
+        .map(Some)
     };
-    let fits = |result: &text_flow::FlowLayoutResult| {
-        result.exhausted && text_flow::flow_layout_is_contained(result)
+    let is_candidate_fit = |candidate_layout: &text_flow::FlowLayoutResult| {
+        candidate_layout.exhausted && text_flow::flow_layout_is_contained(candidate_layout)
     };
 
-    let mut lo = 0usize;
-    let mut hi = total - 1;
-    let mut best: Option<(usize, text_flow::FlowLayoutResult)> = None;
-    while lo <= hi {
-        let mid = lo + (hi - lo) / 2;
-        let candidate = probe(mid)?;
-        if fits(&candidate) {
-            best = Some((mid, candidate));
-            lo = mid + 1;
-        } else if mid == 0 {
-            break;
-        } else {
-            hi = mid - 1;
-        }
+    let graphemes = super::collect_inline_graphemes(&inline_nodes);
+    let grapheme_refs = graphemes.iter().map(String::as_str).collect::<Vec<_>>();
+    let effective_wrap = if req.white_space == crate::text::types::WhiteSpaceMode::NoWrap {
+        WrapMode::None
+    } else {
+        req.wrap
+    };
+    let word_boundaries = super::prepare_ellipsis_word_boundaries(&graphemes, effective_wrap, None);
+    let profile =
+        crate::text::kinsoku::get_kinsoku_profile(Some(super::language_to_str(req.language)));
+    let legal_prefixes = super::legal_ellipsis_prefixes(&inline_nodes)
+        .into_iter()
+        .filter(|keep| *keep < total)
+        .filter(|keep| super::is_ellipsis_boundary_allowed_by_wrap(word_boundaries.as_ref(), *keep))
+        .filter(|keep| {
+            profile.is_none_or(|active_profile| {
+                crate::text::kinsoku::is_valid_ellipsis_boundary(
+                    &grapheme_refs,
+                    *keep,
+                    active_profile,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    let required = legal_prefixes.len().saturating_add(1);
+    let limit = crate::text::ellipsis_plan::ELLIPSIS_CANDIDATES_MAX;
+    if required > limit {
+        return Err(BoundtextError::EllipsisCandidateLimit { required, limit });
     }
-    let (keep, mut result) = best.unwrap_or((0, probe(0)?));
+    let selected = crate::text::ellipsis_plan::try_select_longest_fitting(
+        legal_prefixes.into_iter(),
+        &probe,
+        is_candidate_fit,
+    )?;
+    let mut projected_layout = if let Some((_, selected)) = selected {
+        selected
+    } else {
+        let mut empty = probe(0)?.ok_or_else(|| {
+            BoundtextError::FlowLayout("Failed to prepare empty ellipsis candidate".to_string())
+        })?;
+        empty.lines.clear();
+        empty.inline_box_decorations.clear();
+        empty.used_line_count = 0;
+        empty.warnings.clear();
+        empty
+    };
 
-    if let Some(profile) =
-        crate::text::kinsoku::get_kinsoku_profile(Some(super::language_to_str(req.language)))
+    projected_layout.exhausted = false;
+    projected_layout.overflow_reason = overflow_reason;
+    if let Some(marker_fragment) = projected_layout
+        .lines
+        .iter_mut()
+        .flat_map(|line| line.fragments.iter_mut())
+        .find(|fragment| {
+            fragment.text.contains('\u{2026}')
+                && fragment
+                    .positioned_glyphs
+                    .iter()
+                    .any(|glyph| glyph.synthetic_kind.as_deref() == Some("ellipsis"))
+        })
     {
-        let graphemes = super::collect_inline_graphemes(&inline_nodes);
-        let grapheme_refs = graphemes.iter().map(String::as_str).collect::<Vec<_>>();
-        let mut adjusted = keep;
-        while adjusted > 0
-            && !crate::text::kinsoku::is_valid_ellipsis_boundary(&grapheme_refs, adjusted, profile)
-        {
-            adjusted -= 1;
-        }
-        if adjusted != keep {
-            result = probe(adjusted)?;
+        marker_fragment.overflow_reason = Some("ellipsis".to_string());
+    }
+    Ok(Some(projected_layout))
+}
+
+#[derive(Debug)]
+struct PendingFlowDecoration {
+    span_id: Option<u32>,
+    decoration: InlineBoxDecoration,
+}
+
+fn finish_flow_decorations(
+    mut pending: Vec<PendingFlowDecoration>,
+    is_vertical: bool,
+) -> Vec<InlineBoxDecoration> {
+    let mut counts = std::collections::HashMap::new();
+    for item in &pending {
+        if let Some(span_id) = item.span_id {
+            *counts.entry(span_id).or_insert(0usize) += 1;
         }
     }
 
-    result.exhausted = false;
-    result.overflow_reason = overflow_reason;
-    Some(result)
+    let mut seen = std::collections::HashMap::new();
+    for item in &mut pending {
+        if let Some(span_id) = item.span_id {
+            let total = *counts.get(&span_id).unwrap_or(&1);
+            let current = seen.entry(span_id).or_insert(0usize);
+            *current += 1;
+            item.decoration.border_radius = if is_vertical {
+                resolve_fragment_border_radius_vertical(
+                    item.decoration.border_radius,
+                    *current == 1,
+                    *current == total,
+                )
+            } else {
+                resolve_fragment_border_radius(
+                    item.decoration.border_radius,
+                    *current == 1,
+                    *current == total,
+                )
+            };
+        }
+    }
+
+    pending.into_iter().map(|item| item.decoration).collect()
+}
+
+fn materialize_horizontal_flow_decorations(
+    lines: &[text_flow::FlowLine],
+    tokens: &[super::LayoutToken],
+    decoration_spans: &[super::DecorationSpanMeta],
+) -> Vec<InlineBoxDecoration> {
+    let mut pending = Vec::new();
+    for line in lines {
+        let mut group_start = 0usize;
+        while group_start < line.fragments.len() {
+            let region_index = line.fragments[group_start].region_index;
+            let mut group_end = group_start + 1;
+            while group_end < line.fragments.len()
+                && line.fragments[group_end].region_index == region_index
+            {
+                group_end += 1;
+            }
+
+            let first_fragment = &line.fragments[group_start];
+            let token_start = first_fragment.char_start;
+            let token_end = line.fragments[group_end - 1].char_end;
+            if token_start < token_end && token_end <= tokens.len() {
+                let assembled = assemble_horizontal_line(
+                    &tokens[token_start..token_end],
+                    0.0,
+                    decoration_spans,
+                );
+                for decoration in assembled.decorations {
+                    let span_id = decoration.span_id;
+                    pending.push(PendingFlowDecoration {
+                        span_id,
+                        decoration: InlineBoxDecoration {
+                            x: first_fragment.x + decoration.offset,
+                            y: first_fragment.y,
+                            width: decoration.advance,
+                            height: if span_id.is_some() {
+                                line.cross_size
+                            } else {
+                                decoration.cross_size
+                            },
+                            background: decoration.background,
+                            border_color: decoration.border_color,
+                            border_width: decoration.border_width,
+                            border_radius: decoration.border_radius,
+                            span_key: decoration.span_key,
+                        },
+                    });
+                }
+            }
+            group_start = group_end;
+        }
+    }
+    finish_flow_decorations(pending, false)
+}
+
+fn materialize_vertical_flow_decorations(
+    columns: &[text_flow::FlowLine],
+    tokens: &[super::LayoutToken],
+    decoration_spans: &[super::DecorationSpanMeta],
+) -> Vec<InlineBoxDecoration> {
+    let mut pending = Vec::new();
+    for column in columns {
+        let mut group_start = 0usize;
+        while group_start < column.fragments.len() {
+            let region_index = column.fragments[group_start].region_index;
+            let mut group_end = group_start + 1;
+            while group_end < column.fragments.len()
+                && column.fragments[group_end].region_index == region_index
+            {
+                group_end += 1;
+            }
+
+            let first_fragment = &column.fragments[group_start];
+            let token_start = first_fragment.char_start;
+            let token_end = column.fragments[group_end - 1].char_end;
+            if token_start < token_end && token_end <= tokens.len() {
+                let assembled =
+                    assemble_vertical_line(&tokens[token_start..token_end], 0.0, decoration_spans);
+                for decoration in assembled.decorations {
+                    let span_id = decoration.span_id;
+                    let cross_offset = if span_id.is_some() {
+                        0.0
+                    } else {
+                        first_fragment.baseline_offset - assembled.reference_offset
+                            + decoration.cross_offset
+                    };
+                    pending.push(PendingFlowDecoration {
+                        span_id,
+                        decoration: InlineBoxDecoration {
+                            x: first_fragment.x + cross_offset,
+                            y: first_fragment.y + decoration.offset,
+                            width: if span_id.is_some() {
+                                column.cross_size
+                            } else {
+                                decoration.cross_size
+                            },
+                            height: decoration.advance,
+                            background: decoration.background,
+                            border_color: decoration.border_color,
+                            border_width: decoration.border_width,
+                            border_radius: decoration.border_radius,
+                            span_key: decoration.span_key,
+                        },
+                    });
+                }
+            }
+            group_start = group_end;
+        }
+    }
+    finish_flow_decorations(pending, true)
 }
 
 fn layout_rich_flow_horizontal(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl text_flow::FlowRegionSource,
+    region_provider: &impl text_flow::RegionProvider,
     tokens: &[super::LayoutToken],
+    decoration_spans: &[super::DecorationSpanMeta],
     warnings: &[TextWarning],
     min_region_width: f64,
     chosen_font_size_px: f64,
-) -> text_flow::FlowLayoutResult {
+) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
     let line_height_px = text_flow::resolve_flow_line_height_px(
         font_ctx,
         chosen_font_size_px,
@@ -299,7 +556,14 @@ fn layout_rich_flow_horizontal(
             if !pending_trailing_line {
                 break;
             }
-            let regions = regions_source.line_regions(line_top, line_bottom, min_region_width);
+            let regions = text_flow::query_regions(
+                region_provider,
+                crate::text::types::WritingMode::HorizontalTb,
+                &req.flow_bounds,
+                line_top,
+                line_bottom,
+                min_region_width,
+            )?;
             if regions.is_empty() {
                 line_index += 1;
                 cross_cursor += line_height_px;
@@ -319,11 +583,14 @@ fn layout_rich_flow_horizontal(
         let mut resolved_line = None;
         for _ in 0..tokens.len() + 2 {
             cursor = saved_cursor;
-            let regions = regions_source.line_regions(
+            let regions = text_flow::query_regions(
+                region_provider,
+                crate::text::types::WritingMode::HorizontalTb,
+                &req.flow_bounds,
                 line_top,
                 line_top + probe_cross_size,
                 min_region_width,
-            );
+            )?;
             if regions.is_empty() {
                 resolved_line = None;
                 break;
@@ -349,8 +616,14 @@ fn layout_rich_flow_horizontal(
             };
             resolved_line = Some((fragments, line_cross_size, ended_with_hard_break));
             let next_cross_size = probe_cross_size.max(line_cross_size);
-            let expanded =
-                regions_source.line_regions(line_top, line_top + next_cross_size, min_region_width);
+            let expanded = text_flow::query_regions(
+                region_provider,
+                crate::text::types::WritingMode::HorizontalTb,
+                &req.flow_bounds,
+                line_top,
+                line_top + next_cross_size,
+                min_region_width,
+            )?;
             if text_flow::regions_approx_eq(&regions, &expanded) {
                 break;
             }
@@ -384,7 +657,9 @@ fn layout_rich_flow_horizontal(
     }
 
     let exhausted = cursor >= tokens.len() && !pending_trailing_line;
-    text_flow::FlowLayoutResult {
+    let inline_box_decorations =
+        materialize_horizontal_flow_decorations(&lines, tokens, decoration_spans);
+    Ok(text_flow::FlowLayoutResult {
         used_line_count: lines.len(),
         exhausted,
         overflow_reason: if exhausted {
@@ -397,18 +672,20 @@ fn layout_rich_flow_horizontal(
         chosen_font_size_px: None,
         lines,
         warnings: warnings.to_vec(),
-    }
+        inline_box_decorations,
+    })
 }
 
 fn layout_rich_flow_vertical(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl text_flow::FlowRegionSource,
+    region_provider: &impl text_flow::RegionProvider,
     tokens: &[super::LayoutToken],
+    decoration_spans: &[super::DecorationSpanMeta],
     warnings: &[TextWarning],
     min_region_height: f64,
     chosen_font_size_px: f64,
-) -> text_flow::FlowLayoutResult {
+) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
     let column_width = text_flow::resolve_flow_line_height_px(
         font_ctx,
         chosen_font_size_px,
@@ -443,8 +720,14 @@ fn layout_rich_flow_vertical(
             if !pending_trailing_column {
                 break;
             }
-            let regions =
-                regions_source.column_regions(column_left, column_right, min_region_height);
+            let regions = text_flow::query_regions(
+                region_provider,
+                crate::text::types::WritingMode::VerticalRl,
+                &req.flow_bounds,
+                column_left,
+                column_right,
+                min_region_height,
+            )?;
             if regions.is_empty() {
                 column_index += 1;
                 cross_cursor -= column_width;
@@ -465,8 +748,14 @@ fn layout_rich_flow_vertical(
         for _ in 0..tokens.len() + 2 {
             cursor = saved_cursor;
             let probe_left = column_right - probe_cross_size;
-            let regions =
-                regions_source.column_regions(probe_left, column_right, min_region_height);
+            let regions = text_flow::query_regions(
+                region_provider,
+                crate::text::types::WritingMode::VerticalRl,
+                &req.flow_bounds,
+                probe_left,
+                column_right,
+                min_region_height,
+            )?;
             if regions.is_empty() {
                 resolved_column = None;
                 break;
@@ -498,11 +787,14 @@ fn layout_rich_flow_vertical(
             }
             resolved_column = Some((fragments, column_cross_size, ended_with_hard_break));
             let next_cross_size = probe_cross_size.max(column_cross_size);
-            let expanded = regions_source.column_regions(
+            let expanded = text_flow::query_regions(
+                region_provider,
+                crate::text::types::WritingMode::VerticalRl,
+                &req.flow_bounds,
                 column_right - next_cross_size,
                 column_right,
                 min_region_height,
-            );
+            )?;
             if text_flow::regions_approx_eq(&regions, &expanded) {
                 break;
             }
@@ -531,7 +823,9 @@ fn layout_rich_flow_vertical(
     }
 
     let exhausted = cursor >= tokens.len() && !pending_trailing_column;
-    text_flow::FlowLayoutResult {
+    let inline_box_decorations =
+        materialize_vertical_flow_decorations(&columns, tokens, decoration_spans);
+    Ok(text_flow::FlowLayoutResult {
         used_line_count: columns.len(),
         exhausted,
         overflow_reason: if exhausted {
@@ -544,7 +838,8 @@ fn layout_rich_flow_vertical(
         chosen_font_size_px: None,
         lines: columns,
         warnings: warnings.to_vec(),
-    }
+        inline_box_decorations,
+    })
 }
 
 fn layout_next_rich_flow_line(
@@ -660,7 +955,8 @@ fn layout_next_rich_flow_line(
                     .inline_rects
                     .iter()
                     .map(|inline_rect| text_flow::FlowInlineRect {
-                        inline_offset: token.decoration_start_advance + inline_rect.offset,
+                        inline_offset: super::token_decoration_start_advance(token)
+                            + inline_rect.offset,
                         rect: inline_rect.rect.clone(),
                     })
                     .collect(),
@@ -684,7 +980,7 @@ fn layout_next_rich_flow_line(
             let mut positioned_glyphs = token.glyphs.clone();
             super::shift_glyphs_x(
                 &mut positioned_glyphs,
-                fragment.x + token.decoration_start_advance,
+                fragment.x + super::token_decoration_start_advance(token),
             );
             super::shift_glyphs_y(
                 &mut positioned_glyphs,
@@ -816,7 +1112,8 @@ fn layout_next_rich_flow_column(
                     .inline_rects
                     .iter()
                     .map(|inline_rect| text_flow::FlowInlineRect {
-                        inline_offset: token.decoration_start_advance + inline_rect.offset,
+                        inline_offset: super::token_decoration_start_advance(token)
+                            + inline_rect.offset,
                         rect: inline_rect.rect.clone(),
                     })
                     .collect(),
@@ -844,7 +1141,7 @@ fn layout_next_rich_flow_column(
             );
             super::shift_glyphs_y(
                 &mut positioned_glyphs,
-                fragment.y + token.decoration_start_advance,
+                fragment.y + super::token_decoration_start_advance(token),
             );
             for glyph in &mut positioned_glyphs {
                 glyph.absolute_position = Some(true);
@@ -1076,12 +1373,13 @@ fn rich_region_hanging_overflow_px(
 
 fn flow_token_advance(tokens: &[super::LayoutToken], index: usize, region_end: usize) -> f64 {
     let token = &tokens[index];
-    let mut advance = token.advance + token.decoration_start_advance;
-    if token.decoration_span_id.is_some()
-        && (index + 1 == region_end
-            || tokens[index + 1].decoration_span_id != token.decoration_span_id)
-    {
-        advance += token.decoration_end_advance;
+    let mut advance = token.advance + super::token_decoration_start_advance(token);
+    for membership in &token.decoration_memberships {
+        if index + 1 == region_end
+            || !super::has_decoration_span(&tokens[index + 1], membership.span_id)
+        {
+            advance += membership.end_advance;
+        }
     }
     advance
 }
@@ -1102,9 +1400,7 @@ mod tests {
             inline_rects: Vec::new(),
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
-            decoration_span_id: None,
-            decoration_start_advance: 0.0,
-            decoration_end_advance: 0.0,
+            decoration_memberships: Vec::new(),
             flow_ruby: None,
             trailing_tracking_px: 0.0,
         }

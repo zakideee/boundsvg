@@ -331,6 +331,7 @@ pub fn run_layout(input: &CliInput, font_registry: &FontRegistry) -> CliOutput {
         max_font_size_px: req.max_font_size_px,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
 
     // Run layout
@@ -342,7 +343,7 @@ pub fn run_layout(input: &CliInput, font_registry: &FontRegistry) -> CliOutput {
         style: &font_style,
     };
     match layout_text(&layout_req, &font_ctx) {
-        Some(result) => {
+        Ok(result) => {
             let is_vertical = writing_mode == WritingMode::VerticalRl;
 
             // Compute break indices (grapheme-cluster based)
@@ -429,13 +430,11 @@ pub fn run_layout(input: &CliInput, font_registry: &FontRegistry) -> CliOutput {
                 }),
             }
         }
-        None => CliOutput {
+        Err(error) => CliOutput {
             id: input.id.clone(),
             category: input.category.clone(),
             status: "error".to_string(),
-            error: Some(
-                "layout_text returned None (font not found or unsupported request)".to_string(),
-            ),
+            error: Some(error.to_string()),
             result: None,
         },
     }

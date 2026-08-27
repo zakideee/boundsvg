@@ -3,6 +3,7 @@ use crate::font::shaping::{
     ShapeOptions, format_css_font_feature_settings, format_css_font_variation_settings,
 };
 use crate::font::{FontContext, FontStyle};
+use crate::text::fit::selected_font_size_scale;
 use crate::text::inline_runs;
 use crate::text::paragraph;
 use crate::text::types::{
@@ -10,8 +11,9 @@ use crate::text::types::{
 };
 
 use super::{
-    FlowFragment, FlowFragmentStyle, FlowLayoutRequest, FlowMeasure, FlowRegionSource,
-    FlowTextSpan, measure_flow_inline_with_styles, measure_flow_vertical_inline_with_styles,
+    FlowFragment, FlowFragmentStyle, FlowLayoutRequest, FlowMeasure, FlowTextSpan, RegionProvider,
+    measure_flow_inline_with_styles_and_budgeted_provider,
+    measure_flow_vertical_inline_with_styles_and_budgeted_provider,
 };
 
 // ---------------------------------------------------------------------------
@@ -81,8 +83,8 @@ fn flow_span_to_text_span(
     }
 }
 
-/// Build [`TextSpanInput`] and [`SpanRubyInfo`] vectors from
-/// [`FlowTextSpan`] slices.  This centralises the default resolution
+/// Build [`TextSpanInput`] and [`inline_runs::SpanRubyInfo`] vectors from
+/// [`FlowTextSpan`] slices. This centralises the default resolution
 /// (ruby position = "over", align = "space-around", font-size = 50 % base)
 /// shared by `layout_flow_inline`, `layout_flow_vertical_inline`, and
 /// the shrinkwrap-flow inline path.
@@ -261,7 +263,7 @@ pub(super) fn prepare_inline_flow_inputs(
     // Callers dispatch here only when spans exist; an absent value degrades to
     // an empty inline flow rather than aborting the render.
     let spans_input = req.spans.unwrap_or_default();
-    let scale = chosen_font_size_px / req.font_size_px.max(f64::EPSILON);
+    let scale = selected_font_size_scale(req.font_size_px, chosen_font_size_px);
     let spans = if (scale - 1.0).abs() < f64::EPSILON {
         spans_input.to_vec()
     } else {
@@ -305,9 +307,9 @@ pub(super) fn default_alphabetic_baseline_offset_px(
 pub(super) fn measure_inline_flow_at_font_size(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    regions_source: &impl FlowRegionSource,
+    region_provider: &impl RegionProvider,
     chosen_font_size_px: f64,
-) -> FlowMeasure {
+) -> Result<FlowMeasure, crate::BoundtextError> {
     let (_, text_spans, _, shaped_runs) =
         prepare_inline_flow_inputs(req, font_ctx, chosen_font_size_px);
     let min_region_extent = req.min_region_width.unwrap_or(chosen_font_size_px);
@@ -319,7 +321,7 @@ pub(super) fn measure_inline_flow_at_font_size(
             req.line_height,
             req.line_height_px,
         );
-        measure_flow_vertical_inline_with_styles(
+        measure_flow_vertical_inline_with_styles_and_budgeted_provider(
             &shaped_runs,
             &text_spans,
             font_ctx,
@@ -328,7 +330,7 @@ pub(super) fn measure_inline_flow_at_font_size(
             req.line_height,
             req.line_height_px,
             &req.flow_bounds,
-            regions_source,
+            region_provider,
             min_region_extent,
             req.max_lines,
             req.wrap,
@@ -340,7 +342,7 @@ pub(super) fn measure_inline_flow_at_font_size(
             req.line_height,
             req.line_height_px,
         );
-        measure_flow_inline_with_styles(
+        measure_flow_inline_with_styles_and_budgeted_provider(
             &shaped_runs,
             &text_spans,
             font_ctx,
@@ -349,7 +351,7 @@ pub(super) fn measure_inline_flow_at_font_size(
             req.line_height,
             req.line_height_px,
             &req.flow_bounds,
-            regions_source,
+            region_provider,
             min_region_extent,
             req.max_lines,
             req.wrap,

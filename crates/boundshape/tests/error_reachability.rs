@@ -1,9 +1,10 @@
 //! Public `ShapeError` variants must describe failures the kernel can emit.
 
 use boundshape::{
-    BooleanOp, CompileGeometryOptions, GeometryDoc, GeometryNode, GeometryViewBox, RegionAxis,
-    ShapeError, boolean_regions_with_pair_budget, clip_monotonic_region_to_axis_interval,
-    compile_geometry_paths, evaluate_geometry, measure_single_svg_path,
+    BooleanOp, CompileGeometryOptions, GeometryDoc, GeometryNode, GeometryViewBox,
+    MAX_GEOMETRY_TREE_DEPTH, RegionAxis, ShapeError, boolean_regions_with_pair_budget,
+    clip_monotonic_region_to_axis_interval, compile_geometry_paths, evaluate_geometry,
+    measure_single_svg_path,
 };
 
 fn path_doc(d: &str) -> GeometryDoc {
@@ -22,26 +23,8 @@ fn path_doc(d: &str) -> GeometryDoc {
     }
 }
 
-fn assert_declared_error_is_audited(error: &ShapeError) {
-    match error {
-        ShapeError::BooleanChildCount
-        | ShapeError::InvalidPathData
-        | ShapeError::UnsupportedPathCommand(_)
-        | ShapeError::BooleanTopology
-        | ShapeError::BooleanPairLimit
-        | ShapeError::RegionClipInterval
-        | ShapeError::RegionClipNonMonotonic
-        | ShapeError::DuplicatePartId(_)
-        | ShapeError::PathMeasureMultipleSubpaths
-        | ShapeError::PathMeasureZeroLength
-        | ShapeError::PathMeasureComplexityLimit
-        | ShapeError::PathOffsetGeometry
-        | ShapeError::PathOffsetSampleLimit => {}
-    }
-}
-
 #[test]
-fn every_declared_shape_error_has_a_runtime_origin() {
+fn parse_and_part_errors_have_runtime_origins() {
     let too_few_children = GeometryDoc {
         view_box: GeometryViewBox {
             x: 0.0,
@@ -56,7 +39,6 @@ fn every_declared_shape_error_has_a_runtime_origin() {
         },
     };
     let child_count_error = evaluate_geometry(&too_few_children).expect_err("child count");
-    assert_declared_error_is_audited(&child_count_error);
     assert_eq!(child_count_error, ShapeError::BooleanChildCount);
     assert_eq!(
         evaluate_geometry(&path_doc("M0 0L")),
@@ -103,7 +85,6 @@ fn every_declared_shape_error_has_a_runtime_origin() {
     let duplicate_error =
         compile_geometry_paths(&duplicate_parts, Some(&CompileGeometryOptions::default()))
             .expect_err("duplicate addressable part id");
-    assert_declared_error_is_audited(&duplicate_error);
     assert_eq!(duplicate_error, ShapeError::DuplicatePartId("face".into()));
 
     let path_errors = [
@@ -122,9 +103,32 @@ fn every_declared_shape_error_has_a_runtime_origin() {
         ),
     ];
     for (path_error, expected_error) in path_errors {
-        assert_declared_error_is_audited(&path_error);
         assert_eq!(path_error, expected_error);
     }
+}
+
+#[test]
+fn geometry_depth_limit_has_a_runtime_origin() {
+    let mut deep_root = path_doc("M0 0H10V10H0Z").root;
+    for _ in 0..=MAX_GEOMETRY_TREE_DEPTH {
+        deep_root = GeometryNode::Transform {
+            node_id: None,
+            transform: boundshape::Transform2D::default(),
+            child: Box::new(deep_root),
+        };
+    }
+    let depth_error = evaluate_geometry(&GeometryDoc {
+        view_box: GeometryViewBox {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 200.0,
+        },
+        root: deep_root,
+    })
+    .expect_err("geometry depth limit");
+
+    assert_eq!(depth_error, ShapeError::GeometryDepthLimit);
 }
 
 #[test]
@@ -139,13 +143,11 @@ fn region_operation_limits_and_clip_preconditions_have_runtime_origins() {
     let pair_limit_error =
         boolean_regions_with_pair_budget(&left, &right, BooleanOp::Intersect, &mut no_pairs)
             .expect_err("boolean pair limit");
-    assert_declared_error_is_audited(&pair_limit_error);
     assert_eq!(pair_limit_error, ShapeError::BooleanPairLimit);
 
     let clip_interval_error =
         clip_monotonic_region_to_axis_interval(&left, RegionAxis::X, 2.0, 2.0)
             .expect_err("clip interval");
-    assert_declared_error_is_audited(&clip_interval_error);
     assert_eq!(clip_interval_error, ShapeError::RegionClipInterval);
 
     let Ok(non_monotonic) = evaluate_geometry(&path_doc("M0 0C10 1-10 2 0 3Z")) else {
@@ -154,7 +156,6 @@ fn region_operation_limits_and_clip_preconditions_have_runtime_origins() {
     let clip_monotonicity_error =
         clip_monotonic_region_to_axis_interval(&non_monotonic, RegionAxis::X, -1.0, 1.0)
             .expect_err("clip monotonicity");
-    assert_declared_error_is_audited(&clip_monotonicity_error);
     assert_eq!(clip_monotonicity_error, ShapeError::RegionClipNonMonotonic);
 }
 

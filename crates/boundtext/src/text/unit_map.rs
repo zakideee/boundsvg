@@ -10,7 +10,13 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use super::types::{Line, PositionedGlyph, WritingMode};
+use crate::font::FontContext;
+
+use super::grapheme::grapheme_split;
+use super::types::{
+    Line, PositionedGlyph, TextLayoutRequest, TextLayoutResult, WritingMode,
+    preprocess_span_texts_for_white_space, preprocess_text_for_white_space,
+};
 
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -86,6 +92,57 @@ pub struct TextUnitMap {
     pub units: Vec<TextUnitMapEntry>,
 }
 
+/// Canonical authored unit retained independently from the selected display
+/// projection. This is engine transport for omitted-unit materialization;
+/// callers must treat its ordering and IDs as implementation details.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub(crate) struct TextSourceUnit {
+    pub(crate) source_start: u32,
+    pub(crate) source_end: u32,
+    pub(crate) cluster_start: u32,
+    pub(crate) cluster_end: u32,
+    pub(crate) source_role: TextUnitSourceRole,
+    /// Ruby annotation source namespace; absent for content and ruby base.
+    pub(crate) annotation_level: Option<u32>,
+    pub(crate) authored_order: u32,
+}
+
+/// Immutable logical source projection for a text layout.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[doc(hidden)]
+pub(crate) struct TextSourceProjection {
+    pub(crate) units: Vec<TextSourceUnit>,
+}
+
+impl TextSourceProjection {
+    /// Build one canonical content unit per extended grapheme cluster.
+    #[must_use]
+    pub(crate) fn from_content(text: &str) -> Self {
+        let mut byte_cursor = 0_u32;
+        let units = grapheme_split(text)
+            .into_iter()
+            .enumerate()
+            .map(|(index, grapheme)| {
+                let cluster_start = byte_cursor;
+                byte_cursor =
+                    byte_cursor.saturating_add(u32::try_from(grapheme.len()).unwrap_or(u32::MAX));
+                let source_start = u32::try_from(index).unwrap_or(u32::MAX);
+                TextSourceUnit {
+                    source_start,
+                    source_end: source_start.saturating_add(1),
+                    cluster_start,
+                    cluster_end: byte_cursor,
+                    source_role: TextUnitSourceRole::Content,
+                    annotation_level: None,
+                    authored_order: source_start,
+                }
+            })
+            .collect();
+        Self { units }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextUnitMapError {
     pub line_index: usize,
@@ -112,6 +169,30 @@ struct ClusterSignature {
     source_end: u32,
     cluster_start: u32,
     cluster_end: u32,
+    annotation_level: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ClusterOccurrenceKey {
+    role: TextUnitSourceRole,
+    source_start: u32,
+    source_end: u32,
+    cluster_start: u32,
+    cluster_end: u32,
+}
+
+impl ClusterSignature {
+    /// Coordinates shared by the public unit ID format. Annotation levels use
+    /// consecutive occurrences so existing IDs stay opaque and collision-free.
+    fn occurrence_key(&self) -> ClusterOccurrenceKey {
+        ClusterOccurrenceKey {
+            role: self.role,
+            source_start: self.source_start,
+            source_end: self.source_end,
+            cluster_start: self.cluster_start,
+            cluster_end: self.cluster_end,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -166,13 +247,93 @@ pub fn build_text_unit_map(
     ruby: TextUnitRubyMode,
     writing_mode: WritingMode,
 ) -> Result<TextUnitMap, TextUnitMapError> {
+    build_text_unit_map_internal(lines, None, kind, ruby, writing_mode)
+}
+
+/// Build unit metadata from a completed layout and the request's canonical
+/// normalized authored projection. Units omitted from display are retained
+/// with no glyph members.
+///
+/// # Errors
+///
+/// Returns [`TextUnitMapError`] when a visible authored glyph lacks required
+/// source metadata.
+pub fn build_text_unit_map_for_request(
+    layout_result: &TextLayoutResult,
+    request: &TextLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    kind: TextUnitKind,
+    ruby: TextUnitRubyMode,
+) -> Result<TextUnitMap, TextUnitMapError> {
+    let projection =
+        source_projection_for_request(request, font_ctx, layout_result.chosen_font_size_px);
+    build_text_unit_map_internal(
+        &layout_result.lines,
+        Some(&projection),
+        kind,
+        ruby,
+        request.writing_mode,
+    )
+}
+
+fn source_projection_for_request(
+    request: &TextLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    chosen_font_size_px: f64,
+) -> TextSourceProjection {
+    if request.has_rich_text() || request.text_indent.unwrap_or(0.0) != 0.0 {
+        return super::rich::build_source_projection(request, font_ctx, chosen_font_size_px);
+    }
+
+    let normalized_source = if let Some(spans) = request.spans.filter(|spans| !spans.is_empty()) {
+        let span_texts = spans
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<Vec<_>>();
+        preprocess_span_texts_for_white_space(&span_texts, request.white_space, request.tab_size)
+            .map_or_else(
+                || span_texts.concat(),
+                |normalized| normalized.into_iter().collect(),
+            )
+    } else {
+        preprocess_text_for_white_space(request.text, request.white_space, request.tab_size)
+    };
+    TextSourceProjection::from_content(&normalized_source)
+}
+
+fn build_text_unit_map_internal(
+    lines: &[Line],
+    source_projection: Option<&TextSourceProjection>,
+    kind: TextUnitKind,
+    ruby: TextUnitRubyMode,
+    writing_mode: WritingMode,
+) -> Result<TextUnitMap, TextUnitMapError> {
     let candidates = collect_candidates(lines, writing_mode)?;
     let line_ids = build_line_ids(lines.len(), &candidates, writing_mode);
-    let mut units = match kind {
-        TextUnitKind::Cluster => build_cluster_units(&candidates, &line_ids, ruby),
-        TextUnitKind::Line => build_line_units(candidates, &line_ids),
+    let (mut units, visible_draft_count) = match kind {
+        TextUnitKind::Cluster => {
+            let mut drafts = build_cluster_drafts(&candidates, &line_ids);
+            let visible_draft_count = drafts.len();
+            if let Some(projection) = source_projection {
+                append_omitted_cluster_drafts(&mut drafts, projection, lines.len());
+            }
+            (finalize_cluster_units(drafts, ruby), visible_draft_count)
+        }
+        TextUnitKind::Line => {
+            let drafts = build_line_units(candidates, &line_ids);
+            let visible_draft_count = drafts.len();
+            (drafts, visible_draft_count)
+        }
     };
     assign_orders(&mut units);
+    #[cfg(any(test, feature = "phase-trace"))]
+    crate::phase_trace::record_unit_map_work(
+        source_projection.map_or(0, |projection| projection.units.len()),
+        visible_draft_count,
+        units.iter().map(|draft| draft.entry.members.len()).sum(),
+    );
+    #[cfg(not(any(test, feature = "phase-trace")))]
+    let _ = visible_draft_count;
     Ok(TextUnitMap {
         kind,
         ruby,
@@ -205,6 +366,10 @@ fn collect_candidates(
             });
         }
         for (glyph_index, glyph) in positioned_glyphs.iter().enumerate() {
+            if glyph.synthetic_kind.as_deref() == Some("ellipsis") {
+                paint_order += 1;
+                continue;
+            }
             let source_start = required_source_offset(
                 glyph.source_start,
                 line_index,
@@ -237,6 +402,11 @@ fn collect_candidates(
                     source_end,
                     cluster_start: glyph.cluster_start,
                     cluster_end: glyph.cluster_end,
+                    annotation_level: if role == TextUnitSourceRole::RubyAnnotation {
+                        glyph.decoration_level
+                    } else {
+                        None
+                    },
                 },
                 inline_position: match writing_mode {
                     WritingMode::HorizontalTb => glyph.origin_x,
@@ -324,12 +494,11 @@ fn build_line_ids(
         .collect()
 }
 
-fn build_cluster_units(
+fn build_cluster_drafts(
     candidates: &[GlyphCandidate],
     line_ids: &[Option<String>],
-    ruby: TextUnitRubyMode,
 ) -> Vec<UnitDraft> {
-    let mut occurrence_by_signature = BTreeMap::<ClusterSignature, u32>::new();
+    let mut occurrence_by_coordinates = BTreeMap::<ClusterOccurrenceKey, u32>::new();
     let mut drafts = Vec::<UnitDraft>::new();
     let mut candidate_index = 0_usize;
     while candidate_index < candidates.len() {
@@ -343,8 +512,8 @@ fn build_cluster_units(
         {
             end += 1;
         }
-        let occurrence = occurrence_by_signature
-            .entry(signature.clone())
+        let occurrence = occurrence_by_coordinates
+            .entry(signature.occurrence_key())
             .or_default();
         let occurrence_value = *occurrence;
         *occurrence += 1;
@@ -386,6 +555,10 @@ fn build_cluster_units(
         candidate_index = end;
     }
 
+    drafts
+}
+
+fn finalize_cluster_units(mut drafts: Vec<UnitDraft>, ruby: TextUnitRubyMode) -> Vec<UnitDraft> {
     assign_ruby_groups(&mut drafts);
     assign_cluster_identities(&mut drafts);
     match ruby {
@@ -396,6 +569,87 @@ fn build_cluster_units(
             }
             drafts
         }
+    }
+}
+
+fn append_omitted_cluster_drafts(
+    drafts: &mut Vec<UnitDraft>,
+    projection: &TextSourceProjection,
+    visible_line_count: usize,
+) {
+    let is_represented = |source_unit: &TextSourceUnit| {
+        drafts.iter().any(|draft| {
+            if draft.signature.role != source_unit.source_role {
+                return false;
+            }
+            if draft.signature.annotation_level != source_unit.annotation_level {
+                return false;
+            }
+            let is_source_covered = draft.signature.source_start <= source_unit.source_start
+                && draft.signature.source_end >= source_unit.source_end;
+            if source_unit.source_role == TextUnitSourceRole::RubyAnnotation {
+                is_source_covered
+                    && draft.signature.cluster_start <= source_unit.cluster_start
+                    && draft.signature.cluster_end >= source_unit.cluster_end
+            } else {
+                is_source_covered
+            }
+        })
+    };
+    let omitted_units = projection
+        .units
+        .iter()
+        .filter(|source_unit| !is_represented(source_unit))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut occurrence_by_coordinates = drafts.iter().fold(
+        BTreeMap::<ClusterOccurrenceKey, u32>::new(),
+        |mut counts, draft| {
+            let next = counts.entry(draft.signature.occurrence_key()).or_default();
+            *next = (*next).max(draft.occurrence.saturating_add(1));
+            counts
+        },
+    );
+    for (omitted_index, source_unit) in omitted_units.into_iter().enumerate() {
+        let signature = ClusterSignature {
+            role: source_unit.source_role,
+            source_start: source_unit.source_start,
+            source_end: source_unit.source_end,
+            cluster_start: source_unit.cluster_start,
+            cluster_end: source_unit.cluster_end,
+            annotation_level: source_unit.annotation_level,
+        };
+        let occurrence = occurrence_by_coordinates
+            .entry(signature.occurrence_key())
+            .or_default();
+        let occurrence_value = *occurrence;
+        *occurrence += 1;
+        let unit_id = cluster_unit_id(&signature, occurrence_value, None);
+        let visual_key = VisualKey {
+            line_index: visible_line_count.saturating_add(omitted_index),
+            inline_position: 0.0,
+            paint_order: usize::MAX
+                .saturating_sub(projection.units.len())
+                .saturating_add(omitted_index),
+        };
+        drafts.push(UnitDraft {
+            entry: TextUnitMapEntry {
+                unit_id: unit_id.clone(),
+                kind: TextUnitKind::Cluster,
+                source_start: signature.source_start,
+                source_end: signature.source_end,
+                line_id: String::new(),
+                logical_order: 0,
+                visual_order: 0,
+                members: Vec::new(),
+            },
+            signature: signature.clone(),
+            occurrence: occurrence_value,
+            logical_key: standalone_logical_key(&signature, occurrence_value, &unit_id),
+            visual_key,
+            ruby_group: None,
+            first_paint_order: visual_key.paint_order,
+        });
     }
 }
 
@@ -569,6 +823,7 @@ fn combine_ruby_units(drafts: Vec<UnitDraft>) -> Vec<UnitDraft> {
                 source_end,
                 cluster_start: 0,
                 cluster_end: 0,
+                annotation_level: None,
             },
             occurrence: 0,
             logical_key: LogicalKey {
@@ -651,6 +906,7 @@ fn build_line_units(
                 source_end,
                 cluster_start: 0,
                 cluster_end: 0,
+                annotation_level: None,
             },
             occurrence: axis_rank,
             logical_key: LogicalKey {
@@ -1004,6 +1260,103 @@ mod tests {
             .find(|unit| unit.source_start == 0)
             .expect("ruby unit");
         assert_eq!(ruby.visual_order, 0);
+    }
+
+    #[test]
+    fn synthetic_ellipsis_is_not_an_authored_unit_member() {
+        let authored = glyph("A", (0, 1), (0, 1), "content", (0.0, 12.0));
+        let mut marker = glyph("\u{2026}", (1, 1), (1, 4), "content", (10.0, 12.0));
+        marker.source_start = None;
+        marker.source_end = None;
+        marker.source_role = None;
+        marker.synthetic_kind = Some("ellipsis".to_string());
+
+        let map = cluster_map(&[line(vec![authored, marker])], TextUnitRubyMode::WithBase);
+
+        assert_eq!(map.units.len(), 1);
+        assert_eq!((map.units[0].source_start, map.units[0].source_end), (0, 1));
+        assert_eq!(map.units[0].members.len(), 1);
+    }
+
+    #[test]
+    fn omitted_source_units_are_retained_without_glyph_members() {
+        let authored = glyph("A", (0, 1), (0, 1), "content", (0.0, 12.0));
+        let mut marker = glyph("\u{2026}", (1, 1), (1, 4), "content", (10.0, 12.0));
+        marker.source_start = None;
+        marker.source_end = None;
+        marker.source_role = None;
+        marker.synthetic_kind = Some("ellipsis".to_string());
+        let lines = [line(vec![authored, marker])];
+        let projection = TextSourceProjection::from_content("ABC");
+
+        let map = build_text_unit_map_internal(
+            &lines,
+            Some(&projection),
+            TextUnitKind::Cluster,
+            TextUnitRubyMode::WithBase,
+            WritingMode::HorizontalTb,
+        )
+        .expect("projected unit map");
+
+        assert_eq!(map.units.len(), 3);
+        assert_eq!(map.units[0].members.len(), 1);
+        assert!(map.units[1].members.is_empty());
+        assert!(map.units[2].members.is_empty());
+        assert_eq!(
+            map.units
+                .iter()
+                .map(|unit| (unit.source_start, unit.source_end))
+                .collect::<Vec<_>>(),
+            [(0, 1), (1, 2), (2, 3)]
+        );
+    }
+
+    #[test]
+    fn omitted_ruby_keeps_base_and_annotation_identity() {
+        let projection = TextSourceProjection {
+            units: vec![
+                TextSourceUnit {
+                    source_start: 0,
+                    source_end: 1,
+                    cluster_start: 0,
+                    cluster_end: 3,
+                    source_role: TextUnitSourceRole::RubyBase,
+                    annotation_level: None,
+                    authored_order: 0,
+                },
+                TextSourceUnit {
+                    source_start: 0,
+                    source_end: 1,
+                    cluster_start: 0,
+                    cluster_end: 3,
+                    source_role: TextUnitSourceRole::RubyAnnotation,
+                    annotation_level: Some(0),
+                    authored_order: 1,
+                },
+            ],
+        };
+
+        let separate = build_text_unit_map_internal(
+            &[],
+            Some(&projection),
+            TextUnitKind::Cluster,
+            TextUnitRubyMode::Separate,
+            WritingMode::HorizontalTb,
+        )
+        .expect("separate omitted ruby");
+        assert_eq!(separate.units.len(), 2);
+        assert!(separate.units.iter().all(|unit| unit.members.is_empty()));
+
+        let with_base = build_text_unit_map_internal(
+            &[],
+            Some(&projection),
+            TextUnitKind::Cluster,
+            TextUnitRubyMode::WithBase,
+            WritingMode::HorizontalTb,
+        )
+        .expect("combined omitted ruby");
+        assert_eq!(with_base.units.len(), 1);
+        assert!(with_base.units[0].members.is_empty());
     }
 
     #[test]

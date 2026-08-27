@@ -1,5 +1,6 @@
+use super::adapters::TextFlowLayoutError;
 use super::conversions::{
-    ExclusionRegionSource, convert_flow_result, convert_flow_span, convert_shrinkwrap_status,
+    ExclusionRegionProvider, convert_flow_result, convert_flow_span, convert_shrinkwrap_status,
 };
 use super::geometry::FlowBox;
 use super::types::{
@@ -184,7 +185,7 @@ fn compute_flow_used_height(
 pub(crate) fn shrinkwrap_text(
     input: &ShrinkwrapTextInput,
     registry: &FontRegistry,
-) -> Result<ShrinkwrapTextResult, String> {
+) -> Result<ShrinkwrapTextResult, TextFlowLayoutError> {
     super::validate_rich_text_depth(input.rich_text.as_deref())?;
     let font_families = super::build_font_families(&input.font_family, input.fallback.as_deref());
     let font_style = match input.font_style.as_deref() {
@@ -245,7 +246,9 @@ pub(crate) fn shrinkwrap_text(
         .is_some_and(|nodes| !nodes.is_empty());
 
     if has_authored_spans && has_rich_text {
-        return Err("spans and richText are mutually exclusive".to_string());
+        return Err("spans and richText are mutually exclusive"
+            .to_string()
+            .into());
     }
 
     let preprocessed = crate::text::types::preprocess_text_for_white_space(
@@ -329,6 +332,7 @@ pub(crate) fn shrinkwrap_text(
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
         if is_vertical {
             let max_height = input
@@ -425,40 +429,43 @@ pub(crate) fn shrinkwrap_text(
             max_font_size_px: None,
             fit_epsilon_px: None,
             fit_max_iterations: None,
+            fit_max_probes: None,
             shape_options: shape_options.clone(),
         };
 
-        let layout_at =
-            |candidate: f64| -> Result<(bt_flow::FlowLayoutResult, bt_flow::FlowBounds), String> {
-                let flow_box = if is_vertical {
-                    FlowBox {
-                        x: 0.0,
-                        y: 0.0,
-                        width: input.max_width,
-                        height: candidate,
-                    }
-                } else {
-                    FlowBox {
-                        x: 0.0,
-                        y: 0.0,
-                        width: candidate,
-                        height: horizontal_cross_extent,
-                    }
-                };
-                let regions = ExclusionRegionSource {
-                    flow_box: &flow_box,
-                    exclusions: &[],
-                };
-                let flow_bounds = bt_flow::FlowBounds {
-                    x: flow_box.x,
-                    y: flow_box.y,
-                    width: flow_box.width,
-                    height: flow_box.height,
-                };
-                let req = build_req(flow_bounds);
-                let layout_result = bt_flow::layout_flow_with_regions(&req, &font_ctx, &regions)?;
-                Ok((layout_result, flow_bounds))
+        let layout_at = |candidate: f64| -> Result<
+            (bt_flow::FlowLayoutResult, bt_flow::FlowBounds),
+            TextFlowLayoutError,
+        > {
+            let flow_box = if is_vertical {
+                FlowBox {
+                    x: 0.0,
+                    y: 0.0,
+                    width: input.max_width,
+                    height: candidate,
+                }
+            } else {
+                FlowBox {
+                    x: 0.0,
+                    y: 0.0,
+                    width: candidate,
+                    height: horizontal_cross_extent,
+                }
             };
+            let regions = ExclusionRegionProvider {
+                flow_box: &flow_box,
+                exclusions: &[],
+            };
+            let flow_bounds = bt_flow::FlowBounds {
+                x: flow_box.x,
+                y: flow_box.y,
+                width: flow_box.width,
+                height: flow_box.height,
+            };
+            let req = build_req(flow_bounds);
+            let layout_result = bt_flow::layout_flow_with_regions(&req, &font_ctx, &regions)?;
+            Ok((layout_result, flow_bounds))
+        };
 
         let original_size = if is_vertical {
             input
@@ -666,7 +673,7 @@ pub(crate) fn shrinkwrap_text(
 pub(crate) fn shrinkwrap_flow(
     input: &ShrinkwrapFlowInput,
     registry: &FontRegistry,
-) -> Result<ShrinkwrapFlowResultDto, String> {
+) -> Result<ShrinkwrapFlowResultDto, TextFlowLayoutError> {
     super::validate_rich_text_depth(input.rich_text.as_deref())?;
     let font_families = super::build_font_families(&input.font_family, input.fallback.as_deref());
     let font_style = match input.font_style.as_deref() {
@@ -734,7 +741,9 @@ pub(crate) fn shrinkwrap_flow(
         .as_ref()
         .is_some_and(|nodes| !nodes.is_empty());
     if has_authored_spans && has_rich_text {
-        return Err("spans and richText are mutually exclusive".to_string());
+        return Err("spans and richText are mutually exclusive"
+            .to_string()
+            .into());
     }
     let synthetic_spans = if !has_authored_spans
         && !has_rich_text
@@ -842,11 +851,12 @@ pub(crate) fn shrinkwrap_flow(
         max_font_size_px: None,
         fit_epsilon_px: None,
         fit_max_iterations: None,
+        fit_max_probes: None,
         shape_options: shape_options.clone(),
     };
 
     // Unified measure closure: delegates to inline, rich, or plain path.
-    let measure_at = |candidate: f64| -> Result<(usize, bool), String> {
+    let measure_at = |candidate: f64| -> Result<(usize, bool), TextFlowLayoutError> {
         let fb = if is_vertical {
             FlowBox {
                 x: input.flow_box.x,
@@ -862,7 +872,7 @@ pub(crate) fn shrinkwrap_flow(
                 height: input.flow_box.height,
             }
         };
-        let regions = ExclusionRegionSource {
+        let regions = ExclusionRegionProvider {
             flow_box: &fb,
             exclusions: &input.exclusions,
         };
@@ -905,7 +915,7 @@ pub(crate) fn shrinkwrap_flow(
                     input.max_lines,
                     wrap,
                 )
-            };
+            }?;
             Ok((measurement.used_line_count, measurement.fits()))
         } else if has_rich_text {
             let req = build_req(bt_fb);
@@ -915,7 +925,9 @@ pub(crate) fn shrinkwrap_flow(
         } else {
             let Some(pp) = pp.as_ref() else {
                 return Err(
-                    "Failed to measure flow shrinkwrap: paragraph was not shaped".to_string(),
+                    "Failed to measure flow shrinkwrap: paragraph was not shaped"
+                        .to_string()
+                        .into(),
                 );
             };
             let measurement = if is_vertical {
@@ -941,7 +953,7 @@ pub(crate) fn shrinkwrap_flow(
                     input.max_lines,
                     wrap,
                 )
-            };
+            }?;
             Ok((measurement.used_line_count, measurement.fits()))
         }
     };
@@ -1024,7 +1036,7 @@ pub(crate) fn shrinkwrap_flow(
             height: input.flow_box.height,
         }
     };
-    let final_regions = ExclusionRegionSource {
+    let final_regions = ExclusionRegionProvider {
         flow_box: &final_fb,
         exclusions: &input.exclusions,
     };

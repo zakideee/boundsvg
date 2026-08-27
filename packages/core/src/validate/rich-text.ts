@@ -974,7 +974,7 @@ function countTextDecorationRanges(node: VNode): number {
 }
 
 function validateTextFlow(node: VNodeFor<"Text">, nid: string): void {
-  const { tabSize, flowExclusions, flowMinRegionWidthPx, width, height } = node.props;
+  const { tabSize, flowExclusions, flowMinRegionWidthPx, fitMaxProbes, width, height } = node.props;
   if (
     tabSize !== undefined &&
     (typeof tabSize !== "number" || !Number.isInteger(tabSize) || tabSize < 1)
@@ -990,6 +990,15 @@ function validateTextFlow(node: VNodeFor<"Text">, nid: string): void {
     throw layoutContractError(
       nid,
       `'flowMinRegionWidthPx' must be positive and finite, got ${String(flowMinRegionWidthPx)}`,
+    );
+  }
+  if (
+    fitMaxProbes !== undefined &&
+    (typeof fitMaxProbes !== "number" || !Number.isInteger(fitMaxProbes) || fitMaxProbes < 1)
+  ) {
+    throw layoutContractError(
+      nid,
+      `'fitMaxProbes' must be a positive integer, got ${String(fitMaxProbes)}`,
     );
   }
   if (flowExclusions === undefined) {

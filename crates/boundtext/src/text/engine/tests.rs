@@ -479,6 +479,7 @@ mod span_parity {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         }
     }
 
@@ -719,6 +720,61 @@ mod span_parity {
             last.text
         );
         assert!(result.bbox.w <= 80.0 + 0.01);
+    }
+
+    /// Vertical rich text must use the same max-lines projection as the
+    /// horizontal planner. The marker is synthetic display content and must
+    /// not borrow an authored source range.
+    #[test]
+    fn vertical_rich_ellipsis_uses_a_source_less_synthetic_marker() {
+        use crate::text::types::RichTextNodeInput;
+
+        let registry = test_registry();
+        let families = vec!["NotoSansJP".to_string()];
+        let font_ctx = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+
+        let source = "あいうえおかきくけこさしすせそ";
+        let nodes = vec![RichTextNodeInput::Text {
+            text: source.to_string(),
+        }];
+        let mut rich_request = req("", None);
+        rich_request.rich_text = Some(&nodes);
+        rich_request.writing_mode = WritingMode::VerticalRl;
+        rich_request.max_width = 100.0;
+        rich_request.max_height = Some(80.0);
+        rich_request.max_lines = Some(2);
+        rich_request.ellipsis = true;
+
+        let layout_result =
+            crate::text::engine::layout_text_with_unit_metadata(&rich_request, &font_ctx)
+                .expect("vertical rich layout");
+
+        assert!(layout_result.lines.len() <= 2, "must fit in maxLines");
+        assert_eq!(layout_result.source_text.as_deref(), Some(source));
+        assert!(
+            layout_result
+                .display_text
+                .as_deref()
+                .is_some_and(|text| text.ends_with('\u{2026}')),
+            "display projection must end with ellipsis: {:?}",
+            layout_result.display_text
+        );
+        let marker = layout_result
+            .lines
+            .iter()
+            .filter_map(|line| line.positioned_glyphs.as_deref())
+            .flatten()
+            .find(|glyph| glyph.synthetic_kind.as_deref() == Some("ellipsis"))
+            .expect("synthetic ellipsis glyph");
+        assert_eq!(marker.source_start, None);
+        assert_eq!(marker.source_end, None);
+        assert_eq!(marker.source_role, None);
     }
 
     /// richText letterSpacing must match plain: per-grapheme token shaping
@@ -991,6 +1047,18 @@ mod span_parity {
             styled.lines[0].width,
             plain.lines[0].width
         );
+        let materialized_fragment_width = styled.lines[0]
+            .fragments
+            .as_ref()
+            .expect("span layout fragments")
+            .iter()
+            .map(|fragment| fragment.width)
+            .sum::<f64>();
+        assert!(
+            (materialized_fragment_width - styled.lines[0].width).abs() < 0.01,
+            "materialized fragment width {materialized_fragment_width} must equal line width {}",
+            styled.lines[0].width
+        );
     }
 }
 
@@ -1080,6 +1148,7 @@ fn char_wrap_breaks_by_character() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
     let result = layout_text(&req, &font_ctx).expect("layout");
     let lines: Vec<&str> = result.lines.iter().map(|l| l.text.as_str()).collect();
@@ -1145,6 +1214,7 @@ fn rich_decorated_span_produces_decorations() {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
     let result = layout_text(&req, &font_ctx).expect("layout");
     assert!(
@@ -1206,6 +1276,7 @@ mod unit_metadata_parity {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         }
     }
 
@@ -1331,5 +1402,76 @@ mod unit_metadata_parity {
             ..request("装飾付きインライン")
         };
         assert_layout_unchanged(&rich_request, &font_ctx);
+    }
+}
+
+mod fit_projection_work {
+    use crate::font::{FontContext, FontRegistry, FontStyle};
+    use crate::phase_trace::{reset_work, snapshot_work};
+    use crate::text::engine::layout_text;
+    use crate::text::types::{
+        FitMode, Language, TextLayoutRequest, TextOrientation, WhiteSpaceMode, WrapMode,
+        WritingMode,
+    };
+
+    #[test]
+    fn ellipsis_reuses_the_complete_documents_selected_fit_size() {
+        let font_bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"
+        ))
+        .expect("test font");
+        let mut registry = FontRegistry::new();
+        registry
+            .register(font_bytes, "NotoSansJP".to_string(), 400, FontStyle::Normal)
+            .expect("register test font");
+        let families = vec!["NotoSansJP".to_string()];
+        let font_context = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let request = TextLayoutRequest {
+            text: "あいうえお",
+            spans: None,
+            rich_text: None,
+            font_size_px: 16.0,
+            line_height: None,
+            line_height_px: None,
+            letter_spacing_px: -1.0,
+            text_indent: None,
+            max_width: 16.0,
+            max_height: None,
+            wrap: WrapMode::Char,
+            white_space: WhiteSpaceMode::Normal,
+            tab_size: 4,
+            fit: FitMode::Shrink,
+            max_lines: Some(1),
+            ellipsis: true,
+            language: Language::Ja,
+            writing_mode: WritingMode::HorizontalTb,
+            text_orientation: TextOrientation::Mixed,
+            uax14_breaks: None,
+            hanging_punctuation: false,
+            font_variation_settings: Vec::new(),
+            font_feature_settings: Vec::new(),
+            min_font_size_px: Some(12.0),
+            shrink_epsilon_px: Some(2.0),
+            shrink_max_iterations: Some(12),
+            max_font_size_px: None,
+            grow_epsilon_px: None,
+            grow_max_iterations: None,
+            fit_max_probes: Some(3),
+        };
+
+        reset_work();
+        let layout_result = layout_text(&request, &font_context).expect("fitted ellipsis layout");
+        let counters = snapshot_work();
+
+        assert_eq!(layout_result.chosen_font_size_px, 12.0);
+        assert_eq!(counters.fit_probes, 3);
+        assert!(counters.ellipsis_candidates > 0);
     }
 }

@@ -5,12 +5,10 @@ use taffy::prelude::*;
 
 use crate::font::FontRegistry;
 use crate::font::line_metrics::{LineMetrics, resolve_line_metrics_for_style};
-use crate::font::shaping;
 use crate::text::types::{
-    FitMode, InlineRectBlockSizeInput, IntrinsicInlineSizes, Language, Line as TextLine,
-    RichTextNodeInput, RichTextStyleInput, TextBBox, TextDecorationInput, TextDecorationStyle,
-    TextLayoutRequest, TextLayoutResult, TextOrientation, TextOverflow, TextWarning,
-    WhiteSpaceMode, WrapMode, WritingMode, build_notdef_warnings, collect_notdef_from_glyphs,
+    FitMode, InlineRectBlockSizeInput, IntrinsicInlineSizes, Language, RichTextNodeInput,
+    RichTextStyleInput, TextDecorationInput, TextDecorationStyle, TextLayoutRequest,
+    TextLayoutResult, TextOrientation, WhiteSpaceMode, WrapMode, WritingMode,
 };
 
 use super::types::{
@@ -30,29 +28,66 @@ pub(super) struct MeasureContext<'a> {
     pub(super) measure_cache:
         HashMap<u64, (Size<f32>, Option<crate::text::types::TextLayoutResult>)>,
     pub(super) measure_cache_hits: usize,
+    /// Widths returned to Taffy for a later shrink-to-fit feedback measure.
+    pub(super) shrink_to_fit_widths: HashMap<NodeId, f32>,
     /// Width-independent shaped paragraph cache.
     /// Key excludes `max_width`, `max_height`, `max_lines`, fit, ellipsis, `font_size`.
     pub(super) shaped_cache: HashMap<u64, crate::text::paragraph::ShapedParagraph>,
     /// Rust Text Engine results (stored during measure, read during collect)
     pub(super) text_results: HashMap<NodeId, crate::text::types::TextLayoutResult>,
+    /// Fatal text errors captured because Taffy's measure callback is infallible.
+    pub(super) text_errors: HashMap<NodeId, crate::error::EngineError>,
 }
 
-fn slice_text_by_byte_range(text: &str, start: usize, end: usize) -> String {
-    if start > end || end > text.len() {
-        return String::new();
-    }
-    if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
-        return String::new();
-    }
-    text[start..end].to_string()
+// Taffy measures in f32 while boundtext accumulates advances in f64. Round
+// intrinsic answers outward, then reserve one guard ULP only when Taffy feeds
+// a measured shrink-to-fit width back into the text engine.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "Taffy dimensions are f32 while text measurements are f64"
+)]
+fn layout_f32(value: f64) -> f32 {
+    value as f32
 }
 
-fn build_fallback_text_warning() -> TextWarning {
-    TextWarning {
-        code: "TEXT_LAYOUT_FALLBACK".to_string(),
-        message: "Rust text engine returned no layout result; using fallback text layout"
-            .to_string(),
-        fallback: Some("fallback_text_layout".to_string()),
+fn ceil_nonnegative_f32(value: f64) -> f32 {
+    let rounded = layout_f32(value);
+    if value > 0.0 && rounded.is_finite() && f64::from(rounded) < value {
+        return f32::from_bits(rounded.to_bits() + 1);
+    }
+    rounded
+}
+
+fn horizontal_constraint_px(value: f32, is_shrink_to_fit_feedback: bool) -> f64 {
+    if is_shrink_to_fit_feedback && value > 0.0 && value.is_finite() {
+        return f64::from(f32::from_bits(value.to_bits() + 1));
+    }
+    f64::from(value)
+}
+
+fn measured_width_px(value: f64, max_width: f32, is_intrinsic_width: bool) -> f32 {
+    let measured = if is_intrinsic_width {
+        ceil_nonnegative_f32(value)
+    } else {
+        layout_f32(value)
+    };
+    measured.min(max_width)
+}
+
+fn record_shrink_to_fit_width(
+    shrink_to_fit_widths: &mut HashMap<NodeId, f32>,
+    node_id: NodeId,
+    max_width: f32,
+    size: Size<f32>,
+    text_result: &TextLayoutResult,
+    is_feedback_candidate: bool,
+) {
+    if is_feedback_candidate
+        && text_result.lines.len() == 1
+        && text_result.overflow.overflow_type == "none"
+        && size.width < max_width
+    {
+        shrink_to_fit_widths.insert(node_id, size.width);
     }
 }
 
@@ -151,255 +186,10 @@ fn measure_intrinsic_inline_sizes(
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
 
     crate::text::rich::measure_intrinsic_inline_size(&req, &font_ctx)
-}
-
-fn build_horizontal_fallback_text_result(
-    text_input: &TextInput,
-    glyphs: &[shaping::GlyphInfo],
-    max_width: f32,
-    primary_alias: &str,
-    font_registry: &FontRegistry,
-    fallback_registry: Option<&FontRegistry>,
-) -> TextLayoutResult {
-    let line_metrics =
-        resolve_text_input_line_metrics(text_input, font_registry, fallback_registry);
-    let line_height_px = line_metrics.line_height_px;
-    let effective_max_w = f64::from(max_width);
-    let mut line_ranges: Vec<(usize, usize, f64)> = Vec::new();
-    let mut line_start = 0usize;
-    let mut cur_w = 0.0;
-
-    for (index, glyph) in glyphs.iter().enumerate() {
-        let next_w = cur_w + glyph.x_advance;
-        if next_w > effective_max_w && cur_w > 0.0 {
-            line_ranges.push((line_start, index, cur_w));
-            line_start = index;
-            cur_w = glyph.x_advance;
-            if let Some(max_lines) = text_input.max_lines {
-                if line_ranges.len() >= max_lines {
-                    break;
-                }
-            }
-        } else {
-            cur_w = next_w;
-        }
-    }
-
-    if line_ranges.len() < text_input.max_lines.unwrap_or(usize::MAX) && line_start < glyphs.len() {
-        line_ranges.push((line_start, glyphs.len(), cur_w));
-    }
-
-    if line_ranges.is_empty() && text_input.content.is_empty() {
-        return TextLayoutResult {
-            lines: Vec::new(),
-            bbox: TextBBox {
-                x: 0.0,
-                y: 0.0,
-                w: 0.0,
-                h: 0.0,
-            },
-            chosen_font_size_px: text_input.font_size_px,
-            overflow: TextOverflow::none(),
-            source_text: None,
-            display_text: None,
-            unit_map: None,
-            warnings: vec![build_fallback_text_warning()],
-            inline_box_decorations: Vec::new(),
-            text_decorations: Vec::new(),
-            inline_rects: Vec::new(),
-        };
-    }
-
-    if line_ranges.is_empty() {
-        line_ranges.push((0, glyphs.len(), cur_w));
-    }
-
-    let total_line_count = line_ranges.len();
-    let mut lines = Vec::with_capacity(total_line_count);
-    let mut max_line_width: f64 = 0.0;
-    for (line_index, (start, end, width)) in line_ranges.into_iter().enumerate() {
-        let start_byte = glyphs
-            .get(start)
-            .map_or(0usize, |glyph| glyph.cluster as usize)
-            .min(text_input.content.len());
-        let end_byte = glyphs
-            .get(end)
-            .map_or(text_input.content.len(), |glyph| glyph.cluster as usize)
-            .min(text_input.content.len());
-        max_line_width = max_line_width.max(width);
-        lines.push(TextLine {
-            text: slice_text_by_byte_range(&text_input.content, start_byte, end_byte),
-            glyphs: glyphs[start..end].to_vec(),
-            width,
-            baseline_y: line_metrics.baseline_offset_px + line_index as f64 * line_height_px,
-            fragments: None,
-            positioned_glyphs: None,
-        });
-    }
-
-    let mut warnings = build_notdef_warnings(&collect_notdef_from_glyphs(
-        glyphs,
-        &text_input.content,
-        primary_alias,
-    ));
-    warnings.push(build_fallback_text_warning());
-
-    TextLayoutResult {
-        lines,
-        bbox: TextBBox {
-            x: 0.0,
-            y: 0.0,
-            w: max_line_width,
-            h: total_line_count as f64 * line_height_px,
-        },
-        chosen_font_size_px: text_input.font_size_px,
-        overflow: if text_input
-            .max_lines
-            .is_some_and(|max_lines| total_line_count >= max_lines && !glyphs.is_empty())
-        {
-            TextOverflow::overflow("lines truncated by maxLines")
-        } else {
-            TextOverflow::none()
-        },
-        source_text: None,
-        display_text: None,
-        unit_map: None,
-        warnings,
-        inline_box_decorations: Vec::new(),
-        text_decorations: Vec::new(),
-        inline_rects: Vec::new(),
-    }
-}
-
-fn build_vertical_fallback_text_result(
-    text_input: &TextInput,
-    glyphs: &[shaping::GlyphInfo],
-    max_height: f32,
-    primary_alias: &str,
-    font_registry: &FontRegistry,
-    fallback_registry: Option<&FontRegistry>,
-) -> TextLayoutResult {
-    let lane_width = resolve_text_input_line_metrics(text_input, font_registry, fallback_registry)
-        .line_height_px;
-    let effective_max_h = if max_height < f32::MAX {
-        f64::from(max_height)
-    } else {
-        f64::MAX
-    };
-    let mut column_ranges: Vec<(usize, usize, f64)> = Vec::new();
-    let mut column_start = 0usize;
-    let mut cur_h = 0.0;
-
-    for (index, glyph) in glyphs.iter().enumerate() {
-        let adv = if glyph.y_advance.abs() > 0.0 {
-            glyph.y_advance.abs()
-        } else {
-            glyph.x_advance.abs()
-        };
-        let next_h = cur_h + adv;
-        if next_h > effective_max_h && cur_h > 0.0 {
-            column_ranges.push((column_start, index, cur_h));
-            column_start = index;
-            cur_h = adv;
-            if let Some(max_lines) = text_input.max_lines {
-                if column_ranges.len() >= max_lines {
-                    break;
-                }
-            }
-        } else {
-            cur_h = next_h;
-        }
-    }
-
-    if column_ranges.len() < text_input.max_lines.unwrap_or(usize::MAX)
-        && column_start < glyphs.len()
-    {
-        column_ranges.push((column_start, glyphs.len(), cur_h));
-    }
-
-    if column_ranges.is_empty() && text_input.content.is_empty() {
-        return TextLayoutResult {
-            lines: Vec::new(),
-            bbox: TextBBox {
-                x: 0.0,
-                y: 0.0,
-                w: 0.0,
-                h: 0.0,
-            },
-            chosen_font_size_px: text_input.font_size_px,
-            overflow: TextOverflow::none(),
-            source_text: None,
-            display_text: None,
-            unit_map: None,
-            warnings: vec![build_fallback_text_warning()],
-            inline_box_decorations: Vec::new(),
-            text_decorations: Vec::new(),
-            inline_rects: Vec::new(),
-        };
-    }
-
-    if column_ranges.is_empty() {
-        column_ranges.push((0, glyphs.len(), cur_h));
-    }
-
-    let total_column_count = column_ranges.len();
-    let mut lines = Vec::with_capacity(total_column_count);
-    let mut max_column_height: f64 = 0.0;
-    for (column_index, (start, end, height)) in column_ranges.into_iter().enumerate() {
-        let start_byte = glyphs
-            .get(start)
-            .map_or(0usize, |glyph| glyph.cluster as usize)
-            .min(text_input.content.len());
-        let end_byte = glyphs
-            .get(end)
-            .map_or(text_input.content.len(), |glyph| glyph.cluster as usize)
-            .min(text_input.content.len());
-        max_column_height = max_column_height.max(height);
-        lines.push(TextLine {
-            text: slice_text_by_byte_range(&text_input.content, start_byte, end_byte),
-            glyphs: glyphs[start..end].to_vec(),
-            width: height,
-            baseline_y: column_index as f64 * lane_width,
-            fragments: None,
-            positioned_glyphs: None,
-        });
-    }
-
-    let mut warnings = build_notdef_warnings(&collect_notdef_from_glyphs(
-        glyphs,
-        &text_input.content,
-        primary_alias,
-    ));
-    warnings.push(build_fallback_text_warning());
-
-    TextLayoutResult {
-        lines,
-        bbox: TextBBox {
-            x: 0.0,
-            y: 0.0,
-            w: total_column_count as f64 * lane_width,
-            h: max_column_height,
-        },
-        chosen_font_size_px: text_input.font_size_px,
-        overflow: if text_input
-            .max_lines
-            .is_some_and(|max_lines| total_column_count >= max_lines && !glyphs.is_empty())
-        {
-            TextOverflow::overflow("lines truncated by maxLines")
-        } else {
-            TextOverflow::none()
-        },
-        source_text: None,
-        display_text: None,
-        unit_map: None,
-        warnings,
-        inline_box_decorations: Vec::new(),
-        text_decorations: Vec::new(),
-        inline_rects: Vec::new(),
-    }
 }
 
 impl MeasureContext<'_> {
@@ -408,6 +198,7 @@ impl MeasureContext<'_> {
         text_input: &TextInput,
         max_width: f32,
         max_height: f32,
+        is_shrink_to_fit_feedback: bool,
     ) -> u64 {
         let mut hasher = DefaultHasher::new();
         text_input.content.hash(&mut hasher);
@@ -452,12 +243,14 @@ impl MeasureContext<'_> {
         text_input.font_feature_settings.hash(&mut hasher);
         text_input.unit_map.hash(&mut hasher);
         text_input.text_decoration_range_count.hash(&mut hasher);
+        text_input.fit_max_probes.hash(&mut hasher);
         if let Some(flow) = &text_input.flow {
             format!("{flow:?}").hash(&mut hasher);
         }
         // Hash constraints
         max_width.to_bits().hash(&mut hasher);
         max_height.to_bits().hash(&mut hasher);
+        is_shrink_to_fit_feedback.hash(&mut hasher);
         hasher.finish()
     }
 
@@ -688,10 +481,11 @@ pub(super) fn measure_text_node(
     available_space: Size<AvailableSpace>,
     measure_cache: &mut HashMap<u64, (Size<f32>, Option<crate::text::types::TextLayoutResult>)>,
     measure_cache_hits: &mut usize,
+    shrink_to_fit_widths: &mut HashMap<NodeId, f32>,
     shaped_cache: &mut HashMap<u64, crate::text::paragraph::ShapedParagraph>,
     node_id: NodeId,
     text_results: &mut HashMap<NodeId, crate::text::types::TextLayoutResult>,
-) -> Size<f32> {
+) -> Result<Size<f32>, crate::error::EngineError> {
     let is_vertical = text_input.writing_mode.as_deref() == Some("vertical-rl");
     let width_is_min_content = known_dimensions.width.is_none()
         && matches!(available_space.width, AvailableSpace::MinContent);
@@ -699,6 +493,9 @@ pub(super) fn measure_text_node(
         && matches!(available_space.width, AvailableSpace::MaxContent);
     let height_is_min_content = known_dimensions.height.is_none()
         && matches!(available_space.height, AvailableSpace::MinContent);
+    let is_feedback_candidate = !is_vertical
+        && known_dimensions.width.is_none()
+        && matches!(available_space.width, AvailableSpace::Definite(_));
 
     let mut max_width = known_dimensions
         .width
@@ -744,42 +541,71 @@ pub(super) fn measure_text_node(
             measure_intrinsic_inline_sizes(text_input, font_registry, fallback_registry)
         {
             if width_is_min_content {
-                max_width = intrinsic.min_content_inline_size as f32;
+                max_width = ceil_nonnegative_f32(intrinsic.min_content_inline_size);
             } else if width_is_max_content && max_width >= f32::MAX {
-                max_width = intrinsic.max_content_inline_size as f32;
+                max_width = ceil_nonnegative_f32(intrinsic.max_content_inline_size);
             }
         }
     }
+    let is_shrink_to_fit_feedback = shrink_to_fit_widths
+        .get(&node_id)
+        .is_some_and(|feedback_width| feedback_width.to_bits() == max_width.to_bits());
+    let horizontal_max_width = horizontal_constraint_px(max_width, is_shrink_to_fit_feedback);
 
     // Check measure cache (width-dependent)
-    let cache_key = MeasureContext::measure_cache_key(text_input, max_width, max_height);
+    let cache_key = MeasureContext::measure_cache_key(
+        text_input,
+        max_width,
+        max_height,
+        is_shrink_to_fit_feedback,
+    );
     if let Some(cached) = measure_cache.get(&cache_key) {
         *measure_cache_hits += 1;
         if let Some(ref tr) = cached.1 {
+            record_shrink_to_fit_width(
+                shrink_to_fit_widths,
+                node_id,
+                max_width,
+                cached.0,
+                tr,
+                is_feedback_candidate,
+            );
             text_results.insert(node_id, tr.clone());
         }
-        return cached.0;
+        return Ok(cached.0);
     }
 
     if text_input.flow.is_some() && max_width < f32::MAX && max_height < f32::MAX {
-        if let Ok(rust_result) = crate::flow::layout_resolved_text_flow(
+        let rust_result = crate::flow::layout_resolved_text_flow(
             text_input,
-            f64::from(max_width),
+            horizontal_max_width,
             f64::from(max_height),
             font_registry,
             fallback_registry,
-        ) {
-            let size = Size {
-                width: rust_result.bbox.w as f32,
-                height: rust_result.bbox.h as f32,
-            };
-            if measure_cache.len() >= MEASURE_CACHE_MAX {
-                measure_cache.clear();
-            }
-            measure_cache.insert(cache_key, (size, Some(rust_result.clone())));
-            text_results.insert(node_id, rust_result);
-            return size;
+        )
+        .map_err(|error| error.into_engine_error(None))?;
+        let size = Size {
+            width: measured_width_px(
+                rust_result.bbox.w,
+                max_width,
+                width_is_min_content || width_is_max_content,
+            ),
+            height: rust_result.bbox.h as f32,
+        };
+        record_shrink_to_fit_width(
+            shrink_to_fit_widths,
+            node_id,
+            max_width,
+            size,
+            &rust_result,
+            is_feedback_candidate,
+        );
+        if measure_cache.len() >= MEASURE_CACHE_MAX {
+            measure_cache.clear();
         }
+        measure_cache.insert(cache_key, (size, Some(rust_result.clone())));
+        text_results.insert(node_id, rust_result);
+        return Ok(size);
     }
 
     // --- Shaped paragraph cache: reuse shaping across different widths ---
@@ -880,7 +706,7 @@ pub(super) fn measure_text_node(
                 text_input.font_size_px,
                 line_height_px,
                 line_metrics.baseline_offset_px,
-                f64::from(max_width),
+                horizontal_max_width,
                 effective_wrap,
                 force_newline_breaks,
             );
@@ -926,7 +752,7 @@ pub(super) fn measure_text_node(
                 line_height_px,
                 text_input.font_size_px,
                 break_result.kinsoku_unresolved,
-                Some(f64::from(max_width)),
+                Some(horizontal_max_width),
                 if max_height < f32::MAX {
                     Some(f64::from(max_height))
                 } else {
@@ -936,16 +762,28 @@ pub(super) fn measure_text_node(
             );
 
             let size = Size {
-                width: (rust_result.bbox.w as f32).min(max_width),
+                width: measured_width_px(
+                    rust_result.bbox.w,
+                    max_width,
+                    width_is_min_content || width_is_max_content,
+                ),
                 height: rust_result.bbox.h as f32,
             };
+            record_shrink_to_fit_width(
+                shrink_to_fit_widths,
+                node_id,
+                max_width,
+                size,
+                &rust_result,
+                is_feedback_candidate,
+            );
 
             if measure_cache.len() >= MEASURE_CACHE_MAX {
                 measure_cache.clear();
             }
             measure_cache.insert(cache_key, (size, Some(rust_result.clone())));
             text_results.insert(node_id, rust_result);
-            return size;
+            return Ok(size);
         }
     }
 
@@ -979,7 +817,11 @@ pub(super) fn measure_text_node(
             line_height_px: text_input.line_height_px,
             letter_spacing_px: text_input.letter_spacing_px.unwrap_or(0.0),
             text_indent: text_input.text_indent,
-            max_width: f64::from(max_width),
+            max_width: if is_vertical {
+                f64::from(max_width)
+            } else {
+                horizontal_max_width
+            },
             max_height: if max_height < f32::MAX {
                 Some(f64::from(max_height))
             } else {
@@ -1020,6 +862,7 @@ pub(super) fn measure_text_node(
             max_font_size_px: text_input.max_font_size_px,
             grow_epsilon_px: text_input.grow_epsilon_px,
             grow_max_iterations: text_input.grow_max_iterations,
+            fit_max_probes: text_input.fit_max_probes,
         };
 
         let font_ctx = crate::font::FontContext {
@@ -1033,113 +876,73 @@ pub(super) fn measure_text_node(
             crate::text::engine::layout_text_with_unit_metadata(&req, &font_ctx)
         } else {
             crate::text::engine::layout_text(&req, &font_ctx)
-        };
-        if let Some(rust_result) = rust_result {
-            let size = Size {
-                width: (rust_result.bbox.w as f32).min(max_width),
-                height: rust_result.bbox.h as f32,
+        }
+        .map_err(|error| {
+            let code = match &error {
+                boundtext::TextLayoutError::EllipsisCandidateLimit { .. } => {
+                    "TEXT_ELLIPSIS_CANDIDATE_LIMIT"
+                }
+                boundtext::TextLayoutError::InvalidFitStep => "TEXT_FIT_INVALID_STEP",
+                boundtext::TextLayoutError::FitProbeLimit { .. } => "TEXT_FIT_PROBE_LIMIT",
+                boundtext::TextLayoutError::RichTextDepthLimit { .. } => "RICH_TEXT_MAX_DEPTH",
+                boundtext::TextLayoutError::InlineRectLimit { .. } => {
+                    "INLINE_RECT_COMPLEXITY_LIMIT"
+                }
+                boundtext::TextLayoutError::PreparationFailed => "TEXT_NO_LAYOUT",
             };
-
-            if measure_cache.len() >= MEASURE_CACHE_MAX {
-                measure_cache.clear();
+            crate::error::EngineError::Structured {
+                code: code.to_string(),
+                message: error.to_string(),
+                stage: Some("text".to_string()),
+                node_id: None,
             }
-            measure_cache.insert(cache_key, (size, Some(rust_result.clone())));
-            text_results.insert(node_id, rust_result);
-            return size;
-        }
-    }
-
-    // --- Fallback: glyph-based measurement when Rust Text Engine returns None ---
-    let font_families = text_input_font_families(text_input);
-    let font_ctx = crate::font::FontContext {
-        registry: font_registry,
-        fallback_registry,
-        families: &font_families,
-        weight: text_input.font_weight,
-        style: &text_input.font_style,
-    };
-    let shape_options = shaping::ShapeOptions {
-        writing_mode: text_input.writing_mode.clone(),
-        language: text_input.language.clone(),
-        vertical_feature_priority: None,
-        text_orientation: text_input.text_orientation.clone(),
-        font_variation_settings: parse_variation_settings_opt(
-            text_input.font_variation_settings.as_deref(),
-        ),
-        font_feature_settings: parse_feature_settings_opt(
-            text_input.font_feature_settings.as_deref(),
-        ),
-    };
-
-    let shaped = shaping::shape_with_fallback_and_options(
-        &font_ctx,
-        &text_input.content,
-        text_input.font_size_px,
-        text_input.letter_spacing_px.unwrap_or(0.0),
-        &shape_options,
-    );
-    let fallback_line_height_px =
-        resolve_text_input_line_metrics(text_input, font_registry, fallback_registry)
-            .line_height_px;
-
-    let result = if shaped.glyphs.is_empty() {
-        // No font resolved — crude character-count estimate
-        if is_vertical {
-            let char_count = text_input.content.chars().count() as f32;
-            let chars_per_col = if max_height < f32::MAX {
-                (max_height / text_input.font_size_px as f32)
-                    .floor()
-                    .max(1.0)
-            } else {
-                char_count
-            };
-            let num_cols = (char_count / chars_per_col).ceil().max(1.0);
-            let height = chars_per_col.min(char_count) * text_input.font_size_px as f32;
-            let width = num_cols * fallback_line_height_px as f32;
-            Size { width, height }
-        } else {
-            let est_width = text_input.content.len() as f32 * text_input.font_size_px as f32 * 0.6;
-            let width = est_width.min(max_width);
-            let height = fallback_line_height_px as f32;
-            Size { width, height }
-        }
-    } else {
-        let primary_alias = shaped.runs.first().map_or("", |run| run.alias.as_str());
-        let rust_result = if is_vertical {
-            build_vertical_fallback_text_result(
-                text_input,
-                &shaped.glyphs,
-                max_height,
-                primary_alias,
-                font_registry,
-                fallback_registry,
-            )
-        } else {
-            build_horizontal_fallback_text_result(
-                text_input,
-                &shaped.glyphs,
-                max_width,
-                primary_alias,
-                font_registry,
-                fallback_registry,
-            )
-        };
+        })?;
         let size = Size {
-            width: (rust_result.bbox.w as f32).min(max_width),
+            width: measured_width_px(
+                rust_result.bbox.w,
+                max_width,
+                width_is_min_content || width_is_max_content,
+            ),
             height: rust_result.bbox.h as f32,
         };
+        record_shrink_to_fit_width(
+            shrink_to_fit_widths,
+            node_id,
+            max_width,
+            size,
+            &rust_result,
+            is_feedback_candidate,
+        );
+
         if measure_cache.len() >= MEASURE_CACHE_MAX {
             measure_cache.clear();
         }
         measure_cache.insert(cache_key, (size, Some(rust_result.clone())));
         text_results.insert(node_id, rust_result);
-        return size;
-    };
-
-    if measure_cache.len() >= MEASURE_CACHE_MAX {
-        measure_cache.clear();
+        Ok(size)
     }
-    measure_cache.insert(cache_key, (result, None));
+}
 
-    result
+#[cfg(test)]
+mod text_constraint_tests {
+    use super::{ceil_nonnegative_f32, horizontal_constraint_px, measured_width_px};
+
+    #[test]
+    fn rounds_only_intrinsic_widths_up_to_the_next_f32() {
+        let lower = 100.0_f32;
+        let intrinsic_width = f64::from(lower) + f64::from(f32::EPSILON);
+        let upper = f32::from_bits(lower.to_bits() + 1);
+
+        assert_eq!(ceil_nonnegative_f32(intrinsic_width), upper);
+        assert_eq!(horizontal_constraint_px(upper, false), f64::from(upper));
+        assert_eq!(
+            horizontal_constraint_px(upper, true),
+            f64::from(f32::from_bits(upper.to_bits() + 1))
+        );
+        assert_eq!(measured_width_px(intrinsic_width, upper, true), upper);
+        assert_eq!(measured_width_px(intrinsic_width, lower, false), lower);
+        assert_eq!(ceil_nonnegative_f32(0.0), 0.0);
+        assert_eq!(ceil_nonnegative_f32(f64::INFINITY), f32::INFINITY);
+        assert!(ceil_nonnegative_f32(f64::NAN).is_nan());
+    }
 }

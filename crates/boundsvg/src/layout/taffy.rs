@@ -47,7 +47,7 @@ pub(super) fn compute_layout_core(
             context.measure_call_count += 1;
 
             if let Some(text_input) = context.text_inputs.get(&node_id) {
-                return measure_text_node(
+                return match measure_text_node(
                     text_input,
                     context.font_registry,
                     context.fallback_registry,
@@ -55,10 +55,17 @@ pub(super) fn compute_layout_core(
                     available_space,
                     &mut context.measure_cache,
                     &mut context.measure_cache_hits,
+                    &mut context.shrink_to_fit_widths,
                     &mut context.shaped_cache,
                     node_id,
                     &mut context.text_results,
-                );
+                ) {
+                    Ok(size) => size,
+                    Err(error) => {
+                        context.text_errors.entry(node_id).or_insert(error);
+                        Size::ZERO
+                    }
+                };
             }
 
             if context.text_path_inputs.contains_key(&node_id) {
@@ -79,6 +86,33 @@ pub(super) fn compute_layout_core(
         },
     )
     .map_err(|e| EngineError::Layout(format!("Layout computation failed: {e:?}")))?;
+
+    if !context.text_errors.is_empty() {
+        let mut failed_nodes = context
+            .text_errors
+            .keys()
+            .filter_map(|node_id| {
+                node_id_map
+                    .get(node_id)
+                    .map(|public_id| (public_id.clone(), *node_id))
+            })
+            .collect::<Vec<_>>();
+        failed_nodes.sort_by(|left, right| left.0.cmp(&right.0));
+        let (public_id, failed_node_id) = failed_nodes
+            .into_iter()
+            .next()
+            .ok_or_else(|| EngineError::Layout("Text measurement failed".to_string()))?;
+        let mut error = context
+            .text_errors
+            .remove(&failed_node_id)
+            .ok_or_else(|| EngineError::Layout("Text measurement failed".to_string()))?;
+        if let EngineError::Structured { node_id, .. } = &mut error
+            && node_id.is_none()
+        {
+            *node_id = Some(public_id);
+        }
+        return Err(error);
+    }
 
     // Collect results
     let mut nodes = Vec::new();
@@ -925,6 +959,7 @@ fn build_taffy_node(
                 max_font_size_px: text.max_font_size_px,
                 grow_epsilon_px: text.grow_epsilon_px,
                 grow_max_iterations: text.grow_max_iterations,
+                fit_max_probes: text.fit_max_probes,
                 ellipsis: text.ellipsis,
                 hanging_punctuation: text.hanging_punctuation,
                 font_variation_settings: text.font_variation_settings.clone(),
@@ -1254,16 +1289,72 @@ fn collect_layout_results(
 
             let unit_map = if let Some(request) = text_input.unit_map {
                 let result = rust_result.ok_or_else(unit_map_unavailable_error)?;
+                let source_request = crate::text::types::TextLayoutRequest {
+                    text: &text_input.content,
+                    spans: text_input
+                        .spans
+                        .as_deref()
+                        .filter(|spans| !spans.is_empty()),
+                    rich_text: text_input
+                        .rich_text
+                        .as_deref()
+                        .filter(|nodes| !nodes.is_empty()),
+                    font_size_px: text_input.font_size_px,
+                    line_height: text_input.line_height,
+                    line_height_px: text_input.line_height_px,
+                    letter_spacing_px: text_input.letter_spacing_px.unwrap_or(0.0),
+                    text_indent: text_input.text_indent,
+                    max_width: f64::MAX,
+                    max_height: None,
+                    wrap: crate::text::types::WrapMode::parse_str(&text_input.wrap),
+                    white_space: crate::text::types::WhiteSpaceMode::from_option(
+                        text_input.white_space.as_deref(),
+                    ),
+                    tab_size: text_input.tab_size.unwrap_or(4),
+                    fit: crate::text::types::FitMode::None,
+                    max_lines: None,
+                    ellipsis: false,
+                    language: crate::text::types::Language::from_option(
+                        text_input.language.as_deref(),
+                    ),
+                    writing_mode: if text_input.writing_mode.as_deref() == Some("vertical-rl") {
+                        crate::text::types::WritingMode::VerticalRl
+                    } else {
+                        crate::text::types::WritingMode::HorizontalTb
+                    },
+                    text_orientation: crate::text::types::TextOrientation::from_option(
+                        text_input.text_orientation.as_deref(),
+                    ),
+                    uax14_breaks: None,
+                    hanging_punctuation: text_input.hanging_punctuation.unwrap_or(false),
+                    font_variation_settings: parse_variation_settings_opt(
+                        text_input.font_variation_settings.as_deref(),
+                    ),
+                    font_feature_settings: parse_feature_settings_opt(
+                        text_input.font_feature_settings.as_deref(),
+                    ),
+                    min_font_size_px: None,
+                    shrink_epsilon_px: None,
+                    shrink_max_iterations: None,
+                    max_font_size_px: None,
+                    grow_epsilon_px: None,
+                    grow_max_iterations: None,
+                    fit_max_probes: None,
+                };
+                let source_font_context = crate::font::FontContext {
+                    registry: context.font_registry,
+                    fallback_registry: context.fallback_registry,
+                    families: &font_families,
+                    weight: text_input.font_weight,
+                    style: &text_input.font_style,
+                };
                 Some(
-                    crate::text::unit_map::build_text_unit_map(
-                        &result.lines,
+                    crate::text::unit_map::build_text_unit_map_for_request(
+                        result,
+                        &source_request,
+                        &source_font_context,
                         request.kind,
                         request.ruby,
-                        if text_input.writing_mode.as_deref() == Some("vertical-rl") {
-                            crate::text::types::WritingMode::VerticalRl
-                        } else {
-                            crate::text::types::WritingMode::HorizontalTb
-                        },
                     )
                     .map_err(|error| EngineError::Structured {
                         code: "TEXT_UNIT_MAP_INVALID".to_string(),
@@ -1414,6 +1505,7 @@ fn build_text_path_layout_output(
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
     };
     let path_request = TextOnPathRequest {
         d: &input.d,

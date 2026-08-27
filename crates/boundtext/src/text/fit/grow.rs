@@ -81,7 +81,7 @@ pub fn fit_grow(
         hanging_chars,
     )?;
     if !initial_fits {
-        let (lines, lh, kinsoku_unresolved) = layout_at_size(
+        let (lines, lh, _) = layout_at_size(
             req,
             font_ctx,
             req.font_size_px,
@@ -89,11 +89,7 @@ pub fn fit_grow(
             kinsoku_profile,
             hanging_chars,
         )?;
-        let overflow = if kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::overflow("initial font size does not fit; cannot grow")
-        };
+        let overflow = TextOverflow::overflow("initial font size does not fit; cannot grow");
         let warnings = collect_warnings_from_lines(&lines, primary_alias);
         return Some(build_result(
             lines,
@@ -196,11 +192,7 @@ fn fit_grow_shaped(
     );
     if !measurement.fits(req.max_width, req.max_lines, req.max_height, lh) {
         // Initial size doesn't fit — return all lines without truncation.
-        let overflow = if measurement.kinsoku_unresolved {
-            TextOverflow::kinsoku_unresolved()
-        } else {
-            TextOverflow::overflow("initial font size does not fit; cannot grow")
-        };
+        let overflow = TextOverflow::overflow("initial font size does not fit; cannot grow");
         return fit_build_shaped_failure(pp, req, font_ctx, req.font_size_px, overflow);
     }
 

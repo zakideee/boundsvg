@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::font::shaping;
 use crate::font::{FontContext, FontEntry, FontRegistry};
 
-use super::engine::layout_text_inner;
+use super::engine::layout_text_inner_with_prepared_spans;
 use super::grapheme::grapheme_split;
 use super::types::{
     FitMode, PositionedGlyph, TextBBox, TextDecorationFragment, TextDecorationInput,
@@ -567,7 +567,7 @@ pub fn layout_text_on_path(
         hanging_punctuation: false,
         ..request.text.clone()
     };
-    let mut layout = layout_text_inner(&path_text_request, font_context, true)
+    let mut layout = layout_text_inner_with_prepared_spans(&path_text_request, font_context, true)
         .ok_or(TextOnPathError::LayoutUnavailable)?;
     apply_text_path_span_metadata(
         &mut layout.lines,
@@ -1093,7 +1093,7 @@ fn shape_path_ellipsis(
         spans: ellipsis_spans.as_deref(),
         ..path_text_request.clone()
     };
-    let mut layout = layout_text_inner(&ellipsis_request, font_context, true)
+    let mut layout = layout_text_inner_with_prepared_spans(&ellipsis_request, font_context, true)
         .ok_or(TextOnPathError::LayoutUnavailable)?;
     apply_text_path_span_metadata(
         &mut layout.lines,
@@ -2518,6 +2518,7 @@ mod tests {
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         }
     }
 

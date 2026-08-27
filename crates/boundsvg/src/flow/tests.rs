@@ -71,6 +71,7 @@ fn make_resolved_flow_text_input(content: &str, exclusions: Vec<FlowExclusionSha
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
         ellipsis: None,
         hanging_punctuation: None,
         white_space: Some("pre-wrap".to_string()),
@@ -157,6 +158,54 @@ fn resolved_flow_applies_ellipsis_before_building_positioned_glyphs() {
             .iter()
             .any(|glyph| glyph.text == "\u{2026}")
     );
+}
+
+#[test]
+fn resolved_vertical_flow_materializes_nested_decoration_owners() {
+    let registry = make_registry();
+    let mut input = make_resolved_flow_text_input("", Vec::new());
+    input.writing_mode = Some("vertical-rl".to_string());
+    input.max_lines = Some(1);
+    input.ellipsis = Some(true);
+    input.rich_text = Some(vec![RichTextNodeInput::DecoratedSpan {
+        style: make_rich_style(20.0, Some("#111111"), Some("upright")),
+        children: vec![RichTextNodeInput::DecoratedSpan {
+            style: make_rich_style(20.0, Some("#222222"), Some("upright")),
+            children: vec![RichTextNodeInput::Text {
+                text: "あいうえおかきくけこ".to_string(),
+            }],
+            padding_inline: Some([2.0, 2.0]),
+            background: Some("#ffeeaa".to_string()),
+            border_color: None,
+            border_width: None,
+            border_radius: Some([3.0; 4]),
+            span_key: Some("inner".to_string()),
+        }],
+        padding_inline: Some([3.0, 3.0]),
+        background: Some("#ddeeff".to_string()),
+        border_color: None,
+        border_width: None,
+        border_radius: Some([4.0; 4]),
+        span_key: Some("outer".to_string()),
+    }]);
+
+    let layout_result = layout_resolved_text_flow(&input, 120.0, 72.0, &registry, None)
+        .expect("resolved nested vertical flow");
+    let keys = layout_result
+        .inline_box_decorations
+        .iter()
+        .filter_map(|decoration| decoration.span_key.as_deref())
+        .collect::<Vec<_>>();
+
+    assert!(keys.contains(&"outer"));
+    assert!(keys.contains(&"inner"));
+    assert!(layout_result.lines.iter().any(|line| {
+        line.positioned_glyphs
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|glyph| glyph.synthetic_kind.as_deref() == Some("ellipsis"))
+    }));
 }
 
 #[test]
@@ -412,6 +461,7 @@ fn make_exclusion_input(
         max_font_size_px: None,
         fit_epsilon_px: None,
         fit_max_iterations: None,
+        fit_max_probes: None,
         spans: None,
         rich_text: None,
         writing_mode: None,
@@ -1204,6 +1254,69 @@ fn fit_shrink_with_exclusions() {
 }
 
 #[test]
+fn exclusion_fit_rejects_an_incomplete_exact_grid_before_layout() {
+    let registry = make_registry();
+    let mut input = make_exclusion_input(
+        "あいうえおかきくけこ",
+        FlowBox {
+            x: 0.0,
+            y: 0.0,
+            width: 160.0,
+            height: 80.0,
+        },
+        vec![FlowExclusionShape::Rect {
+            x: 80.0,
+            y: 0.0,
+            width: 40.0,
+            height: 40.0,
+            margin_px: FlowExclusionMargin::All(0.0),
+        }],
+    );
+    input.fit = Some("shrink".to_string());
+    input.min_font_size_px = Some(8.0);
+    input.fit_epsilon_px = Some(0.25);
+    input.fit_max_probes = Some(1);
+
+    let error = layout_text_flow_with_exclusions(&input, &registry)
+        .expect_err("the complete exact grid exceeds one probe");
+    assert_eq!(error.code(), "TEXT_FIT_PROBE_LIMIT");
+    assert!(matches!(
+        error,
+        super::adapters::TextFlowLayoutError::Boundtext(
+            boundtext::BoundtextError::FitProbeLimit { .. }
+        )
+    ));
+}
+
+#[test]
+fn exclusion_flow_surfaces_the_ellipsis_candidate_limit() {
+    let registry = make_registry();
+    let source = "あ".repeat(1_025);
+    let mut input = make_exclusion_input(
+        &source,
+        FlowBox {
+            x: 0.0,
+            y: 0.0,
+            width: 72.0,
+            height: 200.0,
+        },
+        Vec::new(),
+    );
+    input.max_lines = Some(1);
+    input.ellipsis = Some(true);
+
+    let error = layout_text_flow_with_exclusions(&input, &registry)
+        .expect_err("exact projection must be bounded");
+    assert_eq!(error.code(), "TEXT_ELLIPSIS_CANDIDATE_LIMIT");
+    assert!(matches!(
+        error,
+        super::adapters::TextFlowLayoutError::Boundtext(
+            boundtext::BoundtextError::EllipsisCandidateLimit { .. }
+        )
+    ));
+}
+
+#[test]
 fn fit_shrink_with_max_lines() {
     let reg = make_registry();
     let mut input = make_exclusion_input(
@@ -1553,11 +1666,14 @@ fn rich_text_depth_49_is_rejected_by_all_typed_consumers() {
 
     let errors = [
         layout_text_flow_with_exclusions(&exclusion, &registry)
-            .expect_err("exclusion flow should reject over-depth rich text"),
+            .expect_err("exclusion flow should reject over-depth rich text")
+            .to_string(),
         shrinkwrap_text(&shrinkwrap_text_input, &registry)
-            .expect_err("text shrinkwrap should reject over-depth rich text"),
+            .expect_err("text shrinkwrap should reject over-depth rich text")
+            .to_string(),
         shrinkwrap_flow(&shrinkwrap_flow_input, &registry)
-            .expect_err("flow shrinkwrap should reject over-depth rich text"),
+            .expect_err("flow shrinkwrap should reject over-depth rich text")
+            .to_string(),
         measure_intrinsic_inline_size(&intrinsic, &registry)
             .expect_err("intrinsic measurement should reject over-depth rich text"),
     ];
@@ -4041,6 +4157,7 @@ fn shrinkwrap_text_vertical_preserves_column_count() {
             max_font_size_px: None,
             fit_epsilon_px: None,
             fit_max_iterations: None,
+            fit_max_probes: None,
             spans: None,
             rich_text: None,
             writing_mode: input.writing_mode.clone(),
@@ -4241,7 +4358,7 @@ fn shrinkwrap_text_rejects_spans_and_rich_text_together() {
     let result = shrinkwrap_text(&input, &reg);
     assert!(result.is_err());
     assert_eq!(
-        result.unwrap_err(),
+        result.unwrap_err().to_string(),
         "spans and richText are mutually exclusive"
     );
 }
@@ -4424,6 +4541,7 @@ fn shrinkwrap_text_vertical_rich_text_demo_height_covers_final_layout() {
         max_font_size_px: None,
         fit_epsilon_px: None,
         fit_max_iterations: None,
+        fit_max_probes: None,
         spans: None,
         rich_text: Some(rich_text),
         writing_mode: Some("vertical-rl".to_string()),

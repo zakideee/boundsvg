@@ -188,6 +188,33 @@ describe("computeLayout", () => {
     expect(textNode.textLayout!.measuredWidth).toBeGreaterThan(0);
   });
 
+  it("serializes the exact flow-fit probe budget", () => {
+    const mock = createMockComputeLayout();
+    const vnode = createElement(
+      "Canvas",
+      { width: 200, height: 100 },
+      createElement(
+        "Text",
+        {
+          font: "NotoSansJP",
+          fontSizePx: 24,
+          width: 120,
+          height: 80,
+          flowExclusions: [],
+          fit: "shrink",
+          fitMaxProbes: 77,
+        },
+        "flow text",
+      ),
+    );
+
+    computeLayout(vnode, { computeLayoutFn: mock.computeLayoutFn });
+    const input = mock.lastInput() as {
+      root: { children: Array<{ text?: { fitMaxProbes?: number } }> };
+    };
+    expect(input.root.children[0]?.text?.fitMaxProbes).toBe(77);
+  });
+
   it("serializes inline text spans for WASM measurement", () => {
     const mock = createMockComputeLayout();
     const vnode = createElement(

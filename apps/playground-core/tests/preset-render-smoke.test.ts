@@ -12,7 +12,13 @@ import {
 } from "../src/config";
 import { presets } from "../src/presets/index";
 
-const REPRESENTATIVE_PRESETS = ["fit", "text-on-path-basics", "vertical"] as const;
+/** Presets that exercise distinct text-layout entry paths in the render smoke test. */
+const representativePresets = [
+  "fit",
+  "text-on-path-basics",
+  "vertical",
+  "vertical-rich-ellipsis",
+] as const;
 
 function font(filename: string): Uint8Array {
   return new Uint8Array(readFileSync(resolve(__dirname, "../../../fixtures/fonts", filename)));
@@ -25,6 +31,7 @@ function findTextNodes(node: {
   fontSizePx?: number;
   textLayoutKind?: string;
   sourceText?: string;
+  displayText?: string;
   textPath?: {
     textAnchor: string;
     pathFit: string;
@@ -39,6 +46,7 @@ function findTextNodes(node: {
   fontSizePx?: number;
   textLayoutKind?: string;
   sourceText?: string;
+  displayText?: string;
   textPath?: {
     textAnchor: string;
     pathFit: string;
@@ -90,7 +98,7 @@ describe("playground-core public preset smoke", () => {
     });
   });
 
-  for (const presetKey of REPRESENTATIVE_PRESETS) {
+  for (const presetKey of representativePresets) {
     it(`renders the ${presetKey} representative to SVG and PNG`, () => {
       const vnode = presets[presetKey].build(engine);
       const { svg, ir } = engine.renderToSvgAndIR(vnode, {
@@ -163,5 +171,16 @@ describe("playground-core public preset smoke", () => {
     expect(verticalText).toBeDefined();
     expect(verticalText!.lineHeightPx).toBeGreaterThan(20);
     expect(verticalText!.lineHeightPx).toBeLessThan(60);
+  });
+
+  it("renders the vertical rich preset with a synthetic ellipsis", () => {
+    const textNodes = findTextNodes(
+      engine.renderToIR(presets["vertical-rich-ellipsis"].build(engine)).root,
+    );
+    const verticalText = textNodes.find((node) => node.writingMode === "vertical-rl");
+
+    expect(verticalText?.sourceText).toContain("省略された末尾の装飾や警告");
+    expect(verticalText?.displayText).toMatch(/…$/u);
+    expect(verticalText?.displayText).not.toContain("警告");
   });
 });

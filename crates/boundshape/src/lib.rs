@@ -297,6 +297,7 @@ pub enum CurveSegment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ShapeError {
     #[error("boolean nodes require at least 2 children")]
     BooleanChildCount,
@@ -308,6 +309,8 @@ pub enum ShapeError {
     BooleanTopology,
     #[error("duplicate addressable part id `{0}`")]
     DuplicatePartId(String),
+    #[error("geometry tree exceeds max depth ({MAX_GEOMETRY_TREE_DEPTH})")]
+    GeometryDepthLimit,
     #[error("path measurement supports exactly one drawable subpath")]
     PathMeasureMultipleSubpaths,
     #[error("path measurement requires a non-zero path length")]
@@ -352,6 +355,8 @@ impl Default for GeometryTolerance {
 }
 
 const MAX_TOPOLOGY_RECURSION: usize = 32;
+/// Maximum authored geometry-node depth, counting the document root as depth 0.
+pub const MAX_GEOMETRY_TREE_DEPTH: usize = 48;
 const LINE_COLLINEAR_DIRECTION_EPSILON: f64 = 1e-4;
 const LINE_MERGE_DIRECTION_EPSILON: f64 = 1e-6;
 const LINE_PARALLEL_DIRECTION_EPSILON: f64 = 1e-12;
@@ -612,6 +617,7 @@ fn evaluate_geometry_parts_with_default_fill_rule(
     doc: &GeometryDoc,
     default_fill_rule: Option<&str>,
 ) -> Result<Vec<EvaluatedPart>, ShapeError> {
+    validate_geometry_tree_depth(&doc.root)?;
     validate_unique_part_ids(&doc.root)?;
     let mut parts = Vec::new();
     collect_parts(&doc.root, &mut Vec::new(), &mut parts, default_fill_rule)?;
@@ -714,6 +720,7 @@ fn collect_parts(
 /// Returns `ShapeError` when the document contains invalid path data or a
 /// boolean operation cannot be evaluated.
 pub fn evaluate_geometry(doc: &GeometryDoc) -> Result<Region, ShapeError> {
+    validate_geometry_tree_depth(&doc.root)?;
     evaluate_geometry_node(&doc.root)
 }
 
@@ -1414,11 +1421,18 @@ pub fn region_to_svg(region: &Region, options: Option<&CompileGeometryOptions>) 
     )
 }
 
-#[must_use]
+/// Resolve a symbol definition for the requested output dimensions.
+///
+/// # Errors
+///
+/// Returns [`ShapeError::GeometryDepthLimit`] when either the authored symbol
+/// geometry or its resolved elastic wrapper exceeds the geometry-tree depth
+/// limit.
 pub fn resolve_symbol_geometry(
     definition: &SymbolDefinition,
     options: &SymbolResolutionOptions,
-) -> GeometryDoc {
+) -> Result<GeometryDoc, ShapeError> {
+    validate_geometry_tree_depth(&definition.geometry.root)?;
     let width = if options.width > 0.0 {
         options.width
     } else {
@@ -1431,7 +1445,7 @@ pub fn resolve_symbol_geometry(
     };
 
     if definition.elastic_segments.is_empty() {
-        return definition.geometry.clone();
+        return Ok(definition.geometry.clone());
     }
 
     let view_box = GeometryViewBox {
@@ -1459,10 +1473,12 @@ pub fn resolve_symbol_geometry(
         target_height: height,
     };
 
-    GeometryDoc {
+    let geometry = GeometryDoc {
         view_box,
         root: apply_elastic_segments(&definition.geometry.root, &ctx),
-    }
+    };
+    validate_geometry_tree_depth(&geometry.root)?;
+    Ok(geometry)
 }
 
 /// Hit-test tuning for [`hit_test_geometry_parts`]. All values are in
@@ -1606,6 +1622,7 @@ pub fn compile_geometry_paths(
     geometry: &GeometryDoc,
     options: Option<&CompileGeometryOptions>,
 ) -> Result<Vec<CompiledGeometryPart>, ShapeError> {
+    validate_geometry_tree_depth(&geometry.root)?;
     validate_unique_part_ids(&geometry.root)?;
     let compiled_options = options.cloned().unwrap_or_default();
     let default_fill_rule = compiled_options
@@ -1754,6 +1771,31 @@ pub fn transform_to_svg(transform: &Transform2D) -> String {
 
 fn evaluate_geometry_node(node: &GeometryNode) -> Result<Region, ShapeError> {
     evaluate_geometry_node_with_default_fill_rule(node, None)
+}
+
+/// Validate a geometry tree before recursive processing.
+///
+/// # Errors
+///
+/// Returns [`ShapeError::GeometryDepthLimit`] when a node exceeds
+/// [`MAX_GEOMETRY_TREE_DEPTH`].
+pub fn validate_geometry_tree_depth(root: &GeometryNode) -> Result<(), ShapeError> {
+    let mut pending = vec![(root, 0usize)];
+    while let Some((node, depth)) = pending.pop() {
+        if depth > MAX_GEOMETRY_TREE_DEPTH {
+            return Err(ShapeError::GeometryDepthLimit);
+        }
+        match node {
+            GeometryNode::Path { .. } => {}
+            GeometryNode::Transform { child, .. } => {
+                pending.push((child, depth + 1));
+            }
+            GeometryNode::Group { children, .. } | GeometryNode::Boolean { children, .. } => {
+                pending.extend(children.iter().map(|child| (child, depth + 1)));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn evaluate_geometry_node_with_default_fill_rule(
@@ -8621,6 +8663,47 @@ fn point_angle(point: Point2D) -> f64 {
 mod tests {
     use super::*;
 
+    fn shape_error_runtime_origin_test(error: &ShapeError) -> &'static str {
+        match error {
+            ShapeError::BooleanChildCount
+            | ShapeError::InvalidPathData
+            | ShapeError::UnsupportedPathCommand(_)
+            | ShapeError::BooleanTopology
+            | ShapeError::DuplicatePartId(_)
+            | ShapeError::PathMeasureMultipleSubpaths
+            | ShapeError::PathMeasureZeroLength
+            | ShapeError::PathMeasureComplexityLimit => {
+                "error_reachability::parse_and_part_errors_have_runtime_origins"
+            }
+            ShapeError::BooleanPairLimit
+            | ShapeError::RegionClipInterval
+            | ShapeError::RegionClipNonMonotonic => {
+                "error_reachability::region_operation_limits_and_clip_preconditions_have_runtime_origins"
+            }
+            ShapeError::GeometryDepthLimit => {
+                "error_reachability::geometry_depth_limit_has_a_runtime_origin"
+            }
+            ShapeError::PathOffsetGeometry => {
+                "open_path_measurement::offset_band_rejects_an_authored_cusp"
+            }
+            ShapeError::PathOffsetSampleLimit => {
+                "open_path_measurement::original_curve_offset_band_is_filled_and_budgeted"
+            }
+        }
+    }
+
+    #[test]
+    fn shape_error_variants_name_runtime_origin_tests() {
+        assert_eq!(
+            shape_error_runtime_origin_test(&ShapeError::GeometryDepthLimit),
+            "error_reachability::geometry_depth_limit_has_a_runtime_origin"
+        );
+        assert_eq!(
+            shape_error_runtime_origin_test(&ShapeError::PathOffsetSampleLimit),
+            "open_path_measurement::original_curve_offset_band_is_filled_and_budgeted"
+        );
+    }
+
     #[test]
     fn measured_path_table_is_finite_and_strictly_increasing() {
         let measured =
@@ -9170,7 +9253,8 @@ mod tests {
                 width: 160.0,
                 height: 20.0,
             },
-        );
+        )
+        .expect("symbol should resolve");
         let compiled =
             compile_geometry_to_svg_document(&resolved, None).expect("svg compile should succeed");
 
@@ -9226,7 +9310,8 @@ mod tests {
                 width: 200.0,
                 height: 200.0,
             },
-        );
+        )
+        .expect("symbol should resolve");
         let parts = evaluate_geometry_parts(&resolved).expect("resolved parts");
         assert_eq!(parts[0].bounds.unwrap().width, 200.0);
         assert_eq!(parts[0].bounds.unwrap().height, 200.0);

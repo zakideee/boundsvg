@@ -235,6 +235,7 @@ type WasmTextInput = {
   maxFontSizePx?: number;
   growEpsilonPx?: number;
   growMaxIterations?: number;
+  fitMaxProbes?: number;
   ellipsis?: boolean;
   hangingPunctuation?: boolean;
   fontVariationSettings?: string;
@@ -1000,6 +1001,7 @@ function buildWasmTextInput(
     maxFontSizePx: props.maxFontSizePx as number | undefined,
     growEpsilonPx: props.growEpsilonPx as number | undefined,
     growMaxIterations: props.growMaxIterations as number | undefined,
+    fitMaxProbes: props.fitMaxProbes as number | undefined,
     ellipsis: props.ellipsis as boolean | undefined,
     hangingPunctuation: props.hangingPunctuation as boolean | undefined,
     fontVariationSettings: props.fontVariationSettings as string | undefined,

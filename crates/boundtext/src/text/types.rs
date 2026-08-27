@@ -128,6 +128,12 @@ pub struct TextOverflow {
 }
 
 impl TextOverflow {
+    /// Return whether this status means that a layout constraint was violated.
+    #[must_use]
+    pub(crate) fn is_constraint_overflow(&self) -> bool {
+        !matches!(self.overflow_type.as_str(), "none" | "kinsoku_unresolved")
+    }
+
     #[must_use]
     pub fn none() -> Self {
         Self {
@@ -330,11 +336,17 @@ pub struct TextDecorationGlyphGeometry {
 pub struct PositionedGlyph {
     pub glyph_id: u32,
     pub text: String,
+    /// Inclusive UTF-8 byte offset in the glyph's shaping source. Content and
+    /// ruby-base glyphs use the normalized base document; ruby annotations use
+    /// their annotation level's local text.
     pub cluster_start: u32,
+    /// Exclusive UTF-8 byte offset in the same shaping source. The cluster
+    /// range is not a cross-role identity; use the source role or the unit map
+    /// when comparing glyphs from different source namespaces.
     pub cluster_end: u32,
-    /// Grapheme range in the logical base text. Unlike `cluster_*`, these
-    /// offsets remain stable across rich-text runs. Ruby annotations point to
-    /// the range of the base text they annotate.
+    /// Grapheme range in the logical base text, stable for selection across
+    /// rich-text runs. Ruby annotations point to the base-text range they
+    /// annotate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_start: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -354,6 +366,9 @@ pub struct PositionedGlyph {
     pub decoration_source_start: Option<u32>,
     #[serde(skip)]
     pub decoration_source_end: Option<u32>,
+    /// Namespace discriminator for decoration-local source coordinates. Ruby
+    /// annotations also use it to keep equal text on distinct annotation
+    /// levels from collapsing into one unit-map identity.
     #[serde(skip)]
     pub decoration_level: Option<u32>,
     #[serde(skip)]
@@ -436,7 +451,7 @@ impl PositionedGlyph {
 /// Field names match the canonical TS `TextRunStyle` interface
 /// (`packages/core/src/text/types.ts`).
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextRunStyle {
     /// Primary font alias (first element of font-family chain).
@@ -647,6 +662,8 @@ pub struct TextLayoutRequest<'a> {
     pub max_font_size_px: Option<f64>,
     pub grow_epsilon_px: Option<f64>,
     pub grow_max_iterations: Option<usize>,
+    /// Work limit for an uncertified exact-grid fit search.
+    pub fit_max_probes: Option<usize>,
 }
 
 impl TextLayoutRequest<'_> {
@@ -691,6 +708,83 @@ impl TextLayoutRequest<'_> {
     pub fn has_forced_newline_breaks(&self) -> bool {
         self.white_space == WhiteSpaceMode::PreWrap
     }
+}
+
+/// Whether the authored fit predicate has the scalar preconditions required
+/// for binary refinement.
+///
+/// Negative tracking can make line topology non-monotone as font size changes:
+/// a larger run can overlap enough to fit again after an intermediate size
+/// overflowed. Negative proportional line/ruby offsets have the same proof
+/// problem. Such inputs must use exact-grid search.
+pub(crate) fn is_text_fit_certified_monotone(req: &TextLayoutRequest<'_>) -> bool {
+    if req.letter_spacing_px < 0.0 || req.line_height.is_some_and(|value| value < 0.0) {
+        return false;
+    }
+    if req.spans.is_some_and(|spans| {
+        spans.iter().any(|span| {
+            span.font_size_px < 0.0 || span.letter_spacing_px.is_some_and(|value| value < 0.0)
+        })
+    }) {
+        return false;
+    }
+    is_rich_text_fit_certified_monotone(req.rich_text)
+}
+
+/// Determine whether every rich style preserves monotone font-size fit.
+pub(crate) fn is_rich_text_fit_certified_monotone(rich_text: Option<&[RichTextNodeInput]>) -> bool {
+    let Some(nodes) = rich_text else {
+        return true;
+    };
+    let mut pending = nodes.iter().collect::<Vec<_>>();
+    while let Some(node) = pending.pop() {
+        let is_style_uncertified = |style: &RichTextStyleInput| {
+            style.font_size_px < 0.0
+                || style.letter_spacing_px.is_some_and(|value| value < 0.0)
+                || style.line_height.is_some_and(|value| value < 0.0)
+        };
+        match node {
+            RichTextNodeInput::Text { .. } | RichTextNodeInput::InlineRect { .. } => {}
+            RichTextNodeInput::Span { style, .. } | RichTextNodeInput::Combine { style, .. } => {
+                if is_style_uncertified(style) {
+                    return false;
+                }
+            }
+            RichTextNodeInput::Ruby {
+                style,
+                base,
+                rt,
+                rt_levels,
+                ruby_gap_px,
+                ruby_offset_px,
+                ..
+            } => {
+                if is_style_uncertified(style)
+                    || ruby_gap_px.is_some_and(|value| value < 0.0)
+                    || ruby_offset_px.is_some_and(|value| value < 0.0)
+                {
+                    return false;
+                }
+                pending.extend(base);
+                pending.extend(rt);
+                for level in rt_levels {
+                    pending.extend(level);
+                }
+            }
+            RichTextNodeInput::InlineBox {
+                style, children, ..
+            }
+            | RichTextNodeInput::DecoratedSpan {
+                style, children, ..
+            } => {
+                if is_style_uncertified(style) {
+                    return false;
+                }
+                pending.extend(children);
+            }
+        }
+    }
+    true
 }
 
 /// Expand tab characters to spaces.
@@ -1053,6 +1147,81 @@ pub enum RichTextNodeInput {
 pub const MAX_RICH_TEXT_DEPTH: usize = 48;
 /// Maximum authored inline rectangles accepted for one Text node.
 pub const MAX_INLINE_RECTS: usize = 4_096;
+
+/// Identify which recursive rich-text resource limit was exceeded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RichTextResourceViolation {
+    /// Authored nesting exceeded the maximum accepted depth.
+    Depth { actual: usize, limit: usize },
+    /// Authored inline rectangles exceeded the per-layout limit.
+    InlineRects { required: usize, limit: usize },
+}
+
+/// Validate recursive rich-text resources without recursively walking the input.
+///
+/// This guard must run before flattening so an over-depth public Rust input
+/// cannot exhaust the call stack even when it bypasses the TypeScript and
+/// `boundsvg` validators.
+///
+/// # Errors
+///
+/// Returns the first depth or inline-rectangle limit exceeded by the input.
+pub(crate) fn validate_rich_text_resources(
+    nodes: &[RichTextNodeInput],
+) -> Result<(), RichTextResourceViolation> {
+    let mut inline_rect_count = 0_usize;
+    let mut pending: Vec<(&RichTextNodeInput, usize)> =
+        nodes.iter().map(|node| (node, 0_usize)).collect();
+
+    while let Some((node, parent_container_depth)) = pending.pop() {
+        match node {
+            RichTextNodeInput::Ruby {
+                base,
+                rt,
+                rt_levels,
+                ..
+            } => {
+                let container_depth = parent_container_depth.saturating_add(1);
+                if container_depth > MAX_RICH_TEXT_DEPTH {
+                    return Err(RichTextResourceViolation::Depth {
+                        actual: container_depth,
+                        limit: MAX_RICH_TEXT_DEPTH,
+                    });
+                }
+                pending.extend(base.iter().map(|child| (child, container_depth)));
+                pending.extend(rt.iter().map(|child| (child, container_depth)));
+                for level in rt_levels {
+                    pending.extend(level.iter().map(|child| (child, container_depth)));
+                }
+            }
+            RichTextNodeInput::InlineBox { children, .. }
+            | RichTextNodeInput::DecoratedSpan { children, .. } => {
+                let container_depth = parent_container_depth.saturating_add(1);
+                if container_depth > MAX_RICH_TEXT_DEPTH {
+                    return Err(RichTextResourceViolation::Depth {
+                        actual: container_depth,
+                        limit: MAX_RICH_TEXT_DEPTH,
+                    });
+                }
+                pending.extend(children.iter().map(|child| (child, container_depth)));
+            }
+            RichTextNodeInput::InlineRect { .. } => {
+                inline_rect_count = inline_rect_count.saturating_add(1);
+                if inline_rect_count > MAX_INLINE_RECTS {
+                    return Err(RichTextResourceViolation::InlineRects {
+                        required: inline_rect_count,
+                        limit: MAX_INLINE_RECTS,
+                    });
+                }
+            }
+            RichTextNodeInput::Text { .. }
+            | RichTextNodeInput::Span { .. }
+            | RichTextNodeInput::Combine { .. } => {}
+        }
+    }
+
+    Ok(())
+}
 
 /// Return the first container depth beyond the supported rich-text resource boundary.
 #[must_use]

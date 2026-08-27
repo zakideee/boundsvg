@@ -99,13 +99,14 @@ pub(crate) fn measure_text_block(
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
-        let result = crate::text::engine::layout_text(&req, &font_ctx)
-            .ok_or_else(|| "Failed to layout vertical text for measurement".to_string())?;
+        let layout_result =
+            crate::text::engine::layout_text(&req, &font_ctx).map_err(|error| error.to_string())?;
         return Ok(MeasureTextBlockResult {
-            line_count: result.lines.len(),
-            used_width: result.bbox.w,
-            used_height: result.bbox.h,
+            line_count: layout_result.lines.len(),
+            used_width: layout_result.bbox.w,
+            used_height: layout_result.bbox.h,
             // Vertical lines carry no character ranges; per-line data for
             // vertical text is available via layoutTextFlow.
             lines: None,
@@ -157,6 +158,7 @@ pub(crate) fn measure_text_block(
             max_font_size_px: None,
             grow_epsilon_px: None,
             grow_max_iterations: None,
+            fit_max_probes: None,
         };
         let result = crate::text::engine::measure_text_lines(&req, &font_ctx)
             .ok_or_else(|| "Failed to layout fallback text for measurement".to_string())?;

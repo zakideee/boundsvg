@@ -274,9 +274,8 @@ export function TransformPage() {
             Slate dashed = layout / Cyan = transform / Pink corners = visual bounds / Amber = origin
           </p>
           <p className="section-note">
-            Origin anchors only appear where the transform lands on a group. A transform on a leaf
-            (Text / Path / Image / Shape) carries no origin in the IR yet, so presets built from
-            leaves show none.
+            Origin anchors appear for authored transforms. Leaf transforms retain their origin on
+            the generated wrapper group used by the inspection overlay.
           </p>
         </Section>
       </aside>

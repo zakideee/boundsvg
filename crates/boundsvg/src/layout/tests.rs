@@ -40,6 +40,7 @@ fn plain_text_input(content: &str, font_size_px: f64, wrap: &str) -> TextInput {
         max_font_size_px: None,
         grow_epsilon_px: None,
         grow_max_iterations: None,
+        fit_max_probes: None,
         ellipsis: None,
         hanging_punctuation: None,
         font_variation_settings: None,
@@ -49,6 +50,66 @@ fn plain_text_input(content: &str, font_size_px: f64, wrap: &str) -> TextInput {
         white_space: None,
         tab_size: None,
         flow: None,
+    }
+}
+
+fn centered_column_text_input() -> LayoutInput {
+    let text_node = |node_id: &str, content: &str| LayoutNodeInput {
+        node_id: node_id.into(),
+        node_type: "text".into(),
+        authored_id: true,
+        style: TaffyStyleInput::default(),
+        children: vec![],
+        text: Some(plain_text_input(content, 13.0, "char")),
+        text_path: None,
+        image: None,
+        visual: None,
+    };
+
+    LayoutInput {
+        root: LayoutNodeInput {
+            node_id: "canvas".into(),
+            node_type: "canvas".into(),
+            authored_id: true,
+            style: TaffyStyleInput {
+                width: Some(160.0),
+                height: Some(120.0),
+                ..Default::default()
+            },
+            children: vec![LayoutNodeInput {
+                node_id: "column".into(),
+                node_type: "flex".into(),
+                authored_id: true,
+                style: TaffyStyleInput {
+                    flex_direction: Some("column".into()),
+                    justify_content: Some("center".into()),
+                    align_items: Some("center".into()),
+                    width: Some(160.0),
+                    height: Some(120.0),
+                    padding: Some([12.0, 12.0, 12.0, 12.0]),
+                    gap: Some(4.0),
+                    ..Default::default()
+                },
+                children: vec![
+                    text_node("t1", "Same transform,"),
+                    text_node("t2", "every node type."),
+                ],
+                text: None,
+                text_path: None,
+                image: None,
+                visual: None,
+            }],
+            text: None,
+            text_path: None,
+            image: None,
+            visual: None,
+        },
+        fonts: vec![FontInput {
+            alias: "NotoSansJP".into(),
+            weight: 400,
+            style: FontStyle::Normal,
+            data: test_font_data(),
+        }],
     }
 }
 
@@ -219,11 +280,18 @@ fn rich_base_decoration_wire_input(range_count: usize, animate_units: bool) -> L
                 "text": {
                     "content": "x".repeat(range_count),
                     "fontSizePx": 16.0,
+                    "fontFamily": ["NotoSansJP"],
                     "richText": rich_text
                 },
                 "visual": visual
             }]
-        }
+        },
+        "fonts": [{
+            "alias": "NotoSansJP",
+            "weight": 400,
+            "style": "normal",
+            "data": test_font_data()
+        }]
     }))
     .expect("rich decoration wire input")
 }
@@ -709,6 +777,10 @@ fn text_unit_map_supports_single_and_multiline_ellipsis() {
                 ),
                 "ellipsis must retain the omitted source tail for {content:?} at maxLines={max_lines}",
             );
+            assert!(
+                unit_map.units.iter().any(|unit| unit.members.is_empty()),
+                "omitted source units must remain addressable without borrowing the synthetic marker for {content:?} at maxLines={max_lines}",
+            );
         }
     }
 }
@@ -756,7 +828,7 @@ fn text_unit_map_supports_ruby_multiline_ellipsis() {
 }
 
 #[test]
-fn text_unit_map_reports_unavailable_text_layout() {
+fn text_measurement_fails_before_unit_map_materialization() {
     let mut input = text_unit_layout_input(
         "missing font",
         120.0,
@@ -773,12 +845,117 @@ fn text_unit_map_reports_unavailable_text_layout() {
             node_id,
             ..
         } => {
-            assert_eq!(code, "TEXT_UNIT_MAP_UNAVAILABLE");
+            assert_eq!(code, "TEXT_NO_LAYOUT");
             assert_eq!(stage.as_deref(), Some("text"));
             assert_eq!(node_id.as_deref(), Some("unit-text"));
         }
         other => panic!("expected structured unit-map error, got {other:?}"),
     }
+}
+
+#[test]
+fn text_measurement_surfaces_the_ellipsis_candidate_limit() {
+    let source = "あ".repeat(1_025);
+    let mut input = text_unit_layout_input(
+        &source,
+        1.0,
+        None,
+        crate::text::unit_map::TextUnitKind::Cluster,
+        crate::text::unit_map::TextUnitRubyMode::WithBase,
+    );
+    let text = input.root.children[0].text.as_mut().expect("text input");
+    text.max_lines = Some(1);
+    text.ellipsis = Some(true);
+
+    let error = compute_full_layout(&input).expect_err("exact projection must be bounded");
+    assert_structured_error_code(error, "TEXT_ELLIPSIS_CANDIDATE_LIMIT");
+}
+
+#[test]
+fn ordinary_text_measurement_surfaces_the_content_fit_probe_limit() {
+    let mut input = text_unit_layout_input(
+        "negative tracking fit",
+        120.0,
+        None,
+        crate::text::unit_map::TextUnitKind::Cluster,
+        crate::text::unit_map::TextUnitRubyMode::WithBase,
+    );
+    let text = input.root.children[0].text.as_mut().expect("text input");
+    text.letter_spacing_px = Some(-1.0);
+    text.fit = Some("shrink".to_string());
+    text.min_font_size_px = Some(8.0);
+    text.shrink_epsilon_px = Some(0.25);
+    text.fit_max_probes = Some(1);
+
+    let error = compute_full_layout(&input).expect_err("ordinary exact fit must be bounded");
+    assert_structured_error_code(error, "TEXT_FIT_PROBE_LIMIT");
+}
+
+#[test]
+fn text_measure_cache_separates_fit_probe_budgets() {
+    let mut registry = FontRegistry::new();
+    registry
+        .register(
+            test_font_data(),
+            "NotoSansJP".into(),
+            400,
+            FontStyle::Normal,
+        )
+        .expect("font registration should succeed");
+
+    let mut permissive = plain_text_input("negative tracking fit", 32.0, "char");
+    permissive.letter_spacing_px = Some(-1.0);
+    permissive.fit = Some("shrink".to_string());
+    permissive.min_font_size_px = Some(8.0);
+    permissive.shrink_epsilon_px = Some(0.25);
+    permissive.fit_max_probes = Some(128);
+    let mut constrained = plain_text_input("negative tracking fit", 32.0, "char");
+    constrained.letter_spacing_px = Some(-1.0);
+    constrained.fit = Some("shrink".to_string());
+    constrained.min_font_size_px = Some(8.0);
+    constrained.shrink_epsilon_px = Some(0.25);
+    constrained.fit_max_probes = Some(1);
+
+    let available_space = Size {
+        width: AvailableSpace::Definite(50.0),
+        height: AvailableSpace::Definite(20.0),
+    };
+    let mut measure_cache = HashMap::new();
+    let mut measure_cache_hits = 0;
+    let mut shrink_to_fit_widths = HashMap::new();
+    let mut shaped_cache = HashMap::new();
+    let mut text_results = HashMap::new();
+
+    measure_text_node(
+        &permissive,
+        &registry,
+        None,
+        Size::NONE,
+        available_space,
+        &mut measure_cache,
+        &mut measure_cache_hits,
+        &mut shrink_to_fit_widths,
+        &mut shaped_cache,
+        NodeId::new(1),
+        &mut text_results,
+    )
+    .expect("the permissive exact-fit budget should complete");
+
+    let error = measure_text_node(
+        &constrained,
+        &registry,
+        None,
+        Size::NONE,
+        available_space,
+        &mut measure_cache,
+        &mut measure_cache_hits,
+        &mut shrink_to_fit_widths,
+        &mut shaped_cache,
+        NodeId::new(2),
+        &mut text_results,
+    )
+    .expect_err("a cached result must not bypass the constrained probe budget");
+    assert_structured_error_code(error, "TEXT_FIT_PROBE_LIMIT");
 }
 
 #[test]
@@ -997,6 +1174,7 @@ fn test_preferred_frame_does_not_clamp_min_content_queries() {
         };
         let mut measure_cache = HashMap::new();
         let mut measure_cache_hits = 0;
+        let mut shrink_to_fit_widths = HashMap::new();
         let mut shaped_cache = HashMap::new();
         let mut text_results = HashMap::new();
 
@@ -1008,10 +1186,12 @@ fn test_preferred_frame_does_not_clamp_min_content_queries() {
             available_space,
             &mut measure_cache,
             &mut measure_cache_hits,
+            &mut shrink_to_fit_widths,
             &mut shaped_cache,
             NodeId::new(1),
             &mut text_results,
         )
+        .expect("text measurement")
     }
 
     assert_eq!(
@@ -1024,6 +1204,53 @@ fn test_preferred_frame_does_not_clamp_min_content_queries() {
         measure_min_content(true, false),
         "vertical min-content height must ignore preferredFrame.h"
     );
+}
+
+#[test]
+fn centered_column_text_uses_intrinsic_width_and_resolved_height() {
+    let output = compute_full_layout(&centered_column_text_input()).expect("layout should succeed");
+    let first = output
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "t1")
+        .expect("first text layout");
+    let second = output
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "t2")
+        .expect("second text layout");
+    let first_text = first.text_layout.as_ref().expect("first text result");
+    let second_text = second.text_layout.as_ref().expect("second text result");
+
+    assert_eq!(first_text.lines.as_ref().map(Vec::len), Some(1));
+    assert_eq!(second_text.lines.as_ref().map(Vec::len), Some(1));
+    assert!(
+        (f64::from(first.width) - first_text.measured_width).abs() < 1.0,
+        "first layout width={} measured width={} bbox={:?}",
+        first.width,
+        first_text.measured_width,
+        first_text.bbox
+    );
+    assert!(
+        (f64::from(second.width) - second_text.measured_width).abs() < 1.0,
+        "second layout width={} measured width={} bbox={:?}",
+        second.width,
+        second_text.measured_width,
+        second_text.bbox
+    );
+    assert!(
+        (f64::from(first.height) - first_text.measured_height).abs() < 1.0,
+        "first layout height={} measured height={}",
+        first.height,
+        first_text.measured_height
+    );
+    assert!(
+        (f64::from(second.height) - second_text.measured_height).abs() < 1.0,
+        "second layout height={} measured height={}",
+        second.height,
+        second_text.measured_height
+    );
+    assert!(first.y + first.height <= second.y);
 }
 
 #[test]
@@ -1332,6 +1559,7 @@ fn test_layout_with_text_measure() {
                     max_font_size_px: None,
                     grow_epsilon_px: None,
                     grow_max_iterations: None,
+                    fit_max_probes: None,
                     ellipsis: None,
                     hanging_punctuation: None,
                     font_variation_settings: None,
@@ -1439,6 +1667,7 @@ fn test_layout_with_rich_text_fallback_produces_complete_text_layout() {
                     max_font_size_px: None,
                     grow_epsilon_px: None,
                     grow_max_iterations: None,
+                    fit_max_probes: None,
                     ellipsis: None,
                     hanging_punctuation: None,
                     font_variation_settings: None,
@@ -1564,6 +1793,7 @@ fn measure_call_count_is_bounded() {
                         max_font_size_px: None,
                         grow_epsilon_px: None,
                         grow_max_iterations: None,
+                        fit_max_probes: None,
                         ellipsis: None,
                         hanging_punctuation: None,
                         font_variation_settings: None,
@@ -1609,6 +1839,7 @@ fn measure_call_count_is_bounded() {
                         max_font_size_px: None,
                         grow_epsilon_px: None,
                         grow_max_iterations: None,
+                        fit_max_probes: None,
                         ellipsis: None,
                         hanging_punctuation: None,
                         font_variation_settings: None,
@@ -1654,6 +1885,7 @@ fn measure_call_count_is_bounded() {
                         max_font_size_px: None,
                         grow_epsilon_px: None,
                         grow_max_iterations: None,
+                        fit_max_probes: None,
                         ellipsis: None,
                         hanging_punctuation: None,
                         font_variation_settings: None,
@@ -1750,6 +1982,7 @@ fn test_layout_multiline_text_measure() {
                     max_font_size_px: None,
                     grow_epsilon_px: None,
                     grow_max_iterations: None,
+                    fit_max_probes: None,
                     ellipsis: None,
                     hanging_punctuation: None,
                     font_variation_settings: None,

@@ -22,6 +22,7 @@ const MIRRORED_SAMPLE_KEYS = [
   "text-path-motion",
   "typing-ime-timeline",
   "variable-font",
+  "vertical-rich-ellipsis",
 ] as const;
 
 const KEYED_AUTO_NODE_ID_PATTERN = /^(auto:\d+(?:\.\d+)*):(.+)$/u;
@@ -198,7 +199,7 @@ describe("mirrored core and React samples", () => {
 
   afterAll(() => engine.dispose());
 
-  it("renders all eight mirrored samples with semantic SVG equality", () => {
+  it("renders all nine mirrored samples with semantic SVG equality", () => {
     const byteEqualKeys: string[] = [];
     const normalizedCounts = new Map<string, { core: number; react: number }>();
 
