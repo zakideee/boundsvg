@@ -31,10 +31,15 @@ import type {
   LayeredSvgResult,
   MeasureTextBlockInput,
   MeasureTextBlockResult,
+  OutputCommonOptions,
   PngResolutionAdjustedWarning,
+  RasterEmissionOptions,
   RenderAnimatedGifOptions,
+  RenderAnimatedSvgOptions,
   RenderAnimatedWebpOptions,
-  RenderOptions,
+  RenderPngOptions,
+  RenderSvgOptions,
+  RenderWebpOptions,
   SceneNode,
   ShrinkwrapFlowInput,
   ShrinkwrapFlowResult,
@@ -61,7 +66,9 @@ import {
   type WorkerFrameRenderOptions,
   type WorkerLayeredPngRenderOptions,
   type WorkerLayeredSvgRenderOptions,
-  type WorkerRenderOptions,
+  type WorkerRenderAnimatedSvgOptions,
+  type WorkerRenderPngOptions,
+  type WorkerRenderSvgOptions,
   type WorkerRequest,
   type WorkerResponse,
 } from "./protocol.js";
@@ -129,9 +136,9 @@ type PendingRequest<T> = {
   timer: ReturnType<typeof setTimeout>;
 };
 
-type WarningCallback = NonNullable<RenderOptions["onWarning"]>;
+type WarningCallback = NonNullable<OutputCommonOptions["onWarning"]>;
 type RecoverableWarning = Parameters<WarningCallback>[0];
-type PngResolutionAdjustedCallback = NonNullable<RenderOptions["onPngResolutionAdjusted"]>;
+type PngResolutionAdjustedCallback = NonNullable<RasterEmissionOptions["onPngResolutionAdjusted"]>;
 
 export type WorkerRenderedFrame =
   | { format: "svg"; data: string; warnings: StructuredError[] }
@@ -153,7 +160,7 @@ export type WorkerPoolEndpoint = {
   render(
     scene: SceneNode,
     format: "svg" | "png",
-    options: WorkerRenderOptions,
+    options: WorkerRenderSvgOptions | WorkerRenderPngOptions,
   ): Promise<WorkerRenderedFrame>;
 };
 
@@ -329,8 +336,18 @@ export class WorkerEngine {
         this.assertNotDisposed();
         const response = await this.send(
           format === "svg"
-            ? { id: this.nextId++, type: "render-svg", scene, options }
-            : { id: this.nextId++, type: "render-png", scene, options },
+            ? {
+                id: this.nextId++,
+                type: "render-svg",
+                scene,
+                options: options as WorkerRenderSvgOptions,
+              }
+            : {
+                id: this.nextId++,
+                type: "render-png",
+                scene,
+                options: options as WorkerRenderPngOptions,
+              },
         );
         if (response.type === "error") {
           throw rehydrateError(response.error);
@@ -411,7 +428,7 @@ export class WorkerEngine {
    * Warnings from the Worker are forwarded to `options.onWarning` if provided,
    * then the SVG string is returned.
    */
-  async renderToSvg(scene: SceneNode, options?: RenderOptions): Promise<string> {
+  async renderToSvg(scene: SceneNode, options?: RenderSvgOptions): Promise<string> {
     this.assertNotDisposed();
 
     const { workerOptions, onWarning } = splitOptions(options);
@@ -436,6 +453,28 @@ export class WorkerEngine {
     return response.svg;
   }
 
+  /** Render independent authored animation tracks to animated SVG inside the Worker. */
+  async renderToAnimatedSvg(scene: SceneNode, options: RenderAnimatedSvgOptions): Promise<string> {
+    this.assertNotDisposed();
+
+    const { workerOptions, onWarning } = splitOptions(options);
+    const request: WorkerRequest = {
+      id: this.nextId++,
+      type: "render-animated-svg",
+      scene,
+      options: workerOptions as WorkerRenderAnimatedSvgOptions,
+    };
+    const response = await this.send(request);
+    if (response.type === "error") {
+      throw rehydrateError(response.error);
+    }
+    if (response.type !== "render-animated-svg-ok") {
+      throw unexpectedWorkerResponseError(response.type, "render-animated-svg-ok");
+    }
+    forwardWorkerWarnings(response.warnings, onWarning);
+    return response.svg;
+  }
+
   /**
    * Render a scene to SVG + IR inside the Worker.
    *
@@ -445,7 +484,7 @@ export class WorkerEngine {
    */
   async renderToSvgAndIR(
     scene: SceneNode,
-    options?: RenderOptions,
+    options?: RenderSvgOptions,
   ): Promise<{ svg: string; ir: IR }> {
     this.assertNotDisposed();
 
@@ -474,13 +513,39 @@ export class WorkerEngine {
     return { svg: response.svg, ir };
   }
 
+  /** Render animated SVG + IR with independent authored animation tracks. */
+  async renderToAnimatedSvgAndIR(
+    scene: SceneNode,
+    options: RenderAnimatedSvgOptions,
+  ): Promise<{ svg: string; ir: IR }> {
+    this.assertNotDisposed();
+
+    const { workerOptions, onWarning } = splitOptions(options);
+    const request: WorkerRequest = {
+      id: this.nextId++,
+      type: "render-animated-svg-and-ir",
+      scene,
+      options: workerOptions as WorkerRenderAnimatedSvgOptions,
+    };
+    const response = await this.send(request);
+    if (response.type === "error") {
+      throw rehydrateError(response.error);
+    }
+    if (response.type !== "render-animated-svg-and-ir-ok") {
+      throw unexpectedWorkerResponseError(response.type, "render-animated-svg-and-ir-ok");
+    }
+    forwardWorkerWarnings(response.warnings, onWarning);
+    const ir: IR = { ...response.ir, warnings: [] };
+    return { svg: response.svg, ir };
+  }
+
   /**
    * Render a scene to PNG inside the Worker.
    *
    * The PNG `Uint8Array` is transferred (zero-copy) from the Worker.
    * Warnings are forwarded to `options.onWarning` if provided.
    */
-  async renderToPng(scene: SceneNode, options?: RenderOptions): Promise<Uint8Array> {
+  async renderToPng(scene: SceneNode, options?: RenderPngOptions): Promise<Uint8Array> {
     this.assertNotDisposed();
 
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
@@ -511,7 +576,7 @@ export class WorkerEngine {
    * The WebP `Uint8Array` is transferred (zero-copy) from the Worker.
    * Warnings are forwarded to `options.onWarning` if provided.
    */
-  async renderToWebp(scene: SceneNode, options?: RenderOptions): Promise<Uint8Array> {
+  async renderToWebp(scene: SceneNode, options?: RenderWebpOptions): Promise<Uint8Array> {
     this.assertNotDisposed();
 
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
@@ -969,7 +1034,7 @@ function isWorkerLike(value: unknown): value is WorkerLike {
   );
 }
 
-type SplitCallbacks<TWorkerOptions = WorkerRenderOptions> = {
+type SplitCallbacks<TWorkerOptions> = {
   workerOptions: TWorkerOptions | undefined;
   onWarning: WarningCallback | undefined;
   onPngResolutionAdjusted: PngResolutionAdjustedCallback | undefined;
@@ -988,11 +1053,16 @@ type SplitLayeredPngCallbacks = {
 
 /**
  * Split render options into Worker-safe options and main-thread callbacks.
- * Generic so option bags that extend `RenderOptions` — animated raster
- * schedules, for instance — keep their extra fields in the worker payload
- * type rather than widening to plain `RenderOptions`.
+ * Generic so each format-specific option bag — including animated raster
+ * schedules — keeps its extra fields in the worker payload type instead of
+ * widening to a shared callback-only shape.
  */
-function splitOptions<TOptions extends RenderOptions>(
+type RenderCallbacks = {
+  onWarning?: WarningCallback;
+  onPngResolutionAdjusted?: PngResolutionAdjustedCallback;
+};
+
+function splitOptions<TOptions extends RenderCallbacks>(
   options?: TOptions,
 ): SplitCallbacks<Omit<TOptions, "onWarning" | "onPngResolutionAdjusted">> {
   if (!options) {

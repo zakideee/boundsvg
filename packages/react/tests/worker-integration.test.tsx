@@ -1,10 +1,10 @@
 /** @jsxImportSource react */
 
-import type { Engine, RenderOptions, VNode } from "@boundsvg/core";
+import type { Engine, RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/core";
 import type { WorkerEngine } from "@boundsvg/worker";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { BoundSvg } from "../src/components/boundsvg.js";
+import { AnimatedBoundSvg, BoundSvg } from "../src/components/boundsvg.js";
 import { Flex, Text } from "../src/components/nodes.js";
 import { BoundSvgContext } from "../src/context.js";
 import { useBoundSvg } from "../src/hooks/use-boundsvg.js";
@@ -35,7 +35,7 @@ function createMainThreadContext(engine: Engine | null): BoundSvgContextValue {
     workerEngine: null,
     status: engine ? "ready" : "loading",
     error: null,
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   };
 }
 
@@ -45,7 +45,7 @@ function createWorkerContext(workerEngine: WorkerEngine | null): BoundSvgContext
     workerEngine,
     status: workerEngine ? "ready" : "loading",
     error: null,
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   };
 }
 
@@ -206,7 +206,7 @@ describe("BoundSvg Worker/non-Worker branching", () => {
   it("passes renderOptions to sync engine", () => {
     const renderToSvg = vi.fn(() => '<svg viewBox="0 0 100 100"></svg>');
     const engine = makeEngineMock({ renderToSvg });
-    const options: RenderOptions = { scale: 2 };
+    const options: RenderSvgOptions = { scale: 2 };
 
     renderToString(
       <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
@@ -216,9 +216,31 @@ describe("BoundSvg Worker/non-Worker branching", () => {
 
     expect(renderToSvg).toHaveBeenCalledTimes(1);
     const callArgs = renderToSvg.mock.calls[0] as unknown[];
-    const calledOptions = callArgs[1] as RenderOptions;
+    const calledOptions = callArgs[1] as RenderSvgOptions;
     expect(calledOptions.scale).toBe(2);
-    // defaultRenderOptions merged
+    // defaultCommonOptions merged
     expect(calledOptions.textPathMode).toBe("merged");
+  });
+
+  it("routes AnimatedBoundSvg through the dedicated animated SVG method", () => {
+    const renderToAnimatedSvg = vi.fn(() => '<svg data-mode="animated"></svg>');
+    const engine = makeEngineMock({ renderToAnimatedSvg });
+    const renderOptions: RenderAnimatedSvgOptions = {
+      playback: { mode: "independent" },
+      resourceIdPrefix: "react-animated-",
+      nodeIdMetadata: "omit",
+    };
+
+    const html = renderToString(
+      <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
+        <AnimatedBoundSvg vnode={sampleVNode()} renderOptions={renderOptions} />
+      </BoundSvgContext.Provider>,
+    );
+
+    expect(html).toContain("data-mode");
+    expect(renderToAnimatedSvg).toHaveBeenCalledWith(sampleVNode(), {
+      textPathMode: "merged",
+      ...renderOptions,
+    });
   });
 });

@@ -16,9 +16,10 @@ Given the same
 - font bytes (fonts are injected as data, never discovered from the OS),
 - render options,
 
-`renderToSvg` returns the same SVG string, and `renderToPng`, `renderToWebp`,
-`renderToAnimatedWebp`, and `renderToAnimatedGif` return the same bytes on
-Node.js, in the browser, and in a Web Worker.
+`renderToSvg` and `renderToAnimatedSvg` return the same SVG string, and
+`renderToPng`, `renderToWebp`, `renderToAnimatedWebp`, and
+`renderToAnimatedGif` return the same bytes on Node.js, in the browser, and in
+a Web Worker.
 
 This holds because the entire text pipeline — shaping (rustybuzz), line
 breaking, kinsoku, vertical layout, font metrics — and the rasterizer (resvg)
@@ -51,7 +52,7 @@ attributes on each text group.
 ## Canvas-stable stroke fallback
 
 For `strokeScaling: "canvas"` on a `Flex`, `Grid`, or `Box` border or a `Path`,
-declarative SVG contains both a sampled fallback width and an `@supports`
+animated SVG contains both a sampled fallback width and an `@supports`
 rule for the standard `vector-effect: non-scaling-stroke` behavior. Supporting
 browsers use the authored canvas-space width during playback. Static renderers
 such as the bundled resvg ignore the conditional rule and draw the fallback
@@ -59,8 +60,10 @@ computed from the sampled `timeMs` pose.
 
 This split preserves the same base-pose meaning for SVG, PNG, WebP, GIF, and
 the PNG frames supplied to MP4 encoders. The fallback is derived only from
-post-layout node transforms. `RenderOptions.scale` is part of output
-resolution and still multiplies the final device-pixel width.
+post-layout node transforms. The format-specific render option `scale` is part
+of output resolution and still multiplies the final device-pixel width. For
+SVG it changes root `width` / `height` and this restoration CSS width, but not
+the `viewBox`, child geometry, or ordinary stroke attributes.
 
 ## Exceptions — read this
 
@@ -70,13 +73,13 @@ resolution and still multiplies the final device-pixel width.
    font database when rasterizing to PNG — these can differ from each other
    and between environments. Convert embedded text to paths upstream if you
    need the guarantee to cover it.
-2. **Animation playback timing.** Declarative SVG uses CSS `@keyframes`, and
+2. **Animation playback timing.** Animated SVG uses CSS `@keyframes`, and
    animated GIF stores delays in 10 ms units that browsers override below
    2 centiseconds. The bytes are covered; how long a viewer actually shows each
    frame is not.
    Which frame a viewer shows at a wall-clock instant comes from the viewer's
    animation clock and is outside this contract. The static SVG baked at
-   `timeMs`, PNG output (always static), and the declarative SVG's attribute
+   `timeMs`, PNG output (always static), and the animated SVG's attribute
    base pose are covered. A non-CSS viewer or resvg shows that base-pose still,
    which rasterizes identically to static PNG at the same `timeMs`. boundsvg
    emits a `prefers-reduced-motion` opt-out only when `reducedMotion: "pause"`
@@ -117,5 +120,5 @@ resolution and still multiplies the final device-pixel width.
 - **Cache-safe generation** — content-addressed caching of rendered assets is
   sound because the mapping input → bytes is a pure function.
 - **Cross-environment static preview** — a browser, Node.js batch job, and Worker
-  produce the same sampled still at the same `timeMs`. Declarative playback
+  produce the same sampled still at the same `timeMs`. Animated SVG playback
   timing remains viewer-dependent as described above.

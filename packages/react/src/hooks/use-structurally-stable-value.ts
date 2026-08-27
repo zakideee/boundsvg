@@ -1,4 +1,4 @@
-import type { RenderOptions } from "@boundsvg/core";
+import type { OutputCommonOptions, RasterEmissionOptions } from "@boundsvg/core";
 import { useLayoutEffect, useRef } from "react";
 
 type StructuralComparisonState = {
@@ -6,9 +6,12 @@ type StructuralComparisonState = {
   rightToLeft: WeakMap<object, object>;
 };
 
-type WarningCallback = NonNullable<RenderOptions["onWarning"]>;
-type PngResolutionAdjustedCallback = NonNullable<RenderOptions["onPngResolutionAdjusted"]>;
-type RenderOptionCallbacks = Pick<RenderOptions, "onWarning" | "onPngResolutionAdjusted">;
+type WarningCallback = NonNullable<OutputCommonOptions["onWarning"]>;
+type PngResolutionAdjustedCallback = NonNullable<RasterEmissionOptions["onPngResolutionAdjusted"]>;
+type RenderOptionCallbacks = {
+  onWarning?: WarningCallback;
+  onPngResolutionAdjusted?: PngResolutionAdjustedCallback;
+};
 type StableRenderOptionCallbacks = {
   onWarning: WarningCallback;
   onPngResolutionAdjusted: PngResolutionAdjustedCallback;

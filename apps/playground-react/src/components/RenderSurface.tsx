@@ -1,4 +1,10 @@
-import { BoundSvg, type RenderOptions, useRenderToSvg, type VNode } from "@boundsvg/react";
+import {
+  BoundSvg,
+  type CompileOptions,
+  type OutputCommonOptions,
+  useRenderToSvg,
+  type VNode,
+} from "@boundsvg/react";
 import { useRenderToPng } from "@boundsvg/react/png";
 import { useMemo } from "react";
 import type { RendererMode } from "../types";
@@ -6,7 +12,7 @@ import type { RendererMode } from "../types";
 type RenderSurfaceProps = {
   renderer: RendererMode;
   vnode: VNode | null;
-  renderOptions?: RenderOptions;
+  renderOptions?: CompileOptions & OutputCommonOptions;
   isPending?: boolean;
 };
 
@@ -64,7 +70,7 @@ function BoundSvgSurface({
   renderOptions,
 }: {
   vnode: VNode | null;
-  renderOptions?: RenderOptions;
+  renderOptions?: CompileOptions & OutputCommonOptions;
 }) {
   return (
     <div className="preview-stage">
@@ -84,7 +90,7 @@ function SvgHookSurface({
   renderOptions,
 }: {
   vnode: VNode | null;
-  renderOptions?: RenderOptions;
+  renderOptions?: CompileOptions & OutputCommonOptions;
 }) {
   const { svg, error, isReady } = useRenderToSvg(vnode, renderOptions);
 
@@ -116,7 +122,7 @@ function PngHookSurface({
   renderOptions,
 }: {
   vnode: VNode | null;
-  renderOptions?: RenderOptions;
+  renderOptions?: CompileOptions & OutputCommonOptions;
 }) {
   const { png, dataUrl, error, isReady } = useRenderToPng(vnode, renderOptions);
   const previewSize = useMemo(() => {

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /** @jsxImportSource react */
 
-import type { Engine, RenderOptions, VNode } from "@boundsvg/core";
+import type { Engine, RenderSvgOptions, VNode } from "@boundsvg/core";
 import { act, StrictMode, Suspense, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -28,9 +28,9 @@ function makeVNode(width = 100, text = "hello"): VNode {
 const STABLE_VNODE = makeVNode();
 
 function makeEngine() {
-  const renderToSvg = vi.fn((vnode: VNode, options: RenderOptions) => {
+  const renderToSvg = vi.fn((vnode: VNode, options: RenderSvgOptions) => {
     options.onWarning?.(
-      new Error("test warning") as Parameters<NonNullable<RenderOptions["onWarning"]>>[0],
+      new Error("test warning") as Parameters<NonNullable<RenderSvgOptions["onWarning"]>>[0],
     );
     return `<svg data-width="${Reflect.get(vnode.props, "width")}" data-scale="${options.scale ?? 1}"></svg>`;
   });
@@ -46,7 +46,7 @@ function context(engine: Engine): BoundSvgContextValue {
     workerEngine: null,
     status: "ready",
     error: null,
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   };
 }
 
@@ -83,9 +83,9 @@ afterEach(() => {
 describe("synchronous SVG render-input stability", () => {
   it("delivers render warnings once after a StrictMode generation commits", () => {
     const onWarning = vi.fn();
-    const renderToSvg = vi.fn((_vnode: VNode, options: RenderOptions) => {
+    const renderToSvg = vi.fn((_vnode: VNode, options: RenderSvgOptions) => {
       options.onWarning?.(
-        new Error("commit warning") as Parameters<NonNullable<RenderOptions["onWarning"]>>[0],
+        new Error("commit warning") as Parameters<NonNullable<RenderSvgOptions["onWarning"]>>[0],
       );
       expect(onWarning).not.toHaveBeenCalled();
       return "<svg></svg>";
@@ -113,9 +113,9 @@ describe("synchronous SVG render-input stability", () => {
   it("does not deliver warnings from a render that starts but never commits", () => {
     const onWarning = vi.fn();
     const never = new Promise<never>(() => {});
-    const renderToSvg = vi.fn((_vnode: VNode, options: RenderOptions) => {
+    const renderToSvg = vi.fn((_vnode: VNode, options: RenderSvgOptions) => {
       options.onWarning?.(
-        new Error("render warning") as Parameters<NonNullable<RenderOptions["onWarning"]>>[0],
+        new Error("render warning") as Parameters<NonNullable<RenderSvgOptions["onWarning"]>>[0],
       );
       return "<svg></svg>";
     });

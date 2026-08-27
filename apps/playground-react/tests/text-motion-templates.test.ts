@@ -90,7 +90,9 @@ test("React Templates groups the same five Text Motion samples as core", () => {
 });
 
 test("React Terminal / IME Timeline renders all authored states and composition decoration", () => {
-  const { svg, ir } = engine.renderToSvgAndIR(buildTemplate("typing-ime-timeline"));
+  const { svg, ir } = engine.renderToAnimatedSvgAndIR(buildTemplate("typing-ime-timeline"), {
+    playback: { mode: "independent" },
+  });
   const timelineNodes = collectTextNodes(ir.root).filter((node) =>
     node.nodeId.startsWith("timeline-"),
   );
@@ -254,7 +256,7 @@ test("React Decoration & Path Fit keeps the capability boundary explicit", () =>
 });
 
 test("React Rich Text on Path preserves identity and separates decoration from unit animation", () => {
-  const { svg, ir } = engine.renderToSvgAndIR(buildTemplate("rich-text-on-path"));
+  const { svg, ir } = engine.renderToSvgAndIR(buildTemplate("rich-text-on-path"), { timeMs: 0 });
   const textNodes = collectTextNodes(ir.root);
   const plain = textNodes.find((node) => node.nodeId === "path-identity-plain");
   const singleInline = textNodes.find((node) => node.nodeId === "path-identity-inline");

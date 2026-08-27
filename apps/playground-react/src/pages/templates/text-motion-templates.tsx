@@ -183,7 +183,6 @@ function collectStats(node: IRNode): Omit<FrameStats, "svgBytes"> {
 
 function measureFrame(engine: Engine, frame: TimelineFrame): FrameStats {
   const { svg, ir } = engine.renderToSvgAndIR(framePreview(frame), {
-    animation: "static",
     timeMs: frame.timeMs,
   });
   return {
@@ -1601,7 +1600,6 @@ function motionPreview(frame: MotionFrame): VNode {
 
 function measureMotionSvgBytes(engine: Engine, frame: MotionFrame): number {
   const svg = engine.renderToSvg(motionPreview(frame), {
-    animation: "static",
     timeMs: frame.timeMs,
   });
   return new TextEncoder().encode(svg).byteLength;

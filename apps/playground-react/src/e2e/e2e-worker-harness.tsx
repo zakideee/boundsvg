@@ -736,7 +736,6 @@ async function hasMaterializedTextPathParity(
 ): Promise<boolean> {
   const directArtifacts = inputs.map((input) =>
     directEngine.renderToSvgAndIR(input.scene, {
-      animation: "static",
       timeMs: input.timeMs,
       resourceIdPrefix: MATERIALIZED_RESOURCE_ID_PREFIX,
     }),
@@ -744,7 +743,6 @@ async function hasMaterializedTextPathParity(
   const workerArtifacts = await Promise.all(
     inputs.map((input) =>
       workerEngine.renderToSvgAndIR(input.scene, {
-        animation: "static",
         timeMs: input.timeMs,
         resourceIdPrefix: MATERIALIZED_RESOURCE_ID_PREFIX,
       }),
@@ -963,7 +961,6 @@ async function verifyV2PoolLifecycle(
     pool.renderMaterializedFrames([recoveryInput], { format: "svg" }),
   );
   const expectedRecoverySvg = directEngine.renderToSvg(recoveryInput.scene, {
-    animation: "static",
     timeMs: recoveryInput.timeMs,
   });
 
@@ -1249,9 +1246,9 @@ function useRouteParity(
       };
       const scene = toSceneDocument(vnode);
       const directValues: unknown[] = [
-        createdEngine.renderToSvg(scene),
-        createdEngine.renderToSvgAndIR(scene),
-        createdEngine.renderToPng(scene),
+        createdEngine.renderToSvg(scene, { timeMs: 0 }),
+        createdEngine.renderToSvgAndIR(scene, { timeMs: 0 }),
+        createdEngine.renderToPng(scene, { timeMs: 0 }),
         createdEngine.layoutTextFlow({ ...common, lineWidths: [80, 120, 160] }),
         createdEngine.layoutTextFlowWithExclusions({
           ...common,
@@ -1285,9 +1282,9 @@ function useRouteParity(
         }),
       ];
       const workerValues = await Promise.all([
-        workerEngine.renderToSvg(scene),
-        workerEngine.renderToSvgAndIR(scene),
-        workerEngine.renderToPng(scene),
+        workerEngine.renderToSvg(scene, { timeMs: 0 }),
+        workerEngine.renderToSvgAndIR(scene, { timeMs: 0 }),
+        workerEngine.renderToPng(scene, { timeMs: 0 }),
         workerEngine.layoutTextFlow({ ...common, lineWidths: [80, 120, 160] }),
         workerEngine.layoutTextFlowWithExclusions({
           ...common,
@@ -1341,20 +1338,16 @@ function useRouteParity(
       const narrowTextUnitScene = buildMaterializedTextUnitScene(100);
       const wideTextUnitScene = buildMaterializedTextUnitScene(260);
       const directNarrowTextUnit = createdEngine.renderToSvgAndIR(narrowTextUnitScene, {
-        animation: "static",
         timeMs: 420,
       });
       const directWideTextUnit = createdEngine.renderToSvgAndIR(wideTextUnitScene, {
-        animation: "static",
         timeMs: 420,
       });
       const [workerNarrowTextUnit, workerWideTextUnit] = await Promise.all([
         workerEngine.renderToSvgAndIR(narrowTextUnitScene, {
-          animation: "static",
           timeMs: 420,
         }),
         workerEngine.renderToSvgAndIR(wideTextUnitScene, {
-          animation: "static",
           timeMs: 420,
         }),
       ]);
@@ -1385,11 +1378,11 @@ function useRouteParity(
         verticalMovingExclusionEnd,
       ];
       const directFlowedArtifacts = flowedScenes.map((flowedScene) =>
-        createdEngine.renderToSvgAndIR(flowedScene, { animation: "static", timeMs: 420 }),
+        createdEngine.renderToSvgAndIR(flowedScene, { timeMs: 420 }),
       );
       const workerFlowedArtifacts = await Promise.all(
         flowedScenes.map((flowedScene) =>
-          workerEngine.renderToSvgAndIR(flowedScene, { animation: "static", timeMs: 420 }),
+          workerEngine.renderToSvgAndIR(flowedScene, { timeMs: 420 }),
         ),
       );
       const directFlowedTexts = directFlowedArtifacts.map((artifacts) =>
@@ -1495,7 +1488,6 @@ function useRouteParity(
         timeMs: input.timeMs,
         format: "svg" as const,
         data: createdEngine.renderToSvg(input.scene, {
-          animation: "static",
           timeMs: input.timeMs,
           resourceIdPrefix: MATERIALIZED_RESOURCE_ID_PREFIX,
         }),
@@ -1505,9 +1497,7 @@ function useRouteParity(
         timeMs: input.timeMs,
         format: "png" as const,
         data: createdEngine.renderToPng(input.scene, {
-          animation: "static",
           timeMs: input.timeMs,
-          resourceIdPrefix: MATERIALIZED_RESOURCE_ID_PREFIX,
         }),
       }));
       const materializedLayoutChanges =
@@ -1574,7 +1564,6 @@ function useRouteParity(
             materializedFrameSource(materializedInputs, concurrency === 1),
             {
               format: "png",
-              resourceIdPrefix: MATERIALIZED_RESOURCE_ID_PREFIX,
             },
           ),
         );

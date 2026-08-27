@@ -1,4 +1,4 @@
-import type { Engine, LayoutNode, RenderOptions, VNode } from "@boundsvg/core";
+import type { Engine, LayoutNode, RenderIrOptions, VNode } from "@boundsvg/core";
 import { validateNodeIds } from "@boundsvg/core";
 import {
   buildHandlerMap,
@@ -47,9 +47,11 @@ export type CliSceneInspection = {
 export function inspectCliScene(
   engine: Engine,
   input: VNode,
-  options?: RenderOptions,
+  options?: RenderIrOptions,
 ): CliSceneInspection {
-  const layout = engine.renderToLayoutTree(input, options);
+  const layoutOptions =
+    options?.skipValidation === undefined ? undefined : { skipValidation: options.skipValidation };
+  const layout = engine.renderToLayoutTree(input, layoutOptions);
   const ir = engine.renderToIR(input, options);
   const bboxes = collectBBoxes(ir.root);
   const missingGlyphCount = countMissingGlyphs(ir.root);

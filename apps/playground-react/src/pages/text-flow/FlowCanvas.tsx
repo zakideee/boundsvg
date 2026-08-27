@@ -1,4 +1,4 @@
-import type { DebugOverlayPart, Engine, RenderOptions, VNode } from "@boundsvg/react";
+import type { DebugOverlayPart, Engine, RenderSvgOptions, VNode } from "@boundsvg/react";
 import { useRenderToSvg } from "@boundsvg/react";
 import { useBoundSvg } from "@boundsvg/react/provider";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -37,7 +37,7 @@ export function FlowCanvas<T>({
     return buildVNode(engine, obstacles);
   }, [engine, obstacles, buildVNode]);
 
-  const renderOptions = useMemo<RenderOptions>(
+  const renderOptions = useMemo<RenderSvgOptions>(
     () => ({ debug: resolveDebugOverlayConfig(debugOverlayParts), textPathMode: "merged" }),
     [debugOverlayParts],
   );

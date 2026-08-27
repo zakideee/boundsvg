@@ -296,7 +296,7 @@ describe("portable layout transition through fixed Worker protocol families", ()
     const compiled = directEngine.compileLayoutTransition(transition);
     const expectedDigests = timesMs.map((timeMs) =>
       createHash("sha256")
-        .update(directEngine.renderCompiledToPng(compiled, { animation: "static", timeMs }))
+        .update(directEngine.renderCompiledToPng(compiled, { timeMs }))
         .digest("hex"),
     );
     expect(frames.map((frame) => frame.timeMs)).toEqual(timesMs);

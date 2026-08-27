@@ -1,5 +1,6 @@
 import {
   FatalError,
+  type IR,
   type PngResolutionAdjustedWarning,
   RecoverableError,
   type SceneNode,
@@ -77,6 +78,17 @@ class MockWorker {
 // ---------------------------------------------------------------------------
 
 const SCENE: SceneNode = { type: "Canvas", width: 100, height: 100, children: [] };
+const WORKER_IR: Omit<IR, "warnings"> = {
+  root: {
+    type: "group",
+    nodeId: "root",
+    bbox: { x: 0, y: 0, w: 100, h: 100 },
+    children: [],
+  },
+  drawOrder: ["root"],
+  width: 100,
+  height: 100,
+};
 const TRANSITION: WorkerLayoutTransitionInput = {
   states: {
     A: SCENE,
@@ -389,24 +401,55 @@ describe("WorkerEngine", () => {
       };
 
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
-        if (request.type === "render-svg") {
+        if (request.type === "render-animated-svg") {
           mockWorker.respond({
             id: request.id,
-            type: "render-svg-ok",
+            type: "render-animated-svg-ok",
             svg: "<svg></svg>",
             warnings: [],
           });
         }
       });
 
-      await engine.renderToSvg(scene, { animation: "declarative", timeMs: 250 });
+      await engine.renderToAnimatedSvg(scene, {
+        playback: { mode: "independent" },
+        timeMs: 250,
+      });
 
       const request = mockWorker.lastRequest();
-      expect(request.type).toBe("render-svg");
-      if (request.type === "render-svg") {
+      expect(request.type).toBe("render-animated-svg");
+      if (request.type === "render-animated-svg") {
         expect(request.scene).toEqual(scene);
-        expect(request.options).toMatchObject({ animation: "declarative", timeMs: 250 });
+        expect(request.options).toEqual({ playback: { mode: "independent" }, timeMs: 250 });
       }
+      engine.dispose();
+    });
+
+    it("renders animated SVG + IR through its dedicated request family", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-animated-svg-and-ir") {
+          mockWorker.respond({
+            id: request.id,
+            type: "render-animated-svg-and-ir-ok",
+            svg: '<svg data-animated="true"/>',
+            ir: WORKER_IR,
+            warnings: [],
+          });
+        }
+      });
+
+      const result = await engine.renderToAnimatedSvgAndIR(SCENE, {
+        playback: { mode: "independent" },
+        nodeIdMetadata: "include",
+      });
+
+      expect(result.svg).toContain("data-animated");
+      expect(result.ir).toEqual({ ...WORKER_IR, warnings: [] });
+      expect(mockWorker.lastRequest()).toMatchObject({
+        type: "render-animated-svg-and-ir",
+        options: { playback: { mode: "independent" }, nodeIdMetadata: "include" },
+      });
       engine.dispose();
     });
 

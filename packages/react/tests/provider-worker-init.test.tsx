@@ -311,11 +311,11 @@ describe("BoundSvgProvider Worker initialization", () => {
     }
     const firstConfig = {
       fonts: [{ alias: "first", source: "/first.woff2" }],
-      defaultRenderOptions: { scale: 1 },
+      defaultCommonOptions: { scale: 1 },
     };
     const secondConfig = {
       fonts: [{ alias: "second", source: "/second.woff2" }],
-      defaultRenderOptions: { scale: 2 },
+      defaultCommonOptions: { scale: 2 },
     };
     const mounted = mount(
       <BoundSvgProvider config={firstConfig} fallback={<Probe />}>
@@ -333,10 +333,10 @@ describe("BoundSvgProvider Worker initialization", () => {
       </BoundSvgProvider>,
     );
 
-    expect(snapshots.some((snapshot) => snapshot.defaultRenderOptions?.scale === 2)).toBe(true);
+    expect(snapshots.some((snapshot) => snapshot.defaultCommonOptions?.scale === 2)).toBe(true);
     expect(
       snapshots.some(
-        (snapshot) => snapshot.engine === mockEngine && snapshot.defaultRenderOptions?.scale === 2,
+        (snapshot) => snapshot.engine === mockEngine && snapshot.defaultCommonOptions?.scale === 2,
       ),
     ).toBe(false);
     expect(mockEngine.dispose).toHaveBeenCalledTimes(1);
@@ -355,12 +355,12 @@ describe("BoundSvgProvider Worker initialization", () => {
     const firstConfig = {
       fonts: [],
       worker: { mode: "prefer" as const, timeoutMs: 1000 },
-      defaultRenderOptions: { scale: 1 },
+      defaultCommonOptions: { scale: 1 },
     };
     const secondConfig = {
       fonts: [],
       worker: { mode: "prefer" as const, timeoutMs: 2000 },
-      defaultRenderOptions: { scale: 2 },
+      defaultCommonOptions: { scale: 2 },
     };
     const mounted = mount(
       <BoundSvgProvider config={firstConfig} fallback={<Probe />}>
@@ -379,11 +379,11 @@ describe("BoundSvgProvider Worker initialization", () => {
       </BoundSvgProvider>,
     );
 
-    expect(snapshots.some((snapshot) => snapshot.defaultRenderOptions?.scale === 2)).toBe(true);
+    expect(snapshots.some((snapshot) => snapshot.defaultCommonOptions?.scale === 2)).toBe(true);
     expect(
       snapshots.some(
         (snapshot) =>
-          snapshot.workerEngine === mockWorkerEngine && snapshot.defaultRenderOptions?.scale === 2,
+          snapshot.workerEngine === mockWorkerEngine && snapshot.defaultCommonOptions?.scale === 2,
       ),
     ).toBe(false);
     expect(mockDispose).toHaveBeenCalledTimes(1);

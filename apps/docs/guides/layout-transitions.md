@@ -20,7 +20,10 @@ full layout at every sampled time.
 ## Quick start
 
 ```ts
-import { compileLayoutTransition, renderCompiledToSvg } from "@boundsvg/core";
+import {
+  compileLayoutTransition,
+  renderCompiledToAnimatedSvg,
+} from "@boundsvg/core";
 
 // Both states must give every node an explicit unique id — matching between
 // the states happens by id, and a node without one fails the compile.
@@ -38,7 +41,9 @@ const compiled = compileLayoutTransition({
   easing: "ease-in-out",
 });
 
-const svg = renderCompiledToSvg(compiled); // one animated SVG document
+const svg = renderCompiledToAnimatedSvg(compiled, {
+  playback: { mode: "independent" },
+});
 ```
 
 The schedule is fixed in shape: exactly two named states, exactly four
@@ -109,14 +114,18 @@ accepts it:
 import {
   renderCompiledFrames,
   renderCompiledToAnimatedGif,
+  renderCompiledToAnimatedSvg,
   renderCompiledToAnimatedWebp,
   renderCompiledToPng,
   renderCompiledToSvg,
 } from "@boundsvg/core";
 import { renderCompiledToMp4 } from "@boundsvg/video";
 
-renderCompiledToSvg(compiled); // animated SVG
-renderCompiledToPng(compiled, { animation: "static", timeMs: 300 }); // a poster
+renderCompiledToSvg(compiled, { timeMs: 300 }); // a static poster SVG
+renderCompiledToAnimatedSvg(compiled, {
+  playback: { mode: "independent" },
+});
+renderCompiledToPng(compiled, { timeMs: 300 }); // a poster PNG
 renderCompiledFrames(compiled, { timesMs: [0, 100, 200], format: "png" });
 renderCompiledToAnimatedWebp(compiled, {
   durationMs: 1000,

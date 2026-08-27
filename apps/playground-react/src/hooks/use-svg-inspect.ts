@@ -16,7 +16,7 @@ import {
   type IR,
   inspectHitTestCandidates,
 } from "@boundsvg/core/scene";
-import type { Engine, RenderOptions, VNode } from "@boundsvg/react";
+import type { Engine, RenderSvgOptions, VNode } from "@boundsvg/react";
 import Prism from "prismjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -239,7 +239,7 @@ export function useSvgInspect(
   engine: Engine | null,
   status: string,
   vnode: VNode | null,
-  renderOptions?: RenderOptions,
+  renderOptions?: RenderSvgOptions,
   overlayDisplay?: EventEffectOverlayDisplayOptions,
 ): {
   highlightedSvg: string;

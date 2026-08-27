@@ -402,9 +402,7 @@ function writeInspectionReport(
   let report: string;
   try {
     const inspection = inspectCliScene(engine, input, {
-      debug: options.debug,
       textPathMode: options.textPathMode,
-      scale: options.scale,
     });
     report = formatInspectionJson(inspection);
   } catch (err) {

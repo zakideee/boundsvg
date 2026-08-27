@@ -52,7 +52,7 @@ The optional `strokeScaling` prop defaults to `"transform"`, preserving the
 normal behavior where post-layout transforms scale a stroke. `"canvas"` keeps
 a solid stroke's width in canvas space under translation, rotation, and
 uniform scale. It does not change layout or `inspectScene().visualBBox`, and
-`RenderOptions.scale` still scales the output resolution. Dashed strokes,
+the render method's `scale` option still scales the output resolution. Dashed strokes,
 non-uniform scale, and axis reflection are rejected for this mode.
 
 ### Text flow types
@@ -378,9 +378,21 @@ check for downstream materialized-scene generators.
 
 ```ts
 interface Engine {
-  renderToSvg(input: EngineInput, options?: RenderOptions): string;
-  renderToPng(input: EngineInput, options?: RenderOptions): Uint8Array;
-  renderToWebp(input: EngineInput, options?: RenderOptions): Uint8Array;
+  renderToSvg(input: EngineInput, options?: RenderSvgOptions): string;
+  renderToSvgAndIR(
+    input: EngineInput,
+    options?: RenderSvgOptions,
+  ): { svg: string; ir: IR };
+  renderToAnimatedSvg(
+    input: EngineInput,
+    options: RenderAnimatedSvgOptions,
+  ): string;
+  renderToAnimatedSvgAndIR(
+    input: EngineInput,
+    options: RenderAnimatedSvgOptions,
+  ): { svg: string; ir: IR };
+  renderToPng(input: EngineInput, options?: RenderPngOptions): Uint8Array;
+  renderToWebp(input: EngineInput, options?: RenderWebpOptions): Uint8Array;
   renderToAnimatedWebp(
     input: EngineInput,
     options: RenderAnimatedWebpOptions,
@@ -389,10 +401,6 @@ interface Engine {
     input: EngineInput,
     options: RenderAnimatedGifOptions,
   ): Uint8Array;
-  renderToSvgAndIR(
-    input: EngineInput,
-    options?: RenderOptions,
-  ): { svg: string; ir: IR };
   renderToLayeredSvg(
     input: EngineInput,
     options?: LayeredSvgOptions,
@@ -405,16 +413,23 @@ interface Engine {
     input: EngineInput,
     options?: LayoutRenderOptions,
   ): LayoutResult;
-  renderToIR(input: EngineInput, options?: RenderOptions): IR;
+  renderToIR(input: EngineInput, options?: RenderIrOptions): IR;
   renderToTextOutlines(
     input: EngineInput,
-    options?: RenderOptions,
+    options?: RenderTextOutlinesOptions,
   ): TextOutlineNode[];
   compile(input: EngineInput, options?: CompileOptions): CompiledScene;
-  renderCompiledToSvg(compiled: CompiledScene, options?: EmitOptions): string;
+  renderCompiledToSvg(
+    compiled: CompiledScene,
+    options?: EmitSvgOptions,
+  ): string;
+  renderCompiledToAnimatedSvg(
+    compiled: CompiledScene,
+    options: EmitAnimatedSvgOptions,
+  ): string;
   renderCompiledToPng(
     compiled: CompiledScene,
-    options?: EmitOptions,
+    options?: EmitPngOptions,
   ): Uint8Array;
   renderCompiledToTextOutlines(
     compiled: CompiledScene,
@@ -458,6 +473,27 @@ Renders a VNode tree to an SVG string.
 ```ts
 const svg: string = engine.renderToSvg(node);
 ```
+
+This is a static SVG API. If the scene contains `animate` or `animateUnits`,
+pass an explicit non-negative finite `timeMs`; omitting it fails with
+`STATIC_ANIMATION_TIME_REQUIRED`. A scene without animation may omit options.
+
+### `engine.renderToAnimatedSvg(input, options)`
+
+Emits a self-animating SVG while preserving every authored track's delay,
+duration, easing, fill, and iteration count independently. The 0.3 playback
+contract is explicit and has one supported mode:
+
+```ts
+const svg = engine.renderToAnimatedSvg(node, {
+  playback: { mode: "independent" },
+  timeMs: 0,
+});
+```
+
+`timeMs` selects the deterministic base pose shown by static SVG viewers.
+Caller-defined document timelines, document durations, and document-level
+iterations are not supported in 0.3.
 
 ### `engine.renderToPng(input, options?)`
 
@@ -507,9 +543,11 @@ const gif = engine.renderToAnimatedGif(node, {
 
 ### `RenderAnimatedWebpOptions` / `RenderAnimatedGifOptions`
 
-Everything in `RenderOptions` except `animation` and `timeMs`, plus the frame
-schedule and a required total-play count. The two option types are structurally
-identical, but their container limits differ.
+`RenderAnimatedWebpOptions` extends the WebP raster options and
+`RenderAnimatedGifOptions` extends the PNG-compatible raster options with a
+frame schedule and a required total-play count. SVG-only options are not
+accepted. The two option types otherwise share the schedule shape, but their
+container limits differ.
 
 | Option             | Type                   | Default | Description                                                                  |
 | ------------------ | ---------------------- | ------- | ---------------------------------------------------------------------------- |
@@ -634,7 +672,10 @@ Compiles a VNode tree into a `CompiledScene` (holds the IR). The compiled result
 
 ```ts
 const compiled: CompiledScene = engine.compile(node);
-const svg = engine.renderCompiledToSvg(compiled);
+const svg = engine.renderCompiledToSvg(compiled, { timeMs: 0 });
+const animatedSvg = engine.renderCompiledToAnimatedSvg(compiled, {
+  playback: { mode: "independent" },
+});
 const png = engine.renderCompiledToPng(compiled, { scale: 2 });
 ```
 
@@ -669,7 +710,13 @@ Registered shapes are expanded into normal boundsvg nodes during compile, so exi
 
 ### `engine.renderCompiledToSvg(compiled, options?)`
 
-Renders a `CompiledScene` to an SVG string.
+Renders a `CompiledScene` to a static SVG string. As with `renderToSvg`, an
+animated compiled scene requires an explicit `timeMs`.
+
+### `engine.renderCompiledToAnimatedSvg(compiled, options)`
+
+Renders a `CompiledScene` to an independently playing animated SVG. Pass
+`playback: { mode: "independent" }` explicitly.
 
 ### `engine.renderCompiledToPng(compiled, options?)`
 
@@ -700,10 +747,19 @@ type Frame =
   | { index: number; timeMs: number; format: "svg"; data: string }
   | { index: number; timeMs: number; format: "png"; data: Uint8Array };
 
-type RenderFramesOptions = Omit<RenderOptions, "animation" | "timeMs"> & {
-  timesMs: readonly number[];
-  format: "svg" | "png";
-};
+type RenderFramesOptions =
+  | (CompileOptions &
+      OutputCommonOptions &
+      SvgEmissionOptions & {
+        timesMs: readonly number[];
+        format: "svg";
+      })
+  | (CompileOptions &
+      OutputCommonOptions &
+      RasterEmissionOptions & {
+        timesMs: readonly number[];
+        format: "png";
+      });
 ```
 
 The returned iterable is single-use and owns an instance-local prepared scene.
@@ -723,23 +779,71 @@ Workers, or to render independently materialized layout-reactive scenes, use
 
 Releases WASM resources. Use in Node.js batch processing to explicitly free memory.
 
-## Render Options
+## Render options
 
-| Option                    | Type                                  | Default              | Description                                                                                                                                  |
-| ------------------------- | ------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scale`                   | positive finite `number`              | `1`                  | Raster scale factor (no effect on SVG). Output is capped at 3 840 px (long edge) / 8.3 M pixels; exceeding triggers `rasterOversizeBehavior` |
-| `debug`                   | `boolean \| DebugOverlayConfig`       | `false`              | Draw bbox/guide overlays. `true` draws all of them; `{ parts: [...] }` selects from `"specified"`, `"layout"`, `"actual"`, `"baseline"`      |
-| `resourceIdPrefix`        | `string`                              | —                    | Literal prefix for all boundsvg-generated document-global SVG identifiers and their references                                               |
-| `textPathMode`            | `"merged" \| "glyphs"`                | `"merged"`           | Glyph-outline grouping for `Text` and `TextOnPath`; this does not enable or configure path layout                                            |
-| `rasterBackground`        | `string`                              | —                    | Raster background color (PNG / WebP / GIF)                                                                                                   |
-| `skipValidation`          | `boolean`                             | `false`              | Skip VNode tree validation                                                                                                                   |
-| `rasterOversizeBehavior`  | `"auto-adjust" \| "error"`            | `"auto-adjust"`      | Behavior when raster resolution exceeds limits                                                                                               |
-| `onPngResolutionAdjusted` | `(warning) => void`                   | —                    | Callback when the raster scale is auto-adjusted                                                                                              |
-| `onWarning`               | `(warning: RecoverableError) => void` | —                    | Callback for recoverable warnings during render                                                                                              |
-| `animation`               | `"declarative" \| "static"`           | SVG: `"declarative"` | SVG output mode. Raster output is always sampled statically                                                                                  |
-| `timeMs`                  | `number`                              | `0`                  | Non-negative finite animation sampling time                                                                                                  |
-| `reducedMotion`           | `"keep" \| "pause"`                   | `"keep"`             | `"pause"` appends one `prefers-reduced-motion` block that stops every animation this render started. `"keep"` leaves output byte identical   |
-| `showMissingGlyphs`       | `boolean`                             | `false`              | Render tofu rectangles for missing glyphs (`glyph_id=0`)                                                                                     |
+Options are split by output format. There is no catch-all `RenderOptions` or
+`EmitOptions` type in 0.3:
+
+```ts
+type RenderSvgOptions = CompileOptions &
+  OutputCommonOptions &
+  SvgEmissionOptions & { timeMs?: number };
+
+type RenderAnimatedSvgOptions = CompileOptions &
+  OutputCommonOptions &
+  SvgEmissionOptions & {
+    playback: { mode: "independent" };
+    timeMs?: number;
+    reducedMotion?: "keep" | "pause";
+  };
+
+type RenderPngOptions = CompileOptions &
+  OutputCommonOptions &
+  RasterEmissionOptions & { timeMs?: number };
+
+type RenderWebpOptions = CompileOptions &
+  OutputCommonOptions &
+  RasterEmissionOptions & { timeMs?: number };
+```
+
+| Family              | Options                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Compile             | `skipValidation`, `textPathMode`                                                                                                     |
+| Output common       | `scale`, `debug`, `onWarning`, `showMissingGlyphs`, `generator`                                                                      |
+| SVG emission        | `resourceIdPrefix`, `nodeIdMetadata`                                                                                                 |
+| Animated SVG only   | required `playback`, optional `reducedMotion`; `timeMs` is the base pose                                                             |
+| Raster emission     | `rasterBackground`, `rasterOversizeBehavior`, `onPngResolutionAdjusted`                                                              |
+| Static SVG / raster | optional `timeMs`; static SVG requires it when the scene contains animation                                                          |
+| Animated WebP / GIF | raster options plus a schedule and required total-play `iterations`; no SVG namespace, metadata, playback, or reduced-motion options |
+
+Every public method validates the object's own keys before projecting or
+serializing it. Removed legacy keys such as `animation` and `loop`, options for
+the wrong artifact family, and unknown keys fail with a structured fatal error
+instead of being ignored.
+
+`scale` is an output-resolution multiplier for every output family. In SVG it
+multiplies only the root `width` and `height` and the browser restoration CSS
+`stroke-width` for `strokeScaling: "canvas"`. It does not change `viewBox`,
+child geometry, or ordinary non-canvas-stroke attributes. Raster output also
+uses it to determine pixel dimensions and applies the documented 3,840-edge /
+8.3-Mpixel caps.
+
+`nodeIdMetadata` defaults to `"include"`. Inspection and hit-testing previews
+should include it; final SVGs can omit only the generated
+`data-boundsvg-node-id` attributes without changing IR, part IDs, authored raw
+content, generator metadata, or scene metadata:
+
+```ts
+const compiled = engine.compile(scene);
+const preview = engine.renderCompiledToSvg(compiled, {
+  timeMs: 0,
+  nodeIdMetadata: "include",
+});
+const finalSvg = engine.renderCompiledToSvg(compiled, {
+  timeMs: 0,
+  nodeIdMetadata: "omit",
+});
+```
 
 `resourceIdPrefix` covers generated `<defs>` IDs and fragment references,
 animation keyframes and names, generated classes and selectors, shared Shape
@@ -844,20 +948,22 @@ See the [Layered Export guide](/guides/layered-export) for concepts, layer resol
 
 ### `LayeredSvgOptions`
 
-Subset of `RenderOptions` plus `validateComposition`.
+Static SVG render options plus `validateComposition`. Layered SVG has no
+animated emission mode; an animated scene requires an explicit `timeMs` and is
+sampled to static layers.
 
-| Option                | Type                                  | Default         | Description                                                                     |
-| --------------------- | ------------------------------------- | --------------- | ------------------------------------------------------------------------------- |
-| `skipValidation`      | `boolean`                             | `false`         | Skip VNode tree validation                                                      |
-| `debug`               | `boolean \| DebugOverlayConfig`       | `false`         | Draw bbox/guide overlays per layer; same shape as the Render Options entry      |
-| `resourceIdPrefix`    | `string`                              | —               | Base prefix for all generated document-global identifiers in each layer         |
-| `scale`               | `number`                              | `1`             | Scale factor forwarded to each layer SVG (no effect on SVG output geometry)     |
-| `textPathMode`        | `"merged" \| "glyphs"`                | `"merged"`      | Glyph-outline grouping for `Text` and `TextOnPath`; unrelated to path placement |
-| `showMissingGlyphs`   | `boolean`                             | `false`         | Render tofu rectangles for missing glyphs                                       |
-| `onWarning`           | `(warning: RecoverableError) => void` | —               | Callback for recoverable warnings                                               |
-| `animation`           | `"declarative" \| "static"`           | `"declarative"` | Per-layer SVG animation output mode                                             |
-| `timeMs`              | `number`                              | `0`             | Sampling time shared by every layer                                             |
-| `validateComposition` | `LayeredCompositionValidationOptions` | —               | Enable pixel-diff composition validation                                        |
+| Option                | Type                                  | Default     | Description                                                                                       |
+| --------------------- | ------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| `skipValidation`      | `boolean`                             | `false`     | Skip VNode tree validation                                                                        |
+| `debug`               | `boolean \| DebugOverlayConfig`       | `false`     | Draw bbox/guide overlays per layer                                                                |
+| `resourceIdPrefix`    | `string`                              | —           | Base prefix for all generated document-global identifiers in each layer                           |
+| `nodeIdMetadata`      | `"include" \| "omit"`                 | `"include"` | Include or omit generated node-id attributes                                                      |
+| `scale`               | positive finite `number`              | `1`         | Multiply root dimensions and canvas-stroke restoration CSS; preserve `viewBox` and child geometry |
+| `textPathMode`        | `"merged" \| "glyphs"`                | `"merged"`  | Glyph-outline grouping for `Text` and `TextOnPath`                                                |
+| `showMissingGlyphs`   | `boolean`                             | `false`     | Render tofu rectangles for missing glyphs                                                         |
+| `onWarning`           | `(warning: RecoverableError) => void` | —           | Callback for recoverable warnings                                                                 |
+| `timeMs`              | `number`                              | —           | Static sampling time shared by every layer; required for animated input                           |
+| `validateComposition` | `LayeredCompositionValidationOptions` | —           | Enable pixel-diff composition validation                                                          |
 
 With a non-empty prefix, layered SVG export derives the deterministic sub-prefix
 `<normalized-prefix>layer-<zero-based-index>-` for each emitted layer. Those
@@ -868,7 +974,9 @@ legacy bytes and does not add a cross-layer namespace guarantee.
 
 ### `LayeredPngOptions`
 
-`LayeredSvgOptions` plus PNG-specific options.
+Compile/output-common options, PNG emission options, `timeMs`, and
+`validateComposition`. SVG-only `resourceIdPrefix` and `nodeIdMetadata` are not
+accepted.
 
 Layered PNG is always sampled statically. Its manifest still records
 `animated: true` and the shared `timeMs` when the source scene is animated.
@@ -1040,11 +1148,25 @@ Initialize the default engine synchronously with pre-configured `EngineOptions` 
 
 ### `renderToSvg(input, options?)`
 
-Render using the default engine (sync). Throws if the default engine is not initialized.
+Render a static SVG using the default engine (sync). Throws if the default
+engine is not initialized, or if animated input omits `timeMs`.
 
 ```ts
 const svg = renderToSvg(node);
 ```
+
+### `renderToAnimatedSvg(input, options)`
+
+Render an independently playing animated SVG using the default engine.
+
+```ts
+const svg = renderToAnimatedSvg(node, {
+  playback: { mode: "independent" },
+});
+```
+
+`renderToSvgAndIR` and `renderToAnimatedSvgAndIR` expose the corresponding
+SVG-plus-IR pairs.
 
 ### `renderToPng(input, options?)`
 

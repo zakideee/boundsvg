@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 /** @jsxImportSource react */
 
-import type { CompiledScene, Engine, RenderOptions, VNode } from "@boundsvg/core";
+import type {
+  CompiledScene,
+  EmitPngOptions,
+  Engine,
+  RenderPngOptions,
+  VNode,
+} from "@boundsvg/core";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -28,7 +34,7 @@ function makeVNode(width = 10): VNode {
 }
 
 const STABLE_VNODE = makeVNode();
-const STABLE_OPTIONS: RenderOptions = { scale: 2 };
+const STABLE_OPTIONS: RenderPngOptions = { scale: 2 };
 
 function vnodeWidth(vnode: VNode): number {
   return Number(Reflect.get(vnode.props, "width"));
@@ -37,12 +43,12 @@ function vnodeWidth(vnode: VNode): number {
 function makeEngine() {
   const compile = vi.fn((vnode: VNode) => ({ vnode }) as unknown as CompiledScene);
   const renderToPng = vi.fn(
-    (vnode: VNode, options: RenderOptions) =>
+    (vnode: VNode, options: RenderPngOptions) =>
       new Uint8Array([vnodeWidth(vnode), options.scale ?? 1]),
   );
   const renderCompiledToSvg = vi.fn(() => "<svg></svg>");
   const renderCompiledToPng = vi.fn(
-    (compiled: CompiledScene, options: RenderOptions) =>
+    (compiled: CompiledScene, options: EmitPngOptions) =>
       new Uint8Array([
         vnodeWidth(Reflect.get(compiled as object, "vnode") as VNode),
         options.scale ?? 1,
@@ -63,7 +69,7 @@ function context(engine: Engine): BoundSvgContextValue {
     workerEngine: null,
     status: "ready",
     error: null,
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   };
 }
 
@@ -102,7 +108,7 @@ describe("synchronous PNG object URL stability", () => {
     const callbackOrder: string[] = [];
     const onWarning = vi.fn(() => callbackOrder.push("warning"));
     const onPngResolutionAdjusted = vi.fn(() => callbackOrder.push("adjusted"));
-    const renderToPng = vi.fn((_vnode: VNode, options: RenderOptions) => {
+    const renderToPng = vi.fn((_vnode: VNode, options: RenderPngOptions) => {
       options.onPngResolutionAdjusted?.({
         requestedScale: 2,
         appliedScale: 1,
@@ -116,7 +122,7 @@ describe("synchronous PNG object URL stability", () => {
         maxPixels: 100,
       });
       options.onWarning?.(
-        new Error("png warning") as Parameters<NonNullable<RenderOptions["onWarning"]>>[0],
+        new Error("png warning") as Parameters<NonNullable<RenderPngOptions["onWarning"]>>[0],
       );
       expect(onWarning).not.toHaveBeenCalled();
       expect(onPngResolutionAdjusted).not.toHaveBeenCalled();

@@ -39,7 +39,7 @@ const config: BoundSvgConfig = {
       style: "normal",
     },
   ],
-  defaultRenderOptions: { debug: false },
+  defaultCommonOptions: { debug: false },
 };
 
 function App() {
@@ -56,6 +56,12 @@ The provider handles:
 - WASM module loading (auto-imported from `@boundsvg/browser` if not provided)
 - Font fetching and registration
 - Engine lifecycle management
+
+`defaultCommonOptions` accepts compile and output-common defaults only.
+Namespace/metadata, sampling time, animated playback/reduced-motion, and
+raster-only options belong on each component or hook call. Removed, unknown,
+or artifact-specific Provider defaults fail synchronously before fonts, an
+Engine, or a Worker are initialized.
 
 Status transitions: `idle` → `loading` → `ready` | `error`
 
@@ -131,6 +137,30 @@ function Preview({ vnode }) {
   );
 }
 ```
+
+`BoundSvg` is static. If `vnode` contains animation, pass an explicit
+`timeMs`. Use `AnimatedBoundSvg` for self-animating SVG:
+
+```tsx
+import { AnimatedBoundSvg } from "@boundsvg/react";
+
+function AnimatedPreview({ vnode }) {
+  return (
+    <AnimatedBoundSvg
+      vnode={vnode}
+      renderOptions={{
+        playback: { mode: "independent" },
+        nodeIdMetadata: "include",
+        reducedMotion: "pause",
+      }}
+    />
+  );
+}
+```
+
+Keep `nodeIdMetadata: "include"` for an inspection or hit-testing preview and
+use `"omit"` on a separate final-export call. Interactive React APIs force it
+to `"include"` because their event routing depends on those attributes.
 
 ## Using phantom components
 

@@ -1,4 +1,4 @@
-import type { RenderSvgOptions, VNode } from "@boundsvg/core";
+import type { RenderAnimatedSvgOptions, VNode } from "@boundsvg/core";
 import { useMemo } from "react";
 import { resolveMainThreadEngineError } from "../utils/main-thread-only.js";
 import { useBoundSvg } from "./use-boundsvg.js";
@@ -8,41 +8,30 @@ import {
   type RenderNotificationDelivery,
   useCommitPhaseRenderNotifications,
 } from "./use-commit-phase-render-notifications.js";
+import type { UseRenderToSvgResult } from "./use-render-svg.js";
 import {
   useStructurallyStableRenderOptions,
   useStructurallyStableValue,
 } from "./use-structurally-stable-value.js";
 
-export type UseRenderToSvgResult = {
-  /** Rendered SVG string (null while engine is not ready or on error) */
-  svg: string | null;
-  /** Render error (null on success) */
-  error: Error | null;
-  /** Whether the engine is ready and SVG was produced */
-  isReady: boolean;
-};
-
-type SvgRenderComputation = {
+type AnimatedSvgRenderComputation = {
   result: UseRenderToSvgResult;
   deliveries: readonly RenderNotificationDelivery[];
 };
 
-/**
- * Reactively render a VNode to an SVG string.
- * Re-renders when the VNode or render-option values change.
- */
-export function useRenderToSvg(
+/** Reactively render independent authored animation tracks to declarative SVG. */
+export function useRenderToAnimatedSvg(
   vnode: VNode | null,
-  options?: RenderSvgOptions,
+  options: RenderAnimatedSvgOptions,
 ): UseRenderToSvgResult {
   const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
   const stableVNode = useStructurallyStableValue(vnode);
   const stableOptions = useStructurallyStableRenderOptions(options);
   const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
-  const computation = useMemo<SvgRenderComputation>(() => {
+  const computation = useMemo<AnimatedSvgRenderComputation>(() => {
     if (status !== "ready" || !engine || !stableVNode) {
-      const error = resolveMainThreadEngineError("useRenderToSvg", {
+      const error = resolveMainThreadEngineError("useRenderToAnimatedSvg", {
         status,
         engine,
         workerEngine,
@@ -53,18 +42,24 @@ export function useRenderToSvg(
       };
     }
 
-    const mergedOptions = { ...stableDefaultCommonOptions, ...stableOptions };
+    const mergedOptions = {
+      ...stableDefaultCommonOptions,
+      ...stableOptions,
+    } as RenderAnimatedSvgOptions;
     const captured = captureRenderNotifications(mergedOptions);
     try {
-      const svg = engine.renderToSvg(stableVNode, captured.options);
+      const svg = engine.renderToAnimatedSvg(stableVNode, captured.options);
       return {
         result: { svg, error: null, isReady: true },
         deliveries: [captured.delivery],
       };
-    } catch (err: unknown) {
-      const error = err instanceof Error ? err : new Error(String(err));
+    } catch (error: unknown) {
       return {
-        result: { svg: null, error, isReady: false },
+        result: {
+          svg: null,
+          error: error instanceof Error ? error : new Error(String(error)),
+          isReady: false,
+        },
         deliveries: [captured.delivery],
       };
     }

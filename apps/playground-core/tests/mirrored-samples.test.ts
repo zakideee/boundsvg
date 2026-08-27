@@ -211,8 +211,8 @@ describe("mirrored core and React samples", () => {
       }
       const coreVNode = preset.build(engine);
       const reactVNode = buildReactTemplate(sampleKey, engine);
-      const coreSvg = engine.renderToSvg(coreVNode);
-      const reactSvg = engine.renderToSvg(reactVNode);
+      const coreSvg = engine.renderToSvg(coreVNode, { timeMs: 0 });
+      const reactSvg = engine.renderToSvg(reactVNode, { timeMs: 0 });
       if (coreSvg === reactSvg) {
         byteEqualKeys.push(sampleKey);
       }

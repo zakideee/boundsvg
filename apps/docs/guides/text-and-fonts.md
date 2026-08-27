@@ -225,7 +225,7 @@ used by Node, browser, Worker, SVG, IR, and PNG routes.
 
 Text is always rendered as `<path>` elements (glyph outlines). The SVG is self-contained — no browser font or CSS `@font-face` registration is required.
 
-The `textPathMode` option in `RenderOptions` controls how glyph outlines are
+The `textPathMode` compile option controls how glyph outlines are
 grouped for both `Text` and `TextOnPath`. Despite its historical name, this
 render option does not place text on a path. Use the `TextOnPath` VNode for
 layout along path geometry.

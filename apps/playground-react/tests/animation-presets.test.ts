@@ -59,7 +59,6 @@ test("fixed static playback prepares its SVG schedule once", () => {
     engine,
     scene,
     {
-      animation: "static",
       timeMs: 80,
       resourceIdPrefix: "playback",
       showMissingGlyphs: true,
@@ -109,7 +108,6 @@ test("static artifact failures are returned instead of thrown", () => {
   };
 
   const result = tryRenderAnimationArtifacts(engine, preset.build(preset.defaultControls, true), {
-    animation: "static",
     timeMs: preset.posterTimeMs,
   });
 

@@ -1,4 +1,4 @@
-import { BoundSvg, type RenderOptions } from "@boundsvg/react";
+import { BoundSvg, type RenderSvgOptions } from "@boundsvg/react";
 import { BoundSvgDebugOverlay } from "@boundsvg/react/debug";
 import { type InspectionBBox, useBoundSvgInspection } from "@boundsvg/react/inspect";
 import { useBoundSvg } from "@boundsvg/react/provider";
@@ -116,7 +116,7 @@ export function LayoutComparePage() {
     transform: `scale(${compareScale})`,
   };
   const vnode = useMemo(() => pattern.buildVNode(), [pattern]);
-  const renderOptions = useMemo<RenderOptions>(() => ({ debug: false }), []);
+  const renderOptions = useMemo<RenderSvgOptions>(() => ({ debug: false }), []);
   const selectedOverlayParts = useMemo(() => new Set(overlayParts), [overlayParts]);
   const showSvgOverlay =
     selectedOverlayParts.has("svg-box") || selectedOverlayParts.has("svg-text");

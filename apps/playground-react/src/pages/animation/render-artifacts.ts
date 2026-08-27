@@ -1,4 +1,11 @@
-import type { Engine, EngineInput, LayoutNode, RenderOptions } from "@boundsvg/core";
+import type {
+  Engine,
+  EngineInput,
+  LayoutNode,
+  RenderAnimatedSvgOptions,
+  RenderPngOptions,
+  RenderSvgOptions,
+} from "@boundsvg/core";
 
 function toRenderError(renderError: unknown): Error {
   return renderError instanceof Error ? renderError : new Error(String(renderError));
@@ -7,7 +14,7 @@ function toRenderError(renderError: unknown): Error {
 export function tryRenderAnimationArtifacts(
   engine: Pick<Engine, "renderToSvgAndIR"> | null,
   input: EngineInput,
-  renderOptions: RenderOptions,
+  renderOptions: RenderSvgOptions,
 ) {
   if (!engine) {
     return { artifacts: null, error: null };
@@ -48,7 +55,7 @@ export function downloadStillArtifact({
 }: {
   engine: Pick<Engine, "renderToPng"> | null;
   input: EngineInput;
-  renderOptions: RenderOptions;
+  renderOptions: RenderPngOptions;
   fileName: string;
 }): { error: Error | null } {
   if (!engine) {
@@ -56,7 +63,7 @@ export function downloadStillArtifact({
   }
   let bytes: Uint8Array;
   try {
-    bytes = engine.renderToPng(input, { ...renderOptions, animation: "static" });
+    bytes = engine.renderToPng(input, renderOptions);
   } catch (renderError) {
     return { error: toRenderError(renderError) };
   }
@@ -95,7 +102,7 @@ export function downloadAnimatedArtifact({
 }: {
   engine: Pick<Engine, "renderToAnimatedWebp" | "renderToAnimatedGif"> | null;
   input: EngineInput;
-  renderOptions: RenderOptions;
+  renderOptions: Omit<RenderPngOptions, "timeMs">;
   durationMs: number;
   format: AnimatedExportFormat;
   fileName: string;
@@ -103,13 +110,10 @@ export function downloadAnimatedArtifact({
   if (!engine) {
     return { error: new Error("Engine is not ready") };
   }
-  // `animation` and `timeMs` describe a single sampled still; the animated
-  // encoders own the whole schedule instead.
-  const { animation: _animation, timeMs: _timeMs, ...rasterOptions } = renderOptions;
   let bytes: Uint8Array;
   try {
     const animatedOptions = {
-      ...rasterOptions,
+      ...renderOptions,
       durationMs,
       fps: ANIMATED_EXPORT_FPS,
       iterations: "infinite" as const,
@@ -178,7 +182,7 @@ export async function downloadMp4Artifact({
 }: {
   engine: Engine | null;
   input: EngineInput;
-  renderOptions: RenderOptions;
+  renderOptions: Pick<RenderPngOptions, "scale">;
   durationMs: number;
   frameRate: Mp4ExportFrameRate;
   fileName: string;
@@ -278,21 +282,26 @@ function monotonicNow(): number {
   return globalThis.performance?.now() ?? Date.now();
 }
 
-export function tryRenderLayoutReactiveArtifacts(
-  engine: Pick<Engine, "renderToLayoutTree" | "renderToSvgAndIR"> | null,
+type SvgIrArtifacts = ReturnType<Engine["renderToSvgAndIR"]>;
+
+function tryRenderLayoutReactiveArtifactsWith(
+  engine: Pick<Engine, "renderToLayoutTree">,
   input: EngineInput,
-  renderOptions: RenderOptions,
+  renderOptions: RenderSvgOptions | RenderAnimatedSvgOptions,
+  renderArtifacts: () => SvgIrArtifacts,
   textNodeId?: string,
 ) {
-  if (!engine) {
-    return { artifacts: null, metrics: null, error: null };
-  }
   try {
     const layoutStart = monotonicNow();
-    const layout = engine.renderToLayoutTree(input, renderOptions);
+    const layout = engine.renderToLayoutTree(
+      input,
+      renderOptions.skipValidation === undefined
+        ? undefined
+        : { skipValidation: renderOptions.skipValidation },
+    );
     const layoutProbeMs = monotonicNow() - layoutStart;
     const renderStart = monotonicNow();
-    const artifacts = engine.renderToSvgAndIR(input, renderOptions);
+    const artifacts = renderArtifacts();
     const fullFrameRenderMs = monotonicNow() - renderStart;
     const textLayout = textNodeId
       ? findLayoutNode(layout.root, textNodeId)?.textLayout?.resolvedTextLayout
@@ -312,4 +321,40 @@ export function tryRenderLayoutReactiveArtifacts(
   } catch (renderError) {
     return { artifacts: null, metrics: null, error: toRenderError(renderError) };
   }
+}
+
+export function tryRenderLayoutReactiveArtifacts(
+  engine: Pick<Engine, "renderToLayoutTree" | "renderToSvgAndIR"> | null,
+  input: EngineInput,
+  renderOptions: RenderSvgOptions,
+  textNodeId?: string,
+) {
+  if (!engine) {
+    return { artifacts: null, metrics: null, error: null };
+  }
+  return tryRenderLayoutReactiveArtifactsWith(
+    engine,
+    input,
+    renderOptions,
+    () => engine.renderToSvgAndIR(input, renderOptions),
+    textNodeId,
+  );
+}
+
+export function tryRenderAnimatedLayoutReactiveArtifacts(
+  engine: Pick<Engine, "renderToLayoutTree" | "renderToAnimatedSvgAndIR"> | null,
+  input: EngineInput,
+  renderOptions: RenderAnimatedSvgOptions,
+  textNodeId?: string,
+) {
+  if (!engine) {
+    return { artifacts: null, metrics: null, error: null };
+  }
+  return tryRenderLayoutReactiveArtifactsWith(
+    engine,
+    input,
+    renderOptions,
+    () => engine.renderToAnimatedSvgAndIR(input, renderOptions),
+    textNodeId,
+  );
 }

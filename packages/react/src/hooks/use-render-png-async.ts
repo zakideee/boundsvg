@@ -1,5 +1,5 @@
 import { pngToDataUrl } from "@boundsvg/browser/png";
-import type { RenderOptions, VNode } from "@boundsvg/core";
+import type { RenderPngOptions, VNode } from "@boundsvg/core";
 import { useMemo } from "react";
 import { useWorkerRender } from "./use-worker-render.js";
 
@@ -26,14 +26,14 @@ export type UseRenderToPngAsyncResult = {
  */
 export function useRenderToPngAsync(
   vnode: VNode | null,
-  renderOptions?: RenderOptions,
+  renderOptions?: RenderPngOptions,
 ): UseRenderToPngAsyncResult {
   const {
     data: png,
     error,
     isRendering,
     isReady,
-  } = useWorkerRender({
+  } = useWorkerRender<Uint8Array, RenderPngOptions>({
     vnode,
     renderFn: (engine, scene, options) => engine.renderToPng(scene, options),
     renderOptions,

@@ -20,9 +20,13 @@ import {
   type MeasureTextBlockInput,
   type MeasureTextBlockResult,
   type RenderAnimatedGifOptions,
+  type RenderAnimatedSvgOptions,
   type RenderAnimatedWebpOptions,
-  type RenderFramesOptions,
-  type RenderOptions,
+  type RenderPngFramesOptions,
+  type RenderPngOptions,
+  type RenderSvgFramesOptions,
+  type RenderSvgOptions,
+  type RenderWebpOptions,
   type SceneNode,
   type ShrinkwrapFlowInput,
   type ShrinkwrapFlowResult,
@@ -46,16 +50,25 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Subset of `RenderOptions` that is safe for `postMessage` / `structuredClone`.
+ * Format-specific option subsets that are safe for `postMessage` /
+ * `structuredClone`.
  *
  * Callbacks (`onWarning`, `onPngResolutionAdjusted`) cannot cross the Worker
  * boundary. Warnings are returned in the response payload instead.
  */
-export type WorkerRenderOptions = Omit<RenderOptions, "onWarning" | "onPngResolutionAdjusted">;
-export type WorkerFrameRenderOptions = Omit<
-  RenderFramesOptions,
-  "timesMs" | "onWarning" | "onPngResolutionAdjusted"
+export type WorkerRenderSvgOptions = Omit<RenderSvgOptions, "onWarning">;
+export type WorkerRenderAnimatedSvgOptions = Omit<RenderAnimatedSvgOptions, "onWarning">;
+export type WorkerRenderPngOptions = Omit<
+  RenderPngOptions,
+  "onWarning" | "onPngResolutionAdjusted"
 >;
+export type WorkerRenderWebpOptions = Omit<
+  RenderWebpOptions,
+  "onWarning" | "onPngResolutionAdjusted"
+>;
+export type WorkerFrameRenderOptions =
+  | Omit<RenderSvgFramesOptions, "timesMs" | "onWarning">
+  | Omit<RenderPngFramesOptions, "timesMs" | "onWarning" | "onPngResolutionAdjusted">;
 export type WorkerAnimatedWebpRenderOptions = Omit<
   RenderAnimatedWebpOptions,
   "onWarning" | "onPngResolutionAdjusted"
@@ -99,21 +112,28 @@ export type RenderSvgRequest = {
   id: number;
   type: "render-svg";
   scene: SceneNode;
-  options?: WorkerRenderOptions;
+  options?: WorkerRenderSvgOptions;
+};
+
+export type RenderAnimatedSvgRequest = {
+  id: number;
+  type: "render-animated-svg";
+  scene: SceneNode;
+  options: WorkerRenderAnimatedSvgOptions;
 };
 
 export type RenderPngRequest = {
   id: number;
   type: "render-png";
   scene: SceneNode;
-  options?: WorkerRenderOptions;
+  options?: WorkerRenderPngOptions;
 };
 
 export type RenderWebpRequest = {
   id: number;
   type: "render-webp";
   scene: SceneNode;
-  options?: WorkerRenderOptions;
+  options?: WorkerRenderWebpOptions;
 };
 
 export type RenderAnimatedWebpRequest = {
@@ -162,7 +182,14 @@ export type RenderSvgAndIrRequest = {
   id: number;
   type: "render-svg-and-ir";
   scene: SceneNode;
-  options?: WorkerRenderOptions;
+  options?: WorkerRenderSvgOptions;
+};
+
+export type RenderAnimatedSvgAndIrRequest = {
+  id: number;
+  type: "render-animated-svg-and-ir";
+  scene: SceneNode;
+  options: WorkerRenderAnimatedSvgOptions;
 };
 
 export type IndexedFrameTime = {
@@ -242,6 +269,7 @@ export type DisposeRequest = {
 export type WorkerRequest =
   | InitRequest
   | RenderSvgRequest
+  | RenderAnimatedSvgRequest
   | RenderPngRequest
   | RenderWebpRequest
   | RenderAnimatedWebpRequest
@@ -251,6 +279,7 @@ export type WorkerRequest =
   | RenderLayeredSvgRequest
   | RenderLayeredPngRequest
   | RenderSvgAndIrRequest
+  | RenderAnimatedSvgAndIrRequest
   | OpenFrameStreamRequest
   | OpenLayoutTransitionFrameStreamRequest
   | NextFrameStreamRequest
@@ -275,6 +304,13 @@ export type InitOkResponse = {
 export type RenderSvgOkResponse = {
   id: number;
   type: "render-svg-ok";
+  svg: string;
+  warnings: StructuredError[];
+};
+
+export type RenderAnimatedSvgOkResponse = {
+  id: number;
+  type: "render-animated-svg-ok";
   svg: string;
   warnings: StructuredError[];
 };
@@ -349,6 +385,15 @@ export type WorkerIR = Omit<IR, "warnings">;
 export type RenderSvgAndIrOkResponse = {
   id: number;
   type: "render-svg-and-ir-ok";
+  svg: string;
+  /** IR with `warnings` stripped (see `WorkerIR`). */
+  ir: WorkerIR;
+  warnings: StructuredError[];
+};
+
+export type RenderAnimatedSvgAndIrOkResponse = {
+  id: number;
+  type: "render-animated-svg-and-ir-ok";
   svg: string;
   /** IR with `warnings` stripped (see `WorkerIR`). */
   ir: WorkerIR;
@@ -433,6 +478,7 @@ export type DisposeOkResponse = {
 export type WorkerResponse =
   | InitOkResponse
   | RenderSvgOkResponse
+  | RenderAnimatedSvgOkResponse
   | RenderPngOkResponse
   | RenderWebpOkResponse
   | RenderAnimatedWebpOkResponse
@@ -440,6 +486,7 @@ export type WorkerResponse =
   | RenderLayeredSvgOkResponse
   | RenderLayeredPngOkResponse
   | RenderSvgAndIrOkResponse
+  | RenderAnimatedSvgAndIrOkResponse
   | OpenFrameStreamOkResponse
   | NextFrameStreamOkResponse
   | CloseFrameStreamOkResponse
@@ -620,6 +667,8 @@ export function isWorkerRequest(value: unknown): value is WorkerRequest {
     case "render-layered-png":
     case "render-svg-and-ir":
       return isSceneNode(getProperty(value, "scene"));
+    case "render-animated-svg":
+    case "render-animated-svg-and-ir":
     case "render-animated-webp":
     case "render-animated-gif":
       return (
@@ -680,7 +729,8 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
     case "init-ok":
     case "dispose-ok":
       return true;
-    case "render-svg-ok": {
+    case "render-svg-ok":
+    case "render-animated-svg-ok": {
       const svg = getStringProperty(value, "svg");
       const warnings = getProperty(value, "warnings");
       return (
@@ -721,7 +771,8 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
     case "render-layered-png-ok": {
       return isWorkerLayeredPngResult(getProperty(value, "result"));
     }
-    case "render-svg-and-ir-ok": {
+    case "render-svg-and-ir-ok":
+    case "render-animated-svg-and-ir-ok": {
       const svg = getStringProperty(value, "svg");
       const ir = getProperty(value, "ir");
       const warnings = getProperty(value, "warnings");

@@ -10,8 +10,9 @@ import { wasmRenderShapeRegionSvg } from "@boundsvg/core/wasm";
 import {
   Box,
   Canvas,
+  type CompileOptions,
   Flex,
-  type RenderOptions,
+  type OutputCommonOptions,
   Shape,
   Svg,
   // biome-ignore lint/suspicious/noShadowRestrictedNames: matches core API name
@@ -830,7 +831,7 @@ export function ShapesPage() {
 
   const vnode = useMemo(() => (engine ? buildVNode(deferred) : null), [engine, deferred]);
 
-  const renderOptions = useMemo<RenderOptions>(
+  const renderOptions = useMemo<CompileOptions & OutputCommonOptions>(
     () => ({ debug: resolveDebugOverlayConfig(deferred.debugOverlayParts) }),
     [deferred.debugOverlayParts],
   );

@@ -1,5 +1,11 @@
 import type { FontLoader } from "@boundsvg/browser/fonts";
-import type { Engine, GeometryDoc, RenderOptions, SymbolDefinition } from "@boundsvg/core";
+import type {
+  CompileOptions,
+  Engine,
+  GeometryDoc,
+  OutputCommonOptions,
+  SymbolDefinition,
+} from "@boundsvg/core";
 import type { WasmModule } from "@boundsvg/core/wasm";
 import type { WorkerEngine } from "@boundsvg/worker";
 
@@ -79,6 +85,9 @@ export type WorkerConfig = {
   onFallback?: (error: Error) => void;
 };
 
+/** Defaults shared by every direct render family. Artifact-specific options stay per call. */
+export type BoundSvgDefaultCommonOptions = CompileOptions & OutputCommonOptions;
+
 /** Configuration for BoundSvgProvider */
 export type BoundSvgConfig = {
   /**
@@ -97,8 +106,8 @@ export type BoundSvgConfig = {
   fontLoader?: FontLoader;
   /** Fetch options used when the default or custom font loader resolves URL sources */
   fontFetchOptions?: RequestInit;
-  /** Default RenderOptions applied to all render calls */
-  defaultRenderOptions?: RenderOptions;
+  /** Compile and output-common defaults applied to direct render calls. */
+  defaultCommonOptions?: BoundSvgDefaultCommonOptions;
   /** Pre-registered geometry definitions for Shape components using geometryId */
   geometries?: Array<{ id: string; doc: GeometryDoc }>;
   /** Pre-registered symbol definitions for Symbol components using symbolId */
@@ -131,6 +140,6 @@ export type BoundSvgContextValue = {
   status: BoundSvgStatus;
   /** Error that occurred during initialization (if any) */
   error: Error | null;
-  /** Default render options from config */
-  defaultRenderOptions?: RenderOptions;
+  /** Compile and output-common defaults from config. */
+  defaultCommonOptions?: BoundSvgDefaultCommonOptions;
 };

@@ -102,7 +102,7 @@ supported props and error codes.
   `timeMs` pose is uniform. Non-uniform scales that cancel only after ancestor
   composition are still rejected.
 - In a browser, the non-scaling width is pinned to the authored `borderWidth`
-  or `strokeWidth` multiplied by `RenderOptions.scale` CSS pixels. SVG and raster widths agree
+  or `strokeWidth` multiplied by the format-specific render option `scale` in CSS pixels. SVG and raster widths agree
   at the emitted SVG's intrinsic `width` and `height`; resizing that SVG with
   CSS does not scale its canvas-stable strokes.
 - Canvas-stable width reduces scale-driven stroke pulsing, but a translated

@@ -145,11 +145,15 @@ function renderFormat(
     showMissingGlyphs: true,
     ...(coreState.pngScale > 1 && { scale: coreState.pngScale }),
   };
+  const staticOptions = {
+    ...options,
+    ...(preset.animationDurationMs !== undefined && { timeMs: 0 }),
+  };
   if (format === "png") {
-    return engine.renderToPng(vnode, options);
+    return engine.renderToPng(vnode, staticOptions);
   }
   if (format === "webp") {
-    return engine.renderToWebp(vnode, options);
+    return engine.renderToWebp(vnode, staticOptions);
   }
   const animated = {
     ...options,

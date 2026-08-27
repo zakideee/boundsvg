@@ -1,4 +1,10 @@
-import { BoundSvg, type RenderOptions } from "@boundsvg/react";
+import {
+  AnimatedBoundSvg,
+  BoundSvg,
+  type RenderAnimatedSvgOptions,
+  type RenderPngOptions,
+  type RenderSvgOptions,
+} from "@boundsvg/react";
 import { useBoundSvg } from "@boundsvg/react/provider";
 import {
   type ReactNode,
@@ -38,6 +44,7 @@ import {
   downloadStillArtifact,
   isMp4ExportSupported,
   type Mp4ExportFrameRate,
+  tryRenderAnimatedLayoutReactiveArtifacts,
   tryRenderAnimationArtifacts,
   tryRenderLayoutReactiveArtifacts,
 } from "./render-artifacts";
@@ -72,14 +79,6 @@ function isDeclarativeRigidPanel(
     return false;
   }
   return rigidAnimation === "declarative";
-}
-
-/** A declarative comparison panel is emitted once instead of resampled. */
-function rigidPanelAnimationOptions(
-  declarative: boolean,
-  timeMs: number,
-): Pick<RenderOptions, "animation" | "timeMs"> {
-  return declarative ? { animation: "declarative" } : { animation: "static", timeMs };
 }
 
 function missingAnimationPreset(presetKey: string): never {
@@ -734,7 +733,7 @@ function LayoutReactivePreviewPanels({
 }
 
 export function AnimationPage() {
-  const { engine, defaultRenderOptions } = useBoundSvg();
+  const { engine, defaultCommonOptions } = useBoundSvg();
   const mobileViewer = useMobileViewer();
   const [presetKey, setPresetKey] = useState<AnimationPagePresetKey>(DEFAULT_PRESET);
   const reducedMotion = usePrefersReducedMotion();
@@ -858,22 +857,39 @@ export function AnimationPage() {
     setDeclarativeStartTimeMs((currentTimeMs) => Math.min(currentTimeMs, durationMs));
   }, [durationMs]);
 
-  const declarativeOptions = useMemo<RenderOptions>(
+  const declarativeOptions = useMemo<RenderAnimatedSvgOptions>(
     () => ({
-      animation: reducedMotion ? "static" : "declarative",
-      timeMs: reducedMotion ? posterTimeMs : declarativeStartTimeMs,
+      ...defaultCommonOptions,
+      playback: { mode: "independent" },
+      timeMs: declarativeStartTimeMs,
+      reducedMotion: "keep",
       resourceIdPrefix: `animation-${presetKey}-declarative`,
     }),
-    [declarativeStartTimeMs, posterTimeMs, presetKey, reducedMotion],
+    [declarativeStartTimeMs, defaultCommonOptions, presetKey],
   );
-  const staticOptions = useMemo<RenderOptions>(
+  const reducedMotionOptions = useMemo<RenderSvgOptions>(
     () => ({
-      ...defaultRenderOptions,
-      animation: "static",
+      ...defaultCommonOptions,
+      timeMs: posterTimeMs,
+      resourceIdPrefix: `animation-${presetKey}-declarative`,
+    }),
+    [defaultCommonOptions, posterTimeMs, presetKey],
+  );
+  const staticOptions = useMemo<RenderSvgOptions>(
+    () => ({
+      ...defaultCommonOptions,
       timeMs,
       resourceIdPrefix: `animation-${presetKey}-static`,
     }),
-    [defaultRenderOptions, presetKey, timeMs],
+    [defaultCommonOptions, presetKey, timeMs],
+  );
+  const stillPngOptions = useMemo<RenderPngOptions>(
+    () => ({ ...defaultCommonOptions, timeMs }),
+    [defaultCommonOptions, timeMs],
+  );
+  const animatedRasterOptions = useMemo<Omit<RenderPngOptions, "timeMs">>(
+    () => ({ ...defaultCommonOptions }),
+    [defaultCommonOptions],
   );
 
   const [animatedExportError, setAnimatedExportError] = useState<Error | null>(null);
@@ -913,11 +929,11 @@ export function AnimationPage() {
     const { error } = downloadStillArtifact({
       engine,
       input: vnode,
-      renderOptions: { ...staticOptions, timeMs: sampledTimeMs },
+      renderOptions: { ...stillPngOptions, timeMs: sampledTimeMs },
       fileName: `animation-${presetKey}-${Math.round(sampledTimeMs)}ms`,
     });
     setAnimatedExportError(error);
-  }, [engine, presetKey, staticOptions, vnode]);
+  }, [engine, presetKey, stillPngOptions, vnode]);
 
   const downloadAnimated = useCallback(
     (format: AnimatedExportFormat) => {
@@ -937,7 +953,7 @@ export function AnimationPage() {
           const { error } = downloadAnimatedArtifact({
             engine,
             input: vnode,
-            renderOptions: staticOptions,
+            renderOptions: animatedRasterOptions,
             durationMs,
             format,
             fileName: `animation-${presetKey}`,
@@ -950,7 +966,7 @@ export function AnimationPage() {
         }
       });
     },
-    [durationMs, engine, presetKey, staticOptions, vnode],
+    [animatedRasterOptions, durationMs, engine, presetKey, vnode],
   );
 
   // Support cannot change for the life of the page, so it is read once rather
@@ -1003,19 +1019,33 @@ export function AnimationPage() {
     if (!layoutFrameResult.frame) {
       return { artifacts: null, metrics: null, error: layoutFrameResult.error };
     }
+    if (declarativeRigidPanel) {
+      return tryRenderAnimatedLayoutReactiveArtifacts(
+        engine,
+        layoutFrameResult.frame.rigidScene,
+        {
+          ...defaultCommonOptions,
+          playback: { mode: "independent" },
+          timeMs,
+          reducedMotion: "keep",
+          resourceIdPrefix: `animation-${presetKey}-rigid`,
+        },
+        layoutPreset?.textNodeId,
+      );
+    }
     return tryRenderLayoutReactiveArtifacts(
       engine,
       layoutFrameResult.frame.rigidScene,
       {
-        ...defaultRenderOptions,
-        ...rigidPanelAnimationOptions(declarativeRigidPanel, timeMs),
+        ...defaultCommonOptions,
+        timeMs,
         resourceIdPrefix: `animation-${presetKey}-rigid`,
       },
       layoutPreset?.textNodeId,
     );
   }, [
     declarativeRigidPanel,
-    defaultRenderOptions,
+    defaultCommonOptions,
     engine,
     layoutFrameResult,
     layoutPreset,
@@ -1030,25 +1060,23 @@ export function AnimationPage() {
       engine,
       layoutFrameResult.frame.materializedScene,
       {
-        ...defaultRenderOptions,
-        animation: "static",
+        ...defaultCommonOptions,
         timeMs,
         resourceIdPrefix: `animation-${presetKey}-materialized`,
       },
       layoutPreset?.textNodeId,
     );
-  }, [defaultRenderOptions, engine, layoutFrameResult, layoutPreset, presetKey, timeMs]);
+  }, [defaultCommonOptions, engine, layoutFrameResult, layoutPreset, presetKey, timeMs]);
   const animationOffRenderResult = useMemo(() => {
     if (!animationOffVNode) {
       return { artifacts: null, error: null };
     }
     return tryRenderAnimationArtifacts(engine, animationOffVNode, {
-      ...defaultRenderOptions,
-      animation: "static",
+      ...defaultCommonOptions,
       timeMs: 0,
       resourceIdPrefix: `animation-${presetKey}-off`,
     });
-  }, [animationOffVNode, defaultRenderOptions, engine, presetKey]);
+  }, [animationOffVNode, defaultCommonOptions, engine, presetKey]);
   const staticArtifacts = staticRenderResult.artifacts;
   const animationOffArtifacts = animationOffRenderResult.artifacts;
   const staticMetrics = useMemo(
@@ -1108,7 +1136,7 @@ export function AnimationPage() {
     };
     // Rewriting a declarative panel every tick would restart its CSS
     // animations, so playback leaves that DOM subtree alone.
-    const syncRigidPreview = (frame: LayoutReactiveFrame, sharedOptions: RenderOptions) => {
+    const syncRigidPreview = (frame: LayoutReactiveFrame, sharedOptions: RenderSvgOptions) => {
       if (declarativeRigidPanel) {
         return;
       }
@@ -1134,9 +1162,8 @@ export function AnimationPage() {
           throw new Error("The layout-reactive frame generator is not ready");
         }
         const frame = generator(sampledTimeMs);
-        const sharedOptions: RenderOptions = {
-          ...defaultRenderOptions,
-          animation: "static",
+        const sharedOptions: RenderSvgOptions = {
+          ...defaultCommonOptions,
           timeMs: sampledTimeMs,
         };
         syncRigidPreview(frame, sharedOptions);
@@ -1180,7 +1207,7 @@ export function AnimationPage() {
     return () => window.cancelAnimationFrame(animationFrameId);
   }, [
     declarativeRigidPanel,
-    defaultRenderOptions,
+    defaultCommonOptions,
     durationMs,
     engine,
     layoutGeneratorResult,
@@ -1261,15 +1288,25 @@ export function AnimationPage() {
   const declarativePreview = useMemo(
     () =>
       vnode ? (
-        <BoundSvg
-          key={`${presetKey}-${declarativeRestart}-${reducedMotion ? "static" : "native"}`}
-          vnode={vnode}
-          className="rendered-content"
-          renderOptions={declarativeOptions}
-          fallback={<p className="placeholder-text">Rendering…</p>}
-        />
+        reducedMotion ? (
+          <BoundSvg
+            key={`${presetKey}-${declarativeRestart}-static`}
+            vnode={vnode}
+            className="rendered-content"
+            renderOptions={reducedMotionOptions}
+            fallback={<p className="placeholder-text">Rendering…</p>}
+          />
+        ) : (
+          <AnimatedBoundSvg
+            key={`${presetKey}-${declarativeRestart}-native`}
+            vnode={vnode}
+            className="rendered-content"
+            renderOptions={declarativeOptions}
+            fallback={<p className="placeholder-text">Rendering…</p>}
+          />
+        )
       ) : null,
-    [vnode, declarativeOptions, presetKey, declarativeRestart, reducedMotion],
+    [vnode, declarativeOptions, reducedMotionOptions, presetKey, declarativeRestart, reducedMotion],
   );
 
   return (

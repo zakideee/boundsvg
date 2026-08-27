@@ -32,13 +32,19 @@ function createLowLevelEngine(instance: WasmEngineInstance): Engine {
     computeLayoutFn: handle.createComputeLayoutFn(),
     renderToIrFn: (inputJson, optionsJson) => handle.renderToIr(inputJson, optionsJson),
     renderToSvgFn: (inputJson, optionsJson) => handle.renderToSvg(inputJson, optionsJson),
+    renderToAnimatedSvgFn: (inputJson, optionsJson) =>
+      handle.renderToAnimatedSvg(inputJson, optionsJson),
     emitSvgFromIrFn: (irJson, optionsJson) => handle.emitSvgFromIr(irJson, optionsJson),
+    emitAnimatedSvgFromIrFn: (irJson, optionsJson) =>
+      handle.emitAnimatedSvgFromIr(irJson, optionsJson),
     resolveIrFn: (irJson, optionsJson) => handle.resolveIr(irJson, optionsJson),
     preflightIrFn: (irJson) => handle.preflightIr(irJson),
     preflightRasterSceneFn: (irJson, optionsJson) =>
       handle.preflightRasterScene(irJson, optionsJson),
     resolveAndEmitSvgFromIrFn: (irJson, optionsJson) =>
       handle.resolveAndEmitSvgFromIr(irJson, optionsJson),
+    resolveAndEmitAnimatedSvgFromIrFn: (irJson, optionsJson) =>
+      handle.resolveAndEmitAnimatedSvgFromIr(irJson, optionsJson),
     prepareSceneFn: (irJson, optionsJson) => handle.prepareScene(irJson, optionsJson),
     registerFontFn: (font) =>
       handle.registerFont(font.data, {
@@ -85,6 +91,26 @@ function buildScene(): VNode {
   );
 }
 
+function buildAnimatedScene(): VNode {
+  return createElement(
+    "Canvas",
+    { width: 120, height: 80 },
+    createElement("Box", {
+      id: "animated-box",
+      width: 40,
+      height: 30,
+      background: "#2563eb",
+      animate: {
+        keyframes: [
+          { at: 0, opacity: 0.2 },
+          { at: 1, opacity: 1 },
+        ],
+        durationMs: 600,
+      },
+    }),
+  );
+}
+
 describe("nodejs/web WASM public parity", () => {
   let nodeEngine: Engine;
   let webEngine: Engine;
@@ -120,6 +146,39 @@ describe("nodejs/web WASM public parity", () => {
     const webWebp = webEngine.renderToWebp(scene);
     expect(webWebp.subarray(12, 16)).toEqual(new TextEncoder().encode("VP8L"));
     expect(webWebp).toEqual(nodeEngine.renderToWebp(scene));
+  });
+
+  it("renders independent animated SVG and IR bytes identically", () => {
+    const scene = buildAnimatedScene();
+    const options = {
+      playback: { mode: "independent" as const },
+      resourceIdPrefix: "parity-",
+      nodeIdMetadata: "omit" as const,
+    };
+    expect(webEngine.renderToAnimatedSvg(scene, options)).toBe(
+      nodeEngine.renderToAnimatedSvg(scene, options),
+    );
+    expect(webEngine.renderToAnimatedSvgAndIR(scene, options)).toEqual(
+      nodeEngine.renderToAnimatedSvgAndIR(scene, options),
+    );
+  });
+
+  it("returns the same static-animation sampling error", () => {
+    const scene = buildAnimatedScene();
+    let nodeError: unknown;
+    let webError: unknown;
+    try {
+      nodeEngine.renderToSvg(scene);
+    } catch (error) {
+      nodeError = error;
+    }
+    try {
+      webEngine.renderToSvg(scene);
+    } catch (error) {
+      webError = error;
+    }
+    expect(webError).toMatchObject({ code: "STATIC_ANIMATION_TIME_REQUIRED" });
+    expect(webError).toEqual(nodeError);
   });
 
   it("returns the same representative measurement result", () => {

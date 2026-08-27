@@ -68,6 +68,8 @@ boundsvg export \
 `1`–`65535` for animated WebP, `1`–`65536` for GIF, or `infinite`; omission
 defaults to `infinite`. `--duration-ms`, `--fps`, `--iterations` and `--bitrate`
 are usage errors on a still format. `--scale` applies to every raster format.
+This omission default is CLI-only: the Core and Worker animated-raster APIs
+require callers to supply `iterations` explicitly.
 
 `--format mp4` differs on all three: `--fps` goes up to 120 (default 30) and
 also accepts the NTSC decimals `23.976` / `29.97` / `59.94` and a rational such

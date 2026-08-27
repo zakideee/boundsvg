@@ -99,11 +99,18 @@ export function renderPreset(engine: Engine, key: string): void {
     textPathMode: coreState.textPathMode,
     showMissingGlyphs: true,
   };
+  const svgOptions = { ...options, nodeIdMetadata: "include" as const };
   const svgOutput = getElement("svg-output");
   const eventLogPanel = getElement("event-log");
 
   // Always get IR for inspect-hover support
-  const { svg, ir } = engine.renderToSvgAndIR(vnode, options);
+  const { svg, ir } =
+    preset.animationDurationMs === undefined
+      ? engine.renderToSvgAndIR(vnode, svgOptions)
+      : engine.renderToAnimatedSvgAndIR(vnode, {
+          ...svgOptions,
+          playback: { mode: "independent" },
+        });
   coreState.cachedSvgString = svg;
   svgOutput.innerHTML = svg;
 
@@ -144,7 +151,11 @@ export function renderPreset(engine: Engine, key: string): void {
 
   // PNG
   const pngOutput = getElement("png-output");
-  const pngOpts = coreState.pngScale > 1 ? { ...options, scale: coreState.pngScale } : options;
+  const pngOpts = {
+    ...options,
+    ...(coreState.pngScale > 1 && { scale: coreState.pngScale }),
+    ...(preset.animationDurationMs !== undefined && { timeMs: 0 }),
+  };
   const pngBytes = engine.renderToPng(vnode, pngOpts);
   const url = createPngObjectUrl(pngBytes);
   pngOutput.innerHTML = "";

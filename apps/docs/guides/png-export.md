@@ -21,7 +21,10 @@ const png = engine.renderToPng(node, { scale: 2 });
 // A 400×200 canvas produces an 800×400 PNG
 ```
 
-The `scale` option affects raster output only — SVG rendering ignores it.
+SVG supports the same output-resolution option, but applies it differently: it
+multiplies root `width` / `height` and canvas-stroke restoration CSS while
+leaving `viewBox`, child geometry, and ordinary attributes unchanged. Raster
+output uses it for pixel dimensions and applies the resolution caps below.
 
 ## Background Color
 

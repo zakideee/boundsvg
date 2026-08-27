@@ -103,7 +103,6 @@ function measureSvgBytes(engine: Engine | undefined, frame: MotionFrame): number
     return 0;
   }
   const svg = engine.renderToSvg(previewScene(frame), {
-    animation: "static",
     timeMs: frame.timeMs,
   });
   return new TextEncoder().encode(svg).byteLength;
@@ -255,7 +254,6 @@ function materializeTextPathFrame(timeMs: number) {
 
 const svgFrames = [0, 400, 800].map((timeMs) =>
   engine.renderToSvg(materializeTextPathFrame(timeMs), {
-    animation: "static",
     timeMs,
   }),
 );`,

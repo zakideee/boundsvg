@@ -2,7 +2,7 @@ import {
   resolveHitTarget as resolveHitTargetBrowser,
   translateSvgCoords,
 } from "@boundsvg/browser/events";
-import type { IR, RenderOptions, VNode } from "@boundsvg/core";
+import type { IR, RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/core";
 import {
   buildHandlerMap,
   buildHitTestIndex,
@@ -42,9 +42,7 @@ export type TextContextMenuHit = {
   clientY: number;
 };
 
-export type UseInteractiveSvgOptions = {
-  /** Render options passed to the engine */
-  renderOptions?: RenderOptions;
+type InteractiveBehaviorOptions = {
   /** Whether to show cursor:pointer on interactive elements (default: true) */
   showPointerCursor?: boolean;
   /** When true, right-click on text nodes fires onTextContextMenu instead of browser default */
@@ -52,6 +50,20 @@ export type UseInteractiveSvgOptions = {
   /** Callback fired when a text node is right-clicked (requires enableTextCopy) */
   onTextContextMenu?: (hit: TextContextMenuHit) => void;
 };
+
+export type UseInteractiveSvgOptions = InteractiveBehaviorOptions &
+  (
+    | {
+        /** Static sampled SVG is the default interactive document family. */
+        renderMode?: "static";
+        renderOptions?: RenderSvgOptions;
+      }
+    | {
+        /** Preserve independent authored tracks in the interactive SVG document. */
+        renderMode: "animated";
+        renderOptions: RenderAnimatedSvgOptions;
+      }
+  );
 
 export type UseInteractiveSvgResult = {
   /** Rendered SVG string (null while engine is not ready or on error) */
@@ -110,10 +122,11 @@ export function useInteractiveSvg(
   handlers: Map<string, EventCallback>,
   options?: UseInteractiveSvgOptions,
 ): UseInteractiveSvgResult {
-  const { engine, workerEngine, status, defaultRenderOptions } = useBoundSvg();
+  const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
   const stableVNode = useStructurallyStableValue(vnode);
   const stableRenderOptions = useStructurallyStableRenderOptions(options?.renderOptions);
-  const stableDefaultRenderOptions = useStructurallyStableRenderOptions(defaultRenderOptions);
+  const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
+  const renderMode = options?.renderMode ?? "static";
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
 
   // Memoize render artifacts — uses engine.renderToSvgAndIR() for single layout pass
@@ -129,10 +142,20 @@ export function useInteractiveSvg(
         deliveries: NO_RENDER_NOTIFICATION_DELIVERIES,
       };
     }
-    const mergedOptions = { ...stableDefaultRenderOptions, ...stableRenderOptions };
+    const mergedOptions = {
+      ...stableDefaultCommonOptions,
+      ...stableRenderOptions,
+      nodeIdMetadata: "include" as const,
+    };
     const captured = captureRenderNotifications(mergedOptions);
     try {
-      const { svg, ir } = engine.renderToSvgAndIR(stableVNode, captured.options);
+      const { svg, ir } =
+        renderMode === "animated"
+          ? engine.renderToAnimatedSvgAndIR(
+              stableVNode,
+              captured.options as RenderAnimatedSvgOptions,
+            )
+          : engine.renderToSvgAndIR(stableVNode, captured.options as RenderSvgOptions);
       const spatialIndex = buildHitTestIndex(ir);
       const handlerMap = buildHandlerMap(ir);
       const nodeTypeMap = buildNodeTypeMap(ir);
@@ -157,7 +180,15 @@ export function useInteractiveSvg(
         deliveries: [captured.delivery],
       };
     }
-  }, [engine, workerEngine, status, stableVNode, stableRenderOptions, stableDefaultRenderOptions]);
+  }, [
+    engine,
+    workerEngine,
+    status,
+    stableVNode,
+    stableRenderOptions,
+    stableDefaultCommonOptions,
+    renderMode,
+  ]);
   useCommitPhaseRenderNotifications(computation.deliveries);
   const artifacts = computation.artifacts;
 
