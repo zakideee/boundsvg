@@ -108,6 +108,14 @@
       "output": "<g id=\"p-x\"/><animate begin=\"unknown.repeat(\"/><rect fill=\"url(#unknown\"/>"
     },
     {
+      "name": "malformed-unknown-url-does-not-hide-later-local-reference",
+      "input": "<g id=\"x\"/><rect style=\"fill:url('#unknown' bad); stroke:url(#x)\"/>",
+      "status": "ok",
+      "definitions": ["x"],
+      "references": [{ "attribute": "style", "kind": "url", "syntax": "url", "id": "x" }],
+      "output": "<g id=\"p-x\"/><rect style=\"fill:url('#unknown' bad); stroke:url(#p-x)\"/>"
+    },
+    {
       "name": "malformed-xml-start-tag",
       "input": "<g id=\"x/><animate begin='x.begin'/>",
       "status": "error",

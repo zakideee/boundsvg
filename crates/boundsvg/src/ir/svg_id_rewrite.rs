@@ -589,7 +589,11 @@ fn scan_url_references(
                         "unterminated quoted url()",
                     ));
                 }
-                cursor = range.end;
+                // The malformed unknown function can still close before a
+                // later declaration. Resume after that boundary so a valid
+                // known-local url() later in the same style body is not lost.
+                cursor =
+                    find_byte(bytes, b')', index, range.end).map_or(range.end, |close| close + 1);
                 continue;
             }
             index += 1;
@@ -607,7 +611,7 @@ fn scan_url_references(
                     "unterminated url()",
                 ));
             }
-            cursor = range.end;
+            cursor = find_byte(bytes, b')', index, range.end).map_or(range.end, |close| close + 1);
             continue;
         }
         add_local_reference(

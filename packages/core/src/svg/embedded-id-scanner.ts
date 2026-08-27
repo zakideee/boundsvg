@@ -510,7 +510,11 @@ function scanUrlReferences(
         if (decodedId !== undefined && definitions.has(decodedId)) {
           scanError(UNSUPPORTED_REFERENCE, "unterminated quoted url()");
         }
-        cursor = range.end;
+        // The malformed unknown function can still close before a later
+        // declaration. Resume there so a following known-local url() remains
+        // visible to the structural scan.
+        const close = svg.indexOf(")", index);
+        cursor = close < 0 || close >= range.end ? range.end : close + 1;
         continue;
       }
       index += 1;
@@ -522,7 +526,8 @@ function scanUrlReferences(
       if (decodedId !== undefined && definitions.has(decodedId)) {
         scanError(UNSUPPORTED_REFERENCE, "unterminated url()");
       }
-      cursor = range.end;
+      const close = svg.indexOf(")", index);
+      cursor = close < 0 || close >= range.end ? range.end : close + 1;
       continue;
     }
     addReference(context, {
