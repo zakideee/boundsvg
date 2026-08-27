@@ -16,7 +16,7 @@ No children allowed.
 | `width`               | `number`                      | Yes      | —        | Display width in px                                                                                                                             |
 | `height`              | `number`                      | Yes      | —        | Display height in px                                                                                                                            |
 | `preserveAspectRatio` | `"none" \| "meet" \| "slice"` |          | `"meet"` | How to fit the SVG content into the display box                                                                                                 |
-| `contentIdPrefix`     | `string`                      |          | —        | Prefix for embedded SVG content IDs to avoid collisions                                                                                         |
+| `contentIdPrefix`     | `string`                      |          | —        | Prefix exact embedded IDs and supported same-document references; see [ID rewriting](#id-rewriting)                                             |
 | `opacity`             | `number`                      |          | —        | Opacity (0–1)                                                                                                                                   |
 | `zIndex`              | `number`                      |          | —        | Sibling-local paint order (integer; higher paints later)                                                                                        |
 | `meta`                | `Record<string, string>`      |          | —        | Metadata emitted as `data-boundsvg-meta-*` attributes and into the layered manifest (max 16 keys, `[a-z][a-z0-9-]{0,31}` keys, 256-char values) |
@@ -86,6 +86,20 @@ const mapSvg = fs.readFileSync("world-map.svg", "utf-8");
 </Canvas>;
 ```
 
-::: info
-Use `contentIdPrefix` when embedding multiple SVG sources to prevent internal ID collisions (e.g. gradient/filter IDs).
-:::
+## ID rewriting
+
+Use a non-empty `contentIdPrefix` when embedding multiple SVG sources whose internal IDs could collide. The rewriter preserves the original attribute order, quotes, whitespace, comments, CDATA, text, and entity spelling. It changes only exact `id` attribute values and supported references to IDs defined in the same embedded SVG.
+
+Supported references are:
+
+- fragment-only `href` and `xlink:href` values;
+- `url(#id)` in `clip-path`, `color-profile`, `cursor`, `fill`, `filter`, `marker`, `marker-start`, `marker-mid`, `marker-end`, `mask`, `stroke`, and `style` attributes;
+- `url(#id)` and flat ID selectors in a `<style>` block;
+- WAI-ARIA single-ID attributes (`aria-activedescendant`, `aria-details`, `aria-errormessage`) and ID-list attributes (`aria-controls`, `aria-describedby`, `aria-flowto`, `aria-labelledby`, `aria-owns`);
+- SMIL `begin` and `end` timing lists using syncbase, eventbase, `repeat()`, `marker()`, deprecated `id(...)`, offsets, or escaped ID values.
+
+External references and references to unknown IDs remain unchanged. Attribute names are matched exactly, so values in `data-id`, `data-href`, comments, CDATA, metadata text, and similarly named attributes are not rewritten. Class names, custom properties, and authored keyframe names are outside this namespace.
+
+With a non-empty prefix, malformed start-tag/declaration syntax and ambiguous supported syntax that points to a known local ID fail before output with `CONTENT_ID_PREFIX_MALFORMED_XML` or `CONTENT_ID_PREFIX_UNSUPPORTED_REFERENCE`. CSS block at-rules and nested CSS blocks are unsupported. Omitting the prefix, or passing an empty string, keeps the existing pass-through behavior.
+
+Use `analyzeEmbeddedSvgIds()` from `@boundsvg/core/svg` to inspect exact definitions, duplicates, supported reference kinds, their source attributes and syntax, and unresolved IDs before rendering. The analyzer applies the same structural safety boundary and reports failures at the `analyzer` stage.

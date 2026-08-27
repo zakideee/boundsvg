@@ -915,7 +915,10 @@ export type SvgProps = {
   height: number;
   /** How to fit the SVG content into the display box */
   preserveAspectRatio?: "none" | "meet" | "slice";
-  /** Optional prefix for embedded SVG content IDs to avoid collisions */
+  /**
+   * Prefix for exact embedded `id` attributes and their supported same-document references.
+   * A non-empty prefix enables structural validation and fails on unsafe known-local syntax.
+   */
   contentIdPrefix?: string;
   /** Opacity (0-1) */
   opacity?: number;

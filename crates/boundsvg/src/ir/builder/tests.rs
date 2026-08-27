@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use boundshape::MAX_GEOMETRY_TREE_DEPTH;
 
-use super::build_ir;
+use super::{build_ir, parse_svg_content};
 use crate::error::EngineError;
 use crate::layout::types::{LayoutNodeInput, LayoutNodeOutput, TextLayoutOutput};
 use crate::text::types::{
@@ -1269,6 +1269,52 @@ fn parses_nested_svg_content_and_prefixes_ids() {
         "hyphenated attribute untouched: {inner}"
     );
     assert!(inner.contains("fill: #abc"), "hex color untouched: {inner}");
+}
+
+#[test]
+fn reports_content_id_prefix_rewrite_errors_with_ir_node_context() {
+    let root = parse_node(json!({
+        "nodeId": "root",
+        "nodeType": "canvas",
+        "children": [{
+            "nodeId": "nested",
+            "nodeType": "svg",
+            "children": [],
+            "visual": {
+                "svgContent": "<svg><g id=\"x\"/><rect fill=\"url(#x\"/></svg>",
+                "contentIdPrefix": "p-",
+            },
+        }],
+    }));
+    let error = build_ir(
+        &root,
+        &outputs_map(vec![
+            output("root", 0.0, 0.0, 100.0, 100.0),
+            output("nested", 0.0, 0.0, 40.0, 40.0),
+        ]),
+    )
+    .expect_err("known-local malformed reference should fail");
+
+    assert!(matches!(
+        error,
+        EngineError::Structured { code, stage, node_id, .. }
+            if code == "CONTENT_ID_PREFIX_UNSUPPORTED_REFERENCE"
+                && stage.as_deref() == Some("ir")
+                && node_id.as_deref() == Some("nested")
+    ));
+}
+
+#[test]
+fn bypasses_id_scanning_when_content_id_prefix_is_absent_or_empty() {
+    let malformed_inner = "<g id=\"x/><animate begin='x.begin'/>";
+
+    let (_, absent_output) =
+        parse_svg_content(malformed_inner, None).expect("absent prefix should pass through");
+    let (_, empty_output) =
+        parse_svg_content(malformed_inner, Some("")).expect("empty prefix should pass through");
+
+    assert_eq!(absent_output, malformed_inner);
+    assert_eq!(empty_output, malformed_inner);
 }
 
 #[test]

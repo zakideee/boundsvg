@@ -16,6 +16,7 @@ use boundshape::{
 };
 
 use super::gradient::{is_supported_gradient_function, parse_gradient_for_box};
+use super::svg_id_rewrite::rewrite_svg_ids;
 use super::svg_security::unsafe_svg_reason;
 use super::types::{
     BBox, BorderRadii, BorderRadius, BorderRadiusInput, ErrorSeverity, HandlersRef, Ir, IrFillRule,
@@ -1507,7 +1508,16 @@ fn build_svg_child(
         });
     }
 
-    let (view_box, inner_content) = parse_svg_content(content, visual.content_id_prefix.as_deref());
+    let (view_box, inner_content) = parse_svg_content(content, visual.content_id_prefix.as_deref())
+        .map_err(|error| EngineError::Structured {
+            code: error.code.to_string(),
+            message: format!(
+                "Embedded SVG ID rewrite failed for node \"{node_id}\": {}",
+                error.detail
+            ),
+            stage: Some("ir".to_string()),
+            node_id: Some(node_id.to_string()),
+        })?;
 
     if contains_embedded_text_element(&inner_content) {
         // Embedded <text> is re-shaped by the viewer / rasterizer fonts,
@@ -1562,15 +1572,15 @@ fn contains_embedded_text_element(inner_content: &str) -> bool {
 fn parse_svg_content(
     svg_string: &str,
     content_id_prefix: Option<&str>,
-) -> (Option<String>, String) {
+) -> Result<(Option<String>, String), super::svg_id_rewrite::SvgIdRewriteError> {
     let view_box = extract_svg_view_box(svg_string);
     let mut inner = strip_outer_svg(svg_string);
-    if let Some(prefix) = content_id_prefix {
+    if let Some(prefix) = content_id_prefix.filter(|prefix| !prefix.is_empty()) {
         if !inner.is_empty() {
-            inner = prefix_svg_ids(&inner, prefix);
+            inner = rewrite_svg_ids(&inner, prefix)?;
         }
     }
-    (view_box, inner)
+    Ok((view_box, inner))
 }
 
 fn extract_svg_view_box(svg_string: &str) -> Option<String> {
@@ -1613,150 +1623,6 @@ fn strip_outer_svg(svg_string: &str) -> String {
     }
 
     result.trim().to_string()
-}
-
-/// Whether `ch` matches the TS lookbehind class `[\w-]`.
-fn is_word_or_hyphen(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
-}
-
-/// Collect and rewrite `id=<q>...<q>` attribute definitions with the same
-/// boundary rule as the TS regex `(?<![\w-])id=...` (rejects `data-...-id`).
-fn rewrite_id_definitions(
-    content: &str,
-    prefix: &str,
-    quote: char,
-    ids: &mut Vec<String>,
-) -> String {
-    let needle = format!("id={quote}");
-    let mut result = String::with_capacity(content.len());
-    let mut cursor = 0;
-    while let Some(found) = content[cursor..].find(&needle) {
-        let match_start = cursor + found;
-        let value_start = match_start + needle.len();
-        let preceded_by_word = content[..match_start]
-            .chars()
-            .next_back()
-            .is_some_and(is_word_or_hyphen);
-        let Some(value_length) = content[value_start..].find(quote) else {
-            break;
-        };
-        if preceded_by_word || value_length == 0 {
-            result.push_str(&content[cursor..value_start]);
-            cursor = value_start;
-            continue;
-        }
-        let id_value = &content[value_start..value_start + value_length];
-        if !ids.iter().any(|known| known == id_value) {
-            ids.push(id_value.to_string());
-        }
-        result.push_str(&content[cursor..match_start]);
-        result.push_str("id=");
-        result.push(quote);
-        result.push_str(prefix);
-        result.push_str(id_value);
-        result.push(quote);
-        cursor = value_start + value_length + 1;
-    }
-    result.push_str(&content[cursor..]);
-    result
-}
-
-/// Prefix all id="..." definitions and url(#...)/href references in SVG
-/// content, mirroring `prefixSvgIds` in the TS builder (including the
-/// `<style>` block selector rewrite).
-fn prefix_svg_ids(content: &str, prefix: &str) -> String {
-    // Collection happens through the same passes that rewrite definitions,
-    // in the TS order: double-quoted first, then single-quoted.
-    let mut ids: Vec<String> = Vec::new();
-    let mut result = rewrite_id_definitions(content, prefix, '"', &mut ids);
-    result = rewrite_id_definitions(&result, prefix, '\'', &mut ids);
-    if ids.is_empty() {
-        return content.to_string();
-    }
-
-    for id in &ids {
-        let reference_rewrites = [
-            (format!("url(#{id})"), format!("url(#{prefix}{id})")),
-            (format!("url('#{id}')"), format!("url('#{prefix}{id}')")),
-            (format!("url(\"#{id}\")"), format!("url(\"#{prefix}{id}\")")),
-            (format!("href=\"#{id}\""), format!("href=\"#{prefix}{id}\"")),
-            (format!("href='#{id}'"), format!("href='#{prefix}{id}'")),
-        ];
-        for (needle, replacement) in &reference_rewrites {
-            result = result.replace(needle, replacement);
-        }
-    }
-
-    result = rewrite_style_block_selectors(&result, &ids, prefix);
-    result
-}
-
-/// Whether `ch` matches the TS selector-context lookahead `[\s{,:.[>+~]`.
-fn is_css_selector_boundary(ch: char) -> bool {
-    ch.is_whitespace() || matches!(ch, '{' | ',' | ':' | '.' | '[' | '>' | '+' | '~')
-}
-
-/// Rewrite `#id` selectors inside `<style>` blocks for the collected ids.
-/// `url(#id)` references were already rewritten before this runs.
-fn rewrite_style_block_selectors(content: &str, ids: &[String], prefix: &str) -> String {
-    let lower = content.to_ascii_lowercase();
-    let mut result = String::with_capacity(content.len());
-    let mut cursor = 0;
-    while let Some(found) = lower[cursor..].find("<style") {
-        let style_start = cursor + found;
-        // The TS regex requires <style\b — reject <styleFoo
-        let after_tag = content[style_start + "<style".len()..].chars().next();
-        if after_tag.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
-            result.push_str(&content[cursor..style_start + "<style".len()]);
-            cursor = style_start + "<style".len();
-            continue;
-        }
-        let Some(open_end) = content[style_start..].find('>') else {
-            break;
-        };
-        let css_start = style_start + open_end + 1;
-        let Some(close_offset) = lower[css_start..].find("</style>") else {
-            break;
-        };
-        let css_end = css_start + close_offset;
-        result.push_str(&content[cursor..css_start]);
-        result.push_str(&rewrite_css_id_selectors(
-            &content[css_start..css_end],
-            ids,
-            prefix,
-        ));
-        cursor = css_end;
-    }
-    result.push_str(&content[cursor..]);
-    result
-}
-
-fn rewrite_css_id_selectors(css: &str, ids: &[String], prefix: &str) -> String {
-    let mut result = css.to_string();
-    for id in ids {
-        let needle = format!("#{id}");
-        let mut rewritten = String::with_capacity(result.len());
-        let mut cursor = 0;
-        while let Some(found) = result[cursor..].find(&needle) {
-            let match_start = cursor + found;
-            let match_end = match_start + needle.len();
-            let next_char = result[match_end..].chars().next();
-            if next_char.is_some_and(is_css_selector_boundary) {
-                rewritten.push_str(&result[cursor..match_start]);
-                rewritten.push('#');
-                rewritten.push_str(prefix);
-                rewritten.push_str(id);
-                cursor = match_end;
-            } else {
-                rewritten.push_str(&result[cursor..match_end]);
-                cursor = match_end;
-            }
-        }
-        rewritten.push_str(&result[cursor..]);
-        result = rewritten;
-    }
-    result
 }
 
 // ---------------------------------------------------------------------------
