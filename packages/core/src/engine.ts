@@ -587,7 +587,11 @@ export type RenderOptions = {
   skipValidation?: boolean;
   scale?: number;
   debug?: boolean | DebugOverlayConfig;
-  /** Prefix applied to boundsvg-generated SVG resource IDs in <defs>. */
+  /**
+   * Literal prefix applied to every boundsvg-generated, document-global SVG
+   * identifier and its references. Co-embedded outputs require normalized,
+   * non-empty, pairwise prefix-free values for guaranteed non-intersection.
+   */
   resourceIdPrefix?: string;
   /** Text outline grouping mode. Default: "merged". */
   textPathMode?: TextPathMode;
@@ -622,7 +626,11 @@ export type CompileOptions = {
 export type EmitOptions = {
   scale?: number;
   debug?: boolean | DebugOverlayConfig;
-  /** Prefix applied to boundsvg-generated SVG resource IDs in <defs>. */
+  /**
+   * Literal prefix applied to every boundsvg-generated, document-global SVG
+   * identifier and its references. Co-embedded outputs require normalized,
+   * non-empty, pairwise prefix-free values for guaranteed non-intersection.
+   */
   resourceIdPrefix?: string;
   rasterBackground?: string;
   rasterOversizeBehavior?: RasterOversizeBehavior;

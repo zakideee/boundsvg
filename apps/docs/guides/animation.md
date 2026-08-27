@@ -403,8 +403,11 @@ const stillPng = engine.renderToPng(scene, {
 
 `timeMs` defaults to `0` and must be a non-negative finite number. When more
 than one generated SVG is embedded inline in the same document, give each one
-a stable, unique `resourceIdPrefix` to keep generated animation and resource
-identifiers separate.
+a stable `resourceIdPrefix`. The prefixes, after boundsvg's CSS-safe
+normalization, must be non-empty and pairwise prefix-free for generated
+animation names, classes, resources, and references to be guaranteed disjoint.
+For example, fixed-width scopes are suitable; `doc-` and `doc-clip-` are not,
+because the former is a prefix of the latter.
 
 ### Canvas-stable strokes
 

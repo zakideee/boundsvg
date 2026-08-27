@@ -6,6 +6,7 @@
 //! formats and prints.
 
 pub mod emitter;
+pub(crate) mod identifier_namespace;
 pub mod num_format;
 pub mod outline_resolver;
 pub mod paint;

@@ -716,7 +716,7 @@ Releases WASM resources. Use in Node.js batch processing to explicitly free memo
 | ------------------------- | ------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `scale`                   | positive finite `number`              | `1`                  | Raster scale factor (no effect on SVG). Output is capped at 3 840 px (long edge) / 8.3 M pixels; exceeding triggers `rasterOversizeBehavior` |
 | `debug`                   | `boolean \| DebugOverlayConfig`       | `false`              | Draw bbox/guide overlays. `true` draws all of them; `{ parts: [...] }` selects from `"specified"`, `"layout"`, `"actual"`, `"baseline"`      |
-| `resourceIdPrefix`        | `string`                              | —                    | Prefix for boundsvg-generated `<defs>` IDs and `url(#...)` references                                                                        |
+| `resourceIdPrefix`        | `string`                              | —                    | Literal prefix for all boundsvg-generated document-global SVG identifiers and their references                                               |
 | `textPathMode`            | `"merged" \| "glyphs"`                | `"merged"`           | Glyph-outline grouping for `Text` and `TextOnPath`; this does not enable or configure path layout                                            |
 | `rasterBackground`        | `string`                              | —                    | Raster background color (PNG / WebP / GIF)                                                                                                   |
 | `skipValidation`          | `boolean`                             | `false`              | Skip VNode tree validation                                                                                                                   |
@@ -727,6 +727,16 @@ Releases WASM resources. Use in Node.js batch processing to explicitly free memo
 | `timeMs`                  | `number`                              | `0`                  | Non-negative finite animation sampling time                                                                                                  |
 | `reducedMotion`           | `"keep" \| "pause"`                   | `"keep"`             | `"pause"` appends one `prefers-reduced-motion` block that stops every animation this render started. `"keep"` leaves output byte identical   |
 | `showMissingGlyphs`       | `boolean`                             | `false`              | Render tofu rectangles for missing glyphs (`glyph_id=0`)                                                                                     |
+
+`resourceIdPrefix` covers generated `<defs>` IDs and fragment references,
+animation keyframes and names, generated classes and selectors, shared Shape
+paths, canvas-stroke classes, and the debug-overlay class. It does not rewrite
+authored embedded SVG content or metadata. For multiple outputs embedded in one
+document, use prefixes that remain non-empty and pairwise prefix-free after
+boundsvg's CSS-safe normalization: no normalized value may be the string prefix
+of another. Merely different values are insufficient; for example, `doc-` and
+`doc-clip-` are outside the guarantee. Fixed-width scope tokens passed through
+`createResourceIdPrefix()` are a simple way to satisfy the condition.
 
 ## Render capability contract
 
@@ -827,7 +837,7 @@ Subset of `RenderOptions` plus `validateComposition`.
 | --------------------- | ------------------------------------- | --------------- | ------------------------------------------------------------------------------- |
 | `skipValidation`      | `boolean`                             | `false`         | Skip VNode tree validation                                                      |
 | `debug`               | `boolean \| DebugOverlayConfig`       | `false`         | Draw bbox/guide overlays per layer; same shape as the Render Options entry      |
-| `resourceIdPrefix`    | `string`                              | —               | Prefix for generated `<defs>` IDs inside each layer                             |
+| `resourceIdPrefix`    | `string`                              | —               | Base prefix for all generated document-global identifiers in each layer         |
 | `scale`               | `number`                              | `1`             | Scale factor forwarded to each layer SVG (no effect on SVG output geometry)     |
 | `textPathMode`        | `"merged" \| "glyphs"`                | `"merged"`      | Glyph-outline grouping for `Text` and `TextOnPath`; unrelated to path placement |
 | `showMissingGlyphs`   | `boolean`                             | `false`         | Render tofu rectangles for missing glyphs                                       |
@@ -835,6 +845,13 @@ Subset of `RenderOptions` plus `validateComposition`.
 | `animation`           | `"declarative" \| "static"`           | `"declarative"` | Per-layer SVG animation output mode                                             |
 | `timeMs`              | `number`                              | `0`             | Sampling time shared by every layer                                             |
 | `validateComposition` | `LayeredCompositionValidationOptions` | —               | Enable pixel-diff composition validation                                        |
+
+With a non-empty prefix, layered SVG export derives the deterministic sub-prefix
+`<normalized-prefix>layer-<zero-based-index>-` for each emitted layer. Those
+sub-prefixes are pairwise prefix-free even for indices such as `1` and `10`.
+Across separate layered results, the caller still supplies normalized,
+non-empty, pairwise prefix-free base prefixes. Omitting the prefix preserves the
+legacy bytes and does not add a cross-layer namespace guarantee.
 
 ### `LayeredPngOptions`
 

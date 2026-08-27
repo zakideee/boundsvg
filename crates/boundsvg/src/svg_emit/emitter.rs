@@ -104,7 +104,10 @@ pub fn emit_svg_scene(scene: &PaintScene) -> Result<String, EngineError> {
     emit_items(&scene.items, 1, &mut parts)?;
 
     if let Some(debug_items) = &scene.debug_items {
-        parts.push("  <g class=\"debug-overlay\" opacity=\"0.4\">".to_string());
+        parts.push(format!(
+            "  <g class=\"{}\" opacity=\"0.4\">",
+            escape_xml(&scene.debug_overlay_class)
+        ));
         emit_items(debug_items, 2, &mut parts)?;
         parts.push("  </g>".to_string());
     }
