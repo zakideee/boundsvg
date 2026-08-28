@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type {
   AnimationIterationCount,
+  AnimationSpec,
   AnimationTimeline,
   EmitAnimatedSvgOptions,
   Engine,
@@ -47,6 +48,47 @@ function timelineScene(easing: "linear" | { type: "spring" } = "linear") {
       },
     }),
   );
+}
+
+type EndpointOwner = "node" | "textUnit";
+type EndpointChannel = "opacity" | "transform";
+
+function exactEndpointScene(owner: EndpointOwner, channel: EndpointChannel, seam: boolean) {
+  const valueA = 0.5;
+  const valueB = valueA + Number.EPSILON / 2;
+  const keyframe = (at: number, value: number) =>
+    channel === "opacity" ? { at, opacity: value } : { at, transform: { translateX: value } };
+  const animation: AnimationSpec = {
+    keyframes: seam
+      ? [keyframe(0, valueA), keyframe(1, valueB)]
+      : [keyframe(0, valueA), keyframe(0.5, valueB), keyframe(1, valueB)],
+    durationMs: seam ? 100 : 200,
+    easing: "linear",
+    iterations: seam ? "infinite" : 1,
+    fill: "both",
+  };
+  const animated =
+    owner === "node"
+      ? createElement("Box", {
+          id: `${channel}-endpoint-node`,
+          width: 32,
+          height: 20,
+          animate: animation,
+        })
+      : createElement(
+          "Text",
+          {
+            id: `${channel}-endpoint-text`,
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
 function captureFatal(run: () => unknown): FatalError {
@@ -149,6 +191,35 @@ describe("animated SVG document timeline", () => {
     expect((direct.match(/^\s*\d+(?:\.\d+)?%\s*\{/gm) ?? []).length).toBe(4);
     expect(direct).toContain("15.625%");
     expect(direct).toContain("50%");
+  });
+
+  it("preserves exact linear endpoints across owners, channels, and public render paths", () => {
+    const options = {
+      playback: { mode: "timeline", durationMs: 200, iterations: 0.5 },
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      for (const channel of ["opacity", "transform"] as const) {
+        const seamScene = exactEndpointScene(owner, channel, true);
+        const seamCompiled = engine.compile(seamScene);
+        for (const render of [
+          () => engine.renderToAnimatedSvg(seamScene, options),
+          () => engine.renderToAnimatedSvgAndIR(seamScene, options),
+          () => engine.renderCompiledToAnimatedSvg(seamCompiled, options),
+        ]) {
+          expect(captureFatal(render)).toMatchObject({
+            code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+            context: { reason: "zero-delta-jump", boundaryTimeMs: 100 },
+          });
+        }
+
+        const continuousScene = exactEndpointScene(owner, channel, false);
+        const continuousCompiled = engine.compile(continuousScene);
+        const direct = engine.renderToAnimatedSvg(continuousScene, options);
+        expect(engine.renderToAnimatedSvgAndIR(continuousScene, options).svg).toBe(direct);
+        expect(engine.renderCompiledToAnimatedSvg(continuousCompiled, options)).toBe(direct);
+      }
+    }
   });
 
   it("enforces the published inclusive keyframe stop limit", () => {

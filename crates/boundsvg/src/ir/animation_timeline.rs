@@ -282,16 +282,6 @@ impl TrackValue {
         }
         values
     }
-
-    fn approximately_equals(&self, other: &Self) -> bool {
-        let left = self.channel_values();
-        let right = other.channel_values();
-        left.len() == right.len()
-            && left.iter().zip(right).all(|(left_value, right_value)| {
-                let scale = left_value.abs().max(right_value.abs()).max(1.0);
-                (left_value - right_value).abs() <= f64::EPSILON * scale * 16.0
-            })
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -867,6 +857,60 @@ fn interpolate_keyframes(
     }
 }
 
+fn transform_interpolation_is_constant(
+    from: &AnimationTransform2D,
+    to: &AnimationTransform2D,
+) -> bool {
+    from.translate_x.unwrap_or(0.0) == to.translate_x.unwrap_or(0.0)
+        && from.translate_y.unwrap_or(0.0) == to.translate_y.unwrap_or(0.0)
+        && from.scale_x.unwrap_or(1.0) == to.scale_x.unwrap_or(1.0)
+        && from.scale_y.unwrap_or(1.0) == to.scale_y.unwrap_or(1.0)
+        && from.rotate_deg.unwrap_or(0.0) == to.rotate_deg.unwrap_or(0.0)
+}
+
+fn cubic_piece_constant_value(
+    spec: &AnimationSpec,
+    segment_index: usize,
+    input_start: f64,
+    input_end: f64,
+    curve: [f64; 4],
+) -> Option<TrackValue> {
+    let from = &spec.keyframes[segment_index];
+    let to = &spec.keyframes[segment_index + 1];
+    if let (Some(from_transform), Some(to_transform)) =
+        (from.transform.as_ref(), to.transform.as_ref())
+        && !transform_interpolation_is_constant(from_transform, to_transform)
+    {
+        return None;
+    }
+
+    let input_midpoint = f64::midpoint(input_start, input_end);
+    if let (Some(from_opacity), Some(to_opacity)) = (from.opacity, to.opacity)
+        && from_opacity != to_opacity
+    {
+        // Clamp roots are timeline boundaries, so a strict interior raw value
+        // identifies the side of the entire open piece without rounding its endpoints.
+        let segment_duration_ms = spec.duration_ms * (to.at - from.at);
+        let eased_midpoint = animation::apply_easing(
+            input_midpoint,
+            ResolvedEasing::Cubic(curve),
+            false,
+            segment_duration_ms,
+        );
+        let raw_midpoint = from_opacity + (to_opacity - from_opacity) * eased_midpoint;
+        if (0.0..=1.0).contains(&raw_midpoint) {
+            return None;
+        }
+    }
+
+    Some(evaluate_segment(
+        spec,
+        segment_index,
+        input_midpoint,
+        ResolvedEasing::Cubic(curve),
+    ))
+}
+
 fn keyframe_segment_index(keyframes: &[AnimationKeyframe], progress: f64) -> Option<usize> {
     if keyframes.len() < 2 || progress < keyframes.first()?.at || progress >= keyframes.last()?.at {
         return None;
@@ -1407,20 +1451,18 @@ fn function_piece(
                 evaluate_segment(&source.spec, segment_index, input_start, resolved_easing);
             let end_value =
                 evaluate_segment(&source.spec, segment_index, input_end, resolved_easing);
-            let midpoint_value = evaluate_segment(
+            if let Some(constant_value) = cubic_piece_constant_value(
                 &source.spec,
                 segment_index,
-                progress_at(midpoint_ms),
-                resolved_easing,
-            );
-            if start_value.approximately_equals(&end_value)
-                && start_value.approximately_equals(&midpoint_value)
-            {
+                input_start,
+                input_end,
+                curve,
+            ) {
                 return Ok(FunctionPiece {
                     start_ms,
                     end_ms,
-                    start_value: start_value.clone(),
-                    end_value: start_value,
+                    start_value: constant_value.clone(),
+                    end_value: constant_value,
                     easing: PieceEasing::Constant,
                 });
             }
@@ -3036,6 +3078,86 @@ mod tests {
                 };
                 assert_eq!(context["reason"], "final-hold-on-discontinuity");
                 assert_eq!(context["boundaryTimeMs"], 100.0);
+            }
+        }
+    }
+
+    #[test]
+    fn preserves_exact_linear_endpoints_for_final_hold_classification() {
+        let value_a = 0.5_f64;
+        let value_b = f64::from_bits(value_a.to_bits() + 1);
+        let keyframe = |at: f64, value: f64, transform: bool| AnimationKeyframe {
+            at,
+            opacity: (!transform).then_some(value),
+            transform: transform.then_some(AnimationTransform2D {
+                translate_x: Some(value),
+                ..AnimationTransform2D::default()
+            }),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 200.0,
+            iterations: DocumentIterationCount::Finite(0.5),
+        };
+
+        for transform in [false, true] {
+            let seam_spec = AnimationSpec {
+                keyframes: vec![
+                    keyframe(0.0, value_a, transform),
+                    keyframe(1.0, value_b, transform),
+                ],
+                duration_ms: 100.0,
+                delay_ms: Some(0.0),
+                easing: Some(AnimationEasing::Named("linear".to_string())),
+                iterations: Some(AnimationIterations::Infinite("infinite".to_string())),
+                fill: Some("both".to_string()),
+            };
+            let continuous_spec = AnimationSpec {
+                keyframes: vec![
+                    keyframe(0.0, value_a, transform),
+                    keyframe(0.5, value_b, transform),
+                    keyframe(1.0, value_b, transform),
+                ],
+                duration_ms: 200.0,
+                delay_ms: Some(0.0),
+                easing: Some(AnimationEasing::Named("linear".to_string())),
+                iterations: Some(AnimationIterations::Count(1.0)),
+                fill: Some("both".to_string()),
+            };
+
+            for source in [
+                timeline_ir(seam_spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &seam_spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                let error = compile_document_animation_plan(&source, playback, 0.0)
+                    .expect_err("a one-ULP iteration seam must remain observable");
+                let EngineError::StructuredContext { code, context, .. } = error else {
+                    panic!("one-ULP seam should produce timeline context");
+                };
+                assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+                assert_eq!(context["reason"], "zero-delta-jump");
+                assert_eq!(context["boundaryTimeMs"], 100.0);
+            }
+
+            for source in [
+                timeline_ir(continuous_spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &continuous_spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                compile_document_animation_plan(&source, playback, 0.0)
+                    .expect("an exact continuous keyframe boundary must remain continuous");
             }
         }
     }

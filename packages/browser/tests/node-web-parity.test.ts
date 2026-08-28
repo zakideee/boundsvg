@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { createElement, Engine, type VNode } from "@boundsvg/core";
+import { type AnimationSpec, createElement, Engine, type VNode } from "@boundsvg/core";
 import {
   EXPECTED_WASM_SCHEMA_VERSION,
   WasmEngineHandle,
@@ -187,6 +187,60 @@ function buildMixedClampCubicScene(): VNode {
   );
 }
 
+type EndpointOwner = "node" | "textUnit";
+type EndpointChannel = "opacity" | "transform";
+
+function buildExactEndpointScene(
+  owner: EndpointOwner,
+  channel: EndpointChannel,
+  seam: boolean,
+): VNode {
+  const valueA = 0.5;
+  const valueB = valueA + Number.EPSILON / 2;
+  const keyframe = (at: number, value: number) =>
+    channel === "opacity" ? { at, opacity: value } : { at, transform: { translateX: value } };
+  const animation: AnimationSpec = {
+    keyframes: seam
+      ? [keyframe(0, valueA), keyframe(1, valueB)]
+      : [keyframe(0, valueA), keyframe(0.5, valueB), keyframe(1, valueB)],
+    durationMs: seam ? 100 : 200,
+    easing: "linear",
+    iterations: seam ? "infinite" : 1,
+    fill: "both",
+  };
+  const animated =
+    owner === "node"
+      ? createElement("Box", {
+          id: `${channel}-endpoint-node`,
+          width: 32,
+          height: 20,
+          animate: animation,
+        })
+      : createElement(
+          "Text",
+          {
+            id: `${channel}-endpoint-text`,
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return createElement("Canvas", { width: 96, height: 48 }, animated);
+}
+
+function captureThrown(run: () => unknown): unknown {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected render to throw");
+}
+
 function buildSpringAnimatedScene(): VNode {
   return createElement(
     "Canvas",
@@ -328,6 +382,41 @@ describe("nodejs/web WASM public parity", () => {
       expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
     }
     expect((expected.match(/^\s*\d+(?:\.\d+)?%\s*\{/gm) ?? []).length).toBe(4);
+  });
+
+  it("preserves exact linear endpoints in every owner, channel, path, and WASM artifact", () => {
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 200, iterations: 0.5 },
+    };
+
+    for (const owner of ["node", "textUnit"] as const) {
+      for (const channel of ["opacity", "transform"] as const) {
+        const seamScene = buildExactEndpointScene(owner, channel, true);
+        for (const engine of timelineEngines) {
+          const compiled = engine.compile(seamScene);
+          for (const render of [
+            () => engine.renderToAnimatedSvg(seamScene, options),
+            () => engine.renderToAnimatedSvgAndIR(seamScene, options),
+            () => engine.renderCompiledToAnimatedSvg(compiled, options),
+          ]) {
+            expect(captureThrown(render)).toMatchObject({
+              code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+              context: { reason: "zero-delta-jump", boundaryTimeMs: 100 },
+            });
+          }
+        }
+
+        const continuousScene = buildExactEndpointScene(owner, channel, false);
+        const expected = nodeEngine.renderToAnimatedSvg(continuousScene, options);
+        for (const engine of timelineEngines) {
+          expect(engine.renderToAnimatedSvg(continuousScene, options)).toBe(expected);
+          expect(engine.renderToAnimatedSvgAndIR(continuousScene, options).svg).toBe(expected);
+          expect(engine.renderCompiledToAnimatedSvg(engine.compile(continuousScene), options)).toBe(
+            expected,
+          );
+        }
+      }
+    }
   });
 
   it("returns the same timeline representability error and context", () => {
