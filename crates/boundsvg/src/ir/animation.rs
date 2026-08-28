@@ -26,7 +26,7 @@ const SPRING_MASS_MAX: f64 = 10.0;
 const SPRING_CRITICAL_EPSILON: f64 = 1.0e-9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AnimationStepPosition {
+pub(super) enum AnimationStepPosition {
     Start,
     End,
     None,
@@ -34,7 +34,7 @@ enum AnimationStepPosition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ResolvedEasing {
+pub(super) enum ResolvedEasing {
     Cubic([f64; 4]),
     Steps {
         count: f64,
@@ -320,7 +320,7 @@ pub(crate) fn sample_spring_progress(
     apply_spring_easing(progress, omega0, zeta, segment_duration_ms)
 }
 
-fn resolve_easing(
+pub(super) fn resolve_easing(
     easing: Option<&AnimationEasing>,
     node_id: &str,
 ) -> Result<ResolvedEasing, EngineError> {
@@ -461,7 +461,7 @@ fn apply_step_easing(
     current_step / jumps
 }
 
-fn apply_easing(
+pub(super) fn apply_easing(
     progress: f64,
     easing: ResolvedEasing,
     before: bool,
@@ -586,7 +586,7 @@ fn sample_transform(
     }
 }
 
-fn sample_spec(
+pub(super) fn sample_spec(
     spec: &AnimationSpec,
     node_id: &str,
     time_ms: f64,

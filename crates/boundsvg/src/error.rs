@@ -37,6 +37,21 @@ pub enum EngineError {
         stage: Option<String>,
         node_id: Option<String>,
     },
+
+    /// Structured render failure with a code-specific JSON context payload.
+    ///
+    /// Most errors only need the common stage/node fields above. Timeline
+    /// compilation additionally exposes machine-readable representability,
+    /// precision, and budget details, so keeping this as a separate variant
+    /// avoids widening every existing constructor.
+    #[error("{message}")]
+    StructuredContext {
+        code: String,
+        message: String,
+        stage: Option<String>,
+        node_id: Option<String>,
+        context: Box<serde_json::Value>,
+    },
 }
 
 impl From<EngineError> for String {
