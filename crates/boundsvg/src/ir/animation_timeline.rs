@@ -3116,6 +3116,99 @@ mod tests {
     }
 
     #[test]
+    fn representative_semantic_expansion_matches_the_two_pass_stop_count() {
+        const TRACK_COUNT: usize = 828;
+        const FOUR_STOP_TRACKS: usize = 294;
+        const STEP_TRACKS: usize = 814;
+        const INFINITE_TRACKS: usize = 13;
+        const EXPECTED_STOPS: usize = 2_778;
+
+        let children = (0..TRACK_COUNT)
+            .map(|track_index| {
+                let selector_count = if track_index < FOUR_STOP_TRACKS { 4 } else { 3 };
+                let keyframes = (0..selector_count)
+                    .map(|selector_index| AnimationKeyframe {
+                        at: f64::from(selector_index) / f64::from(selector_count - 1),
+                        opacity: Some(f64::from(selector_index % 2)),
+                        transform: None,
+                    })
+                    .collect();
+                let easing = if track_index < STEP_TRACKS {
+                    AnimationEasing::Steps(AnimationSteps {
+                        kind: "steps".to_string(),
+                        count: 1.0,
+                        position: Some("jump-end".to_string()),
+                    })
+                } else {
+                    AnimationEasing::Named("linear".to_string())
+                };
+                let iterations = if track_index < INFINITE_TRACKS {
+                    AnimationIterations::Infinite("infinite".to_string())
+                } else {
+                    AnimationIterations::Count(1.0)
+                };
+                animated_group(
+                    &format!("representative-{track_index}"),
+                    AnimationSpec {
+                        keyframes,
+                        duration_ms: 200.0,
+                        delay_ms: Some(0.0),
+                        easing: Some(easing),
+                        iterations: Some(iterations),
+                        fill: Some("both".to_string()),
+                    },
+                )
+            })
+            .collect();
+        let ir = Ir {
+            root: IrNode {
+                node_id: "root".to_string(),
+                bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
+                kind: IrNodeKind::Group {
+                    children,
+                    clip_path: None,
+                    clip_border_radius: None,
+                    opacity: None,
+                    box_shadow: None,
+                    meta: None,
+                    transform: None,
+                    animation: None,
+                    on: None,
+                },
+            },
+            draw_order: Vec::new(),
+            width: 100.0,
+            height: 50.0,
+            debug: None,
+            warnings: Vec::new(),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 200.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+        let plan = compile_document_animation_plan_with_prefix(
+            &ir,
+            playback,
+            0.0,
+            "representative-",
+            false,
+        )
+        .expect("representative semantic expansion should compile");
+
+        assert_eq!(plan.tracks.len(), TRACK_COUNT);
+        assert_eq!(plan.keyframe_stop_count, EXPECTED_STOPS);
+        assert_eq!(
+            plan.exact_css_bytes,
+            crate::svg_emit::emitter::timeline_plan_css_byte_count(
+                &plan,
+                "representative-",
+                false,
+            )
+            .expect("the count pass should match the accepted plan")
+        );
+    }
+
+    #[test]
     fn cubic_subcurve_reproduces_the_original_interval() {
         let curve = [0.3, 1.6, 0.7, 1.4];
         let input_start = 0.2;

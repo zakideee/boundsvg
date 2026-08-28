@@ -22,6 +22,11 @@ export default defineConfig({
       testMatch: "canvas-stable-border.spec.ts",
       use: { ...devices["Desktop Firefox"] },
     },
+    {
+      name: "firefox-timeline",
+      testMatch: "animated-svg-document-timeline.spec.ts",
+      use: { ...devices["Desktop Firefox"] },
+    },
   ],
   webServer: [
     {

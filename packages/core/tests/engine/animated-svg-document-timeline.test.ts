@@ -7,6 +7,7 @@ import type {
   RenderAnimatedSvgOptions,
 } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
+import { animatedSvgTimelineLimits } from "../../src/render-capabilities.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
@@ -78,6 +79,51 @@ describe("animated SVG document timeline", () => {
     expect(direct).toContain("animation-duration: 800ms;");
     expect(direct).toContain("animation-delay: -150ms;");
     expect(direct).toContain("animation-iteration-count: 1.25;");
+  });
+
+  it("enforces the published inclusive keyframe stop limit", () => {
+    const stepScene = (count: number) =>
+      createElement(
+        "Canvas",
+        { width: 48, height: 24 },
+        createElement("Box", {
+          id: "timeline-step-limit",
+          width: 16,
+          height: 16,
+          animate: {
+            keyframes: [
+              { at: 0, opacity: 0 },
+              { at: 1, opacity: 1 },
+            ],
+            durationMs: 800,
+            easing: { type: "steps", count, position: "jump-end" },
+            iterations: 1,
+            fill: "both",
+          },
+        }),
+      );
+    const playback = {
+      playback: { mode: "timeline", durationMs: 800, iterations: "infinite" },
+    } as const satisfies RenderAnimatedSvgOptions;
+    const atLimit = engine.renderToAnimatedSvg(
+      stepScene(animatedSvgTimelineLimits.maxKeyframeStops - 1),
+      playback,
+    );
+    expect((atLimit.match(/^\s*\d+(?:\.\d+)?%\s*\{/gm) ?? []).length).toBe(
+      animatedSvgTimelineLimits.maxKeyframeStops,
+    );
+
+    const error = captureFatal(() =>
+      engine.renderToAnimatedSvg(stepScene(animatedSvgTimelineLimits.maxKeyframeStops), playback),
+    );
+    expect(error).toMatchObject({
+      code: "ANIMATED_SVG_TIMELINE_LIMIT",
+      context: {
+        metric: "keyframeStops",
+        actual: animatedSvgTimelineLimits.maxKeyframeStops + 1,
+        limit: animatedSvgTimelineLimits.maxKeyframeStops,
+      },
+    });
   });
 
   it.each([

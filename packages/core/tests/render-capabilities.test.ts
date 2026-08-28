@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  animatedSvgTimelineLimits,
   type CompiledScene,
   createElement,
   createEngineAsync,
@@ -251,6 +252,11 @@ describe("public render capability contract", () => {
     expect(RASTER_DIMENSION_SATURATION).toBe(4_294_967_295);
     expect(MAX_ANIMATION_FRAMES).toBe(300);
     expect(MAX_ANIMATION_SVG_PAYLOAD_CHARS).toBe(67_108_864);
+    expect(animatedSvgTimelineLimits).toEqual({
+      maxKeyframeStops: 16_384,
+      maxCssBytes: 16_777_216,
+    });
+    expect(Object.isFrozen(animatedSvgTimelineLimits)).toBe(true);
   });
 
   it("terminates and rejects a non-finite public resolver input", () => {
