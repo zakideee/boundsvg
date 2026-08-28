@@ -1,5 +1,34 @@
 # @boundsvg/core
 
+## 0.3.0
+
+### Minor Changes
+
+- [#20](https://github.com/zakideee/boundsvg/pull/20) [`977e4dd`](https://github.com/zakideee/boundsvg/commit/977e4dd34a6d75223245e41edd9dbaff954d0917) Thanks [@zakideee](https://github.com/zakideee)! - Preserve same-document raw SVG ID references when `contentIdPrefix` is set, including ARIA IDREF(S), SMIL timing references, supported `url()` values, and flat CSS ID selectors. Rewriting is now structural and byte-preserving, and unsafe known-local syntax fails with a structured error instead of emitting dangling references.
+
+  `analyzeEmbeddedSvgIds()` now reports `aria`, `smil`, and `css-selector` reference kinds plus `attribute` and `syntax` metadata. Update exhaustive `EmbeddedSvgReferenceKind` switches for the new variants.
+
+- [#20](https://github.com/zakideee/boundsvg/pull/20) [`977e4dd`](https://github.com/zakideee/boundsvg/commit/977e4dd34a6d75223245e41edd9dbaff954d0917) Thanks [@zakideee](https://github.com/zakideee)! - Apply `resourceIdPrefix` to every boundsvg-generated, document-global SVG identifier and its references, including animation names, generated classes, shared Shape paths, canvas-stroke classes, and debug overlays.
+
+  Layered SVG exports now derive a stable, prefix-free sub-namespace for every layer when a non-empty prefix is supplied. For guaranteed separation across co-embedded outputs, use normalized prefixes that are non-empty and pairwise prefix-free; merely different values such as `doc-` and `doc-clip-` are not sufficient.
+
+- [#20](https://github.com/zakideee/boundsvg/pull/20) [`977e4dd`](https://github.com/zakideee/boundsvg/commit/977e4dd34a6d75223245e41edd9dbaff954d0917) Thanks [@zakideee](https://github.com/zakideee)! - Split static SVG, animated SVG, and raster rendering into format-specific 0.3 APIs and option types. `RenderOptions` and `EmitOptions` are removed. Static SVG methods now reject animated scenes unless `timeMs` is explicit; use `renderToAnimatedSvg` / `renderCompiledToAnimatedSvg` and their SVG+IR or Worker equivalents with `playback: { mode: "independent" }` to preserve authored tracks. Caller-defined document timelines are not part of this release.
+
+  SVG emission now supports `nodeIdMetadata: "include" | "omit"`. Keep the default `"include"` for inspection and hit testing, and pass `"omit"` for final output. `scale` continues to multiply SVG root dimensions and canvas-stroke restoration CSS without changing the `viewBox` or child geometry.
+
+  React adds `AnimatedBoundSvg` and main-thread/Worker animated SVG hooks. Rename Provider `defaultRenderOptions` to `defaultCommonOptions`; it accepts compile and output-common fields only. Pass namespace, metadata, sampling, playback, reduced-motion, and raster options at each component or hook call. Legacy, unknown, or artifact-incompatible own keys now fail instead of being ignored.
+
+  Layered SVG and PNG remain static-only. Remove the old `animation` option, supply `timeMs` for animated input, and do not pass SVG-only namespace or metadata options to layered PNG.
+
+- [#20](https://github.com/zakideee/boundsvg/pull/20) [`977e4dd`](https://github.com/zakideee/boundsvg/commit/977e4dd34a6d75223245e41edd9dbaff954d0917) Thanks [@zakideee](https://github.com/zakideee)! - Replace animated-raster `loop` counts with a required `iterations` total-play count in the Core and Worker APIs. Animated WebP accepts 1–65535 or `"infinite"`; GIF accepts 1–65536 or `"infinite"`, omits its repeat extension for one play, and stores finite totals as one fewer repeat.
+
+  The CLI now accepts `--iterations <positive-integer|infinite>` for animated WebP and GIF, defaulting an omitted flag to `infinite`. The removed `--loop` flag fails with format-specific migration guidance: WebP positive values stay unchanged, while GIF positive values increase by one.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @boundsvg/shape@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
