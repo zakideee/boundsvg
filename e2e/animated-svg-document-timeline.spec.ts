@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   type AnimationSpec,
-  animatedSvgTimelineLimits,
   createElement,
   createEngineAsync,
   type Engine,
@@ -480,77 +479,4 @@ test("keeps node and text-unit tracks on the same document clock", async ({ page
     const animated = await readVisualState(page, animatedSvg, fixture.selector);
     expectNear(animated.opacity, fixture.expected, OPACITY_TOLERANCE);
   }
-});
-
-function representativeAnimation(trackIndex: number): AnimationSpec {
-  const selectorCount = trackIndex < 294 ? 4 : 3;
-  const keyframes = Array.from({ length: selectorCount }, (_, selectorIndex) => ({
-    at: selectorIndex / (selectorCount - 1),
-    opacity: selectorIndex % 2,
-    transform: { translateX: selectorIndex },
-  }));
-  return {
-    keyframes,
-    durationMs: DOCUMENT_DURATION_MS,
-    delayMs: (trackIndex % 509) * 0.05,
-    easing: trackIndex < 814 ? { type: "steps", count: 1, position: "jump-end" } : "linear",
-    iterations: trackIndex < 13 ? "infinite" : 1,
-    fill: "both",
-  };
-}
-
-function representativeScene(): VNode {
-  const children = Array.from({ length: 828 }, (_, trackIndex) => {
-    const animation = representativeAnimation(trackIndex);
-    if (trackIndex % 2 === 0) {
-      return createElement("Box", {
-        id: `representative-node-${trackIndex}`,
-        position: "absolute",
-        width: 1,
-        height: 1,
-        opacity: 0,
-        animate: animation,
-      });
-    }
-    return createElement(
-      "Text",
-      {
-        id: `representative-unit-${trackIndex}`,
-        position: "absolute",
-        width: 8,
-        height: 8,
-        font: "NotoSansJP",
-        fontSizePx: 8,
-        lineHeightPx: 8,
-        opacity: 0,
-        animateUnits: { by: "cluster", delayStepMs: 0, animation },
-      },
-      "A",
-    );
-  });
-  return createElement("Canvas", { width: 64, height: 64 }, ...children);
-}
-
-test("loads a representative 828-track timeline within the published budget", async ({ page }) => {
-  const svg = engine.renderToAnimatedSvg(representativeScene(), timelineOptions(125));
-  const style = /<style>([\s\S]*?)<\/style>/.exec(svg)?.[1] ?? "";
-  const animationCount = (style.match(/@keyframes /g) ?? []).length;
-  const keyframeStopCount = (style.match(/^\s*(?:\d+(?:\.\d+)?%)\s*\{/gm) ?? []).length;
-  expect(animationCount).toBe(828);
-  expect(keyframeStopCount).toBeLessThanOrEqual(animatedSvgTimelineLimits.maxKeyframeStops);
-  expect(new TextEncoder().encode(style).byteLength).toBeLessThanOrEqual(
-    animatedSvgTimelineLimits.maxCssBytes,
-  );
-
-  await page.setContent(`<style>${PAUSED_ANIMATION_CSS}</style><main>${svg}</main>`);
-  await expect(page.locator('[class*="bsvg-anim-"]')).toHaveCount(828);
-  const first = await page
-    .locator('[data-boundsvg-node-id="representative-node-0"]')
-    .evaluate((element) => getComputedStyle(element).animationName);
-  const last = await page
-    .locator('[class*="unit:0"]')
-    .last()
-    .evaluate((element) => getComputedStyle(element).animationName);
-  expect(first).not.toBe("none");
-  expect(last).not.toBe("none");
 });

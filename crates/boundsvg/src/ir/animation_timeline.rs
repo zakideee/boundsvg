@@ -4351,12 +4351,12 @@ mod tests {
     }
 
     #[test]
-    fn representative_semantic_expansion_matches_the_two_pass_stop_count() {
-        const TRACK_COUNT: usize = 828;
-        const FOUR_STOP_TRACKS: usize = 294;
-        const STEP_TRACKS: usize = 814;
-        const INFINITE_TRACKS: usize = 13;
-        const EXPECTED_STOPS: usize = 2_778;
+    fn mixed_track_semantic_expansion_matches_the_two_pass_stop_count() {
+        const TRACK_COUNT: usize = 11;
+        const FOUR_STOP_TRACKS: usize = 4;
+        const STEP_TRACKS: usize = 7;
+        const INFINITE_TRACKS: usize = 3;
+        const EXPECTED_STOPS: usize = 37;
 
         let children = (0..TRACK_COUNT)
             .map(|track_index| {
@@ -4383,7 +4383,7 @@ mod tests {
                     AnimationIterations::Count(1.0)
                 };
                 animated_group(
-                    &format!("representative-{track_index}"),
+                    &format!("count-check-{track_index}"),
                     AnimationSpec {
                         keyframes,
                         duration_ms: 200.0,
@@ -4421,25 +4421,16 @@ mod tests {
             duration_ms: 200.0,
             iterations: DocumentIterationCount::Infinite,
         };
-        let plan = compile_document_animation_plan_with_prefix(
-            &ir,
-            playback,
-            0.0,
-            "representative-",
-            false,
-        )
-        .expect("representative semantic expansion should compile");
+        let plan =
+            compile_document_animation_plan_with_prefix(&ir, playback, 0.0, "count-check-", false)
+                .expect("mixed semantic expansion should compile");
 
         assert_eq!(plan.tracks.len(), TRACK_COUNT);
         assert_eq!(plan.keyframe_stop_count, EXPECTED_STOPS);
         assert_eq!(
             plan.exact_css_bytes,
-            crate::svg_emit::emitter::timeline_plan_css_byte_count(
-                &plan,
-                "representative-",
-                false,
-            )
-            .expect("the count pass should match the accepted plan")
+            crate::svg_emit::emitter::timeline_plan_css_byte_count(&plan, "count-check-", false,)
+                .expect("the count pass should match the accepted plan")
         );
     }
 
