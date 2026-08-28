@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type {
+  AnimationIterationCount,
   AnimationTimeline,
   EmitAnimatedSvgOptions,
   Engine,
@@ -57,7 +58,8 @@ function captureFatal(run: () => unknown): FatalError {
   throw new Error("Expected a FatalError");
 }
 
-const timeline: AnimationTimeline = { durationMs: 800, iterations: 2.25 };
+const iterationCount: AnimationIterationCount = 2.25;
+const timeline: AnimationTimeline = { durationMs: 800, iterations: iterationCount };
 const timelineOptions = {
   playback: { mode: "timeline", ...timeline },
   timeMs: 950,
@@ -117,6 +119,44 @@ describe("animated SVG document timeline", () => {
       }),
     );
     expect(independentError.code).toBe("ANIMATION_INVALID_TIME");
+  });
+
+  it("rejects explicit null timeMs before every animated SVG transport", () => {
+    const renderTransport = vi.fn((inputJson: string, optionsJson: string) =>
+      handle.renderToAnimatedSvg(inputJson, optionsJson),
+    );
+    const compiledTransport = vi.fn((irJson: string, optionsJson: string) =>
+      handle.resolveAndEmitAnimatedSvgFromIr(irJson, optionsJson),
+    );
+    const boundaryEngine = createEngineFromHandle(handle, {
+      renderToAnimatedSvgFn: renderTransport,
+      resolveAndEmitAnimatedSvgFromIrFn: compiledTransport,
+    });
+    const scene = timelineScene();
+    const compiled = boundaryEngine.compile(scene);
+    const nullTimeOptions = {
+      playback: { mode: "timeline", durationMs: 800, iterations: "infinite" },
+      timeMs: null,
+    } as unknown as RenderAnimatedSvgOptions;
+
+    try {
+      for (const render of [
+        () => boundaryEngine.renderToAnimatedSvg(scene, nullTimeOptions),
+        () => boundaryEngine.renderToAnimatedSvgAndIR(scene, nullTimeOptions),
+        () => boundaryEngine.renderCompiledToAnimatedSvg(compiled, nullTimeOptions),
+      ]) {
+        const error = captureFatal(render);
+        expect(error).toMatchObject({
+          code: "ANIMATED_SVG_INVALID_TIMELINE",
+          stage: "validate",
+          context: { stage: "validate", field: "timeMs", received: "null" },
+        });
+      }
+      expect(renderTransport).not.toHaveBeenCalled();
+      expect(compiledTransport).not.toHaveBeenCalled();
+    } finally {
+      boundaryEngine.dispose();
+    }
   });
 
   it("rejects document clock precision loss with the fixed context", () => {

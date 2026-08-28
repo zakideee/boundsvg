@@ -12,6 +12,10 @@ import webWasmInit, {
   BoundSvgEngine as WebBoundSvgEngine,
   wasm_schema_version as webSchemaVersion,
 } from "../../../crates/boundsvg/pkg-web/boundsvg.js";
+import scalarWebWasmInit, {
+  BoundSvgEngine as ScalarWebBoundSvgEngine,
+  wasm_schema_version as scalarWebSchemaVersion,
+} from "../../../crates/boundsvg/pkg-web/scalar/boundsvg.js";
 
 type LowLevelWasmModule = {
   BoundSvgEngine: new () => WasmEngineInstance;
@@ -21,6 +25,9 @@ type LowLevelWasmModule = {
 const require = createRequire(import.meta.url);
 const nodeWasm = require(
   resolve(__dirname, "../../core/wasm-pkg/boundsvg.js"),
+) as LowLevelWasmModule;
+const scalarNodeWasm = require(
+  resolve(__dirname, "../../core/wasm-pkg/scalar/boundsvg.js"),
 ) as LowLevelWasmModule;
 const fontBytes = readFileSync(
   resolve(__dirname, "../../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"),
@@ -156,25 +163,40 @@ function buildSpringAnimatedScene(): VNode {
 
 describe("nodejs/web WASM public parity", () => {
   let nodeEngine: Engine;
+  let scalarNodeEngine: Engine;
   let webEngine: Engine;
+  let scalarWebEngine: Engine;
+  let timelineEngines: Engine[];
 
   beforeAll(async () => {
     const webWasmBytes = readFileSync(
       resolve(__dirname, "../../../crates/boundsvg/pkg-web/boundsvg_bg.wasm"),
     );
+    const scalarWebWasmBytes = readFileSync(
+      resolve(__dirname, "../../../crates/boundsvg/pkg-web/scalar/boundsvg_bg.wasm"),
+    );
     await webWasmInit({ module_or_path: new WebAssembly.Module(webWasmBytes) });
+    await scalarWebWasmInit({ module_or_path: new WebAssembly.Module(scalarWebWasmBytes) });
     nodeEngine = createLowLevelEngine(new nodeWasm.BoundSvgEngine());
+    scalarNodeEngine = createLowLevelEngine(new scalarNodeWasm.BoundSvgEngine());
     webEngine = createLowLevelEngine(new WebBoundSvgEngine() as unknown as WasmEngineInstance);
+    scalarWebEngine = createLowLevelEngine(
+      new ScalarWebBoundSvgEngine() as unknown as WasmEngineInstance,
+    );
+    timelineEngines = [nodeEngine, scalarNodeEngine, webEngine, scalarWebEngine];
   });
 
   afterAll(() => {
-    nodeEngine.dispose();
-    webEngine.dispose();
+    for (const engine of timelineEngines) {
+      engine.dispose();
+    }
   });
 
   it("reports the same DTO schema", () => {
     expect(nodeWasm.wasm_schema_version()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
+    expect(scalarNodeWasm.wasm_schema_version()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
     expect(webSchemaVersion()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
+    expect(scalarWebSchemaVersion()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
   });
 
   it("renders representative SVG, IR, and PNG bytes identically", () => {
@@ -214,12 +236,19 @@ describe("nodejs/web WASM public parity", () => {
       resourceIdPrefix: "timeline-parity-",
       nodeIdMetadata: "omit" as const,
     };
-    expect(webEngine.renderToAnimatedSvg(scene, options)).toBe(
-      nodeEngine.renderToAnimatedSvg(scene, options),
+    const expectedSvg = nodeEngine.renderToAnimatedSvg(scene, options);
+    const expectedSvgAndIr = nodeEngine.renderToAnimatedSvgAndIR(scene, options);
+    const expectedCompiledSvg = nodeEngine.renderCompiledToAnimatedSvg(
+      nodeEngine.compile(scene),
+      options,
     );
-    expect(webEngine.renderToAnimatedSvgAndIR(scene, options)).toEqual(
-      nodeEngine.renderToAnimatedSvgAndIR(scene, options),
-    );
+    for (const engine of timelineEngines) {
+      expect(engine.renderToAnimatedSvg(scene, options)).toBe(expectedSvg);
+      expect(engine.renderToAnimatedSvgAndIR(scene, options)).toEqual(expectedSvgAndIr);
+      expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(
+        expectedCompiledSvg,
+      );
+    }
   });
 
   it("returns the same timeline representability error and context", () => {
@@ -228,19 +257,22 @@ describe("nodejs/web WASM public parity", () => {
       playback: { mode: "timeline" as const, durationMs: 1_000, iterations: "infinite" as const },
       timeMs: 100,
     };
-    let nodeError: unknown;
-    let webError: unknown;
-    try {
-      nodeEngine.renderToAnimatedSvg(scene, options);
-    } catch (error) {
-      nodeError = error;
-    }
-    try {
-      webEngine.renderToAnimatedSvg(scene, options);
-    } catch (error) {
-      webError = error;
-    }
-    expect(webError).toMatchObject({
+    const errors = timelineEngines.flatMap((engine) => {
+      const compiled = engine.compile(scene);
+      return [
+        () => engine.renderToAnimatedSvg(scene, options),
+        () => engine.renderToAnimatedSvgAndIR(scene, options),
+        () => engine.renderCompiledToAnimatedSvg(compiled, options),
+      ].map((render) => {
+        try {
+          render();
+        } catch (error) {
+          return error;
+        }
+        throw new Error("Expected timeline representability error");
+      });
+    });
+    expect(errors[0]).toMatchObject({
       code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
       context: {
         ownerKind: "node",
@@ -249,7 +281,9 @@ describe("nodejs/web WASM public parity", () => {
         boundaryTimeMs: 0,
       },
     });
-    expect(webError).toEqual(nodeError);
+    for (const error of errors.slice(1)) {
+      expect(error).toEqual(errors[0]);
+    }
   });
 
   it("returns the same static-animation sampling error", () => {

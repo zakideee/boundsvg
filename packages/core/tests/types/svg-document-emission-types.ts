@@ -1,4 +1,6 @@
 import type {
+  AnimationIterationCount,
+  AnimationTimeline,
   EmitAnimatedSvgOptions,
   EmitSvgOptions,
   LayeredPngOptions,
@@ -25,12 +27,21 @@ const animatedOptions: RenderAnimatedSvgOptions = {
   reducedMotion: "pause",
   nodeIdMetadata: "include",
 };
+const timelineIterations: AnimationIterationCount = 2.25;
+const timeline: AnimationTimeline = {
+  durationMs: 1_000,
+  iterations: timelineIterations,
+};
+const timelineOptions: RenderAnimatedSvgOptions = {
+  playback: { mode: "timeline", ...timeline },
+};
 const staticEmitOptions: EmitSvgOptions = { timeMs: 0, nodeIdMetadata: "omit" };
 const animatedEmitOptions: EmitAnimatedSvgOptions = {
   playback: { mode: "independent" },
 };
 void staticOptions;
 void animatedOptions;
+void timelineOptions;
 void staticEmitOptions;
 void animatedEmitOptions;
 void (undefined as unknown as RemovedRenderOptions);

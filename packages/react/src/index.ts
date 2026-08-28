@@ -4,6 +4,7 @@
 export type {
   AnimatedSvgPlayback,
   AnimationEasing,
+  AnimationIterationCount,
   AnimationKeyframe,
   AnimationSpec,
   AnimationSpring,

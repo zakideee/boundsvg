@@ -946,6 +946,10 @@ fn sample_svg_animation(
             playback,
             time_ms,
             options.resource_id_prefix.as_deref().unwrap_or_default(),
+            matches!(
+                options.reduced_motion.unwrap_or_default(),
+                ReducedMotionInput::Pause
+            ),
         )
         .map_err(|error| engine_error_to_render_envelope(&error))?;
         (playback.authored_sample_time_ms(time_ms), Some(plan))
@@ -3353,6 +3357,7 @@ mod tests {
             },
             250.0,
             resource_id_prefix,
+            false,
         )
         .expect("timeline plan should compile");
         let css_start = svg
@@ -3364,6 +3369,91 @@ mod tests {
             .map(|index| css_start + index)
             .expect("style end should exist");
         assert_eq!(svg[css_start..css_end].len(), plan.exact_css_bytes);
+    }
+
+    #[test]
+    fn animated_timeline_reduced_motion_is_in_the_exact_css_count() {
+        let engine = BoundSvgEngine::create();
+        let resource_id_prefix = "文書 pause/";
+        let options = serde_json::json!({
+            "playback": {
+                "mode": "timeline",
+                "durationMs": 200.0,
+                "iterations": 2.5
+            },
+            "timeMs": 250.0,
+            "resourceIdPrefix": resource_id_prefix,
+            "reducedMotion": "pause"
+        })
+        .to_string();
+        let svg = engine
+            .emit_animated_svg_from_ir(&timeline_ir_json(), &options)
+            .expect("timeline reduced-motion emit should succeed");
+        let parsed_ir = super::parse_emit_ir(&timeline_ir_json()).expect("IR should parse");
+        let plan = crate::ir::animation_timeline::compile_document_animation_plan_with_prefix(
+            &parsed_ir,
+            crate::ir::animation_timeline::DocumentPlayback {
+                duration_ms: 200.0,
+                iterations: crate::ir::animation_timeline::DocumentIterationCount::Finite(2.5),
+            },
+            250.0,
+            resource_id_prefix,
+            true,
+        )
+        .expect("timeline reduced-motion plan should compile");
+        let css_start = svg
+            .find("  <style>\n")
+            .map(|index| index + "  <style>\n".len())
+            .expect("style start should exist");
+        let css_end = svg[css_start..]
+            .find("  </style>")
+            .map(|index| css_start + index)
+            .expect("style end should exist");
+        assert!(svg.contains("@media (prefers-reduced-motion: reduce)"));
+        assert_eq!(svg[css_start..css_end].len(), plan.exact_css_bytes);
+    }
+
+    #[test]
+    fn animated_timeline_reduced_motion_cannot_bypass_the_css_budget() {
+        let resource_id_prefix = "a".repeat(5_000_000);
+        let parsed_ir = super::parse_emit_ir(&timeline_ir_json()).expect("IR should parse");
+        let playback = crate::ir::animation_timeline::DocumentPlayback {
+            duration_ms: 200.0,
+            iterations: crate::ir::animation_timeline::DocumentIterationCount::Infinite,
+        };
+        let keep_plan = crate::ir::animation_timeline::compile_document_animation_plan_with_prefix(
+            &parsed_ir,
+            playback,
+            0.0,
+            &resource_id_prefix,
+            false,
+        )
+        .expect("the animation rules alone should remain below the CSS limit");
+        assert!(keep_plan.exact_css_bytes <= crate::ir::animation_timeline::MAX_TIMELINE_CSS_BYTES);
+
+        let error = crate::ir::animation_timeline::compile_document_animation_plan_with_prefix(
+            &parsed_ir,
+            playback,
+            0.0,
+            &resource_id_prefix,
+            true,
+        )
+        .expect_err("the reduced-motion selector must count toward the CSS limit");
+        let crate::error::EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("reduced-motion budget should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_LIMIT");
+        assert_eq!(context["metric"], "cssBytes");
+        assert!(
+            context["actual"]
+                .as_u64()
+                .expect("actual should be numeric")
+                > crate::ir::animation_timeline::MAX_TIMELINE_CSS_BYTES as u64
+        );
+        assert_eq!(
+            context["limit"],
+            crate::ir::animation_timeline::MAX_TIMELINE_CSS_BYTES
+        );
     }
 
     #[test]

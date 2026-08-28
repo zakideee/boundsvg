@@ -11,6 +11,7 @@ export type {
   AnimatedRasterIterations,
   AnimatedSvgPlayback,
   AnimationAffineMatrix,
+  AnimationIterationCount,
   AnimationStateSample,
   AnimationTimeline,
   CompiledScene,

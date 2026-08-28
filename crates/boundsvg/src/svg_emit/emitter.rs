@@ -698,11 +698,23 @@ fn enforce_timeline_css_byte_limit(actual_css_bytes: usize) -> Result<(), Engine
 
 fn timeline_css_byte_count(scene: &PaintScene) -> Result<usize, EngineError> {
     let mut counter = CssByteCounter::default();
+    let mut has_timeline_animation = false;
     for animation in &scene.animations {
         if !write_timeline_animation_rule(&mut counter, animation)? {
             continue;
         }
+        has_timeline_animation = true;
         counter.bytes = counter.bytes.saturating_add(1);
+        enforce_timeline_css_byte_limit(counter.bytes)?;
+    }
+    if has_timeline_animation && scene.reduced_motion == ReducedMotionMode::Pause {
+        write_reduced_motion_rule(
+            &mut counter,
+            scene
+                .animations
+                .iter()
+                .map(|animation| animation.class_name.as_str()),
+        )?;
         enforce_timeline_css_byte_limit(counter.bytes)?;
     }
     Ok(counter.bytes)
@@ -711,6 +723,7 @@ fn timeline_css_byte_count(scene: &PaintScene) -> Result<usize, EngineError> {
 pub(crate) fn timeline_plan_css_byte_count(
     plan: &DocumentAnimationPlan,
     resource_id_prefix: &str,
+    include_reduced_motion: bool,
 ) -> Result<usize, EngineError> {
     let identifier_namespace = SvgIdentifierNamespace::new(resource_id_prefix);
     let mut counter = CssByteCounter::default();
@@ -738,6 +751,18 @@ pub(crate) fn timeline_plan_css_byte_count(
         counter.bytes = counter.bytes.saturating_add(1);
         enforce_timeline_css_byte_limit(counter.bytes)?;
     }
+    if include_reduced_motion {
+        write_reduced_motion_rule(
+            &mut counter,
+            plan.tracks.iter().map(|track| {
+                identifier_namespace.identifier(
+                    SvgIdentifierRole::AnimationClass,
+                    &track.animation_name_owner,
+                )
+            }),
+        )?;
+        enforce_timeline_css_byte_limit(counter.bytes)?;
+    }
     Ok(counter.bytes)
 }
 
@@ -751,22 +776,52 @@ pub(crate) fn timeline_plan_css_byte_count(
 /// The base pose invariant is what makes `animation: none` safe: the
 /// element's attributes already carry the sampled pose, so stopping playback
 /// leaves a coherent still rather than an unstyled element.
-fn emit_reduced_motion_rule(scene: &PaintScene) -> Vec<String> {
-    let selectors: Vec<String> = scene
-        .animations
-        .iter()
-        .map(|animation| format!(".{}", escape_css_identifier(&animation.class_name)))
-        .collect();
-    if selectors.is_empty() {
-        return Vec::new();
+fn write_reduced_motion_rule<I, S>(
+    output: &mut impl std::fmt::Write,
+    class_names: I,
+) -> Result<bool, EngineError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut class_names = class_names.into_iter().peekable();
+    if class_names.peek().is_none() {
+        return Ok(false);
     }
-    vec![
-        "    @media (prefers-reduced-motion: reduce) {".to_string(),
-        format!("      {} {{", selectors.join(", ")),
-        "        animation: none !important;".to_string(),
-        "      }".to_string(),
-        "    }".to_string(),
-    ]
+    write_timeline_css(
+        output,
+        format_args!("    @media (prefers-reduced-motion: reduce) {{\n"),
+    )?;
+    write_timeline_css(output, format_args!("      "))?;
+    for (index, class_name) in class_names.enumerate() {
+        if index > 0 {
+            write_timeline_css(output, format_args!(", "))?;
+        }
+        write_timeline_css(
+            output,
+            format_args!(".{}", escape_css_identifier(class_name.as_ref())),
+        )?;
+    }
+    write_timeline_css(
+        output,
+        format_args!(" {{\n        animation: none !important;\n      }}\n    }}\n"),
+    )?;
+    Ok(true)
+}
+
+fn reduced_motion_rule(scene: &PaintScene) -> Result<Option<String>, EngineError> {
+    let mut rule = String::new();
+    if write_reduced_motion_rule(
+        &mut rule,
+        scene
+            .animations
+            .iter()
+            .map(|animation| animation.class_name.as_str()),
+    )? {
+        Ok(Some(rule))
+    } else {
+        Ok(None)
+    }
 }
 
 fn emit_canvas_stroke_rules(scene: &PaintScene) -> Result<Vec<String>, EngineError> {
@@ -813,7 +868,9 @@ fn emit_styles(scene: &PaintScene) -> Result<String, EngineError> {
         }
     }
     if scene.reduced_motion == ReducedMotionMode::Pause {
-        lines.extend(emit_reduced_motion_rule(scene));
+        if let Some(rule) = reduced_motion_rule(scene)? {
+            lines.extend(rule.lines().map(str::to_string));
+        }
     }
     lines.extend(emit_canvas_stroke_rules(scene)?);
     lines.push("  </style>".to_string());

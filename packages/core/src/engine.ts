@@ -508,7 +508,7 @@ function assertAnimatedSvgPlayback(
     );
   }
 
-  const elapsedMs = timeMs ?? 0;
+  const elapsedMs = timeMs === undefined ? 0 : timeMs;
   if (
     typeof elapsedMs !== "number" ||
     !Number.isFinite(elapsedMs) ||
@@ -875,12 +875,15 @@ export type CompileOptions = {
 /** Options that affect layout-tree construction. */
 export type LayoutRenderOptions = Pick<CompileOptions, "skipValidation">;
 
+/** Total document plays, including a fractional final play, or unbounded playback. */
+export type AnimationIterationCount = number | "infinite";
+
 /** Document clock shared by every authored animation track in timeline playback. */
 export type AnimationTimeline = {
   /** One document-cycle duration in milliseconds. */
   durationMs: number;
   /** Total document plays, including a fractional final play, or unbounded playback. */
-  iterations: number | "infinite";
+  iterations: AnimationIterationCount;
 };
 
 export type AnimatedSvgPlayback =

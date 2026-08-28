@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import type { AnimationTimeline, VNode } from "../../dist/index.js";
+import type { AnimationIterationCount, AnimationTimeline, VNode } from "../../dist/index.js";
 import { AnimatedBoundSvg, BoundSvg, useRenderToAnimatedSvg } from "../../dist/index.js";
 import { InteractiveBoundSvg } from "../../dist/interactive.js";
 import type { BoundSvgConfig } from "../../dist/provider.js";
@@ -10,9 +10,10 @@ import {
 
 declare const vnode: VNode;
 
+const iterationCount: AnimationIterationCount = "infinite";
 const timeline: AnimationTimeline = {
   durationMs: 1_000,
-  iterations: 2.25,
+  iterations: iterationCount,
 };
 
 void (<BoundSvg vnode={vnode} renderOptions={{ timeMs: 0, nodeIdMetadata: "omit" }} />);

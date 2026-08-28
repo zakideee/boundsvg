@@ -5,6 +5,11 @@
 //! finite CSS vocabulary used by standalone animated SVG output.
 
 use std::collections::HashMap;
+#[cfg(test)]
+use std::{
+    sync::{LazyLock, Mutex},
+    thread::ThreadId,
+};
 
 use boundshape::Transform2D;
 use serde_json::json;
@@ -25,6 +30,10 @@ pub const MAX_TIMELINE_KEYFRAME_STOPS: usize = 16_384;
 pub const MAX_TIMELINE_CSS_BYTES: usize = 16_777_216;
 
 const CARVE_OUT_SCALE: f64 = 1_048_576.0;
+
+#[cfg(test)]
+static COMPILE_TRACK_TRACE: LazyLock<Mutex<HashMap<ThreadId, Vec<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DocumentIterationCount {
@@ -360,6 +369,7 @@ fn timeline_precision_error(kind: &str, left_time_ms: f64, right_time_ms: f64) -
 }
 
 fn timeline_limit_error(metric: &str, actual: f64, limit: usize) -> EngineError {
+    let finite_actual = if actual.is_finite() { actual } else { f64::MAX };
     EngineError::StructuredContext {
         code: "ANIMATED_SVG_TIMELINE_LIMIT".to_string(),
         message: format!("Animated SVG timeline {metric} exceeds the supported limit"),
@@ -367,7 +377,7 @@ fn timeline_limit_error(metric: &str, actual: f64, limit: usize) -> EngineError 
         node_id: None,
         context: Box::new(json!({
             "metric": metric,
-            "actual": actual,
+            "actual": finite_actual,
             "limit": limit,
         })),
     }
@@ -900,7 +910,7 @@ fn cubic_segment_boundary_progresses(
     let from = &spec.keyframes[segment_index];
     let to = &spec.keyframes[segment_index + 1];
     let segment_span = to.at - from.at;
-    let mut parameters = derivative_roots(curve[1], curve[3]);
+    let mut parameters = Vec::new();
     if let (Some(from_opacity), Some(to_opacity)) = (from.opacity, to.opacity)
         && from_opacity != to_opacity
     {
@@ -1342,7 +1352,24 @@ fn output_scaled_alpha(
                 None,
             ));
         }
-        let alpha = (left_value - start_value) / delta;
+        let numerator = left_value - start_value;
+        if !delta.is_finite() || !numerator.is_finite() {
+            return Err(timeline_unrepresentable(
+                source,
+                "linear-jump-unrepresentable",
+                boundary_time_ms,
+                None,
+            ));
+        }
+        let alpha = numerator / delta;
+        if !alpha.is_finite() {
+            return Err(timeline_unrepresentable(
+                source,
+                "linear-jump-unrepresentable",
+                boundary_time_ms,
+                None,
+            ));
+        }
         if let Some(expected_alpha) = resolved_alpha
             && alpha != expected_alpha
         {
@@ -1475,6 +1502,14 @@ fn compile_track(
     playback: DocumentPlayback,
     resolved_easing: ResolvedEasing,
 ) -> Result<DocumentTrackPlan, EngineError> {
+    #[cfg(test)]
+    COMPILE_TRACK_TRACE
+        .lock()
+        .expect("compile track trace should not be poisoned")
+        .entry(std::thread::current().id())
+        .or_default()
+        .push(source.owner_id.clone());
+
     let boundaries = collect_boundaries(source, playback, resolved_easing)?;
     let mut pieces = Vec::with_capacity(boundaries.len().saturating_sub(1));
     for pair in boundaries.windows(2) {
@@ -1506,7 +1541,11 @@ fn compile_track(
             |next_piece| next_piece.start_value.clone(),
         );
         if piece.end_value != right_value {
-            discontinuities_ms.push(piece.end_ms);
+            discontinuities_ms.push(if same_time(piece.end_ms, playback.duration_ms) {
+                0.0
+            } else {
+                piece.end_ms
+            });
         }
         let easing = compile_piece_easing(source, piece, &right_value)?;
         if let Some(previous_keyframe) = keyframes.last_mut() {
@@ -1628,24 +1667,53 @@ fn steps_track_precision_is_guaranteed(
     minimum_gap_ms >= minimum_separation_ms
 }
 
-fn preflight_closed_form_steps_budget(
-    sources: &[TrackSource],
-    resolved_easings: &[ResolvedEasing],
+fn track_uses_closed_form_preflight(
+    source: &TrackSource,
     playback: DocumentPlayback,
-) -> Result<(), EngineError> {
+    resolved_easing: ResolvedEasing,
+) -> bool {
     if matches!(
         playback.iterations,
         DocumentIterationCount::Finite(iterations) if iterations.fract() != 0.0
     ) {
-        return Ok(());
+        return false;
     }
+    steps_track_precision_is_guaranteed(source, playback, resolved_easing)
+}
+
+fn saturating_finite_stop_count(left: f64, right: f64) -> f64 {
+    let sum = left + right;
+    if sum.is_finite() { sum } else { f64::MAX }
+}
+
+fn preflight_document_tracks(
+    sources: &[TrackSource],
+    playback: DocumentPlayback,
+) -> Result<(Vec<ResolvedEasing>, f64), EngineError> {
+    let mut resolved_easings = Vec::with_capacity(sources.len());
     let mut stop_count = 0.0;
-    for (source, resolved_easing) in sources.iter().zip(resolved_easings) {
-        if !steps_track_precision_is_guaranteed(source, playback, *resolved_easing) {
-            return Ok(());
-        }
-        stop_count += semantic_track_stop_count(source, playback, *resolved_easing);
+    for source in sources {
+        let resolved_easing = resolve_track_easing(source, playback)?;
+        let track_stop_count =
+            if track_uses_closed_form_preflight(source, playback, resolved_easing) {
+                semantic_track_stop_count(source, playback, resolved_easing)
+            } else {
+                let track = compile_track(source, playback, resolved_easing)?;
+                validate_final_hold(std::slice::from_ref(&track), playback)?;
+                track.keyframes.len() as f64
+            };
+        stop_count = saturating_finite_stop_count(stop_count, track_stop_count);
+        resolved_easings.push(resolved_easing);
     }
+
+    for (source, resolved_easing) in sources.iter().zip(&resolved_easings) {
+        if track_uses_closed_form_preflight(source, playback, *resolved_easing) {
+            continue;
+        }
+        let track = compile_track(source, playback, *resolved_easing)?;
+        precision_preflight(&track.keyframes, playback)?;
+    }
+
     if stop_count > MAX_TIMELINE_KEYFRAME_STOPS as f64 {
         return Err(timeline_limit_error(
             "keyframeStops",
@@ -1653,7 +1721,7 @@ fn preflight_closed_form_steps_budget(
             MAX_TIMELINE_KEYFRAME_STOPS,
         ));
     }
-    Ok(())
+    Ok((resolved_easings, stop_count))
 }
 
 #[cfg(test)]
@@ -1662,7 +1730,7 @@ fn compile_document_animation_plan(
     playback: DocumentPlayback,
     time_ms: f64,
 ) -> Result<DocumentAnimationPlan, EngineError> {
-    compile_document_animation_plan_with_prefix(ir, playback, time_ms, "")
+    compile_document_animation_plan_with_prefix(ir, playback, time_ms, "", false)
 }
 
 /// Compile and byte-budget every document track using the caller's SVG
@@ -1677,31 +1745,25 @@ pub fn compile_document_animation_plan_with_prefix(
     playback: DocumentPlayback,
     time_ms: f64,
     resource_id_prefix: &str,
+    include_reduced_motion: bool,
 ) -> Result<DocumentAnimationPlan, EngineError> {
     validate_document_playback(playback, time_ms)?;
     animation::validate_animations(ir)?;
     let timing = playback.css_timing(time_ms);
     let mut sources = Vec::new();
     collect_track_sources(&ir.root, &mut sources);
-    let resolved_easings = sources
-        .iter()
-        .map(|source| resolve_track_easing(source, playback))
-        .collect::<Result<Vec<_>, _>>()?;
-    preflight_closed_form_steps_budget(&sources, &resolved_easings, playback)?;
+    let (resolved_easings, preflight_stop_count) = preflight_document_tracks(&sources, playback)?;
     let mut tracks = Vec::with_capacity(sources.len());
     for (source, resolved_easing) in sources.iter().zip(resolved_easings) {
         let track = compile_track(source, playback, resolved_easing)?;
         tracks.push(track);
     }
-    validate_final_hold(&tracks, playback)?;
-    for track in &tracks {
-        precision_preflight(&track.keyframes, playback)?;
-    }
     let keyframe_stop_count = tracks.iter().try_fold(0_usize, |count, track| {
         count.checked_add(track.keyframes.len()).ok_or_else(|| {
-            timeline_limit_error("keyframeStops", f64::INFINITY, MAX_TIMELINE_KEYFRAME_STOPS)
+            timeline_limit_error("keyframeStops", f64::MAX, MAX_TIMELINE_KEYFRAME_STOPS)
         })
     })?;
+    debug_assert_eq!(keyframe_stop_count as f64, preflight_stop_count);
     if keyframe_stop_count > MAX_TIMELINE_KEYFRAME_STOPS {
         return Err(timeline_limit_error(
             "keyframeStops",
@@ -1718,8 +1780,11 @@ pub fn compile_document_animation_plan_with_prefix(
         keyframe_stop_count,
         exact_css_bytes: 0,
     };
-    plan.exact_css_bytes =
-        crate::svg_emit::emitter::timeline_plan_css_byte_count(&plan, resource_id_prefix)?;
+    plan.exact_css_bytes = crate::svg_emit::emitter::timeline_plan_css_byte_count(
+        &plan,
+        resource_id_prefix,
+        include_reduced_motion,
+    )?;
     Ok(plan)
 }
 
@@ -2014,6 +2079,24 @@ mod tests {
     }
 
     #[test]
+    fn rejects_non_finite_output_scaled_linear_easing() {
+        let mut source = timeline_ir(representable_linear_spec());
+        let IrNodeKind::Group { opacity, .. } = &mut source.root.kind else {
+            panic!("group fixture expected");
+        };
+        *opacity = Some(f64::from_bits(1));
+
+        let error = compile_document_animation_plan(&source, infinite_playback(), 0.0)
+            .expect_err("timeline CSS must not contain a non-finite linear easing value");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("non-finite output scaling should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+        assert_eq!(context["reason"], "linear-jump-unrepresentable");
+        assert_eq!(context["boundaryTimeMs"], 120.0);
+    }
+
+    #[test]
     fn expands_steps_to_piecewise_constant_intervals() {
         let mut spec = opacity_spec(AnimationEasing::Steps(AnimationSteps {
             kind: "steps".to_string(),
@@ -2087,6 +2170,50 @@ mod tests {
     }
 
     #[test]
+    fn does_not_split_transform_only_cubic_at_output_extrema() {
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: None,
+                    transform: Some(AnimationTransform2D {
+                        translate_x: Some(0.0),
+                        ..AnimationTransform2D::default()
+                    }),
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: None,
+                    transform: Some(AnimationTransform2D {
+                        translate_x: Some(100.0),
+                        ..AnimationTransform2D::default()
+                    }),
+                },
+            ],
+            duration_ms: 200.0,
+            delay_ms: Some(0.0),
+            easing: Some(AnimationEasing::CubicBezier([0.5, -1.0e-6, 0.5, 1.0])),
+            iterations: Some(AnimationIterations::Count(1.0)),
+            fill: Some("both".to_string()),
+        };
+
+        let plan = compile_document_animation_plan(&timeline_ir(spec), infinite_playback(), 0.0)
+            .expect("transform values are not clamped at cubic output extrema");
+        assert_eq!(
+            plan.tracks[0]
+                .keyframes
+                .iter()
+                .map(|keyframe| keyframe.time_ms)
+                .collect::<Vec<_>>(),
+            vec![0.0, 200.0]
+        );
+        assert!(matches!(
+            plan.tracks[0].keyframes[0].easing_to_next,
+            Some(CompiledCssEasing::CubicBezier(_))
+        ));
+    }
+
+    #[test]
     fn rejects_spring_easing_without_approximating() {
         let spec = opacity_spec(AnimationEasing::Spring(AnimationSpring {
             kind: "spring".to_string(),
@@ -2144,6 +2271,36 @@ mod tests {
         };
         assert_eq!(context["reason"], "final-hold-on-discontinuity");
         assert_eq!(context["boundaryTimeMs"], 150.0);
+    }
+
+    #[test]
+    fn normalizes_document_end_discontinuities_for_fractional_final_hold() {
+        let mut spec = opacity_spec(AnimationEasing::Steps(AnimationSteps {
+            kind: "steps".to_string(),
+            count: 2.0,
+            position: Some("jump-end".to_string()),
+        }));
+        spec.duration_ms = 200.0;
+        spec.delay_ms = Some(0.0);
+        let source = timeline_ir(spec);
+        let near_cycle_start = DocumentPlayback {
+            duration_ms: 200.0,
+            iterations: DocumentIterationCount::Finite(2.0_f64.powi(-21)),
+        };
+        let error = compile_document_animation_plan(&source, near_cycle_start, 0.0)
+            .expect_err("the document-end seam belongs to S at cycle time zero");
+        let EngineError::StructuredContext { context, .. } = error else {
+            panic!("normalized hold collision should produce timeline context");
+        };
+        assert_eq!(context["reason"], "final-hold-on-discontinuity");
+        assert_eq!(context["boundaryTimeMs"], 0.0);
+
+        let near_cycle_end = DocumentPlayback {
+            duration_ms: 200.0,
+            iterations: DocumentIterationCount::Finite(1.0 - 2.0_f64.powi(-21)),
+        };
+        compile_document_animation_plan(&source, near_cycle_end, 0.0)
+            .expect("a final hold near D must not collide with S at cycle time zero");
     }
 
     #[test]
@@ -2566,6 +2723,106 @@ mod tests {
     }
 
     #[test]
+    fn reports_the_first_owner_representability_failure() {
+        let ir = Ir {
+            root: IrNode {
+                node_id: "root".to_string(),
+                bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
+                kind: IrNodeKind::Group {
+                    children: vec![
+                        animated_group(
+                            "cubic-first",
+                            opacity_spec(AnimationEasing::Named("ease-in".to_string())),
+                        ),
+                        animated_group(
+                            "spring-second",
+                            opacity_spec(AnimationEasing::Spring(AnimationSpring {
+                                kind: "spring".to_string(),
+                                stiffness: None,
+                                damping: None,
+                                mass: None,
+                            })),
+                        ),
+                    ],
+                    clip_path: None,
+                    clip_border_radius: None,
+                    opacity: None,
+                    box_shadow: None,
+                    meta: None,
+                    transform: None,
+                    animation: None,
+                    on: None,
+                },
+            },
+            draw_order: Vec::new(),
+            width: 100.0,
+            height: 50.0,
+            debug: None,
+            warnings: Vec::new(),
+        };
+
+        let error = compile_document_animation_plan(&ir, infinite_playback(), 0.0)
+            .expect_err("the first owner should win within the representability stage");
+        let EngineError::StructuredContext { context, .. } = error else {
+            panic!("representability should produce timeline context");
+        };
+        assert_eq!(context["ownerId"], "cubic-first");
+        assert_eq!(context["reason"], "cubic-into-jump");
+    }
+
+    #[test]
+    fn reports_final_hold_before_a_later_owner_failure() {
+        let mut hold_spec = opacity_spec(AnimationEasing::Steps(AnimationSteps {
+            kind: "steps".to_string(),
+            count: 2.0,
+            position: Some("jump-end".to_string()),
+        }));
+        hold_spec.duration_ms = 300.0;
+        hold_spec.delay_ms = Some(0.0);
+        let ir = Ir {
+            root: IrNode {
+                node_id: "root".to_string(),
+                bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
+                kind: IrNodeKind::Group {
+                    children: vec![
+                        animated_group("hold-first", hold_spec),
+                        animated_group(
+                            "cubic-second",
+                            opacity_spec(AnimationEasing::Named("ease-in".to_string())),
+                        ),
+                    ],
+                    clip_path: None,
+                    clip_border_radius: None,
+                    opacity: None,
+                    box_shadow: None,
+                    meta: None,
+                    transform: None,
+                    animation: None,
+                    on: None,
+                },
+            },
+            draw_order: Vec::new(),
+            width: 100.0,
+            height: 50.0,
+            debug: None,
+            warnings: Vec::new(),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 400.0,
+            iterations: DocumentIterationCount::Finite(1.375),
+        };
+
+        let error = compile_document_animation_plan(&ir, playback, 0.0)
+            .expect_err("the first owner's final hold collision should win");
+        let EngineError::StructuredContext { context, .. } = error else {
+            panic!("final hold should produce timeline context");
+        };
+        assert_eq!(context["ownerId"], "hold-first");
+        assert_eq!(context["reason"], "final-hold-on-discontinuity");
+        assert_eq!(context["boundaryTimeMs"], 150.0);
+    }
+
+    #[test]
     fn does_not_deduplicate_distinct_authored_stops_before_precision_preflight() {
         let next_after_half = f64::from_bits(0.5_f64.to_bits() + 1);
         let spec = AnimationSpec {
@@ -2651,6 +2908,126 @@ mod tests {
                 "limit": MAX_TIMELINE_KEYFRAME_STOPS,
             })
         );
+    }
+
+    #[test]
+    fn rejects_aggregate_steps_before_expanding_closed_form_tracks() {
+        let make_spec = |easing| AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(1.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: 1_000_000.0,
+            delay_ms: Some(0.0),
+            easing: Some(easing),
+            iterations: Some(AnimationIterations::Count(1.0)),
+            fill: Some("both".to_string()),
+        };
+        let near_limit_steps = || {
+            make_spec(AnimationEasing::Steps(AnimationSteps {
+                kind: "steps".to_string(),
+                count: 8_191.0,
+                position: Some("jump-end".to_string()),
+            }))
+        };
+        let ir = Ir {
+            root: IrNode {
+                node_id: "root".to_string(),
+                bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
+                kind: IrNodeKind::Group {
+                    children: vec![
+                        animated_group(
+                            "linear-first",
+                            make_spec(AnimationEasing::Named("linear".to_string())),
+                        ),
+                        animated_group("steps-second", near_limit_steps()),
+                        animated_group("steps-third", near_limit_steps()),
+                    ],
+                    clip_path: None,
+                    clip_border_radius: None,
+                    opacity: None,
+                    box_shadow: None,
+                    meta: None,
+                    transform: None,
+                    animation: None,
+                    on: None,
+                },
+            },
+            draw_order: Vec::new(),
+            width: 100.0,
+            height: 50.0,
+            debug: None,
+            warnings: Vec::new(),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1_000_000.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+        let test_thread_id = std::thread::current().id();
+        COMPILE_TRACK_TRACE
+            .lock()
+            .expect("compile track trace should not be poisoned")
+            .entry(test_thread_id)
+            .or_default()
+            .clear();
+
+        let error = compile_document_animation_plan(&ir, playback, 0.0)
+            .expect_err("the aggregate count should fail before output track allocation");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("aggregate budget should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_LIMIT");
+        assert_eq!(
+            *context,
+            json!({
+                "metric": "keyframeStops",
+                "actual": 16_386.0,
+                "limit": MAX_TIMELINE_KEYFRAME_STOPS,
+            })
+        );
+        let trace = COMPILE_TRACK_TRACE
+            .lock()
+            .expect("compile track trace should not be poisoned");
+        assert_eq!(
+            trace.get(&test_thread_id),
+            Some(&vec![
+                "linear-first".to_string(),
+                "linear-first".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn keeps_extreme_stop_budget_actual_json_finite() {
+        let mut spec = opacity_spec(AnimationEasing::Steps(AnimationSteps {
+            kind: "steps".to_string(),
+            count: 1.0e308,
+            position: Some("jump-end".to_string()),
+        }));
+        spec.duration_ms = 1.0;
+        spec.delay_ms = Some(0.0);
+        let playback = DocumentPlayback {
+            duration_ms: MAX_TIMELINE_DURATION_MS,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        let error = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
+            .expect_err("an extreme semantic count should stay a structured limit error");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("extreme budget should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_LIMIT");
+        assert_eq!(context["metric"], "keyframeStops");
+        assert_eq!(context["actual"].as_f64(), Some(f64::MAX));
+        assert_eq!(context["limit"], MAX_TIMELINE_KEYFRAME_STOPS);
     }
 
     #[test]
