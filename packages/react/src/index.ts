@@ -8,6 +8,7 @@ export type {
   AnimationSpec,
   AnimationSpring,
   AnimationStepPosition,
+  AnimationTimeline,
   AnimationTransform2D,
   AnyVNode,
   BooleanOp,

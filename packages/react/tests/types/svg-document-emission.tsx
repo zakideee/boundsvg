@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import type { VNode } from "../../dist/index.js";
+import type { AnimationTimeline, VNode } from "../../dist/index.js";
 import { AnimatedBoundSvg, BoundSvg, useRenderToAnimatedSvg } from "../../dist/index.js";
 import { InteractiveBoundSvg } from "../../dist/interactive.js";
 import type { BoundSvgConfig } from "../../dist/provider.js";
@@ -10,11 +10,16 @@ import {
 
 declare const vnode: VNode;
 
+const timeline: AnimationTimeline = {
+  durationMs: 1_000,
+  iterations: 2.25,
+};
+
 void (<BoundSvg vnode={vnode} renderOptions={{ timeMs: 0, nodeIdMetadata: "omit" }} />);
 void (
   <AnimatedBoundSvg
     vnode={vnode}
-    renderOptions={{ playback: { mode: "independent" }, reducedMotion: "pause" }}
+    renderOptions={{ playback: { mode: "timeline", ...timeline }, reducedMotion: "pause" }}
   />
 );
 
@@ -23,10 +28,10 @@ void (<AnimatedBoundSvg vnode={vnode} renderOptions={{}} />);
 // @ts-expect-error the static component no longer accepts the legacy animation switch
 void (<BoundSvg vnode={vnode} renderOptions={{ animation: "declarative" }} />);
 
-useRenderToAnimatedSvg(vnode, { playback: { mode: "independent" } });
-useRenderToAnimatedSvgAsync(vnode, { playback: { mode: "independent" } });
+useRenderToAnimatedSvg(vnode, { playback: { mode: "timeline", ...timeline } });
+useRenderToAnimatedSvgAsync(vnode, { playback: { mode: "timeline", ...timeline } });
 useRenderToAnimatedSvgAndIrAsync(vnode, {
-  playback: { mode: "independent" },
+  playback: { mode: "timeline", ...timeline },
   nodeIdMetadata: "include",
 });
 
@@ -34,7 +39,7 @@ void (
   <InteractiveBoundSvg
     vnode={vnode}
     renderMode="animated"
-    renderOptions={{ playback: { mode: "independent" } }}
+    renderOptions={{ playback: { mode: "timeline", ...timeline } }}
   />
 );
 // @ts-expect-error animated interactive mode requires animated SVG options
@@ -54,3 +59,12 @@ const artifactSpecificDefault: BoundSvgConfig = {
   },
 };
 void artifactSpecificDefault;
+
+const playbackSpecificDefault: BoundSvgConfig = {
+  fonts: [],
+  defaultCommonOptions: {
+    // @ts-expect-error animated SVG playback stays at each render call
+    playback: { mode: "timeline", ...timeline },
+  },
+};
+void playbackSpecificDefault;

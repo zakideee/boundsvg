@@ -12,6 +12,7 @@ export type {
   AnimatedSvgPlayback,
   AnimationAffineMatrix,
   AnimationStateSample,
+  AnimationTimeline,
   CompiledScene,
   CompileOptions,
   EmitAnimatedSvgOptions,

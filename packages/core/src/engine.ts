@@ -421,19 +421,114 @@ function assertSvgEmissionOptionValues(options: SvgEmissionOptions | undefined):
   }
 }
 
-function assertAnimatedSvgPlayback(playback: unknown): asserts playback is AnimatedSvgPlayback {
-  if (
-    typeof playback !== "object" ||
-    playback === null ||
-    Array.isArray(playback) ||
-    Object.keys(playback).length !== 1 ||
-    !Object.hasOwn(playback, "mode") ||
-    Reflect.get(playback, "mode") !== "independent"
-  ) {
+const MAX_TIMELINE_DURATION_MS = 2 ** 32;
+const MAX_TIMELINE_ITERATIONS = 2 ** 20;
+const MAX_TIMELINE_TIME_MS = 2 ** 52;
+const MAX_TIMELINE_TIME_RATIO = 2 ** 31;
+
+function timelineReceived(container: object, field: string): string {
+  if (!Object.hasOwn(container, field)) {
+    return "missing";
+  }
+  const value = Reflect.get(container, field);
+  if (value === null || typeof value !== "object") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function invalidAnimatedSvgTimeline(field: string, received: string): FatalError {
+  return new FatalError(
+    "ANIMATED_SVG_INVALID_TIMELINE",
+    `Animated SVG timeline ${field} is outside the supported range.`,
+    { stage: "validate", field, received },
+  );
+}
+
+function assertAnimatedSvgPlayback(
+  playback: unknown,
+  timeMs: unknown,
+): asserts playback is AnimatedSvgPlayback {
+  if (typeof playback !== "object" || playback === null || Array.isArray(playback)) {
     throw new FatalError(
       "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
-      'Animated SVG playback must be exactly { mode: "independent" }.',
+      'Animated SVG playback must use mode "independent" or "timeline".',
       { stage: "validate" },
+    );
+  }
+  const mode = Reflect.get(playback, "mode");
+  if (mode === "independent") {
+    if (Object.keys(playback).length !== 1 || !Object.hasOwn(playback, "mode")) {
+      throw new FatalError(
+        "UNSUPPORTED_RENDER_OPTION",
+        "Independent animated SVG playback only supports the mode field.",
+        { stage: "validate" },
+      );
+    }
+    return;
+  }
+  if (mode !== "timeline") {
+    throw new FatalError(
+      "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
+      'Animated SVG playback must use mode "independent" or "timeline".',
+      { stage: "validate" },
+    );
+  }
+
+  const durationMs = Reflect.get(playback, "durationMs");
+  if (
+    typeof durationMs !== "number" ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 1 ||
+    durationMs > MAX_TIMELINE_DURATION_MS
+  ) {
+    throw invalidAnimatedSvgTimeline("durationMs", timelineReceived(playback, "durationMs"));
+  }
+  const iterations = Reflect.get(playback, "iterations");
+  if (
+    iterations !== "infinite" &&
+    (typeof iterations !== "number" ||
+      !Number.isFinite(iterations) ||
+      iterations <= 0 ||
+      iterations > MAX_TIMELINE_ITERATIONS)
+  ) {
+    throw invalidAnimatedSvgTimeline("iterations", timelineReceived(playback, "iterations"));
+  }
+  const timelineKeys = new Set(["mode", "durationMs", "iterations"]);
+  const unsupportedKey = Object.keys(playback).find((key) => !timelineKeys.has(key));
+  if (unsupportedKey !== undefined) {
+    throw new FatalError(
+      "UNSUPPORTED_RENDER_OPTION",
+      `Animated SVG timeline playback does not support field ${JSON.stringify(unsupportedKey)}.`,
+      { stage: "validate" },
+    );
+  }
+
+  const elapsedMs = timeMs ?? 0;
+  if (
+    typeof elapsedMs !== "number" ||
+    !Number.isFinite(elapsedMs) ||
+    elapsedMs < 0 ||
+    elapsedMs > MAX_TIMELINE_TIME_MS
+  ) {
+    const received = timeMs === undefined ? "missing" : timelineReceived({ timeMs }, "timeMs");
+    throw invalidAnimatedSvgTimeline("timeMs", received);
+  }
+  if (elapsedMs / durationMs > MAX_TIMELINE_TIME_RATIO) {
+    throw new FatalError(
+      "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+      "Animated SVG timeline timeMs/durationMs ratio exceeds the supported precision limit.",
+      {
+        stage: "validate",
+        kind: "time-ratio",
+        timeMs: elapsedMs,
+        durationMs,
+        limitRatio: MAX_TIMELINE_TIME_RATIO,
+      },
     );
   }
 }
@@ -780,8 +875,17 @@ export type CompileOptions = {
 /** Options that affect layout-tree construction. */
 export type LayoutRenderOptions = Pick<CompileOptions, "skipValidation">;
 
-/** 0.3 animated SVG playback deliberately preserves independent authored tracks. */
-export type AnimatedSvgPlayback = { mode: "independent" };
+/** Document clock shared by every authored animation track in timeline playback. */
+export type AnimationTimeline = {
+  /** One document-cycle duration in milliseconds. */
+  durationMs: number;
+  /** Total document plays, including a fractional final play, or unbounded playback. */
+  iterations: number | "infinite";
+};
+
+export type AnimatedSvgPlayback =
+  | { mode: "independent" }
+  | ({ mode: "timeline" } & AnimationTimeline);
 
 export type RenderSvgOptions = CompileOptions &
   OutputCommonOptions &
@@ -1241,7 +1345,7 @@ export class Engine {
   renderToAnimatedSvg(input: EngineInput, renderOpts: RenderAnimatedSvgOptions): string {
     assertOwnOptionKeys(renderOpts, ANIMATED_SVG_OPTION_KEYS, "renderToAnimatedSvg");
     assertSvgEmissionOptionValues(renderOpts);
-    assertAnimatedSvgPlayback(renderOpts?.playback);
+    assertAnimatedSvgPlayback(renderOpts?.playback, renderOpts?.timeMs);
     assertValidAnimationRenderOptions(renderOpts);
     return this.renderWithWasmBackend(input, renderOpts, {
       resolveReturnedIrOutlines: false,
@@ -1256,7 +1360,7 @@ export class Engine {
   ): { svg: string; ir: IR } {
     assertOwnOptionKeys(renderOpts, ANIMATED_SVG_OPTION_KEYS, "renderToAnimatedSvgAndIR");
     assertSvgEmissionOptionValues(renderOpts);
-    assertAnimatedSvgPlayback(renderOpts?.playback);
+    assertAnimatedSvgPlayback(renderOpts?.playback, renderOpts?.timeMs);
     assertValidAnimationRenderOptions(renderOpts);
     return this.renderWithWasmBackend(input, renderOpts, {
       resolveReturnedIrOutlines: true,
@@ -2791,7 +2895,7 @@ export class Engine {
   renderCompiledToAnimatedSvg(compiled: CompiledScene, emitOpts: EmitAnimatedSvgOptions): string {
     assertOwnOptionKeys(emitOpts, EMIT_ANIMATED_SVG_OPTION_KEYS, "renderCompiledToAnimatedSvg");
     assertSvgEmissionOptionValues(emitOpts);
-    assertAnimatedSvgPlayback(emitOpts?.playback);
+    assertAnimatedSvgPlayback(emitOpts?.playback, emitOpts?.timeMs);
     assertValidAnimationRenderOptions(emitOpts);
     this.ensureNotDisposed();
     assertRenderableCanvas(compiled.ir);

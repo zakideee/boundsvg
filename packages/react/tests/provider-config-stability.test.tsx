@@ -259,6 +259,39 @@ describe("BoundSvgProvider config stability", () => {
     expect(createdWorkers).toHaveLength(0);
   });
 
+  it.each([
+    ["main thread", undefined],
+    ["Worker", { mode: "required" as const }],
+  ])("rejects animated playback inside defaultCommonOptions before %s initialization", (_label, worker) => {
+    const config = {
+      fonts: [],
+      defaultCommonOptions: {
+        playback: { mode: "timeline", durationMs: 1_000, iterations: "infinite" },
+      },
+      ...(worker && { worker }),
+    } as unknown as BoundSvgConfig;
+    let thrown: unknown;
+    try {
+      mount(
+        <BoundSvgProvider config={config}>
+          <ContextProbe />
+        </BoundSvgProvider>,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      name: "FatalError",
+      code: "UNSUPPORTED_RENDER_OPTION",
+      stage: "validate",
+    });
+    expect(mockPreloadFonts).not.toHaveBeenCalled();
+    expect(mockCreateEngineAsync).not.toHaveBeenCalled();
+    expect(mockWorkerEngineCreate).not.toHaveBeenCalled();
+    expect(createdWorkers).toHaveLength(0);
+  });
+
   it("does not recreate a main-thread Engine for a fresh equal inline config", async () => {
     let setLabel!: (label: string) => void;
     function Parent() {

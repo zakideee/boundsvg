@@ -453,7 +453,7 @@ export class WorkerEngine {
     return response.svg;
   }
 
-  /** Render independent authored animation tracks to animated SVG inside the Worker. */
+  /** Render authored animation tracks to animated SVG inside the Worker. */
   async renderToAnimatedSvg(scene: SceneNode, options: RenderAnimatedSvgOptions): Promise<string> {
     this.assertNotDisposed();
 
@@ -513,7 +513,7 @@ export class WorkerEngine {
     return { svg: response.svg, ir };
   }
 
-  /** Render animated SVG + IR with independent authored animation tracks. */
+  /** Render animated SVG + IR with authored animation tracks. */
   async renderToAnimatedSvgAndIR(
     scene: SceneNode,
     options: RenderAnimatedSvgOptions,

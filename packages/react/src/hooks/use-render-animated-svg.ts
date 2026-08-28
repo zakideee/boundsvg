@@ -19,7 +19,7 @@ type AnimatedSvgRenderComputation = {
   deliveries: readonly RenderNotificationDelivery[];
 };
 
-/** Reactively render independent authored animation tracks to declarative SVG. */
+/** Reactively render authored animation tracks to declarative SVG. */
 export function useRenderToAnimatedSvg(
   vnode: VNode | null,
   options: RenderAnimatedSvgOptions,

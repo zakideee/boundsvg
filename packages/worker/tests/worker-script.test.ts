@@ -174,7 +174,11 @@ describe("worker script measurement dispatch", () => {
       id: 3,
       type: "render-animated-svg",
       scene,
-      options: { playback: { mode: "independent" }, resourceIdPrefix: "animated-" },
+      options: {
+        playback: { mode: "timeline", durationMs: 800, iterations: 2.25 },
+        timeMs: 950,
+        resourceIdPrefix: "animated-",
+      },
     });
     scope.send({ id: 4, type: "render-svg-and-ir", scene, options: { timeMs: 0 } });
     scope.send({
@@ -198,7 +202,8 @@ describe("worker script measurement dispatch", () => {
     expect(workerEngineMethods.renderToAnimatedSvg).toHaveBeenCalledWith(
       scene,
       expect.objectContaining({
-        playback: { mode: "independent" },
+        playback: { mode: "timeline", durationMs: 800, iterations: 2.25 },
+        timeMs: 950,
         resourceIdPrefix: "animated-",
       }),
     );

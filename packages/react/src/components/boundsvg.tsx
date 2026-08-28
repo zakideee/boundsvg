@@ -36,7 +36,7 @@ export type BoundSvgProps = BoundSvgBaseProps & {
 };
 
 export type AnimatedBoundSvgProps = BoundSvgBaseProps & {
-  /** Declarative SVG options, including the required independent playback contract. */
+  /** Declarative SVG options, including the required playback contract. */
   renderOptions: RenderAnimatedSvgOptions;
 };
 
@@ -147,7 +147,7 @@ function AnimatedBoundSvgAsync(props: AnimatedBoundSvgProps) {
   return renderResult(svg, resolved.error ?? renderError, { isReady, props });
 }
 
-/** Render independent authored animation tracks as declarative animated SVG. */
+/** Render authored animation tracks as declarative animated SVG. */
 export function AnimatedBoundSvg(props: AnimatedBoundSvgProps) {
   const { workerEngine } = useBoundSvg();
   return workerEngine ? <AnimatedBoundSvgAsync {...props} /> : <AnimatedBoundSvgSync {...props} />;

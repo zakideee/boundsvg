@@ -91,7 +91,11 @@ describe("isWorkerRequest", () => {
         id: 21,
         type: "render-animated-svg-and-ir",
         scene,
-        options: { playback: { mode: "independent" }, nodeIdMetadata: "omit" },
+        options: {
+          playback: { mode: "timeline", durationMs: 800, iterations: 2.25 },
+          timeMs: 950,
+          nodeIdMetadata: "omit",
+        },
       }),
     ).toBe(true);
     expect(isWorkerRequest({ id: 22, type: "render-animated-svg", scene })).toBe(false);

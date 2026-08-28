@@ -111,6 +111,49 @@ function buildAnimatedScene(): VNode {
   );
 }
 
+function buildTimelineAnimatedScene(): VNode {
+  return createElement(
+    "Canvas",
+    { width: 120, height: 80 },
+    createElement("Box", {
+      id: "timeline-box",
+      width: 40,
+      height: 30,
+      background: "#2563eb",
+      animate: {
+        keyframes: [
+          { at: 0, opacity: 0.2 },
+          { at: 1, opacity: 1 },
+        ],
+        durationMs: 600,
+        iterations: 1,
+        fill: "none",
+      },
+    }),
+  );
+}
+
+function buildSpringAnimatedScene(): VNode {
+  return createElement(
+    "Canvas",
+    { width: 120, height: 80 },
+    createElement("Box", {
+      id: "spring-box",
+      width: 40,
+      height: 30,
+      background: "#2563eb",
+      animate: {
+        keyframes: [
+          { at: 0, opacity: 0.2 },
+          { at: 1, opacity: 1 },
+        ],
+        durationMs: 600,
+        easing: { type: "spring" },
+      },
+    }),
+  );
+}
+
 describe("nodejs/web WASM public parity", () => {
   let nodeEngine: Engine;
   let webEngine: Engine;
@@ -161,6 +204,52 @@ describe("nodejs/web WASM public parity", () => {
     expect(webEngine.renderToAnimatedSvgAndIR(scene, options)).toEqual(
       nodeEngine.renderToAnimatedSvgAndIR(scene, options),
     );
+  });
+
+  it("renders timeline animated SVG and IR bytes identically", () => {
+    const scene = buildTimelineAnimatedScene();
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1_000, iterations: 2.25 },
+      timeMs: 1_100,
+      resourceIdPrefix: "timeline-parity-",
+      nodeIdMetadata: "omit" as const,
+    };
+    expect(webEngine.renderToAnimatedSvg(scene, options)).toBe(
+      nodeEngine.renderToAnimatedSvg(scene, options),
+    );
+    expect(webEngine.renderToAnimatedSvgAndIR(scene, options)).toEqual(
+      nodeEngine.renderToAnimatedSvgAndIR(scene, options),
+    );
+  });
+
+  it("returns the same timeline representability error and context", () => {
+    const scene = buildSpringAnimatedScene();
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1_000, iterations: "infinite" as const },
+      timeMs: 100,
+    };
+    let nodeError: unknown;
+    let webError: unknown;
+    try {
+      nodeEngine.renderToAnimatedSvg(scene, options);
+    } catch (error) {
+      nodeError = error;
+    }
+    try {
+      webEngine.renderToAnimatedSvg(scene, options);
+    } catch (error) {
+      webError = error;
+    }
+    expect(webError).toMatchObject({
+      code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+      context: {
+        ownerKind: "node",
+        ownerId: "spring-box",
+        reason: "spring-easing",
+        boundaryTimeMs: 0,
+      },
+    });
+    expect(webError).toEqual(nodeError);
   });
 
   it("returns the same static-animation sampling error", () => {
