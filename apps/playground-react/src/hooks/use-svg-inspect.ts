@@ -251,7 +251,16 @@ export function useSvgInspect(
       return EMPTY_DATA;
     }
     try {
-      const { svg, ir } = engine.renderToSvgAndIR(vnode, renderOptions);
+      // Static SVG+IR rejects animated scenes without an explicit timeMs;
+      // scenes that declare animation go through the animated entry point so
+      // the inspected SVG matches the live declarative preview.
+      const animated = /"animate(Units)?":/.test(JSON.stringify(vnode));
+      const { svg, ir } = animated
+        ? engine.renderToAnimatedSvgAndIR(vnode, {
+            ...renderOptions,
+            playback: { mode: "independent" },
+          })
+        : engine.renderToSvgAndIR(vnode, renderOptions);
       return computeSvgRenderData(svg, ir);
     } catch {
       return EMPTY_DATA;

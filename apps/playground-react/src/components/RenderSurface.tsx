@@ -1,13 +1,24 @@
 import {
+  AnimatedBoundSvg,
   BoundSvg,
   type CompileOptions,
   type OutputCommonOptions,
+  useRenderToAnimatedSvg,
   useRenderToSvg,
   type VNode,
 } from "@boundsvg/react";
 import { useRenderToPng } from "@boundsvg/react/png";
 import { useMemo } from "react";
 import type { RendererMode } from "../types";
+
+// Static SVG rendering rejects animated scenes without an explicit timeMs, so
+// SVG surfaces route scenes that declare animation through the animated
+// entry points with independent playback, preserving the live preview.
+function declaresAnimation(vnode: VNode | null): boolean {
+  return vnode !== null && /"animate(Units)?":/.test(JSON.stringify(vnode));
+}
+
+const INDEPENDENT_PLAYBACK = { playback: { mode: "independent" } } as const;
 
 type RenderSurfaceProps = {
   renderer: RendererMode;
@@ -72,20 +83,58 @@ function BoundSvgSurface({
   vnode: VNode | null;
   renderOptions?: CompileOptions & OutputCommonOptions;
 }) {
+  const animated = useMemo(() => declaresAnimation(vnode), [vnode]);
+  const fallback = <p className="placeholder-text">Rendering…</p>;
+  const errorFallback = (error: Error) => (
+    <p className="error-text">Render failed: {error.message}</p>
+  );
   return (
     <div className="preview-stage">
-      <BoundSvg
-        vnode={vnode}
-        className="rendered-content"
-        renderOptions={renderOptions}
-        fallback={<p className="placeholder-text">Rendering…</p>}
-        errorFallback={(error) => <p className="error-text">Render failed: {error.message}</p>}
-      />
+      {animated ? (
+        <AnimatedBoundSvg
+          vnode={vnode}
+          className="rendered-content"
+          renderOptions={{ ...renderOptions, ...INDEPENDENT_PLAYBACK }}
+          fallback={fallback}
+          errorFallback={errorFallback}
+        />
+      ) : (
+        <BoundSvg
+          vnode={vnode}
+          className="rendered-content"
+          renderOptions={renderOptions}
+          fallback={fallback}
+          errorFallback={errorFallback}
+        />
+      )}
     </div>
   );
 }
 
-function SvgHookSurface({
+function SvgHookSurface(props: {
+  vnode: VNode | null;
+  renderOptions?: CompileOptions & OutputCommonOptions;
+}) {
+  const animated = useMemo(() => declaresAnimation(props.vnode), [props.vnode]);
+  return animated ? <AnimatedSvgHookSurface {...props} /> : <StaticSvgHookSurface {...props} />;
+}
+
+function AnimatedSvgHookSurface({
+  vnode,
+  renderOptions,
+}: {
+  vnode: VNode | null;
+  renderOptions?: CompileOptions & OutputCommonOptions;
+}) {
+  const animatedRenderOptions = useMemo(
+    () => ({ ...renderOptions, ...INDEPENDENT_PLAYBACK }),
+    [renderOptions],
+  );
+  const { svg, error, isReady } = useRenderToAnimatedSvg(vnode, animatedRenderOptions);
+  return <SvgHookResult svg={svg} error={error} isReady={isReady} />;
+}
+
+function StaticSvgHookSurface({
   vnode,
   renderOptions,
 }: {
@@ -93,7 +142,18 @@ function SvgHookSurface({
   renderOptions?: CompileOptions & OutputCommonOptions;
 }) {
   const { svg, error, isReady } = useRenderToSvg(vnode, renderOptions);
+  return <SvgHookResult svg={svg} error={error} isReady={isReady} />;
+}
 
+function SvgHookResult({
+  svg,
+  error,
+  isReady,
+}: {
+  svg: string | null;
+  error: Error | null;
+  isReady: boolean;
+}) {
   if (error) {
     return (
       <div className="preview-stage">
