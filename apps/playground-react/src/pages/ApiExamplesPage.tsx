@@ -1,9 +1,10 @@
 import {
   Canvas,
+  type CompileOptions,
   type DebugOverlayPart,
   Flex,
+  type OutputCommonOptions,
   Path,
-  type RenderOptions,
   Text,
   toVNode,
   type VNode,
@@ -38,6 +39,7 @@ import type { RendererMode } from "../types";
 // ---------------------------------------------------------------------------
 
 type ApiView = RendererMode | "interactive-hook" | "interactive-component" | "text-copy";
+type SharedRenderOptions = CompileOptions & OutputCommonOptions;
 
 function isRendererMode(view: ApiView): view is RendererMode {
   return (
@@ -219,7 +221,7 @@ function AsyncRenderSurface({
 }: {
   renderer: "svg-async" | "png-async";
   vnode: VNode | null;
-  renderOptions?: RenderOptions;
+  renderOptions?: SharedRenderOptions;
 }) {
   return (
     <BoundSvgProvider
@@ -244,7 +246,7 @@ function SvgAsyncSurface({
   renderOptions,
 }: {
   vnode: VNode | null;
-  renderOptions?: RenderOptions;
+  renderOptions?: SharedRenderOptions;
 }) {
   const { workerEngine, status, error: providerError } = useBoundSvg();
   const { svg, error, isRendering, isReady } = useRenderToSvgAsync(vnode, renderOptions);
@@ -296,7 +298,7 @@ function PngAsyncSurface({
   renderOptions,
 }: {
   vnode: VNode | null;
-  renderOptions?: RenderOptions;
+  renderOptions?: SharedRenderOptions;
 }) {
   const { workerEngine, status, error: providerError } = useBoundSvg();
   const { dataUrl, error, isRendering, isReady } = useRenderToPngAsync(vnode, renderOptions);
@@ -354,7 +356,7 @@ function InteractiveHookSurface({
 }: {
   vnode: VNode;
   handlers: Map<string, EventCallback>;
-  renderOptions?: RenderOptions;
+  renderOptions?: SharedRenderOptions;
 }) {
   const { svg, hoverNodeId, containerRef, error, isReady } = useInteractiveSvg(vnode, handlers, {
     renderOptions,
@@ -395,7 +397,7 @@ function InteractiveHookSurface({
 // InteractiveBoundSvg component surface
 // ---------------------------------------------------------------------------
 
-function InteractiveComponentSurface({ renderOptions }: { renderOptions?: RenderOptions }) {
+function InteractiveComponentSurface({ renderOptions }: { renderOptions?: SharedRenderOptions }) {
   const [hovered, setHovered] = useState<string | null>(null);
 
   return (
@@ -466,7 +468,7 @@ function TextCopySurface({
 }: {
   vnode: VNode;
   handlers: Map<string, EventCallback>;
-  renderOptions?: RenderOptions;
+  renderOptions?: SharedRenderOptions;
 }) {
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
@@ -555,7 +557,7 @@ type ApiPreviewSurfaceProps = {
   codeLayout: CodeLayout;
   highlightedRenderedSvg: string;
   deferredVNode: VNode;
-  deferredRenderOptions: RenderOptions;
+  deferredRenderOptions: SharedRenderOptions;
   interactiveData: ReturnType<typeof buildInteractiveVNode>;
   isPending: boolean;
   setPreviewEl: (element: HTMLDivElement | null) => void;
@@ -646,7 +648,7 @@ export function ApiExamplesPage() {
 
   const vnode = useMemo(() => buildApiShowcaseVNode(), []);
   const interactiveData = useMemo(() => buildInteractiveVNode(), []);
-  const renderOptions = useMemo<RenderOptions>(
+  const renderOptions = useMemo<SharedRenderOptions>(
     () => ({ debug: resolveDebugOverlayConfig(debugOverlayParts) }),
     [debugOverlayParts],
   );

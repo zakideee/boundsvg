@@ -1,4 +1,4 @@
-import type { Engine, EngineInput, RenderOptions } from "./engine.js";
+import type { Engine, EngineInput, RenderIrOptions } from "./engine.js";
 import type { RecoverableError } from "./errors.js";
 import type { TextMap } from "./ir/text-map.js";
 import type { HandlersRef, IR, IRGroupNode, IRNode, IRNodeType, IRTextNode } from "./ir/types.js";
@@ -92,7 +92,7 @@ export type SceneInspection = {
 export function inspectScene(
   engine: Engine,
   input: EngineInput,
-  options?: RenderOptions,
+  options?: RenderIrOptions,
 ): SceneInspection {
   const layoutOptions =
     options?.skipValidation === undefined ? undefined : { skipValidation: options.skipValidation };

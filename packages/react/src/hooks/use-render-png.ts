@@ -1,6 +1,7 @@
 import { pngToDataUrl } from "@boundsvg/browser/png";
-import type { Engine, RenderOptions, VNode } from "@boundsvg/core";
+import type { Engine, RenderPngOptions, VNode } from "@boundsvg/core";
 import { useMemo } from "react";
+import type { BoundSvgDefaultCommonOptions } from "../types.js";
 import { resolveMainThreadEngineError } from "../utils/main-thread-only.js";
 import { useBoundSvg } from "./use-boundsvg.js";
 import {
@@ -38,11 +39,12 @@ type PngRenderComputation = {
   deliveries: readonly RenderNotificationDelivery[];
 };
 
-type CacheByOptions = WeakMap<RenderOptions, CachedPngResult>;
-type CacheByDefaultOptions = WeakMap<RenderOptions, CacheByOptions>;
+type CacheByOptions = WeakMap<RenderPngOptions, CachedPngResult>;
+type CacheByDefaultOptions = WeakMap<BoundSvgDefaultCommonOptions, CacheByOptions>;
 type CacheByVNode = WeakMap<VNode, CacheByDefaultOptions>;
 
-const EMPTY_RENDER_OPTIONS: RenderOptions = {};
+const EMPTY_RENDER_OPTIONS: RenderPngOptions = {};
+const EMPTY_COMMON_OPTIONS: BoundSvgDefaultCommonOptions = {};
 const pngRenderCache = new WeakMap<Engine, CacheByVNode>();
 
 function getCachedPngResult(
@@ -51,7 +53,7 @@ function getCachedPngResult(
   {
     defaultOptionsKey,
     optionsKey,
-  }: { defaultOptionsKey: RenderOptions; optionsKey: RenderOptions },
+  }: { defaultOptionsKey: BoundSvgDefaultCommonOptions; optionsKey: RenderPngOptions },
 ): CachedPngResult | null {
   const byVNode = pngRenderCache.get(engine);
   if (!byVNode) {
@@ -75,7 +77,11 @@ function cachePngResult(
     defaultOptionsKey,
     optionsKey,
     result,
-  }: { defaultOptionsKey: RenderOptions; optionsKey: RenderOptions; result: CachedPngResult },
+  }: {
+    defaultOptionsKey: BoundSvgDefaultCommonOptions;
+    optionsKey: RenderPngOptions;
+    result: CachedPngResult;
+  },
 ): void {
   let byVNode = pngRenderCache.get(engine);
   if (!byVNode) {
@@ -85,13 +91,13 @@ function cachePngResult(
 
   let byDefaultOptions = byVNode.get(vnode);
   if (!byDefaultOptions) {
-    byDefaultOptions = new WeakMap<RenderOptions, CacheByOptions>();
+    byDefaultOptions = new WeakMap<BoundSvgDefaultCommonOptions, CacheByOptions>();
     byVNode.set(vnode, byDefaultOptions);
   }
 
   let byOptions = byDefaultOptions.get(defaultOptionsKey);
   if (!byOptions) {
-    byOptions = new WeakMap<RenderOptions, CachedPngResult>();
+    byOptions = new WeakMap<RenderPngOptions, CachedPngResult>();
     byDefaultOptions.set(defaultOptionsKey, byOptions);
   }
 
@@ -102,11 +108,14 @@ function cachePngResult(
  * Reactively render a VNode to PNG.
  * Re-renders when the VNode or render-option values change.
  */
-export function useRenderToPng(vnode: VNode | null, options?: RenderOptions): UseRenderToPngResult {
-  const { engine, workerEngine, status, defaultRenderOptions } = useBoundSvg();
+export function useRenderToPng(
+  vnode: VNode | null,
+  options?: RenderPngOptions,
+): UseRenderToPngResult {
+  const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
   const stableVNode = useStructurallyStableValue(vnode);
   const stableOptions = useStructurallyStableRenderOptions(options);
-  const stableDefaultRenderOptions = useStructurallyStableRenderOptions(defaultRenderOptions);
+  const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   const computation = useMemo<PngRenderComputation>(() => {
     if (status !== "ready" || !engine || !stableVNode) {
@@ -121,9 +130,9 @@ export function useRenderToPng(vnode: VNode | null, options?: RenderOptions): Us
       };
     }
 
-    const defaultOptionsKey = stableDefaultRenderOptions ?? EMPTY_RENDER_OPTIONS;
+    const defaultOptionsKey = stableDefaultCommonOptions ?? EMPTY_COMMON_OPTIONS;
     const optionsKey = stableOptions ?? EMPTY_RENDER_OPTIONS;
-    const mergedOptions = { ...stableDefaultRenderOptions, ...stableOptions };
+    const mergedOptions = { ...stableDefaultCommonOptions, ...stableOptions };
     const cached = getCachedPngResult(engine, stableVNode, { defaultOptionsKey, optionsKey });
     if (cached) {
       return {
@@ -149,7 +158,7 @@ export function useRenderToPng(vnode: VNode | null, options?: RenderOptions): Us
         deliveries: [captured.delivery],
       };
     }
-  }, [engine, workerEngine, status, stableVNode, stableOptions, stableDefaultRenderOptions]);
+  }, [engine, workerEngine, status, stableVNode, stableOptions, stableDefaultCommonOptions]);
   useCommitPhaseRenderNotifications(computation.deliveries);
   return computation.result;
 }

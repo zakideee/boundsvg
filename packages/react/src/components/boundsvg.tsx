@@ -1,13 +1,15 @@
-import type { RenderOptions, VNode } from "@boundsvg/core";
+import type { RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/core";
 import { type ReactNode, useMemo } from "react";
 import { useBoundSvg } from "../hooks/use-boundsvg.js";
+import { useRenderToAnimatedSvg } from "../hooks/use-render-animated-svg.js";
+import { useRenderToAnimatedSvgAsync } from "../hooks/use-render-animated-svg-async.js";
 import { useRenderToSvg } from "../hooks/use-render-svg.js";
 import { useRenderToSvgAsync } from "../hooks/use-render-svg-async.js";
 import { toVNodeFromChildren } from "../utils/to-vnode.js";
 
 const ERROR_FONT_SIZE_PX = 12;
 
-export type BoundSvgProps = {
+type BoundSvgBaseProps = {
   /** VNode tree to render (legacy API — takes precedence over children) */
   vnode?: VNode | null;
 
@@ -20,8 +22,6 @@ export type BoundSvgProps = {
   /** Declarative children (boundsvg phantom components) */
   children?: ReactNode;
 
-  /** Render options */
-  renderOptions?: RenderOptions;
   /** CSS class name for the wrapper div */
   className?: string;
   /** Fallback UI shown while engine is loading */
@@ -30,11 +30,21 @@ export type BoundSvgProps = {
   errorFallback?: ReactNode | ((error: Error) => ReactNode);
 };
 
+export type BoundSvgProps = BoundSvgBaseProps & {
+  /** Static SVG render options. Animated scenes require an explicit `timeMs`. */
+  renderOptions?: RenderSvgOptions;
+};
+
+export type AnimatedBoundSvgProps = BoundSvgBaseProps & {
+  /** Declarative SVG options, including the required independent playback contract. */
+  renderOptions: RenderAnimatedSvgOptions;
+};
+
 function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
 
-function useResolvedVNode(props: BoundSvgProps): { vnode: VNode | null; error: Error | null } {
+function useResolvedVNode(props: BoundSvgBaseProps): { vnode: VNode | null; error: Error | null } {
   const { vnode, width, height, background, children } = props;
   return useMemo(() => {
     try {
@@ -57,7 +67,7 @@ function useResolvedVNode(props: BoundSvgProps): { vnode: VNode | null; error: E
 function renderResult(
   svg: string | null,
   error: Error | null,
-  { isReady, props }: { isReady: boolean; props: BoundSvgProps },
+  { isReady, props }: { isReady: boolean; props: BoundSvgBaseProps },
 ): React.JSX.Element {
   const { className, fallback, errorFallback } = props;
 
@@ -115,4 +125,30 @@ function BoundSvgAsync(props: BoundSvgProps) {
 export function BoundSvg(props: BoundSvgProps) {
   const { workerEngine } = useBoundSvg();
   return workerEngine ? <BoundSvgAsync {...props} /> : <BoundSvgSync {...props} />;
+}
+
+function AnimatedBoundSvgSync(props: AnimatedBoundSvgProps) {
+  const resolved = useResolvedVNode(props);
+  const {
+    svg,
+    error: renderError,
+    isReady,
+  } = useRenderToAnimatedSvg(resolved.vnode, props.renderOptions);
+  return renderResult(svg, resolved.error ?? renderError, { isReady, props });
+}
+
+function AnimatedBoundSvgAsync(props: AnimatedBoundSvgProps) {
+  const resolved = useResolvedVNode(props);
+  const {
+    svg,
+    error: renderError,
+    isReady,
+  } = useRenderToAnimatedSvgAsync(resolved.vnode, props.renderOptions);
+  return renderResult(svg, resolved.error ?? renderError, { isReady, props });
+}
+
+/** Render independent authored animation tracks as declarative animated SVG. */
+export function AnimatedBoundSvg(props: AnimatedBoundSvgProps) {
+  const { workerEngine } = useBoundSvg();
+  return workerEngine ? <AnimatedBoundSvgAsync {...props} /> : <AnimatedBoundSvgSync {...props} />;
 }

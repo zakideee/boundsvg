@@ -12,7 +12,14 @@
  * freshly allocated, structurally equal VNodes.
  */
 
-import type { LayeredPngResult, LayeredSvgResult, RenderOptions, VNode } from "@boundsvg/core";
+import type {
+  IR,
+  LayeredPngResult,
+  LayeredSvgResult,
+  RenderPngOptions,
+  RenderSvgOptions,
+  VNode,
+} from "@boundsvg/core";
 import type { WorkerEngine } from "@boundsvg/worker";
 import { act, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -35,6 +42,12 @@ vi.mock("@boundsvg/core", () => ({
 
 // Import after mock is set up
 const { useRenderToSvgAsync } = await import("../src/hooks/use-render-svg-async.js");
+const { useRenderToAnimatedSvgAsync } = await import(
+  "../src/hooks/use-render-animated-svg-async.js"
+);
+const { useRenderToAnimatedSvgAndIrAsync } = await import(
+  "../src/hooks/use-render-animated-svg-and-ir-async.js"
+);
 const { useRenderToPngAsync } = await import("../src/hooks/use-render-png-async.js");
 const { useRenderToLayeredSvgAsync } = await import("../src/hooks/use-render-layered-svg-async.js");
 const { useRenderToLayeredPngAsync } = await import("../src/hooks/use-render-layered-png-async.js");
@@ -60,7 +73,7 @@ const VALID_VNODE: VNode = {
 const INVALID_VNODE = makeInvalidVNode({ type: "UnknownWidget", props: {}, children: [] });
 
 /** Stable render options */
-const SCALE_OPTIONS: RenderOptions = { scale: 2 };
+const SCALE_OPTIONS: RenderSvgOptions = { scale: 2 };
 
 function workerCtx(workerEngine: WorkerEngine): BoundSvgContextValue {
   return {
@@ -68,7 +81,7 @@ function workerCtx(workerEngine: WorkerEngine): BoundSvgContextValue {
     workerEngine,
     status: "ready",
     error: null,
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   };
 }
 
@@ -165,7 +178,7 @@ describe("useRenderToSvgAsync", () => {
     unmount();
   });
 
-  it("merges defaultRenderOptions with per-call options", async () => {
+  it("merges defaultCommonOptions with per-call options", async () => {
     const wEng = makeWorkerEngineMock({ renderToSvg: vi.fn(async () => "<svg></svg>") });
 
     function Probe() {
@@ -178,7 +191,7 @@ describe("useRenderToSvgAsync", () => {
 
     const renderToSvgMock = wEng.renderToSvg as ReturnType<typeof vi.fn>;
     const callArgs = renderToSvgMock.mock.calls[0] as unknown[];
-    const options = callArgs[1] as RenderOptions;
+    const options = callArgs[1] as RenderSvgOptions;
     expect(options.textPathMode).toBe("merged");
     expect(options.scale).toBe(2);
     unmount();
@@ -201,14 +214,14 @@ describe("useRenderToSvgAsync", () => {
 
     const renderToSvgMock = wEng.renderToSvg as ReturnType<typeof vi.fn>;
     expect(renderToSvgMock).toHaveBeenCalledTimes(1);
-    const firstCallOptions = (renderToSvgMock.mock.calls[0] as unknown[])[1] as RenderOptions;
+    const firstCallOptions = (renderToSvgMock.mock.calls[0] as unknown[])[1] as RenderSvgOptions;
     expect(firstCallOptions.debug).toBe(false);
 
     act(() => setDebug!(true));
     await flush();
 
     expect(renderToSvgMock).toHaveBeenCalledTimes(2);
-    const secondCallOptions = (renderToSvgMock.mock.calls[1] as unknown[])[1] as RenderOptions;
+    const secondCallOptions = (renderToSvgMock.mock.calls[1] as unknown[])[1] as RenderSvgOptions;
     expect(secondCallOptions.debug).toBe(true);
     unmount();
   });
@@ -238,7 +251,7 @@ describe("useRenderToSvgAsync", () => {
     await flush();
 
     expect(renderToSvg).toHaveBeenCalledTimes(2);
-    const secondCallOptions = (renderToSvg.mock.calls[1] as unknown[])[1] as RenderOptions;
+    const secondCallOptions = (renderToSvg.mock.calls[1] as unknown[])[1] as RenderSvgOptions;
     expect(secondCallOptions.debug).toEqual({ parts: ["baseline"] });
     unmount();
   });
@@ -271,9 +284,9 @@ describe("useRenderToSvgAsync", () => {
     await flush();
 
     expect(renderToSvg).toHaveBeenCalledTimes(1);
-    const firstCallOptions = (renderToSvg.mock.calls[0] as unknown[])[1] as RenderOptions;
+    const firstCallOptions = (renderToSvg.mock.calls[0] as unknown[])[1] as RenderSvgOptions;
     const warning = { code: "TEST_WARNING" } as unknown as Parameters<
-      NonNullable<RenderOptions["onWarning"]>
+      NonNullable<RenderSvgOptions["onWarning"]>
     >[0];
     firstCallOptions.onWarning?.(warning);
     expect(observedLabels).toEqual(["latest"]);
@@ -306,12 +319,12 @@ describe("useRenderToSvgAsync", () => {
 
     const { unmount } = mount(<ConsumerHarness />, workerCtx(wEng));
     await flush();
-    const firstCallOptions = (renderToSvg.mock.calls[0] as unknown[])[1] as RenderOptions;
+    const firstCallOptions = (renderToSvg.mock.calls[0] as unknown[])[1] as RenderSvgOptions;
 
     act(() => setVisible!(false));
     act(() => {
       const warning = { code: "TEST_WARNING" } as unknown as Parameters<
-        NonNullable<RenderOptions["onWarning"]>
+        NonNullable<RenderSvgOptions["onWarning"]>
       >[0];
       firstCallOptions.onWarning?.(warning);
       resolveRender!("<svg>stale</svg>");
@@ -359,13 +372,13 @@ describe("useRenderToSvgAsync", () => {
 
     const { unmount } = mount(<Probe />, workerCtx(wEng));
     await flush();
-    const firstCallOptions = (renderToSvg.mock.calls[0] as unknown[])[1] as RenderOptions;
+    const firstCallOptions = (renderToSvg.mock.calls[0] as unknown[])[1] as RenderSvgOptions;
 
     act(() => setVNode!(secondVNode));
     await flush();
-    const secondCallOptions = (renderToSvg.mock.calls[1] as unknown[])[1] as RenderOptions;
+    const secondCallOptions = (renderToSvg.mock.calls[1] as unknown[])[1] as RenderSvgOptions;
     const warning = { code: "TEST_WARNING" } as unknown as Parameters<
-      NonNullable<RenderOptions["onWarning"]>
+      NonNullable<RenderSvgOptions["onWarning"]>
     >[0];
 
     act(() => {
@@ -409,9 +422,9 @@ describe("useRenderToSvgAsync", () => {
     await flush();
 
     expect(renderToPng).toHaveBeenCalledTimes(1);
-    const firstCallOptions = (renderToPng.mock.calls[0] as unknown[])[1] as RenderOptions;
+    const firstCallOptions = (renderToPng.mock.calls[0] as unknown[])[1] as RenderPngOptions;
     const warning = { code: "PNG_RESOLUTION_ADJUSTED" } as unknown as Parameters<
-      NonNullable<RenderOptions["onPngResolutionAdjusted"]>
+      NonNullable<RenderPngOptions["onPngResolutionAdjusted"]>
     >[0];
     firstCallOptions.onPngResolutionAdjusted?.(warning);
     expect(observedLabels).toEqual(["latest"]);
@@ -444,12 +457,12 @@ describe("useRenderToSvgAsync", () => {
 
     const { unmount } = mount(<ConsumerHarness />, workerCtx(wEng));
     await flush();
-    const firstCallOptions = (renderToPng.mock.calls[0] as unknown[])[1] as RenderOptions;
+    const firstCallOptions = (renderToPng.mock.calls[0] as unknown[])[1] as RenderPngOptions;
 
     act(() => setVisible!(false));
     act(() => {
       const warning = { code: "PNG_RESOLUTION_ADJUSTED" } as unknown as Parameters<
-        NonNullable<RenderOptions["onPngResolutionAdjusted"]>
+        NonNullable<RenderPngOptions["onPngResolutionAdjusted"]>
       >[0];
       firstCallOptions.onPngResolutionAdjusted?.(warning);
       resolveRender!(new Uint8Array([137, 80, 78, 71]));
@@ -478,7 +491,7 @@ describe("useRenderToSvgAsync", () => {
       const [label, setter] = useState("first");
       setLabel = setter;
       const context = workerCtx(wEng);
-      context.defaultRenderOptions = {
+      context.defaultCommonOptions = {
         onWarning: () => observedLabels.push(label),
       };
       return (
@@ -494,9 +507,9 @@ describe("useRenderToSvgAsync", () => {
     await flush();
 
     expect(renderToSvg).toHaveBeenCalledTimes(1);
-    const firstCallOptions = (renderToSvg.mock.calls[0] as unknown[])[1] as RenderOptions;
+    const firstCallOptions = (renderToSvg.mock.calls[0] as unknown[])[1] as RenderSvgOptions;
     const warning = { code: "TEST_WARNING" } as unknown as Parameters<
-      NonNullable<RenderOptions["onWarning"]>
+      NonNullable<RenderSvgOptions["onWarning"]>
     >[0];
     firstCallOptions.onWarning?.(warning);
     expect(observedLabels).toEqual(["latest"]);
@@ -731,6 +744,76 @@ describe("useRenderToSvgAsync", () => {
     resolveSecond!("<svg>second</svg>");
     await flush();
     expect(snapshots.at(-1)?.result.svg).toBe("<svg>second</svg>");
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Animated SVG Worker hooks
+// ---------------------------------------------------------------------------
+
+describe("animated SVG Worker hooks", () => {
+  it("renders through WorkerEngine.renderToAnimatedSvg with independent playback", async () => {
+    const renderToAnimatedSvg = vi.fn(async () => '<svg data-mode="animated"></svg>');
+    const workerEngine = makeWorkerEngineMock({ renderToAnimatedSvg });
+    let snapshot: ReturnType<typeof useRenderToAnimatedSvgAsync> | null = null;
+
+    function Probe() {
+      snapshot = useRenderToAnimatedSvgAsync(VALID_VNODE, {
+        playback: { mode: "independent" },
+        resourceIdPrefix: "worker-animated-",
+      });
+      return null;
+    }
+
+    const { unmount } = mount(<Probe />, workerCtx(workerEngine));
+    await flush();
+
+    expect(snapshot?.svg).toContain("animated");
+    expect(renderToAnimatedSvg).toHaveBeenCalledWith(expect.objectContaining({ type: "canvas" }), {
+      textPathMode: "merged",
+      playback: { mode: "independent" },
+      resourceIdPrefix: "worker-animated-",
+    });
+    unmount();
+  });
+
+  it("returns IR through the dedicated animated SVG + IR Worker method", async () => {
+    const ir = {
+      root: {
+        type: "group",
+        nodeId: "root",
+        bbox: { x: 0, y: 0, w: 100, h: 100 },
+        children: [],
+      },
+      drawOrder: ["root"],
+      width: 100,
+      height: 100,
+      warnings: [],
+    } as IR;
+    const renderToAnimatedSvgAndIR = vi.fn(async () => ({ svg: "<svg/>", ir }));
+    const workerEngine = makeWorkerEngineMock({ renderToAnimatedSvgAndIR });
+    let snapshot: ReturnType<typeof useRenderToAnimatedSvgAndIrAsync> | null = null;
+
+    function Probe() {
+      snapshot = useRenderToAnimatedSvgAndIrAsync(VALID_VNODE, {
+        playback: { mode: "independent" },
+        nodeIdMetadata: "include",
+      });
+      return null;
+    }
+
+    const { unmount } = mount(<Probe />, workerCtx(workerEngine));
+    await flush();
+
+    expect(snapshot?.ir).toBe(ir);
+    expect(renderToAnimatedSvgAndIR).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "canvas" }),
+      expect.objectContaining({
+        playback: { mode: "independent" },
+        nodeIdMetadata: "include",
+      }),
+    );
     unmount();
   });
 });

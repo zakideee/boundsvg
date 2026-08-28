@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use crate::error::EngineError;
 use crate::raster_anim::{
-    AnimationEncodeInput, rasterize_animation_frames, validate_animation_input,
+    AnimatedRasterIterations, AnimationEncodeInput, rasterize_animation_frames,
+    validate_animation_input,
 };
 use crate::webp_encode::pixmap_to_rgba;
 
@@ -29,6 +30,9 @@ const MAX_DELAY_CS: u32 = 65_535;
 /// failure on wasm32 aborts the module rather than raising a catchable error.
 const MAX_ANIMATED_GIF_BYTES: usize = 256 * 1024 * 1024;
 
+/// One initial play plus GIF's u16 repeat field permits 65,536 total plays.
+const MAX_GIF_ITERATIONS: u32 = 65_536;
+
 /// Encode pre-sampled SVG frames as an animated GIF.
 ///
 /// # Errors
@@ -41,6 +45,7 @@ pub fn encode_animated_gif(
     font_data: &[Arc<Vec<u8>>],
 ) -> Result<Vec<u8>, EngineError> {
     validate_animation_input(input)?;
+    let repeat = gif_repeat(input.iterations)?;
     let options = input.options.clone().unwrap_or_default();
     if let Some(generator) = &options.generator {
         generator.validate()?;
@@ -50,7 +55,6 @@ pub fn encode_animated_gif(
     // The encoder owns its output buffer: borrowing an outer `Vec` would leave
     // the closure holding a mutable borrow the encoder also needs.
     let mut encoder: Option<gif::Encoder<Vec<u8>>> = None;
-    let loop_count = input.resolved_loop_count();
 
     let write_result = rasterize_animation_frames(
         &input.frames,
@@ -62,9 +66,11 @@ pub fn encode_animated_gif(
             if encoder.is_none() {
                 let mut created = gif::Encoder::new(Vec::new(), width, height, &[])
                     .map_err(|e| EngineError::Rasterize(format!("Failed to start GIF: {e}")))?;
-                created.set_repeat(gif_repeat(loop_count)).map_err(|e| {
-                    EngineError::Rasterize(format!("Failed to write GIF loop count: {e}"))
-                })?;
+                if let Some(repeat_value) = repeat {
+                    created.set_repeat(repeat_value).map_err(|e| {
+                        EngineError::Rasterize(format!("Failed to write GIF repeat count: {e}"))
+                    })?;
+                }
                 if let Some(generator) = &options.generator {
                     let comment = format!("boundsvg-generator:{}", generator.canonical_json());
                     created
@@ -158,10 +164,23 @@ fn gif_dimensions(width: u32, height: u32) -> Result<(u16, u16), EngineError> {
     ))
 }
 
-fn gif_repeat(loop_count: u32) -> gif::Repeat {
-    match u16::try_from(loop_count) {
-        Ok(0) | Err(_) => gif::Repeat::Infinite,
-        Ok(count) => gif::Repeat::Finite(count),
+fn gif_repeat(iterations: AnimatedRasterIterations) -> Result<Option<gif::Repeat>, EngineError> {
+    match iterations {
+        AnimatedRasterIterations::Infinite(_) => Ok(Some(gif::Repeat::Infinite)),
+        AnimatedRasterIterations::Finite(1) => Ok(None),
+        AnimatedRasterIterations::Finite(iteration_count)
+            if (2..=MAX_GIF_ITERATIONS).contains(&iteration_count) =>
+        {
+            let repeat_count = u16::try_from(iteration_count - 1).map_err(|_| {
+                EngineError::Rasterize(format!(
+                    "Animated GIF iterations must be 1..={MAX_GIF_ITERATIONS} or infinite, got {iteration_count}"
+                ))
+            })?;
+            Ok(Some(gif::Repeat::Finite(repeat_count)))
+        }
+        AnimatedRasterIterations::Finite(iteration_count) => Err(EngineError::Rasterize(format!(
+            "Animated GIF iterations must be 1..={MAX_GIF_ITERATIONS} or infinite, got {iteration_count}"
+        ))),
     }
 }
 
@@ -170,7 +189,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::raster_anim::AnimationFrameInput;
+    use crate::raster_anim::{AnimatedRasterInfinite, AnimationFrameInput};
 
     fn solid_svg(width: u32, height: u32, fill: &str) -> String {
         format!(
@@ -189,10 +208,14 @@ mod tests {
             .collect()
     }
 
-    fn input(durations_ms: &[u32], loop_count: Option<u32>) -> AnimationEncodeInput {
+    fn infinite() -> AnimatedRasterIterations {
+        AnimatedRasterIterations::Infinite(AnimatedRasterInfinite::Infinite)
+    }
+
+    fn input(durations_ms: &[u32], iterations: AnimatedRasterIterations) -> AnimationEncodeInput {
         AnimationEncodeInput {
             frames: frames(durations_ms),
-            loop_count,
+            iterations,
             options: None,
         }
     }
@@ -210,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_animated_gif_roundtrip() {
-        let bytes = encode(&input(&[100, 250], None));
+        let bytes = encode(&input(&[100, 250], infinite()));
         assert_eq!(&bytes[0..6], b"GIF89a");
 
         let mut decoder = gif::DecodeOptions::new()
@@ -226,29 +249,66 @@ mod tests {
     }
 
     #[test]
-    fn test_animated_gif_loop_count() {
+    fn test_animated_gif_total_play_count() {
+        let once = encode(&input(&[100, 100], AnimatedRasterIterations::Finite(1)));
+        assert!(
+            !once
+                .windows(b"NETSCAPE2.0".len())
+                .any(|window| window == b"NETSCAPE2.0"),
+            "one total play must omit the repeat extension"
+        );
+
         let infinite = gif::DecodeOptions::new()
-            .read_info(Cursor::new(encode(&input(&[100, 100], None))))
+            .read_info(Cursor::new(encode(&input(&[100, 100], infinite()))))
             .expect("decodable GIF");
         assert_eq!(infinite.repeat(), gif::Repeat::Infinite);
 
         let finite = gif::DecodeOptions::new()
-            .read_info(Cursor::new(encode(&input(&[100, 100], Some(3)))))
+            .read_info(Cursor::new(encode(&input(
+                &[100, 100],
+                AnimatedRasterIterations::Finite(3),
+            ))))
             .expect("decodable GIF");
-        assert_eq!(finite.repeat(), gif::Repeat::Finite(3));
+        assert_eq!(finite.repeat(), gif::Repeat::Finite(2));
+    }
+
+    #[test]
+    fn gif_iterations_map_total_plays_to_repeat_extension_bounds() {
+        assert_eq!(
+            gif_repeat(infinite()).expect("infinite"),
+            Some(gif::Repeat::Infinite)
+        );
+        assert_eq!(
+            gif_repeat(AnimatedRasterIterations::Finite(1)).expect("one play"),
+            None
+        );
+        assert_eq!(
+            gif_repeat(AnimatedRasterIterations::Finite(2)).expect("two plays"),
+            Some(gif::Repeat::Finite(1))
+        );
+        assert_eq!(
+            gif_repeat(AnimatedRasterIterations::Finite(MAX_GIF_ITERATIONS))
+                .expect("maximum plays"),
+            Some(gif::Repeat::Finite(u16::MAX))
+        );
+        for iteration_count in [0, MAX_GIF_ITERATIONS + 1] {
+            let error = gif_repeat(AnimatedRasterIterations::Finite(iteration_count))
+                .expect_err("out-of-range total plays");
+            assert!(error.to_string().contains("Animated GIF iterations"));
+        }
     }
 
     #[test]
     fn test_animated_gif_deterministic() {
         assert_eq!(
-            encode(&input(&[100, 250], None)),
-            encode(&input(&[100, 250], None))
+            encode(&input(&[100, 250], infinite())),
+            encode(&input(&[100, 250], infinite()))
         );
     }
 
     #[test]
     fn test_animated_gif_embeds_one_generator_comment() {
-        let mut with_generator = input(&[100, 250], None);
+        let mut with_generator = input(&[100, 250], infinite());
         with_generator.options = Some(crate::rasterize::RasterizeOptions {
             generator: Some(generator()),
             ..Default::default()
@@ -265,7 +325,7 @@ mod tests {
             1
         );
 
-        let without_generator = encode(&input(&[100, 250], None));
+        let without_generator = encode(&input(&[100, 250], infinite()));
         assert!(
             !without_generator
                 .windows(marker.len())
@@ -283,7 +343,7 @@ mod tests {
         // 3 cs every frame and lose 1 cs per pair; the cumulative difference
         // keeps the total equal to the animation length.
         let durations: Vec<u32> = (0..10).map(|i| if i % 2 == 0 { 33 } else { 34 }).collect();
-        let delays = resolve_frame_delays_cs(&input(&durations, None));
+        let delays = resolve_frame_delays_cs(&input(&durations, infinite()));
         let total_ms: u32 = durations.iter().sum();
         assert_eq!(delays.iter().sum::<u32>(), (total_ms + 5) / 10);
     }
@@ -292,16 +352,16 @@ mod tests {
     fn test_delay_rounding_is_half_up() {
         // 25 ms sits exactly between 2 and 3 cs; half-up takes 3. Truncation
         // would give 2, which the browser floor would otherwise hide.
-        assert_eq!(resolve_frame_delays_cs(&input(&[25], None)), vec![3]);
+        assert_eq!(resolve_frame_delays_cs(&input(&[25], infinite())), vec![3]);
         assert_eq!(
-            resolve_frame_delays_cs(&input(&[100, 25], None)),
+            resolve_frame_delays_cs(&input(&[100, 25], infinite())),
             vec![10, 3]
         );
         // Below the midpoint; these also pass under truncation, so they guard
         // the floor rather than the rounding mode.
-        assert_eq!(resolve_frame_delays_cs(&input(&[24], None)), vec![2]);
+        assert_eq!(resolve_frame_delays_cs(&input(&[24], infinite())), vec![2]);
         assert_eq!(
-            resolve_frame_delays_cs(&input(&[100, 24], None)),
+            resolve_frame_delays_cs(&input(&[100, 24], infinite())),
             vec![10, 2]
         );
     }
@@ -309,7 +369,7 @@ mod tests {
     #[test]
     fn test_delays_clamp_to_the_browser_floor() {
         // A 1 ms frame rounds to 0 cs, which browsers replace with a default.
-        let delays = resolve_frame_delays_cs(&input(&[1, 1], None));
+        let delays = resolve_frame_delays_cs(&input(&[1, 1], infinite()));
         assert_eq!(delays, vec![MIN_DELAY_CS, MIN_DELAY_CS]);
     }
 
@@ -318,7 +378,7 @@ mod tests {
         // A partly transparent canvas: GIF has 1-bit alpha, so the encoder must
         // mark a transparent palette index rather than painting it opaque.
         let translucent = r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="4"><rect width="4" height="4" fill="#ff0000"/></svg>"##;
-        let mut transparent_input = input(&[100, 100], None);
+        let mut transparent_input = input(&[100, 100], infinite());
         for frame in &mut transparent_input.frames {
             frame.svg = translucent.to_string();
         }
@@ -342,16 +402,16 @@ mod tests {
     fn test_animated_gif_rejects_invalid_input() {
         let empty = AnimationEncodeInput {
             frames: vec![],
-            loop_count: None,
+            iterations: infinite(),
             options: None,
         };
         assert!(encode_animated_gif(&empty, &[], &[]).is_err());
-        assert!(encode_animated_gif(&input(&[0], None), &[], &[]).is_err());
+        assert!(encode_animated_gif(&input(&[0], infinite()), &[], &[]).is_err());
     }
 
     #[test]
     fn test_animated_gif_rejects_mismatched_frame_sizes() {
-        let mut mismatched = input(&[100, 100], None);
+        let mut mismatched = input(&[100, 100], infinite());
         mismatched.frames[1].svg = solid_svg(16, 4, "#0000ff");
         let error =
             encode_animated_gif(&mismatched, &[], &[]).expect_err("size mismatch is invalid");
@@ -360,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_animated_gif_applies_shared_rasterize_options() {
-        let mut scaled = input(&[100, 100], None);
+        let mut scaled = input(&[100, 100], infinite());
         scaled.options = Some(crate::rasterize::RasterizeOptions {
             background: None,
             scale: Some(2.0),

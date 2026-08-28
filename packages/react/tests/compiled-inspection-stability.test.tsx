@@ -7,7 +7,7 @@ import type {
   Engine,
   IR,
   LayoutResult,
-  RenderOptions,
+  RenderIrOptions,
   VNode,
 } from "@boundsvg/core";
 import { act, useState } from "react";
@@ -34,7 +34,7 @@ function makeVNode(width = 100, text = "hello"): VNode {
 
 const STABLE_VNODE = makeVNode();
 const STABLE_COMPILE_OPTIONS: CompileOptions = { textPathMode: "merged" };
-const STABLE_RENDER_OPTIONS: RenderOptions = { textPathMode: "merged" };
+const STABLE_RENDER_OPTIONS: RenderIrOptions = { textPathMode: "merged" };
 
 function vnodeWidth(vnode: VNode): number {
   return Reflect.get(vnode.props, "width") as number;
@@ -79,9 +79,9 @@ function makeEngine() {
     return compiled;
   });
   const renderToLayoutTree = vi.fn((vnode: VNode) => makeLayout(vnode));
-  const renderToIR = vi.fn((vnode: VNode, options?: RenderOptions) => {
+  const renderToIR = vi.fn((vnode: VNode, options?: RenderIrOptions) => {
     options?.onWarning?.(
-      new Error("test warning") as Parameters<NonNullable<RenderOptions["onWarning"]>>[0],
+      new Error("test warning") as Parameters<NonNullable<RenderIrOptions["onWarning"]>>[0],
     );
     return makeIr(vnode);
   });
@@ -99,7 +99,7 @@ function context(engine: Engine): BoundSvgContextValue {
     workerEngine: null,
     status: "ready",
     error: null,
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   };
 }
 

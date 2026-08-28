@@ -1,4 +1,4 @@
-import type { IR, RenderOptions, VNode } from "@boundsvg/core";
+import type { IR, RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/core";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   type TextContextMenuHit,
@@ -12,7 +12,7 @@ import { toInteractiveVNodeFromChildren } from "../utils/to-interactive-vnode.js
 
 const ERROR_FONT_SIZE_PX = 12;
 
-export type InteractiveBoundSvgProps = {
+type InteractiveBoundSvgBaseProps = {
   /** VNode tree to render (explicit mode) */
   vnode?: VNode | null;
   /**
@@ -28,8 +28,6 @@ export type InteractiveBoundSvgProps = {
   background?: string;
   /** Declarative children — boundsvg phantom components with function handlers */
   children?: ReactNode;
-  /** Render options */
-  renderOptions?: RenderOptions;
   /** CSS class name for the wrapper div */
   className?: string;
   /** Whether to show pointer cursor on interactive elements (default: true) */
@@ -54,6 +52,12 @@ export type InteractiveBoundSvgProps = {
   errorFallback?: ReactNode | ((error: Error) => ReactNode);
 };
 
+export type InteractiveBoundSvgProps = InteractiveBoundSvgBaseProps &
+  (
+    | { renderMode?: "static"; renderOptions?: RenderSvgOptions }
+    | { renderMode: "animated"; renderOptions: RenderAnimatedSvgOptions }
+  );
+
 const EMPTY_HANDLERS = new Map<string, EventCallback>();
 
 function toError(value: unknown): Error {
@@ -67,6 +71,7 @@ export function InteractiveBoundSvg({
   height,
   background,
   children,
+  renderMode,
   renderOptions,
   className,
   showPointerCursor,
@@ -126,13 +131,23 @@ export function InteractiveBoundSvg({
   }, []);
 
   const options: UseInteractiveSvgOptions = useMemo(
-    () => ({
-      renderOptions,
-      showPointerCursor,
-      enableTextCopy,
-      onTextContextMenu: handleTextContextMenu,
-    }),
-    [renderOptions, showPointerCursor, enableTextCopy, handleTextContextMenu],
+    () =>
+      renderMode === "animated"
+        ? {
+            renderMode,
+            renderOptions: renderOptions as RenderAnimatedSvgOptions,
+            showPointerCursor,
+            enableTextCopy,
+            onTextContextMenu: handleTextContextMenu,
+          }
+        : {
+            renderMode,
+            renderOptions: renderOptions as RenderSvgOptions | undefined,
+            showPointerCursor,
+            enableTextCopy,
+            onTextContextMenu: handleTextContextMenu,
+          },
+    [renderMode, renderOptions, showPointerCursor, enableTextCopy, handleTextContextMenu],
   );
 
   const { svg, ir, textMap, error, isReady, hoverNodeId, containerRef } = useInteractiveSvg(

@@ -16,6 +16,7 @@ import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import {
   createEngineFromHandle,
   createFontedWasmHandle,
+  emitAnimatedSvgFromIrViaHandle,
   emitSvgFromIrViaHandle,
 } from "../helpers/wasm-render-engine.js";
 
@@ -313,7 +314,9 @@ describe("hand-built IR spring easing", () => {
   it.each([0.5, 5000])("rejects a spring stiffness of %p at the emit boundary", (stiffness) => {
     let caught: unknown;
     try {
-      emitSvgFromIrViaHandle(handle, springIr(stiffness));
+      emitAnimatedSvgFromIrViaHandle(handle, springIr(stiffness), {
+        playback: { mode: "independent" },
+      });
     } catch (error) {
       caught = error;
     }
@@ -321,7 +324,9 @@ describe("hand-built IR spring easing", () => {
   });
 
   it("emits a finite linear() curve for an in-range hand-built spring", () => {
-    const svg = emitSvgFromIrViaHandle(handle, springIr(170));
+    const svg = emitAnimatedSvgFromIrViaHandle(handle, springIr(170), {
+      playback: { mode: "independent" },
+    });
     const timingFunction = /animation-timing-function: (linear\([^)]*\));/.exec(svg)?.[1];
 
     expect(timingFunction, svg).toBeDefined();

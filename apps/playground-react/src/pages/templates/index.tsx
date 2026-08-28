@@ -1,5 +1,5 @@
 import { Canvas } from "@boundsvg/core";
-import type { Engine, RenderOptions, VNode } from "@boundsvg/react";
+import type { CompileOptions, Engine, OutputCommonOptions, VNode } from "@boundsvg/react";
 import { useBoundSvg } from "@boundsvg/react/provider";
 import Prism from "prismjs";
 import { useDeferredValue, useMemo, useState, useTransition } from "react";
@@ -217,7 +217,7 @@ export function TemplatesPage() {
     [baseVNode, overrides],
   );
 
-  const baseRenderOptions = useMemo<RenderOptions>(
+  const baseRenderOptions = useMemo<CompileOptions & OutputCommonOptions>(
     () => ({
       debug: resolveDebugOverlayConfig(overrides.debugOverlayParts),
       textPathMode: overrides.textPathMode,
@@ -225,8 +225,8 @@ export function TemplatesPage() {
     [overrides.debugOverlayParts, overrides.textPathMode],
   );
 
-  const pngRenderOptions = useMemo<RenderOptions>(() => {
-    const options: RenderOptions = {
+  const pngRenderOptions = useMemo<CompileOptions & OutputCommonOptions>(() => {
+    const options: CompileOptions & OutputCommonOptions = {
       debug: resolveDebugOverlayConfig(overrides.debugOverlayParts),
       textPathMode: "merged",
     };

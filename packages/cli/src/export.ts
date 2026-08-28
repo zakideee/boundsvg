@@ -191,8 +191,8 @@ function renderExportRaster(
   const animated = {
     ...shared,
     durationMs: options.durationMs ?? 0,
+    iterations: options.iterations ?? "infinite",
     ...(options.fps !== undefined && { fps: options.fps }),
-    ...(options.loop !== undefined && { loop: options.loop }),
   };
   if (options.format === "animated-webp") {
     return engine.renderToAnimatedWebp(input, animated);
@@ -402,9 +402,7 @@ function writeInspectionReport(
   let report: string;
   try {
     const inspection = inspectCliScene(engine, input, {
-      debug: options.debug,
       textPathMode: options.textPathMode,
-      scale: options.scale,
     });
     report = formatInspectionJson(inspection);
   } catch (err) {
@@ -645,7 +643,8 @@ function hasInputInArgs(args: string[]): boolean {
 /** Inclusive ranges the core animation schedule accepts. */
 const MIN_ANIMATION_FPS = 1;
 const MAX_ANIMATION_FPS = 60;
-const MAX_ANIMATION_LOOP = 65_535;
+const MAX_ANIMATED_WEBP_ITERATIONS = 65_535;
+const MAX_GIF_ITERATIONS = 65_536;
 
 /** Frame rate used for MP4 when the caller does not ask for one. */
 const MP4_FRAME_RATE_DEFAULT = 30;
@@ -661,8 +660,8 @@ const MAX_MP4_BITRATE = 50_000_000;
  * gets its own check rather than bending the shared one.
  */
 function validateMp4Flags(options: ExportOptions): string | null {
-  if (options.loop !== undefined) {
-    return "Error: --loop does not apply to mp4 export; video has no loop count\n";
+  if (options.iterations !== undefined) {
+    return "Error: --iterations does not apply to mp4 export; video has no play-count field\n";
   }
   if (options.durationMs === undefined) {
     return "Error: --duration-ms is required for mp4 export\n";
@@ -786,7 +785,7 @@ function rejectAnimationFlagsOnStillFormat(options: ExportOptions): string | nul
     // fpsArg rather than fps: a rational spelling parses to no number, and a
     // flag that was given still has to be rejected here.
     ["--fps", options.fpsArg],
-    ["--loop", options.loop],
+    ["--iterations", options.iterations],
     ["--bitrate", options.bitrate],
   ] as const) {
     if (value !== undefined) {
@@ -828,11 +827,16 @@ function validateAnimationFlags(options: ExportOptions): string | null {
     // ignoring it would look like it took effect.
     return `Error: --bitrate does not apply to ${options.format} export\n`;
   }
+  const maxIterations =
+    options.format === "animated-webp" ? MAX_ANIMATED_WEBP_ITERATIONS : MAX_GIF_ITERATIONS;
   if (
-    options.loop !== undefined &&
-    (!Number.isInteger(options.loop) || options.loop < 0 || options.loop > MAX_ANIMATION_LOOP)
+    options.iterations !== undefined &&
+    options.iterations !== "infinite" &&
+    (!Number.isSafeInteger(options.iterations) ||
+      options.iterations < 1 ||
+      options.iterations > maxIterations)
   ) {
-    return `Error: --loop must be a whole number between 0 and ${MAX_ANIMATION_LOOP}\n`;
+    return `Error: --iterations for ${options.format} must be "infinite" or a whole number between 1 and ${maxIterations}\n`;
   }
   const frameCount = Math.max(2, Math.ceil((options.durationMs * (options.fps ?? 20)) / 1000));
   if (frameCount > MAX_ANIMATION_FRAMES) {

@@ -121,17 +121,33 @@ const typeTargets: Record<string, TypeTarget[]> = {
   RenderSvgOptionsInput: [
     {
       file: "packages/core/src/engine.ts",
-      typeName: "RenderOptions",
-      // TS-only render options: validation and raster concerns never cross the
-      // SVG emit boundary; callbacks cannot be serialized.
+      typeName: "InternalRenderOptions",
       intentionallyIgnoredTsFields: [
         "skipValidation",
         "rasterBackground",
         "rasterOversizeBehavior",
         "onPngResolutionAdjusted",
         "onWarning",
+        "playback",
       ],
     },
+  ],
+  StaticSvgOptionsInput: [
+    {
+      file: "packages/core/src/engine.ts",
+      typeName: "RenderSvgOptions",
+      intentionallyIgnoredTsFields: ["skipValidation", "onWarning"],
+    },
+  ],
+  AnimatedSvgOptionsInput: [
+    {
+      file: "packages/core/src/engine.ts",
+      typeName: "RenderAnimatedSvgOptions",
+      intentionallyIgnoredTsFields: ["skipValidation", "onWarning"],
+    },
+  ],
+  AnimatedSvgPlaybackInput: [
+    { file: "packages/core/src/engine.ts", typeName: "AnimatedSvgPlayback" },
   ],
   OutputGenerator: [
     { file: "packages/core/src/engine.ts", typeName: "OutputGenerator" },
@@ -262,8 +278,13 @@ const payloadTargets: Record<string, PayloadTarget> = {
 const unitEnumTargets: Record<string, TypeTarget> = {
   AnimationRenderModeInput: {
     file: "packages/core/src/engine.ts",
-    typeName: "RenderOptions",
+    typeName: "InternalRenderOptions",
     path: ["animation"],
+  },
+  AnimatedSvgPlaybackModeInput: {
+    file: "packages/core/src/engine.ts",
+    typeName: "AnimatedSvgPlayback",
+    path: ["mode"],
   },
   FillRule: { file: wasmIndexFile, typeName: "FlowExclusionShape", path: ["fillRule"] },
   FlowOverflowReason: { file: wasmIndexFile, typeName: "FlowOverflowReason" },
@@ -281,6 +302,11 @@ const unitEnumTargets: Record<string, TypeTarget> = {
   StrokeScaling: { file: irTypesFile, typeName: "IRNode", path: ["strokeScaling"] },
   IrFillRule: { file: irTypesFile, typeName: "IRNode", path: ["fillRule"] },
   IrTextAlign: { file: irTypesFile, typeName: "IRNode", path: ["textAlign"] },
+  NodeIdMetadataInput: {
+    file: "packages/core/src/engine.ts",
+    typeName: "SvgEmissionOptions",
+    path: ["nodeIdMetadata"],
+  },
   TextUnitKind: { file: textTypesFile, typeName: "TextUnitKind" },
   TextUnitAnimationOrder: {
     file: "packages/core/src/vnode/types.ts",
@@ -749,6 +775,8 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       "BorderRadiusInputValue",
       "AnimationEasing",
       "AnimationIterations",
+      "AnimatedRasterInfinite",
+      "AnimatedRasterIterations",
       "ReducedMotionInput",
       "DebugOverlayInput",
       "FlowExclusionMargin",
@@ -761,15 +789,15 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       rustDtos.size,
     );
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(124);
+    expect(rustDtos.size).toBe(131);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(833);
-    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(72);
+    ).toBe(861);
+    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(78);
   });
 
   it("keeps struct wire fields and requiredness directionally compatible", () => {
@@ -964,6 +992,21 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
     ]);
     expect(rustDtos.get("AnimationIterations")?.serdeAttributes).toContain("untagged");
     expect(rustDtos.get("AnimationIterations")?.variants).toHaveLength(2);
+
+    expect(rustDtos.get("AnimatedRasterIterations")?.serdeAttributes).toContain("untagged");
+    expect(rustDtos.get("AnimatedRasterIterations")?.variants).toHaveLength(2);
+    expect(rustDtos.get("AnimatedRasterInfinite")?.variants.map((variant) => variant.name)).toEqual(
+      ["infinite"],
+    );
+    const animatedRasterIterationTypes = declarationType(program, checker, {
+      file: wasmIndexFile,
+      typeName: "AnimationEncodeInput",
+      path: ["iterations"],
+    });
+    expect(
+      animatedRasterIterationTypes.some((type) => (type.flags & ts.TypeFlags.NumberLike) !== 0),
+    ).toBe(true);
+    expect(stringLiterals(animatedRasterIterationTypes)).toEqual(["infinite"]);
   });
 
   it("keeps the untagged margin scalar/object arms aligned", () => {

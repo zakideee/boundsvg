@@ -1,9 +1,11 @@
 import {
   type AnimationScheduleErrorCodes,
   type AnimationScheduleOptions,
-  assertAnimationLoopCount,
+  assertAnimationIterations,
   GIF_DELAY_UNIT_MS,
   GIF_MIN_FRAME_MS,
+  MAX_ANIMATED_GIF_ITERATIONS,
+  MAX_ANIMATED_WEBP_ITERATIONS,
   type ResolvedAnimationSchedule,
   resolveAnimationFrameSchedule,
   resolveGifDelaysCs,
@@ -23,6 +25,7 @@ import type {
   LayeredSvgResult,
 } from "./layered-svg.js";
 import {
+  hasAnimatedNode,
   type LayerEmitOptions,
   renderLayeredSvg,
   snapshotLayerSourceMetadata,
@@ -53,7 +56,7 @@ import { projectResolvedTextOutlines } from "./text/outline-projection.js";
 import { assertRichTextNodeDepth } from "./text/rich-text-limits.js";
 import type { RichTextNode, TextOutlineNode, TextPathMode } from "./text/types.js";
 import { validate } from "./validate/index.js";
-import type { VNode } from "./vnode/types.js";
+import type { AnimationSpec, VNode } from "./vnode/types.js";
 import type {
   AnimationEncodeInput,
   IntrinsicInlineSizeInput,
@@ -221,7 +224,7 @@ function collectIrTextNodeIds(root: IRNode): Set<string> {
   return textNodeIds;
 }
 
-function toCompileOptions(options?: RenderOptions): CompileOptions | undefined {
+function toCompileOptions(options?: CompileOptions): CompileOptions | undefined {
   if (!options) {
     return undefined;
   }
@@ -232,9 +235,9 @@ function toCompileOptions(options?: RenderOptions): CompileOptions | undefined {
   return { skipValidation, textPathMode };
 }
 
-/** Map RenderOptions onto the camelCase options JSON the WASM emitter reads. */
+/** Map internal render fields onto the camelCase options JSON a WASM transport reads. */
 function toWasmRenderOptionsJson(
-  renderOpts: RenderOptions | undefined,
+  renderOpts: InternalRenderOptions | undefined,
   overrides?: {
     scale?: number;
     rasterizerCompat?: boolean;
@@ -255,10 +258,12 @@ function toWasmRenderOptionsJson(
       renderOpts?.resourceIdPrefix === undefined
         ? undefined
         : toCssSafeResourceId(renderOpts.resourceIdPrefix),
+    nodeIdMetadata: renderOpts?.nodeIdMetadata,
     textPathMode: renderOpts?.textPathMode,
     showMissingGlyphs: renderOpts?.showMissingGlyphs,
     rasterizerCompat: overrides?.rasterizerCompat,
     animation: overrides?.animation ?? renderOpts?.animation,
+    playback: renderOpts?.playback,
     timeMs: renderOpts?.timeMs,
     reducedMotion: renderOpts?.reducedMotion,
     sampleAnimation: overrides?.sampleAnimation,
@@ -270,7 +275,9 @@ function toWasmRenderOptionsJson(
 }
 
 function assertValidAnimationRenderOptions(
-  options: Pick<RenderOptions, "animation" | "timeMs" | "reducedMotion"> | undefined,
+  options:
+    | { animation?: "declarative" | "static"; timeMs?: number; reducedMotion?: ReducedMotionMode }
+    | undefined,
 ): void {
   if (
     options?.reducedMotion !== undefined &&
@@ -303,6 +310,154 @@ function assertValidAnimationRenderOptions(
   }
 }
 
+const COMPILE_OPTION_KEYS = ["skipValidation", "textPathMode"] as const;
+const OUTPUT_COMMON_OPTION_KEYS = [
+  "scale",
+  "debug",
+  "onWarning",
+  "showMissingGlyphs",
+  "generator",
+] as const;
+const SVG_EMISSION_OPTION_KEYS = ["resourceIdPrefix", "nodeIdMetadata"] as const;
+const RASTER_EMISSION_OPTION_KEYS = [
+  "rasterBackground",
+  "rasterOversizeBehavior",
+  "onPngResolutionAdjusted",
+] as const;
+const STATIC_SVG_OPTION_KEYS = new Set<string>([
+  ...COMPILE_OPTION_KEYS,
+  ...OUTPUT_COMMON_OPTION_KEYS,
+  ...SVG_EMISSION_OPTION_KEYS,
+  "timeMs",
+]);
+const ANIMATED_SVG_OPTION_KEYS = new Set<string>([
+  ...STATIC_SVG_OPTION_KEYS,
+  "playback",
+  "reducedMotion",
+]);
+const EMIT_STATIC_SVG_OPTION_KEYS = new Set<string>(
+  [...STATIC_SVG_OPTION_KEYS].filter((key) => !COMPILE_OPTION_KEYS.includes(key as never)),
+);
+const EMIT_ANIMATED_SVG_OPTION_KEYS = new Set<string>([
+  ...EMIT_STATIC_SVG_OPTION_KEYS,
+  "playback",
+  "reducedMotion",
+]);
+const RASTER_OPTION_KEYS = new Set<string>([
+  ...COMPILE_OPTION_KEYS,
+  ...OUTPUT_COMMON_OPTION_KEYS,
+  ...RASTER_EMISSION_OPTION_KEYS,
+  "timeMs",
+]);
+const EMIT_RASTER_OPTION_KEYS = new Set<string>(
+  [...RASTER_OPTION_KEYS].filter((key) => !COMPILE_OPTION_KEYS.includes(key as never)),
+);
+const ANIMATION_SCHEDULE_OPTION_KEYS = [
+  "timesMs",
+  "frameDurationsMs",
+  "fps",
+  "durationMs",
+] as const;
+const ANIMATED_RASTER_OPTION_KEYS = new Set<string>([
+  ...RASTER_OPTION_KEYS,
+  ...ANIMATION_SCHEDULE_OPTION_KEYS,
+  "iterations",
+]);
+const COMPILED_ANIMATED_RASTER_OPTION_KEYS = new Set<string>(
+  [...ANIMATED_RASTER_OPTION_KEYS].filter((key) => !COMPILE_OPTION_KEYS.includes(key as never)),
+);
+const LEGACY_RENDER_OPTION_MIGRATIONS: Readonly<Record<string, string>> = {
+  animation:
+    'Use renderToAnimatedSvg with playback: { mode: "independent" }, or use static SVG with an explicit timeMs.',
+  loop: "Use the required total-play iterations option for animated WebP or GIF.",
+  loopCount: "Use the required total-play iterations option for animated WebP or GIF.",
+  // biome-ignore lint/style/useNamingConvention: exact legacy wire spelling
+  loop_count: "Use the required total-play iterations option for animated WebP or GIF.",
+};
+
+function assertOwnOptionKeys(
+  options: object | undefined,
+  allowedKeys: ReadonlySet<string>,
+  methodName: string,
+): void {
+  if (options === undefined) {
+    return;
+  }
+  if (typeof options !== "object" || options === null || Array.isArray(options)) {
+    throw new FatalError("UNSUPPORTED_RENDER_OPTION", `${methodName} options must be an object.`, {
+      stage: "validate",
+    });
+  }
+  for (const key of Object.keys(options)) {
+    const migration = LEGACY_RENDER_OPTION_MIGRATIONS[key];
+    if (migration !== undefined) {
+      throw new FatalError(
+        "UNSUPPORTED_LEGACY_RENDER_OPTION",
+        `${methodName} no longer accepts ${JSON.stringify(key)}. ${migration}`,
+        { stage: "validate" },
+      );
+    }
+    if (!allowedKeys.has(key)) {
+      throw new FatalError(
+        "UNSUPPORTED_RENDER_OPTION",
+        `${methodName} does not support option ${JSON.stringify(key)}.`,
+        { stage: "validate" },
+      );
+    }
+  }
+}
+
+function assertSvgEmissionOptionValues(options: SvgEmissionOptions | undefined): void {
+  if (
+    options?.nodeIdMetadata !== undefined &&
+    options.nodeIdMetadata !== "include" &&
+    options.nodeIdMetadata !== "omit"
+  ) {
+    throw new FatalError(
+      "UNSUPPORTED_RENDER_OPTION",
+      `nodeIdMetadata must be "include" or "omit", got ${String(options.nodeIdMetadata)}.`,
+      { stage: "validate" },
+    );
+  }
+}
+
+function assertAnimatedSvgPlayback(playback: unknown): asserts playback is AnimatedSvgPlayback {
+  if (
+    typeof playback !== "object" ||
+    playback === null ||
+    Array.isArray(playback) ||
+    Object.keys(playback).length !== 1 ||
+    !Object.hasOwn(playback, "mode") ||
+    Reflect.get(playback, "mode") !== "independent"
+  ) {
+    throw new FatalError(
+      "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
+      'Animated SVG playback must be exactly { mode: "independent" }.',
+      { stage: "validate" },
+    );
+  }
+}
+
+function assertFrameOptionKeys(
+  options: RenderFramesOptions | RenderCompiledFramesOptions,
+  methodName: string,
+  compiled: boolean,
+): void {
+  const commonKeys = compiled
+    ? OUTPUT_COMMON_OPTION_KEYS
+    : [...COMPILE_OPTION_KEYS, ...OUTPUT_COMMON_OPTION_KEYS];
+  const format = Reflect.get(options, "format");
+  const formatKeys = format === "svg" ? SVG_EMISSION_OPTION_KEYS : RASTER_EMISSION_OPTION_KEYS;
+  assertOwnOptionKeys(
+    options,
+    new Set([...commonKeys, ...formatKeys, "timesMs", "format"]),
+    methodName,
+  );
+  if (format === "svg") {
+    assertSvgEmissionOptionValues(options as SvgEmissionOptions);
+  }
+}
+
 /**
  * Reduce animated-raster options to the render options a frame sample takes.
  *
@@ -312,14 +467,14 @@ function assertValidAnimationRenderOptions(
  * the completed animated container, not every temporary SVG frame.
  */
 function toAnimationFrameRenderOptions(
-  options: RenderAnimatedWebpOptions,
-): Omit<RenderOptions, "animation" | "timeMs" | "scale" | "generator"> {
+  options: RenderAnimatedWebpOptions | RenderAnimatedGifOptions,
+): Omit<RenderPngOptions, "timeMs" | "scale" | "generator"> {
   const {
     timesMs: _timesMs,
     frameDurationsMs: _frameDurationsMs,
     fps: _fps,
     durationMs: _durationMs,
-    loop: _loop,
+    iterations: _iterations,
     scale: _scale,
     generator: _generator,
     ...renderOptions
@@ -327,7 +482,7 @@ function toAnimationFrameRenderOptions(
   return renderOptions;
 }
 
-function validateFrameSchedule(options: RenderFramesOptions | undefined): number[] {
+function validateFrameSchedule(options: LegacyRenderFramesOptions | undefined): number[] {
   if (!options || (options.format !== "svg" && options.format !== "png")) {
     throw new FatalError(
       "ANIMATION_INVALID_FRAME_FORMAT",
@@ -520,8 +675,12 @@ export type EngineOptions = {
   ) => string;
   /** WASM render_to_svg transport: layout + options JSON in, SVG/warnings/metadata envelope out */
   renderToSvgFn?: (inputJson: string, optionsJson: string) => string;
+  /** WASM render_to_animated_svg transport. */
+  renderToAnimatedSvgFn?: (inputJson: string, optionsJson: string) => string;
   /** WASM emit_svg_from_ir transport: IR + options JSON in, SVG string out */
   emitSvgFromIrFn?: (irJson: string, optionsJson: string) => string;
+  /** WASM emit_animated_svg_from_ir transport. */
+  emitAnimatedSvgFromIrFn?: (irJson: string, optionsJson: string) => string;
   /** Resolve all outlines and return a `{ ir, warnings }` envelope. */
   resolveIrFn?: (irJson: string, optionsJson: string) => string;
   /** Run the bounded PNG outline preflight. */
@@ -530,6 +689,8 @@ export type EngineOptions = {
   preflightRasterSceneFn?: (irJson: string, optionsJson: string) => RasterSceneRenderHandle;
   /** Resolve outlines and emit SVG without returning resolved IR. */
   resolveAndEmitSvgFromIrFn?: (irJson: string, optionsJson: string) => string;
+  /** Resolve outlines and emit declarative animated SVG without returning IR. */
+  resolveAndEmitAnimatedSvgFromIrFn?: (irJson: string, optionsJson: string) => string;
   /** WASM sample_animation_state transport: IR JSON + time in, samples JSON out */
   sampleAnimationStateFn?: (irJson: string, timeMs: number) => string;
   /** Prepare a parsed, outline-resolved IR for repeated frame sampling. */
@@ -583,35 +744,32 @@ export type OutputGenerator = {
   version: string;
 };
 
-export type RenderOptions = {
-  skipValidation?: boolean;
+export type OutputCommonOptions = {
   scale?: number;
   debug?: boolean | DebugOverlayConfig;
-  /** Prefix applied to boundsvg-generated SVG resource IDs in <defs>. */
-  resourceIdPrefix?: string;
-  /** Text outline grouping mode. Default: "merged". */
-  textPathMode?: TextPathMode;
-  rasterBackground?: string;
-  rasterOversizeBehavior?: RasterOversizeBehavior;
-  onPngResolutionAdjusted?: (warning: PngResolutionAdjustedWarning) => void;
   onWarning?: (warning: RecoverableError) => void;
   /** Render synthetic tofu rectangles for missing glyphs (glyph_id=0). Default: false. */
   showMissingGlyphs?: boolean;
-  /** SVG animation output mode. SVG defaults to declarative; PNG is always static. */
-  animation?: "declarative" | "static";
-  /** Deterministic animation sampling time in milliseconds. Default: 0. */
-  timeMs?: number;
-  /**
-   * Emit a `prefers-reduced-motion` opt-out alongside declarative animation
-   * CSS. Default: "keep", which leaves output byte identical.
-   */
-  reducedMotion?: ReducedMotionMode;
   /** Unsigned public generator identity. Do not put user or request identifiers here. */
   generator?: OutputGenerator;
 };
 
-/** Options that affect layout-tree construction. Animation is sampled after layout. */
-export type LayoutRenderOptions = Pick<RenderOptions, "skipValidation">;
+export type SvgEmissionOptions = {
+  /**
+   * Literal prefix applied to every boundsvg-generated, document-global SVG
+   * identifier and its references. Co-embedded outputs require normalized,
+   * non-empty, pairwise prefix-free values for guaranteed non-intersection.
+   */
+  resourceIdPrefix?: string;
+  /** Include generated node identity attributes by default, or omit them. */
+  nodeIdMetadata?: "include" | "omit";
+};
+
+export type RasterEmissionOptions = {
+  rasterBackground?: string;
+  rasterOversizeBehavior?: RasterOversizeBehavior;
+  onPngResolutionAdjusted?: (warning: PngResolutionAdjustedWarning) => void;
+};
 
 export type CompileOptions = {
   skipValidation?: boolean;
@@ -619,63 +777,71 @@ export type CompileOptions = {
   textPathMode?: TextPathMode;
 };
 
-export type EmitOptions = {
-  scale?: number;
-  debug?: boolean | DebugOverlayConfig;
-  /** Prefix applied to boundsvg-generated SVG resource IDs in <defs>. */
-  resourceIdPrefix?: string;
-  rasterBackground?: string;
-  rasterOversizeBehavior?: RasterOversizeBehavior;
-  onPngResolutionAdjusted?: (warning: PngResolutionAdjustedWarning) => void;
+/** Options that affect layout-tree construction. */
+export type LayoutRenderOptions = Pick<CompileOptions, "skipValidation">;
+
+/** 0.3 animated SVG playback deliberately preserves independent authored tracks. */
+export type AnimatedSvgPlayback = { mode: "independent" };
+
+export type RenderSvgOptions = CompileOptions &
+  OutputCommonOptions &
+  SvgEmissionOptions & { timeMs?: number };
+
+export type RenderAnimatedSvgOptions = CompileOptions &
+  OutputCommonOptions &
+  SvgEmissionOptions & {
+    playback: AnimatedSvgPlayback;
+    timeMs?: number;
+    reducedMotion?: ReducedMotionMode;
+  };
+
+export type EmitSvgOptions = OutputCommonOptions & SvgEmissionOptions & { timeMs?: number };
+
+export type EmitAnimatedSvgOptions = OutputCommonOptions &
+  SvgEmissionOptions & {
+    playback: AnimatedSvgPlayback;
+    timeMs?: number;
+    reducedMotion?: ReducedMotionMode;
+  };
+
+export type RenderIrOptions = CompileOptions & {
   onWarning?: (warning: RecoverableError) => void;
-  /** Render synthetic tofu rectangles for missing glyphs (glyph_id=0). Default: false. */
   showMissingGlyphs?: boolean;
-  /** SVG animation output mode. SVG defaults to declarative; PNG is always static. */
-  animation?: "declarative" | "static";
-  /** Deterministic animation sampling time in milliseconds. Default: 0. */
   timeMs?: number;
-  /**
-   * Emit a `prefers-reduced-motion` opt-out alongside declarative animation
-   * CSS. Default: "keep", which leaves output byte identical.
-   */
-  reducedMotion?: ReducedMotionMode;
-  /** Unsigned public generator identity. Do not put user or request identifiers here. */
-  generator?: OutputGenerator;
 };
 
-export type LayeredSvgOptions = Pick<
-  RenderOptions,
-  | "skipValidation"
-  | "debug"
-  | "resourceIdPrefix"
-  | "scale"
-  | "textPathMode"
-  | "showMissingGlyphs"
-  | "onWarning"
-  | "animation"
-  | "timeMs"
-  | "generator"
-> & {
-  validateComposition?: LayeredCompositionValidationOptions;
+export type RenderTextOutlinesOptions = CompileOptions & {
+  onWarning?: (warning: RecoverableError) => void;
+  showMissingGlyphs?: boolean;
 };
 
-export type LayeredPngOptions = Pick<
-  RenderOptions,
-  | "skipValidation"
-  | "debug"
-  | "resourceIdPrefix"
-  | "scale"
-  | "textPathMode"
-  | "showMissingGlyphs"
-  | "onWarning"
-  | "animation"
-  | "timeMs"
-  | "rasterOversizeBehavior"
-  | "onPngResolutionAdjusted"
-  | "generator"
-> & {
-  validateComposition?: LayeredCompositionValidationOptions;
-};
+export type EmitTextOutlinesOptions = Omit<RenderTextOutlinesOptions, keyof CompileOptions>;
+
+export type RenderPngOptions = CompileOptions &
+  OutputCommonOptions &
+  RasterEmissionOptions & { timeMs?: number };
+
+export type RenderWebpOptions = CompileOptions &
+  OutputCommonOptions &
+  RasterEmissionOptions & { timeMs?: number };
+
+export type EmitPngOptions = OutputCommonOptions & RasterEmissionOptions & { timeMs?: number };
+
+export type EmitWebpOptions = OutputCommonOptions & RasterEmissionOptions & { timeMs?: number };
+
+export type LayeredSvgOptions = CompileOptions &
+  OutputCommonOptions &
+  SvgEmissionOptions & {
+    timeMs?: number;
+    validateComposition?: LayeredCompositionValidationOptions;
+  };
+
+export type LayeredPngOptions = CompileOptions &
+  OutputCommonOptions &
+  RasterEmissionOptions & {
+    timeMs?: number;
+    validateComposition?: LayeredCompositionValidationOptions;
+  };
 
 export type ValidateLayeredSvgCompositionInput = {
   singleSvg: string;
@@ -729,14 +895,20 @@ type AnimationErrorCodes = AnimationScheduleErrorCodes & {
   payloadLimit: string;
 };
 
-export type RenderAnimatedWebpOptions = Omit<RenderOptions, "animation" | "timeMs"> &
+/** Total number of animated-raster plays, or an unbounded animation. */
+export type AnimatedRasterIterations = NonNullable<AnimationSpec["iterations"]>;
+
+export type RenderAnimatedWebpOptions = Omit<RenderWebpOptions, "timeMs"> &
   AnimationScheduleOptions & {
-    /** Loop count, 0..=65535. 0 (the default) loops forever. */
-    loop?: number;
+    /** Total play count, 1..=65535, or `"infinite"`. */
+    iterations: AnimatedRasterIterations;
   };
 
-/** Animated GIF takes the same schedule and raster options as animated WebP. */
-export type RenderAnimatedGifOptions = RenderAnimatedWebpOptions;
+export type RenderAnimatedGifOptions = Omit<RenderPngOptions, "timeMs"> &
+  AnimationScheduleOptions & {
+    /** Total play count, 1..=65536, or `"infinite"`. */
+    iterations: AnimatedRasterIterations;
+  };
 
 /** Animated WebP options for a scene whose compile-time choices are already fixed. */
 export type RenderCompiledAnimatedWebpOptions = Omit<
@@ -750,26 +922,78 @@ export type RenderCompiledAnimatedGifOptions = Omit<
   "skipValidation" | "textPathMode"
 >;
 
-export type RenderFramesOptions = Omit<RenderOptions, "animation" | "timeMs"> & {
+export type RenderSvgFramesOptions = CompileOptions &
+  OutputCommonOptions &
+  SvgEmissionOptions & {
+    /** Non-negative finite sample times. Duplicates and non-monotonic order are preserved. */
+    timesMs: readonly number[];
+    format: "svg";
+  };
+
+export type RenderPngFramesOptions = CompileOptions &
+  OutputCommonOptions &
+  RasterEmissionOptions & {
+    /** Non-negative finite sample times. Duplicates and non-monotonic order are preserved. */
+    timesMs: readonly number[];
+    format: "png";
+  };
+
+export type RenderFramesOptions = RenderSvgFramesOptions | RenderPngFramesOptions;
+
+export type RenderCompiledSvgFramesOptions = Omit<RenderSvgFramesOptions, keyof CompileOptions>;
+
+export type RenderCompiledPngFramesOptions = Omit<RenderPngFramesOptions, keyof CompileOptions>;
+
+export type RenderCompiledFramesOptions =
+  | RenderCompiledSvgFramesOptions
+  | RenderCompiledPngFramesOptions;
+
+type InternalRenderOptions = CompileOptions &
+  OutputCommonOptions &
+  SvgEmissionOptions &
+  RasterEmissionOptions & {
+    animation?: "declarative" | "static";
+    playback?: AnimatedSvgPlayback;
+    timeMs?: number;
+    reducedMotion?: ReducedMotionMode;
+  };
+
+type InternalEmitOptions = Omit<InternalRenderOptions, keyof CompileOptions>;
+
+type SvgRenderBackendOptions<ResolveReturnedIrOutlines extends boolean> = {
+  resolveReturnedIrOutlines: ResolveReturnedIrOutlines;
+  renderTransport: EngineOptions["renderToSvgFn"];
+  transportName: string;
+};
+
+type ResolveAndEmitSvgRequest = {
+  emitOptions: InternalEmitOptions & {
+    showMissingGlyphs?: boolean;
+    preserveResolvedUnitOutlines?: boolean;
+    rasterizerCompat?: boolean;
+    enforcePngOutlineGlyphLimit?: boolean;
+    irSnapshotJson?: string;
+  };
+  animated: boolean;
+};
+
+type LegacyRenderFramesOptions = InternalRenderOptions & {
   /** Non-negative finite sample times. Duplicates and non-monotonic order are preserved. */
   timesMs: readonly number[];
   /** Payload format for every returned frame. */
   format: "svg" | "png";
 };
 
-/** Frame options for a scene whose compile-time choices are already fixed. */
-export type RenderCompiledFramesOptions = Omit<
-  RenderFramesOptions,
-  "skipValidation" | "textPathMode"
->;
-
 function snapshotRasterOptions<
   Options extends
-    | RenderOptions
-    | EmitOptions
+    | RenderPngOptions
+    | RenderWebpOptions
+    | EmitPngOptions
+    | EmitWebpOptions
     | LayeredPngOptions
-    | RenderFramesOptions
-    | RenderAnimatedWebpOptions,
+    | LegacyRenderFramesOptions
+    | RenderAnimatedWebpOptions
+    | RenderAnimatedGifOptions,
 >(options: Options): Options {
   const debug = options.debug;
   return {
@@ -801,12 +1025,15 @@ function snapshotRasterOptions<
 type AnimationRasterPlan = {
   requestedScale: number;
   behavior: RasterOversizeBehavior;
-  emitOpts: Pick<EmitOptions, "scale" | "onPngResolutionAdjusted" | "onWarning">;
+  emitOpts: Pick<
+    OutputCommonOptions & RasterEmissionOptions,
+    "scale" | "onPngResolutionAdjusted" | "onWarning"
+  >;
   deferredWarnings: readonly RecoverableError[];
 };
 
 type AnimationFrameProducer = (
-  options: RenderFramesOptions,
+  options: LegacyRenderFramesOptions,
   rasterPlan: AnimationRasterPlan,
 ) => Iterable<Frame>;
 
@@ -826,9 +1053,9 @@ type PreparedFrameScene = {
 };
 
 type FrameRenderPlan = {
-  stableOptions: RenderFramesOptions;
+  stableOptions: LegacyRenderFramesOptions;
   timesMs: number[];
-  format: RenderFramesOptions["format"];
+  format: LegacyRenderFramesOptions["format"];
   frameEncoder: FrameEncoder;
   rasterPlan: AnimationRasterPlan | undefined;
   pngOptions: PngRenderOptions;
@@ -984,8 +1211,15 @@ export class Engine {
    * IR. Use {@link renderToSvgAndIR} when the returned IR's `glyphPaths` are
    * needed; Rust then returns the same resolved IR it emitted.
    */
-  renderToSvg(input: EngineInput, renderOpts?: RenderOptions): string {
-    return this.renderWithWasmBackend(input, renderOpts, false).svg;
+  renderToSvg(input: EngineInput, renderOpts?: RenderSvgOptions): string {
+    assertOwnOptionKeys(renderOpts, STATIC_SVG_OPTION_KEYS, "renderToSvg");
+    assertSvgEmissionOptionValues(renderOpts);
+    assertValidAnimationRenderOptions(renderOpts);
+    return this.renderWithWasmBackend(input, renderOpts, {
+      resolveReturnedIrOutlines: false,
+      renderTransport: this.options.renderToSvgFn,
+      transportName: "renderToSvgFn",
+    }).svg;
   }
 
   /**
@@ -993,11 +1227,52 @@ export class Engine {
    * this resolves glyph outlines on the returned IR (populating `glyphPaths`)
    * so downstream hit-test / text-selection consumers see the full contract.
    */
-  renderToSvgAndIR(input: EngineInput, renderOpts?: RenderOptions): { svg: string; ir: IR } {
-    return this.renderWithWasmBackend(input, renderOpts, true);
+  renderToSvgAndIR(input: EngineInput, renderOpts?: RenderSvgOptions): { svg: string; ir: IR } {
+    assertOwnOptionKeys(renderOpts, STATIC_SVG_OPTION_KEYS, "renderToSvgAndIR");
+    assertSvgEmissionOptionValues(renderOpts);
+    assertValidAnimationRenderOptions(renderOpts);
+    return this.renderWithWasmBackend(input, renderOpts, {
+      resolveReturnedIrOutlines: true,
+      renderTransport: this.options.renderToSvgFn,
+      transportName: "renderToSvgFn",
+    });
+  }
+
+  renderToAnimatedSvg(input: EngineInput, renderOpts: RenderAnimatedSvgOptions): string {
+    assertOwnOptionKeys(renderOpts, ANIMATED_SVG_OPTION_KEYS, "renderToAnimatedSvg");
+    assertSvgEmissionOptionValues(renderOpts);
+    assertAnimatedSvgPlayback(renderOpts?.playback);
+    assertValidAnimationRenderOptions(renderOpts);
+    return this.renderWithWasmBackend(input, renderOpts, {
+      resolveReturnedIrOutlines: false,
+      renderTransport: this.options.renderToAnimatedSvgFn,
+      transportName: "renderToAnimatedSvgFn",
+    }).svg;
+  }
+
+  renderToAnimatedSvgAndIR(
+    input: EngineInput,
+    renderOpts: RenderAnimatedSvgOptions,
+  ): { svg: string; ir: IR } {
+    assertOwnOptionKeys(renderOpts, ANIMATED_SVG_OPTION_KEYS, "renderToAnimatedSvgAndIR");
+    assertSvgEmissionOptionValues(renderOpts);
+    assertAnimatedSvgPlayback(renderOpts?.playback);
+    assertValidAnimationRenderOptions(renderOpts);
+    return this.renderWithWasmBackend(input, renderOpts, {
+      resolveReturnedIrOutlines: true,
+      renderTransport: this.options.renderToAnimatedSvgFn,
+      transportName: "renderToAnimatedSvgFn",
+    });
   }
 
   renderToLayeredSvg(input: EngineInput, renderOpts?: LayeredSvgOptions): LayeredSvgResult {
+    assertOwnOptionKeys(
+      renderOpts,
+      new Set([...STATIC_SVG_OPTION_KEYS, "validateComposition"]),
+      "renderToLayeredSvg",
+    );
+    assertSvgEmissionOptionValues(renderOpts);
+    assertValidAnimationRenderOptions(renderOpts);
     this.ensureNotDisposed();
     const renderSnapshot = this.createLayeredRenderSnapshot();
     const { ir, layeredResult } = this.prepareLayeredSvgRender(
@@ -1022,6 +1297,11 @@ export class Engine {
   }
 
   renderToLayeredPng(input: EngineInput, renderOpts?: LayeredPngOptions): LayeredPngResult {
+    assertOwnOptionKeys(
+      renderOpts,
+      new Set([...RASTER_OPTION_KEYS, "validateComposition"]),
+      "renderToLayeredPng",
+    );
     this.ensureNotDisposed();
     const stableRenderOpts =
       renderOpts === undefined ? undefined : snapshotRasterOptions(renderOpts);
@@ -1105,17 +1385,14 @@ export class Engine {
       const appliedRenderOpts: LayeredPngOptions = {
         ...stableRenderOpts,
         scale: scaleResolution.appliedScale,
-        animation: "static",
       };
       const layeredRenderInput = {
         ir,
         sourceNodeMap,
         options: {
           debug: appliedRenderOpts.debug ?? ir.debug,
-          resourceIdPrefix: appliedRenderOpts.resourceIdPrefix,
           scale: appliedRenderOpts.scale,
-          animation: appliedRenderOpts.animation,
-          timeMs: appliedRenderOpts.timeMs,
+          timeMs: appliedRenderOpts.timeMs ?? 0,
         },
         emitLayerSvg: renderSnapshot.emitLayerSvg,
       } as const;
@@ -1164,7 +1441,15 @@ export class Engine {
     }
   }
 
-  renderToTextOutlines(input: EngineInput, renderOpts?: RenderOptions): TextOutlineNode[] {
+  renderToTextOutlines(
+    input: EngineInput,
+    renderOpts?: RenderTextOutlinesOptions,
+  ): TextOutlineNode[] {
+    assertOwnOptionKeys(
+      renderOpts,
+      new Set([...COMPILE_OPTION_KEYS, "showMissingGlyphs", "onWarning"]),
+      "renderToTextOutlines",
+    );
     const compiled = this.compile(input, toCompileOptions(renderOpts));
     return this.renderCompiledToTextOutlines(compiled, {
       showMissingGlyphs: renderOpts?.showMissingGlyphs,
@@ -1172,7 +1457,8 @@ export class Engine {
     });
   }
 
-  renderToPng(input: EngineInput, renderOpts?: RenderOptions): Uint8Array {
+  renderToPng(input: EngineInput, renderOpts?: RenderPngOptions): Uint8Array {
+    assertOwnOptionKeys(renderOpts, RASTER_OPTION_KEYS, "renderToPng");
     return this.renderToPngWithWasmBackend(input, renderOpts);
   }
 
@@ -1180,7 +1466,8 @@ export class Engine {
    * Render to a lossless (VP8L) WebP. Same pipeline and raster caps as
    * `renderToPng`; only the encoder differs.
    */
-  renderToWebp(input: EngineInput, renderOpts?: RenderOptions): Uint8Array {
+  renderToWebp(input: EngineInput, renderOpts?: RenderWebpOptions): Uint8Array {
+    assertOwnOptionKeys(renderOpts, RASTER_OPTION_KEYS, "renderToWebp");
     return this.renderToWebpWithWasmBackend(input, renderOpts);
   }
 
@@ -1191,6 +1478,7 @@ export class Engine {
    * rounding as still/frame PNG, then encoded at raster scale 1.
    */
   renderToAnimatedWebp(input: EngineInput, renderOpts: RenderAnimatedWebpOptions): Uint8Array {
+    assertOwnOptionKeys(renderOpts, ANIMATED_RASTER_OPTION_KEYS, "renderToAnimatedWebp");
     return this.renderAnimatedWebpWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
       this.renderFramesFromInput(input, frameOptions, rasterPlan),
     );
@@ -1206,6 +1494,11 @@ export class Engine {
     compiled: CompiledScene,
     renderOpts: RenderCompiledAnimatedWebpOptions,
   ): Uint8Array {
+    assertOwnOptionKeys(
+      renderOpts,
+      COMPILED_ANIMATED_RASTER_OPTION_KEYS,
+      "renderCompiledToAnimatedWebp",
+    );
     return this.renderAnimatedWebpWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
       this.renderFramesWithCompiledScene(compiled, frameOptions, rasterPlan),
     );
@@ -1234,7 +1527,11 @@ export class Engine {
       tooManyFrames: "ANIMATED_WEBP_TOO_MANY_FRAMES",
       payloadLimit: "ANIMATED_WEBP_PAYLOAD_LIMIT",
     };
-    assertAnimationLoopCount(stableRenderOpts.loop, codes.invalidSchedule);
+    assertAnimationIterations(stableRenderOpts.iterations, {
+      maxIterations: MAX_ANIMATED_WEBP_ITERATIONS,
+      code: codes.invalidSchedule,
+      formatName: "Animated WebP",
+    });
     const schedule = resolveAnimationFrameSchedule(stableRenderOpts, codes);
 
     const frames = frameProducer(
@@ -1269,6 +1566,7 @@ export class Engine {
    * 10 ms quantum.
    */
   renderToAnimatedGif(input: EngineInput, renderOpts: RenderAnimatedGifOptions): Uint8Array {
+    assertOwnOptionKeys(renderOpts, ANIMATED_RASTER_OPTION_KEYS, "renderToAnimatedGif");
     return this.renderAnimatedGifWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
       this.renderFramesFromInput(input, frameOptions, rasterPlan),
     );
@@ -1284,6 +1582,11 @@ export class Engine {
     compiled: CompiledScene,
     renderOpts: RenderCompiledAnimatedGifOptions,
   ): Uint8Array {
+    assertOwnOptionKeys(
+      renderOpts,
+      COMPILED_ANIMATED_RASTER_OPTION_KEYS,
+      "renderCompiledToAnimatedGif",
+    );
     return this.renderAnimatedGifWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
       this.renderFramesWithCompiledScene(compiled, frameOptions, rasterPlan),
     );
@@ -1312,7 +1615,11 @@ export class Engine {
       tooManyFrames: "ANIMATED_GIF_TOO_MANY_FRAMES",
       payloadLimit: "ANIMATED_GIF_PAYLOAD_LIMIT",
     };
-    assertAnimationLoopCount(stableRenderOpts.loop, codes.invalidSchedule);
+    assertAnimationIterations(stableRenderOpts.iterations, {
+      maxIterations: MAX_ANIMATED_GIF_ITERATIONS,
+      code: codes.invalidSchedule,
+      formatName: "Animated GIF",
+    });
     const schedule = resolveAnimationFrameSchedule(stableRenderOpts, codes);
     const timingWarning = this.createGifTimingAdjustmentWarning(schedule.frameDurationsMs, {
       sampled: stableRenderOpts.timesMs === undefined,
@@ -1381,7 +1688,7 @@ export class Engine {
    */
   private buildAnimationEncodeInput(
     sampledFrames: Iterable<Frame>,
-    renderOpts: RenderAnimatedWebpOptions,
+    renderOpts: RenderAnimatedWebpOptions | RenderAnimatedGifOptions,
     plan: {
       schedule: ResolvedAnimationSchedule;
       codes: AnimationErrorCodes;
@@ -1431,7 +1738,7 @@ export class Engine {
       frameIndex += 1;
     }
 
-    return { frames, loopCount: renderOpts.loop ?? 0, options: rasterOptions };
+    return { frames, iterations: renderOpts.iterations, options: rasterOptions };
   }
 
   layoutTextFlow(input: TextFlowInput): TextFlowResult {
@@ -1507,6 +1814,7 @@ export class Engine {
   }
 
   renderToLayoutTree(input: EngineInput, renderOpts?: LayoutRenderOptions): LayoutResult {
+    assertOwnOptionKeys(renderOpts, new Set(["skipValidation"]), "renderToLayoutTree");
     this.ensureNotDisposed();
     const vnode = this.resolveInput(input);
 
@@ -1522,7 +1830,12 @@ export class Engine {
     });
   }
 
-  renderToIR(input: EngineInput, renderOpts?: RenderOptions): IR {
+  renderToIR(input: EngineInput, renderOpts?: RenderIrOptions): IR {
+    assertOwnOptionKeys(
+      renderOpts,
+      new Set([...COMPILE_OPTION_KEYS, "onWarning", "showMissingGlyphs", "timeMs"]),
+      "renderToIR",
+    );
     this.ensureNotDisposed();
     assertValidAnimationRenderOptions(renderOpts);
     const vnode = this.resolveInput(input);
@@ -1576,6 +1889,7 @@ export class Engine {
   }
 
   compile(input: EngineInput, compileOpts?: CompileOptions): CompiledScene {
+    assertOwnOptionKeys(compileOpts, new Set(COMPILE_OPTION_KEYS), "compile");
     this.ensureNotDisposed();
     const vnode = this.resolveInput(input);
 
@@ -1600,6 +1914,7 @@ export class Engine {
     input: LayoutTransitionInput,
     compileOpts?: CompileOptions,
   ): CompiledScene {
+    assertOwnOptionKeys(compileOpts, new Set(COMPILE_OPTION_KEYS), "compileLayoutTransition");
     this.ensureNotDisposed();
     const resolvedTransition = resolveLayoutTransitionInput(input);
     const referenceVNode = this.resolveInput(resolvedTransition.referenceInput);
@@ -1651,7 +1966,8 @@ export class Engine {
    * disposal all release that state.
    */
   renderFrames(input: EngineInput, options: RenderFramesOptions): Iterable<Frame> {
-    return this.renderFramesFromInput(input, options);
+    assertFrameOptionKeys(options, "renderFrames", false);
+    return this.renderFramesFromInput(input, options as LegacyRenderFramesOptions);
   }
 
   /**
@@ -1666,13 +1982,14 @@ export class Engine {
     compiled: CompiledScene,
     options: RenderCompiledFramesOptions,
   ): Iterable<Frame> {
-    return this.renderFramesWithCompiledScene(compiled, options);
+    assertFrameOptionKeys(options, "renderCompiledFrames", true);
+    return this.renderFramesWithCompiledScene(compiled, options as LegacyRenderFramesOptions);
   }
 
   /** Compiled-scene frame entry plus the raster plan used by animated containers. */
   private renderFramesWithCompiledScene(
     compiled: CompiledScene,
-    options: RenderFramesOptions,
+    options: LegacyRenderFramesOptions,
     animationRasterPlan?: AnimationRasterPlan,
   ): Iterable<Frame> {
     this.ensureNotDisposed();
@@ -1687,7 +2004,7 @@ export class Engine {
   /** `renderFrames` plus the raster plan used by animated containers. */
   private renderFramesFromInput(
     input: EngineInput,
-    options: RenderFramesOptions,
+    options: LegacyRenderFramesOptions,
     animationRasterPlan?: AnimationRasterPlan,
   ): Iterable<Frame> {
     this.ensureNotDisposed();
@@ -1705,7 +2022,7 @@ export class Engine {
   }
 
   private createFrameRenderPlan(
-    options: RenderFramesOptions,
+    options: LegacyRenderFramesOptions,
     animationRasterPlan?: AnimationRasterPlan,
   ): FrameRenderPlan {
     const stableOptions = snapshotRasterOptions(options);
@@ -1792,7 +2109,7 @@ export class Engine {
     }
 
     const sanitizedResourceIdPrefix =
-      stableOptions.resourceIdPrefix === undefined
+      format !== "svg" || stableOptions.resourceIdPrefix === undefined
         ? undefined
         : toCssSafeResourceId(stableOptions.resourceIdPrefix);
     const debug = stableOptions.debug ?? irMetadataSnapshot.debug;
@@ -1806,6 +2123,7 @@ export class Engine {
             scale: appliedScale,
             debug,
             resourceIdPrefix: sanitizedResourceIdPrefix,
+            nodeIdMetadata: format === "svg" ? stableOptions.nodeIdMetadata : undefined,
             rasterizerCompat: format === "png" ? true : undefined,
             animation: "static",
             timeMs,
@@ -2047,24 +2365,24 @@ export class Engine {
 
   private renderWithWasmBackend(
     input: EngineInput,
-    renderOpts: RenderOptions | undefined,
-    resolveReturnedIrOutlines: false,
+    renderOpts: InternalRenderOptions | undefined,
+    backendOptions: SvgRenderBackendOptions<false>,
   ): { svg: string };
   private renderWithWasmBackend(
     input: EngineInput,
-    renderOpts: RenderOptions | undefined,
-    resolveReturnedIrOutlines: true,
+    renderOpts: InternalRenderOptions | undefined,
+    backendOptions: SvgRenderBackendOptions<true>,
   ): { svg: string; ir: IR };
   private renderWithWasmBackend(
     input: EngineInput,
-    renderOpts: RenderOptions | undefined,
-    // renderToSvg discards the IR, so its glyph outlines never cross the
-    // boundary; renderToSvgAndIR asks Rust for the resolved object it emitted.
-    resolveReturnedIrOutlines: boolean,
+    renderOpts: InternalRenderOptions | undefined,
+    backendOptions: SvgRenderBackendOptions<boolean>,
   ): { svg: string; ir?: IR } {
     this.ensureNotDisposed();
-    assertValidAnimationRenderOptions(renderOpts);
-    const renderToSvgFn = this.requireWasmBackendFn(this.options.renderToSvgFn, "renderToSvgFn");
+    const renderToSvgFn = this.requireWasmBackendFn(
+      backendOptions.renderTransport,
+      backendOptions.transportName,
+    );
     // Guard TS-side: JSON transport turns non-finite numbers into null,
     // which the emitter would silently read as "no scale".
     const requestedScale = renderOpts?.scale ?? 1;
@@ -2084,7 +2402,11 @@ export class Engine {
     try {
       envelopeJson = renderToSvgFn(
         this.buildWasmTransportJson(vnode),
-        toWasmRenderOptionsJson(renderOpts, { returnResolvedIr: resolveReturnedIrOutlines }),
+        toWasmRenderOptionsJson(renderOpts, {
+          // renderToSvg discards the IR, so its glyph outlines never cross the
+          // boundary; renderToSvgAndIR asks Rust for the resolved object it emitted.
+          returnResolvedIr: backendOptions.resolveReturnedIrOutlines,
+        }),
       );
     } catch (error) {
       throw wrapWasmRenderError(error);
@@ -2093,7 +2415,7 @@ export class Engine {
     this.assertWasmTextContracts(vnode, new Set(envelope.textNodeIds));
     const warnings = rehydrateWasmWarnings(envelope.warnings);
     deliverWarnings(warnings, renderOpts?.onWarning);
-    if (!resolveReturnedIrOutlines) {
+    if (!backendOptions.resolveReturnedIrOutlines) {
       return { svg: envelope.svg };
     }
     if (!envelope.ir) {
@@ -2138,10 +2460,9 @@ export class Engine {
             emitOptions.resourceIdPrefix === undefined
               ? undefined
               : toCssSafeResourceId(emitOptions.resourceIdPrefix),
+          nodeIdMetadata: emitOptions.nodeIdMetadata,
           rasterizerCompat: emitOptions.rasterizerCompat,
-          animation: emitOptions.animation,
           timeMs: emitOptions.timeMs,
-          reducedMotion: emitOptions.reducedMotion,
           generator: emitOptions.generator,
         }),
       );
@@ -2221,17 +2542,14 @@ export class Engine {
   private resolveAndEmitIrViaWasm(
     ir: IR,
     textPathMode: TextPathMode,
-    emitOptions: LayerEmitOptions & {
-      showMissingGlyphs?: boolean;
-      preserveResolvedUnitOutlines?: boolean;
-      rasterizerCompat?: boolean;
-      enforcePngOutlineGlyphLimit?: boolean;
-      irSnapshotJson?: string;
-    },
+    request: ResolveAndEmitSvgRequest,
   ): string {
+    const { animated, emitOptions } = request;
     const resolveAndEmitSvgFromIrFn = this.requireWasmBackendFn(
-      this.options.resolveAndEmitSvgFromIrFn,
-      "resolveAndEmitSvgFromIrFn",
+      animated
+        ? this.options.resolveAndEmitAnimatedSvgFromIrFn
+        : this.options.resolveAndEmitSvgFromIrFn,
+      animated ? "resolveAndEmitAnimatedSvgFromIrFn" : "resolveAndEmitSvgFromIrFn",
     );
     const scale = emitOptions.scale ?? 1;
     for (const scaled of [ir.width * scale, ir.height * scale]) {
@@ -2253,14 +2571,15 @@ export class Engine {
             emitOptions.resourceIdPrefix === undefined
               ? undefined
               : toCssSafeResourceId(emitOptions.resourceIdPrefix),
+          nodeIdMetadata: emitOptions.nodeIdMetadata,
           textPathMode,
           showMissingGlyphs: emitOptions.showMissingGlyphs,
           preserveResolvedUnitOutlines: emitOptions.preserveResolvedUnitOutlines,
           enforcePngOutlineGlyphLimit: emitOptions.enforcePngOutlineGlyphLimit,
           rasterizerCompat: emitOptions.rasterizerCompat,
-          animation: emitOptions.animation,
           timeMs: emitOptions.timeMs,
-          reducedMotion: emitOptions.reducedMotion,
+          playback: animated ? emitOptions.playback : undefined,
+          reducedMotion: animated ? emitOptions.reducedMotion : undefined,
           generator: emitOptions.generator,
         }),
       );
@@ -2285,7 +2604,10 @@ export class Engine {
     };
   }
 
-  private renderToPngWithWasmBackend(input: EngineInput, renderOpts?: RenderOptions): Uint8Array {
+  private renderToPngWithWasmBackend(
+    input: EngineInput,
+    renderOpts?: RenderPngOptions,
+  ): Uint8Array {
     return this.rasterizeWithWasmBackend(input, renderOpts, () =>
       this.requireRasterEncoder(this.options.svgToPngFn, {
         code: "PNG_NO_RASTERIZER",
@@ -2294,7 +2616,10 @@ export class Engine {
     );
   }
 
-  private renderToWebpWithWasmBackend(input: EngineInput, renderOpts?: RenderOptions): Uint8Array {
+  private renderToWebpWithWasmBackend(
+    input: EngineInput,
+    renderOpts?: RenderWebpOptions,
+  ): Uint8Array {
     return this.rasterizeWithWasmBackend(input, renderOpts, () =>
       this.requireRasterEncoder(this.options.svgToWebpFn, {
         code: "WEBP_NO_ENCODER",
@@ -2324,7 +2649,7 @@ export class Engine {
    */
   private rasterizeWithWasmBackend(
     input: EngineInput,
-    renderOpts: RenderOptions | undefined,
+    renderOpts: RenderPngOptions | RenderWebpOptions | undefined,
     resolveEncoder: () => (svg: string, options?: PngRenderOptions) => Uint8Array,
   ): Uint8Array {
     this.ensureNotDisposed();
@@ -2433,9 +2758,11 @@ export class Engine {
     }
   }
 
-  renderCompiledToSvg(compiled: CompiledScene, emitOpts?: EmitOptions): string {
-    this.ensureNotDisposed();
+  renderCompiledToSvg(compiled: CompiledScene, emitOpts?: EmitSvgOptions): string {
+    assertOwnOptionKeys(emitOpts, EMIT_STATIC_SVG_OPTION_KEYS, "renderCompiledToSvg");
+    assertSvgEmissionOptionValues(emitOpts);
     assertValidAnimationRenderOptions(emitOpts);
+    this.ensureNotDisposed();
     assertRenderableCanvas(compiled.ir);
     const requestedScale = emitOpts?.scale ?? 1;
     if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
@@ -2447,22 +2774,62 @@ export class Engine {
     }
     deliverIrWarnings(compiled.ir, emitOpts?.onWarning);
     return this.resolveAndEmitIrViaWasm(compiled.ir, compiled.textPathMode, {
-      scale: emitOpts?.scale,
-      debug: emitOpts?.debug ?? compiled.ir.debug,
-      resourceIdPrefix: emitOpts?.resourceIdPrefix,
-      showMissingGlyphs: emitOpts?.showMissingGlyphs,
-      preserveResolvedUnitOutlines: !emitOpts?.showMissingGlyphs,
-      animation: emitOpts?.animation,
-      timeMs: emitOpts?.timeMs,
-      reducedMotion: emitOpts?.reducedMotion,
-      generator: emitOpts?.generator,
+      emitOptions: {
+        scale: emitOpts?.scale,
+        debug: emitOpts?.debug ?? compiled.ir.debug,
+        resourceIdPrefix: emitOpts?.resourceIdPrefix,
+        nodeIdMetadata: emitOpts?.nodeIdMetadata,
+        showMissingGlyphs: emitOpts?.showMissingGlyphs,
+        preserveResolvedUnitOutlines: !emitOpts?.showMissingGlyphs,
+        timeMs: emitOpts?.timeMs,
+        generator: emitOpts?.generator,
+      },
+      animated: false,
+    });
+  }
+
+  renderCompiledToAnimatedSvg(compiled: CompiledScene, emitOpts: EmitAnimatedSvgOptions): string {
+    assertOwnOptionKeys(emitOpts, EMIT_ANIMATED_SVG_OPTION_KEYS, "renderCompiledToAnimatedSvg");
+    assertSvgEmissionOptionValues(emitOpts);
+    assertAnimatedSvgPlayback(emitOpts?.playback);
+    assertValidAnimationRenderOptions(emitOpts);
+    this.ensureNotDisposed();
+    assertRenderableCanvas(compiled.ir);
+    const requestedScale = emitOpts?.scale ?? 1;
+    if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
+      throw new FatalError(
+        "SVG_INVALID_SCALE",
+        `Invalid SVG scale factor: ${String(requestedScale)}`,
+        { stage: "emit" },
+      );
+    }
+    deliverIrWarnings(compiled.ir, emitOpts?.onWarning);
+    return this.resolveAndEmitIrViaWasm(compiled.ir, compiled.textPathMode, {
+      emitOptions: {
+        scale: emitOpts?.scale,
+        debug: emitOpts?.debug ?? compiled.ir.debug,
+        resourceIdPrefix: emitOpts?.resourceIdPrefix,
+        nodeIdMetadata: emitOpts?.nodeIdMetadata,
+        showMissingGlyphs: emitOpts?.showMissingGlyphs,
+        preserveResolvedUnitOutlines: !emitOpts?.showMissingGlyphs,
+        playback: emitOpts?.playback,
+        timeMs: emitOpts?.timeMs,
+        reducedMotion: emitOpts?.reducedMotion,
+        generator: emitOpts?.generator,
+      },
+      animated: true,
     });
   }
 
   renderCompiledToTextOutlines(
     compiled: CompiledScene,
-    options?: { showMissingGlyphs?: boolean; onWarning?: (warning: RecoverableError) => void },
+    options?: EmitTextOutlinesOptions,
   ): TextOutlineNode[] {
+    assertOwnOptionKeys(
+      options,
+      new Set(["showMissingGlyphs", "onWarning"]),
+      "renderCompiledToTextOutlines",
+    );
     this.ensureNotDisposed();
     deliverIrWarnings(compiled.ir, options?.onWarning);
     const resolvedIr = this.resolveIrViaWasm(compiled.ir, compiled.textPathMode, {
@@ -2472,7 +2839,8 @@ export class Engine {
     return projectResolvedTextOutlines(resolvedIr.root);
   }
 
-  renderCompiledToPng(compiled: CompiledScene, emitOpts?: EmitOptions): Uint8Array {
+  renderCompiledToPng(compiled: CompiledScene, emitOpts?: EmitPngOptions): Uint8Array {
+    assertOwnOptionKeys(emitOpts, EMIT_RASTER_OPTION_KEYS, "renderCompiledToPng");
     this.ensureNotDisposed();
     const stableEmitOpts = emitOpts === undefined ? undefined : snapshotRasterOptions(emitOpts);
     assertValidAnimationRenderOptions(stableEmitOpts);
@@ -2523,10 +2891,6 @@ export class Engine {
       JSON.stringify({
         scale: scaleResolution?.appliedScale ?? requestedScale,
         debug: stableEmitOpts?.debug ?? irMetadataSnapshot.debug,
-        resourceIdPrefix:
-          stableEmitOpts?.resourceIdPrefix === undefined
-            ? undefined
-            : toCssSafeResourceId(stableEmitOpts.resourceIdPrefix),
         textPathMode: compiled.textPathMode,
         showMissingGlyphs: stableEmitOpts?.showMissingGlyphs,
         preserveResolvedUnitOutlines: !stableEmitOpts?.showMissingGlyphs,
@@ -2582,7 +2946,7 @@ export class Engine {
    */
   private prepareLayeredSvgRender(
     input: EngineInput,
-    renderOpts: LayeredSvgOptions | LayeredPngOptions | undefined,
+    renderOpts: LayeredSvgOptions | undefined,
     emitLayerSvg: (layerIr: IR, emitOptions: LayerEmitOptions) => string,
   ): { ir: IR; layoutRoot: LayoutNode; layeredResult: LayeredSvgResult } {
     const vnode = this.resolveInput(input);
@@ -2597,6 +2961,13 @@ export class Engine {
       timeMs: renderOpts?.timeMs,
       showMissingGlyphs: renderOpts?.showMissingGlyphs,
     });
+    if (renderOpts?.timeMs === undefined && hasAnimatedNode(compiled.ir.root)) {
+      throw new FatalError(
+        "STATIC_ANIMATION_TIME_REQUIRED",
+        "Static SVG output requires an explicit timeMs when the scene contains animation.",
+        { stage: "emit" },
+      );
+    }
     const irSnapshotJson = JSON.stringify({ ...compiled.ir, warnings: [] });
     const layoutRoot = computeLayout(vnode, {
       computeLayoutFn: this.options.computeLayoutFn,
@@ -2616,8 +2987,8 @@ export class Engine {
       options: {
         debug: renderOpts?.debug ?? ir.debug,
         resourceIdPrefix: renderOpts?.resourceIdPrefix,
+        nodeIdMetadata: renderOpts?.nodeIdMetadata,
         scale: renderOpts?.scale,
-        animation: renderOpts?.animation,
         timeMs: renderOpts?.timeMs,
         generator: renderOpts?.generator,
       },
@@ -2633,7 +3004,10 @@ export class Engine {
     ir: IR;
     scaleResolution: ResolvedRasterScale;
     behavior: RasterOversizeBehavior;
-    emitOpts?: Pick<EmitOptions, "scale" | "onPngResolutionAdjusted" | "onWarning">;
+    emitOpts?: Pick<
+      OutputCommonOptions & RasterEmissionOptions,
+      "scale" | "onPngResolutionAdjusted" | "onWarning"
+    >;
   }): void {
     const { ir, scaleResolution, behavior, emitOpts } = args;
     if (!scaleResolution.adjusted) {
@@ -2870,7 +3244,9 @@ export class Engine {
     const singleSvg = renderSnapshot.emitLayerSvg(ir, {
       debug: renderOpts?.debug ?? ir.debug,
       resourceIdPrefix: renderOpts?.resourceIdPrefix,
+      nodeIdMetadata: renderOpts?.nodeIdMetadata,
       scale: renderOpts?.scale,
+      timeMs: renderOpts?.timeMs,
     });
 
     try {
@@ -3051,13 +3427,19 @@ async function createEngineFromInstance(
       compileLayoutTransitionFn: (...transportArgs) =>
         handle.compileLayoutTransition(...transportArgs),
       renderToSvgFn: (inputJson, optionsJson) => handle.renderToSvg(inputJson, optionsJson),
+      renderToAnimatedSvgFn: (inputJson, optionsJson) =>
+        handle.renderToAnimatedSvg(inputJson, optionsJson),
       emitSvgFromIrFn: (irJson, optionsJson) => handle.emitSvgFromIr(irJson, optionsJson),
+      emitAnimatedSvgFromIrFn: (irJson, optionsJson) =>
+        handle.emitAnimatedSvgFromIr(irJson, optionsJson),
       resolveIrFn: (irJson, optionsJson) => handle.resolveIr(irJson, optionsJson),
       preflightIrFn: (irJson) => handle.preflightIr(irJson),
       preflightRasterSceneFn: (irJson, optionsJson) =>
         handle.preflightRasterScene(irJson, optionsJson),
       resolveAndEmitSvgFromIrFn: (irJson, optionsJson) =>
         handle.resolveAndEmitSvgFromIr(irJson, optionsJson),
+      resolveAndEmitAnimatedSvgFromIrFn: (irJson, optionsJson) =>
+        handle.resolveAndEmitAnimatedSvgFromIr(irJson, optionsJson),
       sampleAnimationStateFn: (irJson, timeMs) => handle.sampleAnimationState(irJson, timeMs),
       prepareSceneFn: (irJson, optionsJson) => handle.prepareScene(irJson, optionsJson),
       registerFontFn: (font) =>

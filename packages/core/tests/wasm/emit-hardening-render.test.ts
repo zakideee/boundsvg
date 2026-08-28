@@ -123,7 +123,7 @@ describe("renderToSvg scale", () => {
   });
 
   it("multiplies the root width/height and keeps the viewBox", () => {
-    // scale was accepted in RenderOptions but never forwarded to the SVG
+    // scale was accepted by the old shared options but never forwarded to the SVG
     // emitter, so it silently had no effect.
     const svg = engine.renderToSvg(
       createElement(

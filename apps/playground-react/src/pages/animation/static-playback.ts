@@ -1,4 +1,4 @@
-import type { Engine, EngineInput, RenderOptions } from "@boundsvg/core";
+import type { Engine, EngineInput, RenderSvgOptions } from "@boundsvg/core";
 
 export const STATIC_PLAYBACK_STEP_MS = 40;
 
@@ -48,12 +48,12 @@ export function sampleStaticPlaybackTime({
 export function renderStaticPlaybackFrames(
   engine: Pick<Engine, "renderFrames">,
   input: EngineInput,
-  renderOptions: RenderOptions,
+  renderOptions: RenderSvgOptions,
   durationMs: number,
   stepMs = STATIC_PLAYBACK_STEP_MS,
 ): StaticPlaybackFrame[] {
   const timesMs = createStaticPlaybackTimes(durationMs, stepMs);
-  const { animation: _animation, timeMs: _timeMs, ...frameRenderOptions } = renderOptions;
+  const { timeMs: _timeMs, ...frameRenderOptions } = renderOptions;
   return [...engine.renderFrames(input, { ...frameRenderOptions, timesMs, format: "svg" })].map(
     (frame) => {
       if (frame.format !== "svg") {

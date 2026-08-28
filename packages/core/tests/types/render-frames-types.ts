@@ -60,8 +60,12 @@ function readFrame(frame: Frame): string | Uint8Array {
 }
 void readFrame;
 
-// @ts-expect-error frame rendering always uses static sampling internally
-const invalidAnimation: RenderFramesOptions = { timesMs: [0], format: "svg", animation: "static" };
+const invalidAnimation: RenderFramesOptions = {
+  timesMs: [0],
+  format: "svg",
+  // @ts-expect-error frame rendering always uses static sampling internally
+  animation: "static",
+};
 void invalidAnimation;
 
 // @ts-expect-error each frame time must come from the explicit timesMs schedule

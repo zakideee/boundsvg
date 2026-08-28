@@ -1,4 +1,4 @@
-import type { RenderOptions, VNode } from "@boundsvg/core";
+import type { RenderIrOptions, VNode } from "@boundsvg/core";
 import { inspectScene, type SceneInspection } from "@boundsvg/core/inspect";
 import { useMemo } from "react";
 import { useBoundSvg } from "./hooks/use-boundsvg.js";
@@ -12,6 +12,7 @@ import {
   useStructurallyStableRenderOptions,
   useStructurallyStableValue,
 } from "./hooks/use-structurally-stable-value.js";
+import { pickRenderIrOptions } from "./utils/render-options.js";
 
 export type {
   InspectionBBox,
@@ -38,12 +39,12 @@ type InspectionComputation = {
  */
 export function useBoundSvgInspection(
   vnode: VNode | null,
-  options?: RenderOptions,
+  options?: RenderIrOptions,
 ): UseBoundSvgInspectionResult {
-  const { engine, status, defaultRenderOptions } = useBoundSvg();
+  const { engine, status, defaultCommonOptions } = useBoundSvg();
   const stableVNode = useStructurallyStableValue(vnode);
   const stableOptions = useStructurallyStableRenderOptions(options);
-  const stableDefaultRenderOptions = useStructurallyStableRenderOptions(defaultRenderOptions);
+  const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   const computation = useMemo<InspectionComputation>(() => {
     if (status !== "ready" || !engine || !stableVNode) {
@@ -53,7 +54,7 @@ export function useBoundSvgInspection(
       };
     }
 
-    const mergedOptions = { ...stableDefaultRenderOptions, ...stableOptions };
+    const mergedOptions = { ...pickRenderIrOptions(stableDefaultCommonOptions), ...stableOptions };
     const captured = captureRenderNotifications(mergedOptions);
     try {
       const inspection = inspectScene(engine, stableVNode, captured.options);
@@ -68,7 +69,7 @@ export function useBoundSvgInspection(
         deliveries: [captured.delivery],
       };
     }
-  }, [engine, status, stableVNode, stableOptions, stableDefaultRenderOptions]);
+  }, [engine, status, stableVNode, stableOptions, stableDefaultCommonOptions]);
   useCommitPhaseRenderNotifications(computation.deliveries);
   return computation.result;
 }

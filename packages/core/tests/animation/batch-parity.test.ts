@@ -193,7 +193,7 @@ describe("compiled animation frame parity", () => {
       const compiled = engine.compile(scene);
 
       for (const timeMs of CHECKPOINT_TIMES_MS) {
-        const options = { animation: "static" as const, timeMs };
+        const options = { timeMs };
         expect(engine.renderCompiledToSvg(compiled, options)).toBe(
           engine.renderToSvg(scene, options),
         );

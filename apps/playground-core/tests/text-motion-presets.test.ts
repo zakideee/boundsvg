@@ -67,7 +67,9 @@ describe("text motion playground presets", () => {
 
   it("renders eight terminal/IME snapshots with composition and diagnostics", () => {
     const preset = presets["typing-ime-timeline"]!;
-    const { svg, ir } = engine.renderToSvgAndIR(preset.build(engine));
+    const { svg, ir } = engine.renderToAnimatedSvgAndIR(preset.build(engine), {
+      playback: { mode: "independent" },
+    });
     const timelineNodes = collectTextNodes(ir.root).filter((node) =>
       node.nodeId.startsWith("timeline-"),
     );
@@ -97,7 +99,7 @@ describe("text motion playground presets", () => {
   it("covers straight, cubic, arc, effects, and hidden path overflow", () => {
     const preset = presets["text-on-path-basics"]!;
     const vnode = preset.build(engine);
-    const { svg, ir } = engine.renderToSvgAndIR(vnode);
+    const { svg, ir } = engine.renderToSvgAndIR(vnode, { timeMs: 0 });
     const pathTextNodes = collectTextNodes(ir.root).filter(
       (node) => node.textLayoutKind === "path",
     );
@@ -168,7 +170,7 @@ describe("text motion playground presets", () => {
   it("shows V2 decoration, closed traversal, fitting, and ellipsis without widening scope", () => {
     const preset = presets["decoration-path-fit"]!;
     const vnode = preset.build(engine);
-    const svg = engine.renderToSvg(vnode);
+    const svg = engine.renderToSvg(vnode, { timeMs: 0 });
     const ir = engine.renderToIR(vnode);
     const textNodes = collectTextNodes(ir.root);
     const decorationNodes = textNodes.filter((node) => node.nodeId.startsWith("path-decoration-"));
@@ -253,7 +255,7 @@ describe("text motion playground presets", () => {
   it("shows rich path identity, curved decoration, and materialized frames", () => {
     const preset = presets["rich-text-on-path"]!;
     const vnode = preset.build(engine);
-    const { svg, ir } = engine.renderToSvgAndIR(vnode);
+    const { svg, ir } = engine.renderToSvgAndIR(vnode, { timeMs: 0 });
     const textNodes = collectTextNodes(ir.root);
     const plain = textNodes.find((node) => node.nodeId === "path-identity-plain");
     const singleInline = textNodes.find((node) => node.nodeId === "path-identity-inline");

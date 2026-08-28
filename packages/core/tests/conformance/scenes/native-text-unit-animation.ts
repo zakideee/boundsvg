@@ -150,5 +150,5 @@ export const nativeTextUnitAnimationScene: ConformanceScene = {
   build: buildNativeTextUnitAnimationScene,
   width: WIDTH,
   height: HEIGHT,
-  renderOptions: { animation: "static", timeMs: 350 },
+  renderOptions: { timeMs: 350 },
 };

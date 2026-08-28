@@ -34,13 +34,12 @@ use crate::ir::types::{
     ShapePathPart, StrokeLinecap, StrokeLinejoin, StrokeScaling, TextOutlinePath, TextShadowLayer,
     TextStrokeLayer,
 };
+use crate::svg_emit::identifier_namespace::{SvgIdentifierNamespace, SvgIdentifierRole};
 use crate::svg_emit::paint::{
     ShapePaintMode, ShapePaintNode, build_shape_paint_attrs, linecap_str, linejoin_str,
 };
 use crate::svg_emit::transform::{AffineMatrix, node_transform_attr, node_transform_matrix};
-use crate::svg_emit::xml::{
-    ResourceKind, fnv1a_hash_base36, make_resource_id, to_css_safe_resource_id,
-};
+use crate::svg_emit::xml::fnv1a_hash_base36;
 use crate::text::types::Line;
 
 // ---------------------------------------------------------------------------
@@ -179,8 +178,10 @@ pub struct PaintScene {
     pub animation_time_ms: f64,
     pub reduced_motion: ReducedMotionMode,
     pub items: Vec<PaintItem>,
-    /// `Some` emits the `debug-overlay` group (possibly empty).
+    /// `Some` emits the generated debug overlay group (possibly empty).
     pub debug_items: Option<Vec<PaintItem>>,
+    /// Resolved generated class for the optional debug overlay group.
+    pub debug_overlay_class: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -498,22 +499,22 @@ pub fn resolve_paint_scene(
     ir: &Ir,
     options: &PaintSceneOptions,
 ) -> Result<PaintScene, EngineError> {
-    // The prefix is caller-supplied and lands inside `url(#...)` references.
-    let prefix = to_css_safe_resource_id(&options.resource_id_prefix);
+    let identifier_namespace = SvgIdentifierNamespace::new(&options.resource_id_prefix);
 
     let mut defs = SceneDefs::default();
-    collect_defs(&ir.root, &mut defs, &prefix);
-    let shared_shape_paths = collect_shared_shape_paths(&ir.root, &prefix, &mut defs)?;
+    collect_defs(&ir.root, &mut defs, &identifier_namespace);
+    let shared_shape_paths =
+        collect_shared_shape_paths(&ir.root, &identifier_namespace, &mut defs)?;
     let declarative_animation = options.animation_mode == AnimationMode::Declarative;
     let mut animations = Vec::new();
     if declarative_animation {
-        collect_animations(&ir.root, &prefix, &mut animations);
+        collect_animations(&ir.root, &identifier_namespace, &mut animations);
     }
 
     let mut items: Vec<PaintItem> = Vec::new();
     let mut canvas_stroke_state = CanvasStrokeState::default();
     let resolve_options = ResolveNodeOptions {
-        prefix: &prefix,
+        identifier_namespace: &identifier_namespace,
         shared: &shared_shape_paths,
         declarative_animation,
         output_scale: options.scale,
@@ -536,7 +537,7 @@ pub fn resolve_paint_scene(
     let debug_items = match debug_parts {
         Some(parts) => {
             let mut overlay: Vec<PaintItem> = Vec::new();
-            resolve_debug_overlays(&ir.root, &prefix, parts, &mut overlay);
+            resolve_debug_overlays(&ir.root, &identifier_namespace, parts, &mut overlay);
             Some(overlay)
         }
         None => None,
@@ -561,18 +562,26 @@ pub fn resolve_paint_scene(
         reduced_motion: options.reduced_motion,
         items,
         debug_items,
+        debug_overlay_class: identifier_namespace
+            .identifier(SvgIdentifierRole::DebugOverlayClass, ""),
     })
 }
 
-fn animation_names(node_id: &str, prefix: &str) -> (String, String) {
-    let resource_id = make_resource_id(ResourceKind::Anim, node_id, prefix);
+fn animation_names(
+    node_id: &str,
+    identifier_namespace: &SvgIdentifierNamespace,
+) -> (String, String) {
     (
-        format!("bsvg-{resource_id}"),
-        format!("{resource_id}-keyframes"),
+        identifier_namespace.identifier(SvgIdentifierRole::AnimationClass, node_id),
+        identifier_namespace.identifier(SvgIdentifierRole::AnimationKeyframes, node_id),
     )
 }
 
-fn collect_animations(node: &IrNode, prefix: &str, animations: &mut Vec<AnimationStyle>) {
+fn collect_animations(
+    node: &IrNode,
+    identifier_namespace: &SvgIdentifierNamespace,
+    animations: &mut Vec<AnimationStyle>,
+) {
     match &node.kind {
         IrNodeKind::Group {
             children,
@@ -580,7 +589,8 @@ fn collect_animations(node: &IrNode, prefix: &str, animations: &mut Vec<Animatio
             ..
         } => {
             if let Some(spec) = animation {
-                let (class_name, keyframes_name) = animation_names(&node.node_id, prefix);
+                let (class_name, keyframes_name) =
+                    animation_names(&node.node_id, identifier_namespace);
                 animations.push(AnimationStyle {
                     class_name,
                     keyframes_name,
@@ -589,7 +599,7 @@ fn collect_animations(node: &IrNode, prefix: &str, animations: &mut Vec<Animatio
                 });
             }
             for child in children {
-                collect_animations(child, prefix, animations);
+                collect_animations(child, identifier_namespace, animations);
             }
         }
         IrNodeKind::Text {
@@ -632,7 +642,7 @@ fn collect_animations(node: &IrNode, prefix: &str, animations: &mut Vec<Animatio
                         + f64::from(order_index) * unit_animation.delay_step_ms.unwrap_or(0.0),
                 );
                 let (class_name, keyframes_name) =
-                    unit_animation_names(&node.node_id, unit_index, prefix);
+                    unit_animation_names(&node.node_id, unit_index, identifier_namespace);
                 animations.push(AnimationStyle {
                     class_name,
                     keyframes_name,
@@ -645,8 +655,15 @@ fn collect_animations(node: &IrNode, prefix: &str, animations: &mut Vec<Animatio
     }
 }
 
-fn unit_animation_names(node_id: &str, unit_index: usize, prefix: &str) -> (String, String) {
-    animation_names(&format!("{node_id}:unit:{unit_index}"), prefix)
+fn unit_animation_names(
+    node_id: &str,
+    unit_index: usize,
+    identifier_namespace: &SvgIdentifierNamespace,
+) -> (String, String) {
+    animation_names(
+        &format!("{node_id}:unit:{unit_index}"),
+        identifier_namespace,
+    )
 }
 
 #[derive(Clone)]
@@ -707,7 +724,11 @@ fn uniform_glyph_effect_spec(
 // Defs collection (mirrors collectDefs traversal order)
 // ---------------------------------------------------------------------------
 
-fn collect_defs(node: &IrNode, defs: &mut SceneDefs, prefix: &str) {
+fn collect_defs(
+    node: &IrNode,
+    defs: &mut SceneDefs,
+    identifier_namespace: &SvgIdentifierNamespace,
+) {
     match &node.kind {
         IrNodeKind::Group {
             children,
@@ -718,16 +739,17 @@ fn collect_defs(node: &IrNode, defs: &mut SceneDefs, prefix: &str) {
         } => {
             if let Some(clip_bbox) = clip_path {
                 defs.clip_paths.push(ClipPathDef {
-                    id: make_resource_id(ResourceKind::Clip, &node.node_id, prefix),
+                    id: identifier_namespace
+                        .identifier(SvgIdentifierRole::ClipPathId, &node.node_id),
                     bbox: *clip_bbox,
                     border_radius: *clip_border_radius,
                 });
             }
             if let Some(shadow) = box_shadow {
-                push_box_shadow_filter(defs, shadow, &node.node_id, prefix);
+                push_box_shadow_filter(defs, shadow, &node.node_id, identifier_namespace);
             }
             for child in children {
-                collect_defs(child, defs, prefix);
+                collect_defs(child, defs, identifier_namespace);
             }
         }
         IrNodeKind::Rect {
@@ -735,7 +757,7 @@ fn collect_defs(node: &IrNode, defs: &mut SceneDefs, prefix: &str) {
             ..
         } => {
             defs.gradients.push(GradientDef {
-                id: make_resource_id(ResourceKind::Grad, &node.node_id, prefix),
+                id: identifier_namespace.identifier(SvgIdentifierRole::GradientId, &node.node_id),
                 bbox: node.bbox,
                 gradient: gradient.clone(),
             });
@@ -752,10 +774,9 @@ fn collect_defs(node: &IrNode, defs: &mut SceneDefs, prefix: &str) {
                     shadows.as_deref().unwrap_or_default().iter().enumerate()
                 {
                     defs.filters.push(FilterDef {
-                        id: make_resource_id(
-                            ResourceKind::Filter,
+                        id: identifier_namespace.identifier(
+                            SvgIdentifierRole::FilterId,
                             &format!("{}:ts{layer_index}", node.node_id),
-                            prefix,
                         ),
                         dx: shadow.dx,
                         dy: shadow.dy,
@@ -769,10 +790,9 @@ fn collect_defs(node: &IrNode, defs: &mut SceneDefs, prefix: &str) {
             {
                 for (layer_index, shadow) in uniform_range.shadows.iter().enumerate() {
                     defs.filters.push(FilterDef {
-                        id: make_resource_id(
-                            ResourceKind::Filter,
+                        id: identifier_namespace.identifier(
+                            SvgIdentifierRole::FilterId,
                             &format!("{}:ts{layer_index}", node.node_id),
-                            prefix,
                         ),
                         dx: shadow.dx,
                         dy: shadow.dy,
@@ -785,10 +805,9 @@ fn collect_defs(node: &IrNode, defs: &mut SceneDefs, prefix: &str) {
                 for (range_index, range) in glyph_ranges.iter().enumerate() {
                     for (layer_index, shadow) in range.shadows.iter().enumerate() {
                         defs.filters.push(FilterDef {
-                            id: make_resource_id(
-                                ResourceKind::Filter,
+                            id: identifier_namespace.identifier(
+                                SvgIdentifierRole::FilterId,
                                 &format!("{}:pr{range_index}:ts{layer_index}", node.node_id),
-                                prefix,
                             ),
                             dx: shadow.dx,
                             dy: shadow.dy,
@@ -804,9 +823,14 @@ fn collect_defs(node: &IrNode, defs: &mut SceneDefs, prefix: &str) {
     }
 }
 
-fn push_box_shadow_filter(defs: &mut SceneDefs, shadow: &BoxShadow, node_id: &str, prefix: &str) {
+fn push_box_shadow_filter(
+    defs: &mut SceneDefs,
+    shadow: &BoxShadow,
+    node_id: &str,
+    identifier_namespace: &SvgIdentifierNamespace,
+) {
     defs.filters.push(FilterDef {
-        id: make_resource_id(ResourceKind::Filter, node_id, prefix),
+        id: identifier_namespace.identifier(SvgIdentifierRole::FilterId, node_id),
         dx: shadow.dx,
         dy: shadow.dy,
         blur: shadow.blur,
@@ -847,7 +871,7 @@ fn is_single_path_shape_part(part: &ShapePathPart) -> bool {
 
 fn collect_shared_shape_paths(
     root: &IrNode,
-    prefix: &str,
+    identifier_namespace: &SvgIdentifierNamespace,
     defs: &mut SceneDefs,
 ) -> Result<SharedShapePathIndex, EngineError> {
     let mut occurrences: Vec<SharedPathOccurrence> = Vec::new();
@@ -860,12 +884,20 @@ fn collect_shared_shape_paths(
             continue;
         }
         let hash = fnv1a_hash_base36(&occurrence.key);
-        let mut id = format!("{prefix}sp-{hash}");
+        let mut ordinal = 1;
+        let mut id = identifier_namespace.identifier_with_ordinal(
+            SvgIdentifierRole::SharedShapePathId,
+            &hash,
+            ordinal,
+        );
         // Hash collisions disambiguate deterministically by discovery order.
-        let mut suffix = 2;
         while used_ids.contains(&id) {
-            id = format!("{prefix}sp-{hash}-{suffix}");
-            suffix += 1;
+            ordinal += 1;
+            id = identifier_namespace.identifier_with_ordinal(
+                SvgIdentifierRole::SharedShapePathId,
+                &hash,
+                ordinal,
+            );
         }
         used_ids.push(id.clone());
         defs.shared_shape_paths.push(SharedShapePathDef {
@@ -923,7 +955,7 @@ fn collect_shape_part_occurrences(
 // ---------------------------------------------------------------------------
 
 struct ResolveNodeOptions<'a> {
-    prefix: &'a str,
+    identifier_namespace: &'a SvgIdentifierNamespace,
     shared: &'a SharedShapePathIndex,
     declarative_animation: bool,
     output_scale: f64,
@@ -962,22 +994,20 @@ fn canvas_stroke_effective_scale(matrix: AffineMatrix) -> Option<f64> {
 
 fn canvas_stroke_class_name(
     owner_node_id: &str,
-    prefix: &str,
+    identifier_namespace: &SvgIdentifierNamespace,
     class_counts: &mut BTreeMap<String, usize>,
     used_class_names: &mut BTreeSet<String>,
 ) -> String {
-    let base_class_name = format!(
-        "bsvg-{prefix}vstroke-{}",
-        to_css_safe_resource_id(owner_node_id)
-    );
+    let base_class_name =
+        identifier_namespace.identifier(SvgIdentifierRole::CanvasStrokeClass, owner_node_id);
     let class_count = class_counts.entry(base_class_name.clone()).or_default();
     loop {
         *class_count += 1;
-        let candidate = if *class_count == 1 {
-            base_class_name.clone()
-        } else {
-            format!("{base_class_name}-{class_count}")
-        };
+        let candidate = identifier_namespace.identifier_with_ordinal(
+            SvgIdentifierRole::CanvasStrokeClass,
+            owner_node_id,
+            *class_count,
+        );
         if used_class_names.insert(candidate.clone()) {
             return candidate;
         }
@@ -1102,7 +1132,7 @@ fn resolve_canvas_stroke(
     }
     let class_name = canvas_stroke_class_name(
         request.owner_node_id,
-        options.prefix,
+        options.identifier_namespace,
         &mut canvas_stroke_state.class_counts,
         &mut canvas_stroke_state.used_class_names,
     );
@@ -1137,18 +1167,22 @@ fn resolve_node(
             ..
         } => {
             let animation_identifiers = (options.declarative_animation && animation.is_some())
-                .then(|| animation_names(&node.node_id, options.prefix));
+                .then(|| animation_names(&node.node_id, options.identifier_namespace));
             let has_body = !children.is_empty();
             let open = GroupOpenItem {
                 node_id: Some(node.node_id.clone()),
                 meta: meta.clone(),
                 transform: node_transform_attr(transform.as_ref(), node.bbox),
-                clip_ref: clip_path
-                    .is_some()
-                    .then(|| make_resource_id(ResourceKind::Clip, &node.node_id, options.prefix)),
-                filter_ref: box_shadow
-                    .is_some()
-                    .then(|| make_resource_id(ResourceKind::Filter, &node.node_id, options.prefix)),
+                clip_ref: clip_path.is_some().then(|| {
+                    options
+                        .identifier_namespace
+                        .identifier(SvgIdentifierRole::ClipPathId, &node.node_id)
+                }),
+                filter_ref: box_shadow.is_some().then(|| {
+                    options
+                        .identifier_namespace
+                        .identifier(SvgIdentifierRole::FilterId, &node.node_id)
+                }),
                 opacity: (*opacity).filter(|value| *value != 1.0),
                 animation_class: animation_identifiers
                     .as_ref()
@@ -1182,7 +1216,7 @@ fn resolve_node(
             stroke_dasharray,
             ..
         } => {
-            if let Some(mut rect_item) = resolve_rect_item(node, options.prefix) {
+            if let Some(mut rect_item) = resolve_rect_item(node, options.identifier_namespace) {
                 if let Some(resolved_stroke) = resolve_canvas_stroke(
                     &CanvasStrokeRequest {
                         owner: CanvasStrokeOwner::BoxBorder,
@@ -1205,9 +1239,11 @@ fn resolve_node(
             Ok(())
         }
         IrNodeKind::Text { .. } => {
-            if let Some(text_item) =
-                resolve_text_item(node, options.prefix, options.declarative_animation)
-            {
+            if let Some(text_item) = resolve_text_item(
+                node,
+                options.identifier_namespace,
+                options.declarative_animation,
+            ) {
                 items.push(PaintItem::Text(text_item));
             }
             Ok(())
@@ -1309,7 +1345,10 @@ fn is_internal_render_node_id(node_id: &str) -> bool {
     node_id.ends_with(":bg") || node_id.ends_with(":border")
 }
 
-fn resolve_rect_item(node: &IrNode, prefix: &str) -> Option<RectItem> {
+fn resolve_rect_item(
+    node: &IrNode,
+    identifier_namespace: &SvgIdentifierNamespace,
+) -> Option<RectItem> {
     let IrNodeKind::Rect {
         fill,
         gradient,
@@ -1332,7 +1371,7 @@ fn resolve_rect_item(node: &IrNode, prefix: &str) -> Option<RectItem> {
         border_radius: *border_radius,
         gradient_ref: gradient
             .is_some()
-            .then(|| make_resource_id(ResourceKind::Grad, &node.node_id, prefix)),
+            .then(|| identifier_namespace.identifier(SvgIdentifierRole::GradientId, &node.node_id)),
         fill: fill.clone(),
         stroke: stroke.clone(),
         stroke_width: *stroke_width,
@@ -1401,7 +1440,7 @@ fn text_glyph_items(
     node_id: &str,
     glyph_paths: &[TextOutlinePath],
     unit_samples: Option<&[crate::ir::types::TextUnitAnimationSample]>,
-    prefix: &str,
+    identifier_namespace: &SvgIdentifierNamespace,
     declarative_animation: bool,
 ) -> Vec<TextGlyphItem> {
     let sample_by_unit_id: HashMap<&str, (usize, &crate::ir::types::TextUnitAnimationSample)> =
@@ -1423,7 +1462,7 @@ fn text_glyph_items(
                 let bbox = sample.bbox?;
                 Some(TextUnitPaintItem {
                     animation_class: declarative_animation
-                        .then(|| unit_animation_names(node_id, unit_index, prefix).0),
+                        .then(|| unit_animation_names(node_id, unit_index, identifier_namespace).0),
                     transform: node_transform_attr(sample.transform.as_ref(), bbox),
                     opacity: sample.opacity.filter(|opacity| *opacity != 1.0),
                 })
@@ -1432,7 +1471,11 @@ fn text_glyph_items(
         .collect()
 }
 
-fn resolve_text_item(node: &IrNode, prefix: &str, declarative_animation: bool) -> Option<TextItem> {
+fn resolve_text_item(
+    node: &IrNode,
+    identifier_namespace: &SvgIdentifierNamespace,
+    declarative_animation: bool,
+) -> Option<TextItem> {
     let IrNodeKind::Text {
         lines,
         font_size_px,
@@ -1486,10 +1529,9 @@ fn resolve_text_item(node: &IrNode, prefix: &str, declarative_animation: bool) -
                     .iter()
                     .enumerate()
                     .map(|(layer_index, shadow)| TextShadowLayerItem {
-                        filter_ref: make_resource_id(
-                            ResourceKind::Filter,
+                        filter_ref: identifier_namespace.identifier(
+                            SvgIdentifierRole::FilterId,
                             &format!("{}:ts{layer_index}", node.node_id),
-                            prefix,
                         ),
                         color: shadow.color.clone(),
                     })
@@ -1521,10 +1563,9 @@ fn resolve_text_item(node: &IrNode, prefix: &str, declarative_animation: bool) -
                         .iter()
                         .enumerate()
                         .map(|(layer_index, shadow)| TextShadowLayerItem {
-                            filter_ref: make_resource_id(
-                                ResourceKind::Filter,
+                            filter_ref: identifier_namespace.identifier(
+                                SvgIdentifierRole::FilterId,
                                 &format!("{}:pr{range_index}:ts{layer_index}", node.node_id),
-                                prefix,
                             ),
                             color: shadow.color.clone(),
                         })
@@ -1545,10 +1586,9 @@ fn resolve_text_item(node: &IrNode, prefix: &str, declarative_animation: bool) -
                     .iter()
                     .enumerate()
                     .map(|(layer_index, shadow)| TextShadowLayerItem {
-                        filter_ref: make_resource_id(
-                            ResourceKind::Filter,
+                        filter_ref: identifier_namespace.identifier(
+                            SvgIdentifierRole::FilterId,
                             &format!("{}:ts{layer_index}", node.node_id),
-                            prefix,
                         ),
                         color: shadow.color.clone(),
                     })
@@ -1581,7 +1621,7 @@ fn resolve_text_item(node: &IrNode, prefix: &str, declarative_animation: bool) -
             &node.node_id,
             glyph_paths,
             unit_animation_samples.as_deref(),
-            prefix,
+            identifier_namespace,
             declarative_animation,
         ),
         scalar_stroke,
@@ -1753,7 +1793,7 @@ fn node_layout_box(node: &IrNode) -> BBox {
 
 fn resolve_debug_overlays(
     node: &IrNode,
-    prefix: &str,
+    identifier_namespace: &SvgIdentifierNamespace,
     parts: DebugParts,
     items: &mut Vec<PaintItem>,
 ) {
@@ -1769,7 +1809,7 @@ fn resolve_debug_overlays(
     let transform_attr = node_transform_attr(transform, node.bbox);
     let clip_ref = clip_path
         .is_some()
-        .then(|| make_resource_id(ResourceKind::Clip, &node.node_id, prefix));
+        .then(|| identifier_namespace.identifier(SvgIdentifierRole::ClipPathId, &node.node_id));
 
     if transform_attr.is_some() || clip_ref.is_some() {
         items.push(PaintItem::GroupOpen(GroupOpenItem {
@@ -1777,17 +1817,17 @@ fn resolve_debug_overlays(
             clip_ref,
             ..GroupOpenItem::default()
         }));
-        resolve_debug_overlay_node(node, prefix, parts, items);
+        resolve_debug_overlay_node(node, identifier_namespace, parts, items);
         items.push(PaintItem::GroupClose);
         return;
     }
 
-    resolve_debug_overlay_node(node, prefix, parts, items);
+    resolve_debug_overlay_node(node, identifier_namespace, parts, items);
 }
 
 fn resolve_debug_overlay_node(
     node: &IrNode,
-    prefix: &str,
+    identifier_namespace: &SvgIdentifierNamespace,
     parts: DebugParts,
     items: &mut Vec<PaintItem>,
 ) {
@@ -1821,7 +1861,7 @@ fn resolve_debug_overlay_node(
     }
     if let IrNodeKind::Group { children, .. } = &node.kind {
         for child in children {
-            resolve_debug_overlays(child, prefix, parts, items);
+            resolve_debug_overlays(child, identifier_namespace, parts, items);
         }
     }
 }

@@ -248,7 +248,7 @@ describe("textDecoration real WASM rendering", () => {
               },
             },
           }),
-          { skipValidation: true },
+          { skipValidation: true, timeMs: 0 },
         ),
       "TEXT_DECORATION_UNIT_ANIMATION_UNSUPPORTED",
     );

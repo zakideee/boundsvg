@@ -55,6 +55,57 @@ function createTestScene() {
   );
 }
 
+const sharedLayerGeometry = {
+  viewBox: { width: 20, height: 20 },
+  root: {
+    kind: "group" as const,
+    children: [
+      { kind: "path" as const, nodeId: "plate", d: "M0 0H20V20H0Z" },
+      { kind: "path" as const, nodeId: "slot", d: "M8 4H12V16H8Z" },
+    ],
+  },
+};
+
+function createSharedShapeLayerScene() {
+  const shape = (id: string, layer: string, left: number) =>
+    createElement("Shape", {
+      id,
+      layer,
+      geometry: sharedLayerGeometry,
+      width: 40,
+      height: 40,
+      fill: "#2563eb",
+      position: "absolute",
+      left,
+      top: layer === "back" ? 10 : 60,
+    });
+
+  return createElement(
+    "Canvas",
+    { width: 120, height: 110 },
+    shape("back-left", "back", 10),
+    shape("back-right", "back", 60),
+    shape("front-left", "front", 10),
+    shape("front-right", "front", 60),
+  );
+}
+
+function capturedValues(svg: string, pattern: RegExp): string[] {
+  return [...svg.matchAll(pattern)].flatMap((match) => (match[1] === undefined ? [] : [match[1]]));
+}
+
+function layeredGeneratedTokens(svg: string): Set<string> {
+  return new Set([
+    ...capturedValues(svg, /(?:^|[<\s])id="([^"]+)"/gu),
+    ...capturedValues(svg, /\sclass="([^"]+)"/gu).flatMap((classes) => classes.split(/\s+/u)),
+    ...capturedValues(svg, /@keyframes\s+([^\s{]+)/gu),
+  ]);
+}
+
+function intersectTokens(left: Set<string>, right: Set<string>): string[] {
+  return [...left].filter((token) => right.has(token)).sort();
+}
+
 function createInlineRectScene() {
   return createElement(
     "Canvas",
@@ -146,6 +197,60 @@ describe("Engine.renderToLayeredSvg()", () => {
     expect(result.layers[2]?.nodeIds).toEqual(["title"]);
     expect(result.layers[2]?.svg).toContain('data-boundsvg-node-id="title"');
     expect(result.manifest.layers).toHaveLength(3);
+  });
+
+  it("derives prefix-free layer namespaces for shared Shape resources", () => {
+    const engine = createTestEngine();
+    const scene = createSharedShapeLayerScene();
+    const prefixA = "result-a-000-";
+    const prefixB = "result-b-000-";
+    const resultA = engine.renderToLayeredSvg(scene, {
+      debug: true,
+      resourceIdPrefix: prefixA,
+    });
+    const resultB = engine.renderToLayeredSvg(scene, {
+      debug: true,
+      resourceIdPrefix: prefixB,
+    });
+
+    expect(resultA.layers.map((layer) => layer.id)).toEqual(["back", "front"]);
+    const layerTokenSets = resultA.layers.map((layer, layerIndex) => {
+      const expectedLayerPrefix = `${prefixA}layer-${layerIndex}-`;
+      const ids = new Set(capturedValues(layer.svg, /(?:^|[<\s])id="([^"]+)"/gu));
+      const hrefs = capturedValues(layer.svg, /\shref="#([^"]+)"/gu);
+      expect([...ids].some((id) => id.startsWith(`${expectedLayerPrefix}sp-`))).toBe(true);
+      expect([...ids].every((id) => id.startsWith(expectedLayerPrefix))).toBe(true);
+      expect(hrefs.length).toBeGreaterThan(0);
+      expect(hrefs.every((href) => ids.has(href))).toBe(true);
+      expect(layer.svg).toContain(`class="bsvg-${expectedLayerPrefix}debug-overlay"`);
+      return layeredGeneratedTokens(layer.svg);
+    });
+
+    expect(intersectTokens(layerTokenSets[0] ?? new Set(), layerTokenSets[1] ?? new Set())).toEqual(
+      [],
+    );
+    const allTokensA = new Set(
+      resultA.layers.flatMap((layer) => [...layeredGeneratedTokens(layer.svg)]),
+    );
+    const allTokensB = new Set(
+      resultB.layers.flatMap((layer) => [...layeredGeneratedTokens(layer.svg)]),
+    );
+    expect(intersectTokens(allTokensA, allTokensB)).toEqual([]);
+  });
+
+  it("keeps layered SVG bytes unchanged when resourceIdPrefix is omitted or empty", () => {
+    const engine = createTestEngine();
+    const scene = createSharedShapeLayerScene();
+    const omitted = engine.renderToLayeredSvg(scene, { debug: true });
+    const explicitEmpty = engine.renderToLayeredSvg(scene, {
+      debug: true,
+      resourceIdPrefix: "",
+    });
+
+    expect(explicitEmpty.layers.map((layer) => layer.svg)).toEqual(
+      omitted.layers.map((layer) => layer.svg),
+    );
+    expect(omitted.layers.every((layer) => layer.svg.includes('class="debug-overlay"'))).toBe(true);
   });
 
   it("ignores non-drawing fragments when merging a layer's paint order", () => {
@@ -802,7 +907,6 @@ describe("Engine.renderToLayeredPng()", () => {
     let callbackCalls = 0;
     const renderOptions: LayeredPngOptions = {
       scale: 1,
-      resourceIdPrefix: "before-prefix",
       generator: { name: "before-generator", version: "1.0.0" },
       validateComposition: { enabled: true },
     };
@@ -810,7 +914,6 @@ describe("Engine.renderToLayeredPng()", () => {
       callbackCalls += 1;
       textNode.props.layer = "after";
       renderOptions.scale = Number.MAX_VALUE;
-      renderOptions.resourceIdPrefix = "after-prefix";
       renderOptions.generator = { name: "after-generator", version: "9.9.9" };
       renderOptions.validateComposition = { enabled: false };
       engineOptions.emitSvgFromIrFn = replacementEmitter;
@@ -846,14 +949,16 @@ describe("Engine.renderToLayeredPng()", () => {
     expect(originalValidator.mock.calls[0]?.[0]?.options?.fontFamilies).toEqual({
       sansSerif: "before-family",
     });
+    const emittedResourceIdPrefixes = new Set<string | undefined>();
     for (const emitCall of originalEmitTransport.mock.calls) {
       const emitOptions = JSON.parse(emitCall[1]) as {
         resourceIdPrefix?: string;
         scale?: number;
       };
-      expect(emitOptions.resourceIdPrefix).toBe("before-prefix");
+      emittedResourceIdPrefixes.add(emitOptions.resourceIdPrefix);
       expect(emitOptions.scale).toBe(0.768);
     }
+    expect(emittedResourceIdPrefixes).toEqual(new Set([undefined]));
   }, 30_000);
 
   it("does not pass png background to layer rasterization", () => {

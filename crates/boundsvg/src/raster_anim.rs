@@ -20,35 +20,41 @@ pub const MAX_ANIMATION_FRAMES: usize = 300;
 const MIN_FRAME_DURATION_MS: u32 = 1;
 const MAX_FRAME_DURATION_MS: u32 = 60_000;
 
-/// Inclusive upper bound for the loop count; the container stores it as u16.
-const MAX_LOOP_COUNT: u32 = 65_535;
-
 /// One pre-sampled frame: a static SVG plus how long it stays on screen.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AnimationFrameInput {
     pub svg: String,
     /// Whole milliseconds, 1..=60000.
     pub duration_ms: u32,
 }
 
+/// Total number of plays requested for an animated raster container.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum AnimatedRasterIterations {
+    Finite(u32),
+    Infinite(AnimatedRasterInfinite),
+}
+
+/// Exact JSON keyword accepted for infinite animated-raster playback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AnimatedRasterInfinite {
+    Infinite,
+}
+
 /// Input to an animated raster encoder.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AnimationEncodeInput {
     pub frames: Vec<AnimationFrameInput>,
-    /// Loop count, 0..=65535. 0 means loop forever. Defaults to 0.
-    pub loop_count: Option<u32>,
+    /// Required total-play count. Container-specific bounds are enforced by
+    /// the selected WebP or GIF adapter before any output is assembled.
+    pub iterations: AnimatedRasterIterations,
     /// Rasterization options applied identically to every frame, which is what
     /// keeps all frames at one size.
     pub options: Option<RasterizeOptions>,
-}
-
-impl AnimationEncodeInput {
-    /// Loop count with the "loop forever" default applied.
-    pub(crate) fn resolved_loop_count(&self) -> u32 {
-        self.loop_count.unwrap_or(0)
-    }
 }
 
 /// Reject inputs the containers cannot represent.
@@ -58,8 +64,8 @@ impl AnimationEncodeInput {
 ///
 /// # Errors
 ///
-/// Returns `EngineError` if the frame count, any frame duration, or the loop
-/// count is out of range.
+/// Returns `EngineError` if the frame count or any frame duration is out of
+/// range. Total-play bounds are deliberately format-specific.
 pub(crate) fn validate_animation_input(input: &AnimationEncodeInput) -> Result<(), EngineError> {
     if input.frames.is_empty() {
         return Err(EngineError::Rasterize(
@@ -79,12 +85,6 @@ pub(crate) fn validate_animation_input(input: &AnimationEncodeInput) -> Result<(
                 frame.duration_ms
             )));
         }
-    }
-    let loop_count = input.resolved_loop_count();
-    if loop_count > MAX_LOOP_COUNT {
-        return Err(EngineError::Rasterize(format!(
-            "Loop count must be 0..={MAX_LOOP_COUNT}, got {loop_count}"
-        )));
     }
     Ok(())
 }
@@ -152,52 +152,63 @@ mod tests {
         }
     }
 
-    fn input(frames: Vec<AnimationFrameInput>, loop_count: Option<u32>) -> AnimationEncodeInput {
+    fn input(frames: Vec<AnimationFrameInput>) -> AnimationEncodeInput {
         AnimationEncodeInput {
             frames,
-            loop_count,
+            iterations: AnimatedRasterIterations::Infinite(AnimatedRasterInfinite::Infinite),
             options: None,
         }
     }
 
     #[test]
     fn test_rejects_empty_frames() {
-        let error = validate_animation_input(&input(vec![], None)).expect_err("empty is invalid");
+        let error = validate_animation_input(&input(vec![])).expect_err("empty is invalid");
         assert!(error.to_string().contains("at least one frame"));
     }
 
     #[test]
     fn test_rejects_too_many_frames() {
         let frames = vec![frame(10); MAX_ANIMATION_FRAMES + 1];
-        let error = validate_animation_input(&input(frames, None)).expect_err("301 is invalid");
+        let error = validate_animation_input(&input(frames)).expect_err("301 is invalid");
         assert!(error.to_string().contains("limited to 300 frames"));
     }
 
     #[test]
     fn test_accepts_the_frame_limit() {
         let frames = vec![frame(10); MAX_ANIMATION_FRAMES];
-        validate_animation_input(&input(frames, None)).expect("300 frames is valid");
+        validate_animation_input(&input(frames)).expect("300 frames is valid");
     }
 
     #[test]
     fn test_rejects_out_of_range_durations() {
         for duration_ms in [0, MAX_FRAME_DURATION_MS + 1] {
-            let error = validate_animation_input(&input(vec![frame(duration_ms)], None))
+            let error = validate_animation_input(&input(vec![frame(duration_ms)]))
                 .expect_err("duration out of range");
             assert!(error.to_string().contains("Frame 0 duration"));
         }
     }
 
     #[test]
-    fn test_rejects_out_of_range_loop_count() {
-        let error = validate_animation_input(&input(vec![frame(10)], Some(MAX_LOOP_COUNT + 1)))
-            .expect_err("loop count out of range");
-        assert!(error.to_string().contains("Loop count"));
-    }
+    fn input_requires_iterations_and_rejects_legacy_or_unknown_fields() {
+        let frame_json = r#"[{"svg":"<svg/>","durationMs":10}]"#;
+        for invalid_json in [
+            format!(r#"{{"frames":{frame_json}}}"#),
+            format!(r#"{{"frames":{frame_json},"loopCount":0}}"#),
+            format!(r#"{{"frames":{frame_json},"loop_count":0}}"#),
+            format!(r#"{{"frames":{frame_json},"iterations":"forever"}}"#),
+            format!(r#"{{"frames":{frame_json},"iterations":1,"unknown":true}}"#),
+        ] {
+            assert!(
+                serde_json::from_str::<AnimationEncodeInput>(&invalid_json).is_err(),
+                "must reject {invalid_json}"
+            );
+        }
 
-    #[test]
-    fn test_loop_count_defaults_to_forever() {
-        assert_eq!(input(vec![frame(10)], None).resolved_loop_count(), 0);
-        assert_eq!(input(vec![frame(10)], Some(3)).resolved_loop_count(), 3);
+        for valid_iterations in ["1", "65536", r#""infinite""#] {
+            let valid_json =
+                format!(r#"{{"frames":{frame_json},"iterations":{valid_iterations}}}"#);
+            serde_json::from_str::<AnimationEncodeInput>(&valid_json)
+                .unwrap_or_else(|error| panic!("must accept {valid_json}: {error}"));
+        }
     }
 }

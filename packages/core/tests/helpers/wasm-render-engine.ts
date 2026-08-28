@@ -25,15 +25,20 @@ export type WasmEmitOptions = {
   scale?: number;
   debug?: boolean | { parts?: readonly string[] };
   resourceIdPrefix?: string;
+  nodeIdMetadata?: "include" | "omit";
   textPathMode?: "merged" | "glyphs";
   showMissingGlyphs?: boolean;
   rasterizerCompat?: boolean;
-  animation?: "declarative" | "static";
   timeMs?: number;
   generator?: {
     name: string;
     version: string;
   };
+};
+
+export type WasmAnimatedEmitOptions = WasmEmitOptions & {
+  playback: { mode: "independent" };
+  reducedMotion?: "keep" | "pause";
 };
 
 /** Creates a WASM engine instance with the fixture fonts registered. */
@@ -67,13 +72,19 @@ export function engineOptionsFromHandle(
     compileLayoutTransitionFn: (...transportArgs) =>
       handle.compileLayoutTransition(...transportArgs),
     renderToSvgFn: (inputJson, optionsJson) => handle.renderToSvg(inputJson, optionsJson),
+    renderToAnimatedSvgFn: (inputJson, optionsJson) =>
+      handle.renderToAnimatedSvg(inputJson, optionsJson),
     emitSvgFromIrFn: (irJson, optionsJson) => handle.emitSvgFromIr(irJson, optionsJson),
+    emitAnimatedSvgFromIrFn: (irJson, optionsJson) =>
+      handle.emitAnimatedSvgFromIr(irJson, optionsJson),
     resolveIrFn: (irJson, optionsJson) => handle.resolveIr(irJson, optionsJson),
     preflightIrFn: (irJson) => handle.preflightIr(irJson),
     preflightRasterSceneFn: (irJson, optionsJson) =>
       handle.preflightRasterScene(irJson, optionsJson),
     resolveAndEmitSvgFromIrFn: (irJson, optionsJson) =>
       handle.resolveAndEmitSvgFromIr(irJson, optionsJson),
+    resolveAndEmitAnimatedSvgFromIrFn: (irJson, optionsJson) =>
+      handle.resolveAndEmitAnimatedSvgFromIr(irJson, optionsJson),
     sampleAnimationStateFn: (irJson, timeMs) => handle.sampleAnimationState(irJson, timeMs),
     prepareSceneFn: (irJson, optionsJson) => handle.prepareScene(irJson, optionsJson),
     ...overrides,
@@ -103,4 +114,16 @@ export function emitSvgFromIrViaHandle(
   options: WasmEmitOptions = {},
 ): string {
   return handle.emitSvgFromIr(JSON.stringify({ ...ir, warnings: [] }), JSON.stringify(options));
+}
+
+/** Emits declarative animated SVG from hand-built IR through its dedicated export. */
+export function emitAnimatedSvgFromIrViaHandle(
+  handle: WasmEngineHandle,
+  ir: IR,
+  options: WasmAnimatedEmitOptions,
+): string {
+  return handle.emitAnimatedSvgFromIr(
+    JSON.stringify({ ...ir, warnings: [] }),
+    JSON.stringify(options),
+  );
 }

@@ -69,7 +69,7 @@ async function loadCoreWasm() {
 // Example definitions
 // ---------------------------------------------------------------------------
 
-type Example = {
+type ExampleDefinition = {
   id: string;
   code: string;
   build: (core: typeof import("@boundsvg/core")) => import("@boundsvg/core").VNode;
@@ -77,8 +77,19 @@ type Example = {
     core: typeof import("@boundsvg/core");
     engine: import("@boundsvg/core").Engine;
   }) => void;
-  renderOptions?: import("@boundsvg/core").RenderOptions;
 };
+
+type Example = ExampleDefinition &
+  (
+    | {
+        renderMode?: "static";
+        renderOptions?: import("@boundsvg/core").RenderSvgOptions;
+      }
+    | {
+        renderMode: "animated";
+        renderOptions: import("@boundsvg/core").RenderAnimatedSvgOptions;
+      }
+  );
 
 // Fragments computed by the figure-flow prepare step and consumed by its build.
 type FlowFragmentBox = { x: number; y: number; availableInlineSizePx: number; text: string };
@@ -1419,7 +1430,8 @@ const svg = engine.renderToSvg(vnode, { debug: true });`,
     },
     // Freeze the base pose inside the PASS hold, so a renderer that does not
     // run CSS animations shows a completed run rather than an empty terminal.
-    renderOptions: { animation: "declarative", timeMs: 3_200 },
+    renderMode: "animated",
+    renderOptions: { playback: { mode: "independent" }, timeMs: 3_200 },
   },
 
   // --- Vertical Japanese text with Ruby ---
@@ -1981,7 +1993,10 @@ async function main() {
     example.prepare?.({ core, engine });
     const vnode = example.build(core);
 
-    let svg = engine.renderToSvg(vnode, example.renderOptions);
+    let svg =
+      example.renderMode === "animated"
+        ? engine.renderToAnimatedSvg(vnode, example.renderOptions)
+        : engine.renderToSvg(vnode, example.renderOptions);
     if (example.id === "vertical-ruby-ja") {
       svg = stylizeVerticalRubySvg(svg);
     }
@@ -1993,7 +2008,7 @@ async function main() {
       fs.writeFileSync(fixtureSvgPath, svg);
       // A self-animating scene has no single representative frame, so the
       // still companion is skipped rather than frozen at the loop start.
-      if (example.renderOptions?.animation !== "declarative") {
+      if (example.renderMode !== "animated") {
         const fixturePngPath = path.join(OUT_FIXTURE_PNG, `${example.id}.png`);
         const png = svgToPng(svg, { scale: 2 });
         fs.writeFileSync(fixturePngPath, png);

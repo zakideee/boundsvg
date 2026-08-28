@@ -9,8 +9,11 @@ import { MAX_ANIMATION_FRAMES } from "./render-capabilities.js";
 const MIN_FRAME_DURATION_MS = 1;
 const MAX_FRAME_DURATION_MS = 60_000;
 
-/** Inclusive upper bound for the loop count; the container stores it as u16. */
-const MAX_LOOP_COUNT = 65_535;
+/** Largest total play count representable by animated WebP's ANIM field. */
+export const MAX_ANIMATED_WEBP_ITERATIONS = 65_535;
+
+/** Largest total play count representable by GIF's repeat field plus one. */
+export const MAX_ANIMATED_GIF_ITERATIONS = 65_536;
 
 const DEFAULT_FPS = 20;
 const MIN_FPS = 1;
@@ -216,19 +219,28 @@ export function resolveGifDelaysCs(frameDurationsMs: readonly number[]): number[
 export const GIF_MIN_FRAME_MS = GIF_MIN_DELAY_CS * GIF_DELAY_UNIT_MS;
 
 /**
- * Validate a loop count against what the animated containers can store.
+ * Validate a total play count against one animated container's bounds.
  *
- * @throws FatalError with `code` when the value is not a whole number in
- *   0..65535.
+ * @throws FatalError with `code` when the value is omitted, is not
+ *   `"infinite"`, or is not a whole number in `1..maxIterations`.
  */
-export function assertAnimationLoopCount(loop: number | undefined, code: string): void {
-  if (loop === undefined) {
+export function assertAnimationIterations(
+  iterations: unknown,
+  { maxIterations, code, formatName }: { maxIterations: number; code: string; formatName: string },
+): asserts iterations is number | "infinite" {
+  if (iterations === "infinite") {
     return;
   }
-  if (!Number.isInteger(loop) || loop < 0 || loop > MAX_LOOP_COUNT) {
+  if (
+    typeof iterations !== "number" ||
+    !Number.isFinite(iterations) ||
+    !Number.isInteger(iterations) ||
+    iterations < 1 ||
+    iterations > maxIterations
+  ) {
     throw scheduleError(
       code,
-      `loop must be a whole number in 0..${MAX_LOOP_COUNT}, got ${String(loop)}`,
+      `${formatName} iterations must be "infinite" or a whole number in 1..${maxIterations}, got ${String(iterations)}`,
     );
   }
 }

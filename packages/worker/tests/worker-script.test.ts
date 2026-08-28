@@ -7,6 +7,38 @@ const workerEngineMethods = vi.hoisted(() => ({
   compileLayoutTransition: vi.fn(() => ({ marker: "compiled-transition" })),
   renderCompiledToAnimatedWebp: vi.fn(() => new Uint8Array([0x52, 0x49, 0x46, 0x46])),
   renderCompiledToAnimatedGif: vi.fn(() => new Uint8Array([0x47, 0x49, 0x46])),
+  renderToSvg: vi.fn(() => '<svg data-mode="static"/>'),
+  renderToAnimatedSvg: vi.fn(() => '<svg data-mode="animated"/>'),
+  renderToSvgAndIR: vi.fn(() => ({
+    svg: '<svg data-mode="static-ir"/>',
+    ir: {
+      root: {
+        type: "group",
+        nodeId: "root",
+        bbox: { x: 0, y: 0, w: 10, h: 10 },
+        children: [],
+      },
+      drawOrder: ["root"],
+      width: 10,
+      height: 10,
+      warnings: [],
+    },
+  })),
+  renderToAnimatedSvgAndIR: vi.fn(() => ({
+    svg: '<svg data-mode="animated-ir"/>',
+    ir: {
+      root: {
+        type: "group",
+        nodeId: "root",
+        bbox: { x: 0, y: 0, w: 10, h: 10 },
+        children: [],
+      },
+      drawOrder: ["root"],
+      width: 10,
+      height: 10,
+      warnings: [],
+    },
+  })),
   renderFrames: vi.fn((_scene: unknown, options: { timesMs: number[]; format: "svg" | "png" }) => {
     let nextIndex = 0;
     return {
@@ -130,6 +162,46 @@ describe("worker script measurement dispatch", () => {
       { api: "shrinkwrapFlow", input: { marker: 6 } },
       { api: "measureIntrinsicInlineSize", input: { marker: 7 } },
     ]);
+  });
+
+  it("dispatches static and animated SVG direct and SVG+IR request families", async () => {
+    scope.send({ id: 1, type: "init", fonts: [] });
+    await vi.waitFor(() => expect(scope.responses).toContainEqual({ id: 1, type: "init-ok" }));
+
+    const scene = { type: "Canvas", width: 10, height: 10, children: [] } as const;
+    scope.send({ id: 2, type: "render-svg", scene, options: { nodeIdMetadata: "omit" } });
+    scope.send({
+      id: 3,
+      type: "render-animated-svg",
+      scene,
+      options: { playback: { mode: "independent" }, resourceIdPrefix: "animated-" },
+    });
+    scope.send({ id: 4, type: "render-svg-and-ir", scene, options: { timeMs: 0 } });
+    scope.send({
+      id: 5,
+      type: "render-animated-svg-and-ir",
+      scene,
+      options: { playback: { mode: "independent" }, reducedMotion: "pause" },
+    });
+
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(5));
+    expect(scope.responses.slice(1).map((response) => response.type)).toEqual([
+      "render-svg-ok",
+      "render-animated-svg-ok",
+      "render-svg-and-ir-ok",
+      "render-animated-svg-and-ir-ok",
+    ]);
+    expect(workerEngineMethods.renderToSvg).toHaveBeenCalledWith(
+      scene,
+      expect.objectContaining({ nodeIdMetadata: "omit" }),
+    );
+    expect(workerEngineMethods.renderToAnimatedSvg).toHaveBeenCalledWith(
+      scene,
+      expect.objectContaining({
+        playback: { mode: "independent" },
+        resourceIdPrefix: "animated-",
+      }),
+    );
   });
 
   it("keeps prepared frame iterators Worker-local and remaps global indices", async () => {

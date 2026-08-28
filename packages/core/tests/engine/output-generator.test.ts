@@ -152,6 +152,7 @@ describe("output generator metadata", () => {
     });
 
     const webp = capturingEngine.renderToAnimatedWebp(animatedScene(), {
+      iterations: "infinite",
       durationMs: 200,
       fps: 10,
       generator: GENERATOR,
@@ -163,6 +164,7 @@ describe("output generator metadata", () => {
     expect(countBytes(webp, new TextEncoder().encode("XMP "))).toBe(1);
 
     const gif = capturingEngine.renderToAnimatedGif(animatedScene(), {
+      iterations: "infinite",
       durationMs: 200,
       fps: 10,
       generator: GENERATOR,

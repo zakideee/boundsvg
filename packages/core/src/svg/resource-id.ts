@@ -1,5 +1,13 @@
 const DEFAULT_RESOURCE_ID_SCOPE = "bsvg";
 
+/**
+ * Create a readable, delimiter-terminated literal SVG identifier prefix.
+ *
+ * When several outputs will share one document, choose scopes whose resulting
+ * normalized prefixes are non-empty and pairwise prefix-free. For example,
+ * fixed-width scope tokens satisfy that condition; `doc-` and `doc-clip-` do
+ * not because the former is a string prefix of the latter.
+ */
 export function createResourceIdPrefix(scope = DEFAULT_RESOURCE_ID_SCOPE): string {
   const normalized = scope
     .trim()

@@ -63,7 +63,7 @@ describe("parseExportArgs", () => {
       "2000",
       "--fps",
       "12",
-      "--loop",
+      "--iterations",
       "3",
     ]);
     const options = parsed!.options;
@@ -71,7 +71,7 @@ describe("parseExportArgs", () => {
     expect(options.output).toBe("card.webp");
     expect(options.durationMs).toBe(2000);
     expect(options.fps).toBe(12);
-    expect(options.loop).toBe(3);
+    expect(options.iterations).toBe(3);
   });
 
   it("leaves the animation schedule flags unset when absent", () => {
@@ -84,7 +84,7 @@ describe("parseExportArgs", () => {
       "NotoSansJP:400:normal:./font.woff2",
     ]);
     expect(parsed!.options.fps).toBeUndefined();
-    expect(parsed!.options.loop).toBeUndefined();
+    expect(parsed!.options.iterations).toBeUndefined();
     expect(parsed!.options.durationMs).toBeUndefined();
   });
 
@@ -93,7 +93,7 @@ describe("parseExportArgs", () => {
       ["--fps", ["--fps", "abc"]],
       ["--fps", ["--fps"]],
       ["--duration-ms", ["--duration-ms", "--verbose"]],
-      ["--loop", ["--loop", ""]],
+      ["--iterations", ["--iterations", ""]],
       ["--format", ["--format", "wepb"]],
       ["--format", ["--format"]],
     ];
@@ -146,7 +146,7 @@ describe("parseExportArgs", () => {
       "--format=animated-webp",
       "--duration-ms=2000",
       "--fps=12",
-      "--loop=3",
+      "--iterations=infinite",
       "--scale=3",
     ]);
     const options = parsed!.options;
@@ -154,7 +154,7 @@ describe("parseExportArgs", () => {
     expect(options.format).toBe("animated-webp");
     expect(options.durationMs).toBe(2000);
     expect(options.fps).toBe(12);
-    expect(options.loop).toBe(3);
+    expect(options.iterations).toBe("infinite");
     expect(options.scale).toBe(3);
   });
 
@@ -174,6 +174,33 @@ describe("parseExportArgs", () => {
     );
     expect(parsed).toBeNull();
     expect(messages.join("")).toContain("--fps needs a valid value");
+  });
+
+  it("rejects legacy --loop with format-specific migration guidance", () => {
+    for (const [format, loop, replacement] of [
+      ["animated-webp", "3", "--iterations 3"],
+      ["animated-webp", "0", "--iterations infinite"],
+      ["gif", "3", "--iterations 4"],
+      ["gif", "0", "--iterations infinite"],
+    ] as const) {
+      const messages: string[] = [];
+      const parsed = parseExportArgs(
+        [
+          "--input",
+          "card.scene.json",
+          "--font",
+          "NotoSansJP:400:normal:./font.woff2",
+          "--format",
+          format,
+          "--duration-ms",
+          "100",
+          `--loop=${loop}`,
+        ],
+        (message) => messages.push(message),
+      );
+      expect(parsed, `${format} ${loop}`).toBeNull();
+      expect(messages.join(""), `${format} ${loop}`).toContain(replacement);
+    }
   });
 
   it("rejects a malformed --scale instead of falling back", () => {

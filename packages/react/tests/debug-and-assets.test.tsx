@@ -1,6 +1,13 @@
 /** @jsxImportSource react */
 
-import type { CompiledScene, Engine, IR, LayoutResult, RenderOptions, VNode } from "@boundsvg/core";
+import type {
+  CompiledScene,
+  EmitPngOptions,
+  Engine,
+  IR,
+  LayoutResult,
+  VNode,
+} from "@boundsvg/core";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { useRenderAsset } from "../src/assets.js";
@@ -65,7 +72,7 @@ function createContextValue(engine: Engine): BoundSvgContextValue {
     workerEngine: null,
     status: "ready",
     error: null,
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   };
 }
 
@@ -194,9 +201,8 @@ describe("react debug/assets", () => {
     expect(result?.svg).toBe("<svg></svg>");
     expect(result?.dataUrl).toContain("data:image/png;base64");
     expect(renderCompiledToPng).toHaveBeenCalledWith(compiled, {
-      textPathMode: "merged",
       scale: 2,
-    } satisfies RenderOptions);
+    } satisfies EmitPngOptions);
   });
 });
 

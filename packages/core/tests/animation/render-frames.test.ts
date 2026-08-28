@@ -165,7 +165,7 @@ describe("Engine.renderFrames", () => {
     for (const [index, frame] of frames.entries()) {
       const timeMs = timesMs[index];
       expect(frame).toMatchObject({ index, timeMs, format: "svg" });
-      expect(frame.data).toBe(engine.renderToSvg(scene, { animation: "static", timeMs }));
+      expect(frame.data).toBe(engine.renderToSvg(scene, { timeMs }));
     }
   });
 
@@ -177,7 +177,7 @@ describe("Engine.renderFrames", () => {
     for (const [index, frame] of frames.entries()) {
       const timeMs = timesMs[index];
       expect(frame).toMatchObject({ index, timeMs, format: "png" });
-      expect(frame.data).toEqual(engine.renderToPng(scene, { animation: "static", timeMs }));
+      expect(frame.data).toEqual(engine.renderToPng(scene, { timeMs }));
     }
   });
 
@@ -187,12 +187,10 @@ describe("Engine.renderFrames", () => {
       ...engine.renderFrames(scene, { timesMs: [0], format: "png", rasterBackground: "" }),
     ];
 
-    expect(frame?.data).toEqual(
-      engine.renderToPng(scene, { animation: "static", timeMs: 0, rasterBackground: "" }),
-    );
+    expect(frame?.data).toEqual(engine.renderToPng(scene, { timeMs: 0, rasterBackground: "" }));
   });
 
-  it("preserves SVG and PNG emit options on every frame", () => {
+  it("preserves format-specific SVG and PNG emit options on every frame", () => {
     const scene = createTextHeavyScene();
     const timesMs = [0, 600] as const;
     const svgFrames = [
@@ -211,7 +209,6 @@ describe("Engine.renderFrames", () => {
         timesMs,
         format: "png",
         scale: 1.25,
-        resourceIdPrefix: "frame prefix",
         textPathMode: "glyphs",
         showMissingGlyphs: true,
         rasterBackground: "#0f172a",
@@ -222,7 +219,6 @@ describe("Engine.renderFrames", () => {
     for (const [index, timeMs] of timesMs.entries()) {
       expect(svgFrames[index]?.data).toBe(
         engine.renderToSvg(scene, {
-          animation: "static",
           timeMs,
           scale: 1.5,
           debug: true,
@@ -233,10 +229,8 @@ describe("Engine.renderFrames", () => {
       );
       expect(pngFrames[index]?.data).toEqual(
         engine.renderToPng(scene, {
-          animation: "static",
           timeMs,
           scale: 1.25,
-          resourceIdPrefix: "frame prefix",
           textPathMode: "glyphs",
           showMissingGlyphs: true,
           rasterBackground: "#0f172a",
@@ -273,9 +267,7 @@ describe("Engine.renderFrames", () => {
 
     const frames = [...iterable];
     expect(frames[0]?.format).toBe("svg");
-    expect(frames[0]?.data).toBe(
-      engine.renderToSvg(scene, { animation: "static", timeMs: 0, scale: 1, debug: false }),
-    );
+    expect(frames[0]?.data).toBe(engine.renderToSvg(scene, { timeMs: 0, scale: 1, debug: false }));
   });
 
   it("snapshots the current compiled IR before iteration", () => {
@@ -287,7 +279,7 @@ describe("Engine.renderFrames", () => {
         context: { stage: "ir" },
       }),
     );
-    const expected = engine.renderCompiledToSvg(compiled, { animation: "static", timeMs: 0 });
+    const expected = engine.renderCompiledToSvg(compiled, { timeMs: 0 });
     const iterable = engine.renderCompiledFrames(compiled, {
       timesMs: [0],
       format: "svg",

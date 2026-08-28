@@ -153,36 +153,6 @@ pub fn to_css_safe_resource_id(raw_id: &str) -> String {
     format!("{sanitized}-{}", fnv1a_hash_base36(raw_id))
 }
 
-/// Resource-id kinds emitted into `<defs>`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceKind {
-    Anim,
-    Clip,
-    Filter,
-    Grad,
-}
-
-impl ResourceKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            ResourceKind::Anim => "anim",
-            ResourceKind::Clip => "clip",
-            ResourceKind::Filter => "filter",
-            ResourceKind::Grad => "grad",
-        }
-    }
-}
-
-/// Build a namespaced resource id.
-#[must_use]
-pub fn make_resource_id(kind: ResourceKind, node_id: &str, prefix: &str) -> String {
-    format!(
-        "{prefix}{}-{}",
-        kind.as_str(),
-        to_css_safe_resource_id(node_id)
-    )
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -247,14 +217,5 @@ mod tests {
         expected ^= u32::from(b'a');
         expected = expected.wrapping_mul(0x0100_0193);
         assert_eq!(fnv1a_hash_base36("a"), to_base36(expected));
-    }
-
-    #[test]
-    fn resource_ids_are_namespaced() {
-        assert_eq!(make_resource_id(ResourceKind::Clip, "n1", ""), "clip-n1");
-        assert_eq!(
-            make_resource_id(ResourceKind::Grad, "n1", "p-"),
-            "p-grad-n1"
-        );
     }
 }

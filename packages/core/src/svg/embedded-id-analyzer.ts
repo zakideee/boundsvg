@@ -1,8 +1,18 @@
-export type EmbeddedSvgReferenceKind = "url" | "href" | "xlink:href";
+import {
+  type ScannedEmbeddedSvgReferenceKind,
+  type ScannedEmbeddedSvgReferenceSyntax,
+  scanEmbeddedSvgIds,
+} from "./embedded-id-scanner.js";
+
+export type EmbeddedSvgReferenceKind = ScannedEmbeddedSvgReferenceKind;
+
+export type EmbeddedSvgReferenceSyntax = ScannedEmbeddedSvgReferenceSyntax;
 
 export type EmbeddedSvgIdReference = {
   id: string;
   kind: EmbeddedSvgReferenceKind;
+  attribute: string;
+  syntax: EmbeddedSvgReferenceSyntax;
   raw: string;
 };
 
@@ -15,9 +25,16 @@ export type AnalyzeEmbeddedSvgIdsResult = {
 };
 
 export function analyzeEmbeddedSvgIds(svg: string): AnalyzeEmbeddedSvgIdsResult {
-  const ids = collectIds(svg);
+  const scan = scanEmbeddedSvgIds(svg);
+  const ids = scan.ids;
   const duplicateIds = collectDuplicates(ids);
-  const references = collectReferences(svg);
+  const references = scan.references.map((reference) => ({
+    id: reference.id,
+    kind: reference.kind,
+    attribute: reference.attribute,
+    syntax: reference.syntax,
+    raw: reference.raw,
+  }));
   const idSet = new Set(ids);
   const unresolvedReferences = uniqueSorted(
     references.map((reference) => reference.id).filter((referenceId) => !idSet.has(referenceId)),
@@ -30,45 +47,6 @@ export function analyzeEmbeddedSvgIds(svg: string): AnalyzeEmbeddedSvgIdsResult 
     unresolvedReferences,
     hasPotentialCollisions: ids.length > 0,
   };
-}
-
-function collectIds(svg: string): string[] {
-  const ids: string[] = [];
-  const idRegex = /\bid\s*=\s*(?:"([^"]+)"|'([^']+)')/g;
-  for (const match of svg.matchAll(idRegex)) {
-    const id = match[1] ?? match[2];
-    if (id) {
-      ids.push(id);
-    }
-  }
-  return ids;
-}
-
-function collectReferences(svg: string): EmbeddedSvgIdReference[] {
-  const references: EmbeddedSvgIdReference[] = [];
-
-  const urlRegex = /url\(\s*(['"]?)#([^)'" \t\r\n]+)\1\s*\)/g;
-  for (const match of svg.matchAll(urlRegex)) {
-    const id = match[2];
-    if (id) {
-      references.push({ id, kind: "url", raw: match[0] });
-    }
-  }
-
-  const hrefRegex = /\b(href|xlink:href)\s*=\s*(?:"#([^"]+)"|'#([^']+)')/g;
-  for (const match of svg.matchAll(hrefRegex)) {
-    const attributeName = match[1];
-    const id = match[2] ?? match[3];
-    if (attributeName && id) {
-      references.push({
-        id,
-        kind: attributeName === "xlink:href" ? "xlink:href" : "href",
-        raw: match[0],
-      });
-    }
-  }
-
-  return references;
 }
 
 function collectDuplicates(values: ReadonlyArray<string>): string[] {

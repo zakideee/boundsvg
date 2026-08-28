@@ -1,5 +1,5 @@
 import { preloadFonts } from "@boundsvg/browser/fonts";
-import { createEngineAsync, type Engine } from "@boundsvg/core";
+import { createEngineAsync, type Engine, FatalError } from "@boundsvg/core";
 import { initWasm } from "@boundsvg/core/wasm";
 import type { WorkerEngine } from "@boundsvg/worker";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -14,6 +14,7 @@ export { useBoundSvg } from "./hooks/use-boundsvg.js";
 export type {
   BoundSvgConfig,
   BoundSvgContextValue,
+  BoundSvgDefaultCommonOptions,
   BoundSvgStatus,
   FontDefinition,
   WorkerConfig,
@@ -192,8 +193,8 @@ async function initialize(
 type WorkerFallbackCallback = NonNullable<NonNullable<BoundSvgConfig["worker"]>["onFallback"]>;
 
 function useStableProviderConfig(config: BoundSvgConfig) {
-  const stableDefaultRenderOptions = useStructurallyStableRenderOptions(
-    config.defaultRenderOptions,
+  const stableDefaultCommonOptions = useStructurallyStableRenderOptions(
+    config.defaultCommonOptions,
   );
   const latestWorkerFallbackRef = useRef(config.worker?.onFallback);
   useLayoutEffect(() => {
@@ -210,13 +211,98 @@ function useStableProviderConfig(config: BoundSvgConfig) {
     ...config,
     worker: normalizedWorker,
     // Render defaults are consumed by hooks and do not affect Engine creation.
-    defaultRenderOptions: undefined,
+    defaultCommonOptions: undefined,
   });
-  return { initializationConfig, stableDefaultRenderOptions };
+  return { initializationConfig, stableDefaultCommonOptions };
+}
+
+const PROVIDER_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "wasm",
+  "fonts",
+  "fontLoader",
+  "fontFetchOptions",
+  "defaultCommonOptions",
+  "geometries",
+  "symbols",
+  "worker",
+]);
+
+const DEFAULT_COMMON_OPTION_KEYS: ReadonlySet<string> = new Set([
+  "skipValidation",
+  "textPathMode",
+  "scale",
+  "debug",
+  "onWarning",
+  "showMissingGlyphs",
+  "generator",
+]);
+
+const LEGACY_RENDER_OPTION_KEYS: ReadonlySet<string> = new Set([
+  "animation",
+  "loop",
+  "loopCount",
+  "loop_count",
+]);
+
+function unsupportedProviderOption(code: string, message: string): FatalError {
+  return new FatalError(code, message, { stage: "validate" });
+}
+
+function assertOwnProviderKeys(config: BoundSvgConfig): void {
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    throw unsupportedProviderOption(
+      "UNSUPPORTED_RENDER_OPTION",
+      "BoundSvgProvider config must be an object.",
+    );
+  }
+  for (const key of Object.keys(config)) {
+    if (key === "defaultRenderOptions") {
+      throw unsupportedProviderOption(
+        "UNSUPPORTED_LEGACY_RENDER_OPTION",
+        'BoundSvgProvider no longer accepts "defaultRenderOptions". Use "defaultCommonOptions" for compile and output-common defaults; pass artifact-specific options at each component or hook call.',
+      );
+    }
+    if (!PROVIDER_CONFIG_KEYS.has(key)) {
+      throw unsupportedProviderOption(
+        "UNSUPPORTED_RENDER_OPTION",
+        `BoundSvgProvider does not support config option ${JSON.stringify(key)}.`,
+      );
+    }
+  }
+
+  const defaultCommonOptions: unknown = Reflect.get(config, "defaultCommonOptions");
+  if (defaultCommonOptions === undefined) {
+    return;
+  }
+  if (
+    typeof defaultCommonOptions !== "object" ||
+    defaultCommonOptions === null ||
+    Array.isArray(defaultCommonOptions)
+  ) {
+    throw unsupportedProviderOption(
+      "UNSUPPORTED_RENDER_OPTION",
+      "BoundSvgProvider defaultCommonOptions must be an object.",
+    );
+  }
+  for (const key of Object.keys(defaultCommonOptions)) {
+    if (LEGACY_RENDER_OPTION_KEYS.has(key)) {
+      throw unsupportedProviderOption(
+        "UNSUPPORTED_LEGACY_RENDER_OPTION",
+        `BoundSvgProvider defaultCommonOptions no longer accepts ${JSON.stringify(key)}. Use the format-specific render API and options.`,
+      );
+    }
+    if (!DEFAULT_COMMON_OPTION_KEYS.has(key)) {
+      throw unsupportedProviderOption(
+        "UNSUPPORTED_RENDER_OPTION",
+        `BoundSvgProvider defaultCommonOptions does not support ${JSON.stringify(key)}; pass artifact-specific options at the component or hook call.`,
+      );
+    }
+  }
 }
 
 export function BoundSvgProvider({ config, fallback, children }: BoundSvgProviderProps) {
-  const { initializationConfig, stableDefaultRenderOptions } = useStableProviderConfig(config);
+  assertOwnProviderKeys(config);
+  const { initializationConfig, stableDefaultCommonOptions } = useStableProviderConfig(config);
   const [status, setStatus] = useState<BoundSvgStatus>("idle");
   const [engine, setEngine] = useState<Engine | null>(null);
   const [workerEngine, setWorkerEngine] = useState<WorkerEngine | null>(null);
@@ -290,7 +376,7 @@ export function BoundSvgProvider({ config, fallback, children }: BoundSvgProvide
     workerEngine: isCurrentConfig ? workerEngine : null,
     status: visibleStatus,
     error: isCurrentConfig ? error : null,
-    defaultRenderOptions: stableDefaultRenderOptions,
+    defaultCommonOptions: stableDefaultCommonOptions,
   };
 
   return (

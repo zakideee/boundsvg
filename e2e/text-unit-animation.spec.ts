@@ -59,8 +59,11 @@ test("declarative text-unit transforms use the baked user-space origin", async (
         "A",
       ),
     );
-    const declarativeSvg = engine.renderToSvg(scene, { animation: "declarative", timeMs: 0 });
-    const staticSvg = engine.renderToSvg(scene, { animation: "static", timeMs: 0 });
+    const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
+      timeMs: 0,
+    });
+    const staticSvg = engine.renderToSvg(scene, { timeMs: 0 });
 
     const declarativeBBox = await measureTextGroup(page, declarativeSvg);
     const unitStyle = await page.locator('[class*="unit:0"]').evaluate((element) => {

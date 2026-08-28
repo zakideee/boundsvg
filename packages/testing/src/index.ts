@@ -4,7 +4,8 @@ import {
   type Engine,
   type EngineInput,
   type EngineOptions,
-  type RenderOptions,
+  type RenderPngOptions,
+  type RenderSvgOptions,
   validateNodeIds,
 } from "@boundsvg/core";
 
@@ -17,7 +18,7 @@ export type PngSnapshot = {
 export type RenderMatrixCase = {
   name: string;
   input: EngineInput;
-  options?: RenderOptions;
+  options?: RenderSvgOptions;
 };
 
 export type RenderMatrixResult = {
@@ -72,7 +73,7 @@ export function createTestEngine(options: EngineOptions): Engine {
 export function renderSvgSnapshot(
   engine: Engine,
   input: EngineInput,
-  options?: RenderOptions,
+  options?: RenderSvgOptions,
 ): string {
   return normalizeSvg(engine.renderToSvg(input, options));
 }
@@ -83,7 +84,7 @@ export function renderSvgSnapshot(
 export function renderPngSnapshot(
   engine: Engine,
   input: EngineInput,
-  options?: RenderOptions,
+  options?: RenderPngOptions,
 ): PngSnapshot {
   const bytes = engine.renderToPng(input, options);
   const dimensions = readPngDimensions(bytes);

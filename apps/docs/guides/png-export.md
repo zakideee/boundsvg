@@ -21,7 +21,10 @@ const png = engine.renderToPng(node, { scale: 2 });
 // A 400×200 canvas produces an 800×400 PNG
 ```
 
-The `scale` option affects raster output only — SVG rendering ignores it.
+SVG supports the same output-resolution option, but applies it differently: it
+multiplies root `width` / `height` and canvas-stroke restoration CSS while
+leaving `viewBox`, child geometry, and ordinary attributes unchanged. Raster
+output uses it for pixel dimensions and applies the resolution caps below.
 
 ## Background Color
 
@@ -76,12 +79,20 @@ deterministic.
 muxes them into an animated file:
 
 ```ts
-const webp = engine.renderToAnimatedWebp(node, { durationMs: 2000, fps: 20 });
+const webp = engine.renderToAnimatedWebp(node, {
+  durationMs: 2000,
+  fps: 20,
+  iterations: "infinite",
+});
 ```
 
 `renderToAnimatedGif` writes the same sampling as a GIF. GIF quantizes each
 frame to 256 colors with 1-bit alpha, so prefer animated WebP when the frames
 must survive intact; reach for GIF when a consumer cannot display WebP.
+
+Both APIs require `iterations`, which means total plays rather than extra
+repeats. Animated WebP accepts 1–65535, GIF accepts 1–65536, and both accept
+`"infinite"`. GIF omits its repeat extension for `iterations: 1`.
 
 Both cap at 300 frames. See [Animation](/guides/animation) for how the frames
 are sampled, and [Known Limitations](/reference/known-limitations) for the

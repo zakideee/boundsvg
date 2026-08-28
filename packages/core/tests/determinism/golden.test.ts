@@ -39,7 +39,7 @@ type GoldenEntry = {
 
 // Must stay in sync with the browser harness
 // (apps/playground-react/src/e2e/e2e-determinism-harness.ts).
-const ANIMATED_SCHEDULE = { durationMs: 300, fps: 10 } as const;
+const ANIMATED_SCHEDULE = { durationMs: 300, fps: 10, iterations: "infinite" } as const;
 
 function sha256(data: string | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
@@ -140,10 +140,12 @@ describe("determinism goldens", () => {
     // the NeuQuant palette, which is the part most at risk from a crate bump.
     const animatedPath = path.resolve(__dirname, "animated-goldens.json");
     const webp = engine.renderToAnimatedWebp(DETERMINISM_SCENES["grid-cards"], {
+      iterations: "infinite",
       durationMs: 400,
       fps: 10,
     });
     const gif = engine.renderToAnimatedGif(DETERMINISM_SCENES["grid-cards"], {
+      iterations: "infinite",
       durationMs: 400,
       fps: 10,
     });

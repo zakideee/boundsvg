@@ -1,7 +1,8 @@
-import type { RenderOptions, SceneNode, VNode } from "@boundsvg/core";
+import type { OutputCommonOptions, RasterEmissionOptions, SceneNode, VNode } from "@boundsvg/core";
 import { toSceneDocument } from "@boundsvg/core";
 import type { WorkerEngine } from "@boundsvg/worker";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { BoundSvgDefaultCommonOptions } from "../types.js";
 import { useBoundSvg } from "./use-boundsvg.js";
 import {
   useStructurallyStableRenderOptions,
@@ -27,10 +28,13 @@ type SettledInput<O> = {
   workerEngine: WorkerEngine;
   vnode: VNode;
   renderOptions: O | undefined;
-  defaultRenderOptions: RenderOptions | undefined;
+  defaultCommonOptions: BoundSvgDefaultCommonOptions | undefined;
 };
 
-type RenderOptionCallbacks = Pick<RenderOptions, "onWarning" | "onPngResolutionAdjusted">;
+type RenderOptionCallbacks = {
+  onWarning?: OutputCommonOptions["onWarning"];
+  onPngResolutionAdjusted?: RasterEmissionOptions["onPngResolutionAdjusted"];
+};
 
 // WorkerEngine forwards these callbacks before its render Promise settles, so
 // they need the same request-lifetime guard as the Promise handlers below.
@@ -66,15 +70,15 @@ function guardRenderOptionCallbacks<O extends object>(options: O, shouldDeliver:
  *
  * @internal Not exported from the package — used by useRenderToSvgAsync / useRenderToPngAsync.
  */
-export function useWorkerRender<T, O extends object = RenderOptions>({
+export function useWorkerRender<T, O extends object>({
   vnode,
   renderFn,
   renderOptions,
 }: UseWorkerRenderParams<T, O>): UseWorkerRenderResult<T> {
-  const { workerEngine, status, defaultRenderOptions } = useBoundSvg();
+  const { workerEngine, status, defaultCommonOptions } = useBoundSvg();
   const stableVNode = useStructurallyStableValue(vnode);
   const stableRenderOptions = useStructurallyStableRenderOptions(renderOptions);
-  const stableDefaultRenderOptions = useStructurallyStableRenderOptions(defaultRenderOptions);
+  const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   const renderFnRef = useRef(renderFn);
   useLayoutEffect(() => {
@@ -108,7 +112,7 @@ export function useWorkerRender<T, O extends object = RenderOptions>({
       workerEngine,
       vnode: stableVNode,
       renderOptions: stableRenderOptions,
-      defaultRenderOptions: stableDefaultRenderOptions,
+      defaultCommonOptions: stableDefaultCommonOptions,
     };
 
     let scene: SceneNode;
@@ -127,7 +131,7 @@ export function useWorkerRender<T, O extends object = RenderOptions>({
     setIsRendering(true);
 
     const mergedOptions = guardRenderOptionCallbacks(
-      { ...stableDefaultRenderOptions, ...stableRenderOptions } as O,
+      { ...stableDefaultCommonOptions, ...stableRenderOptions } as O,
       () => mountedRef.current && !stale && requestIdRef.current === requestId,
     );
 
@@ -156,7 +160,7 @@ export function useWorkerRender<T, O extends object = RenderOptions>({
     return () => {
       stale = true;
     };
-  }, [workerEngine, status, stableVNode, stableRenderOptions, stableDefaultRenderOptions]);
+  }, [workerEngine, status, stableVNode, stableRenderOptions, stableDefaultCommonOptions]);
 
   // Never expose a settled result under a different render-input identity.
   const hasRenderableInput = status === "ready" && workerEngine !== null && stableVNode !== null;
@@ -165,7 +169,7 @@ export function useWorkerRender<T, O extends object = RenderOptions>({
     settledInput?.workerEngine === workerEngine &&
     settledInput.vnode === stableVNode &&
     settledInput.renderOptions === stableRenderOptions &&
-    settledInput.defaultRenderOptions === stableDefaultRenderOptions;
+    settledInput.defaultCommonOptions === stableDefaultCommonOptions;
   const visibleData = hasCurrentResult ? data : null;
 
   return {

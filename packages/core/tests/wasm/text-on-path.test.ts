@@ -805,7 +805,7 @@ describe("TextOnPath real WASM pipeline", () => {
         fill: "both",
       },
     });
-    const { svg, ir } = engine.renderToSvgAndIR(vnode, { animation: "static", timeMs: 0 });
+    const { svg, ir } = engine.renderToSvgAndIR(vnode, { timeMs: 0 });
     const animatedGroup = findNodeById(ir.root, "path-text");
     const decorationIndex = svg.indexOf('fill="#f43f5e" stroke="none"');
     const glyphIndex = svg.indexOf('fill="#2463eb"');
@@ -1109,7 +1109,7 @@ describe("TextOnPath real WASM pipeline", () => {
     expect(() =>
       engine.renderToSvg(
         withPathProps({ textDecoration: { line: "underline", style: "zigzag" } }),
-        { skipValidation: true },
+        { skipValidation: true, timeMs: 0 },
       ),
     ).toThrow(expect.objectContaining({ code: "TEXT_DECORATION_INVALID" }));
 
@@ -1128,7 +1128,7 @@ describe("TextOnPath real WASM pipeline", () => {
             },
           },
         }),
-        { skipValidation: true },
+        { skipValidation: true, timeMs: 0 },
       ),
     ).toThrow(expect.objectContaining({ code: "TEXT_DECORATION_UNIT_ANIMATION_UNSUPPORTED" }));
 
@@ -1203,13 +1203,13 @@ describe("TextOnPath real WASM pipeline", () => {
       ),
     );
 
-    const svg = engine.renderToSvg(stoppedDecorationScene, {
-      animation: "declarative",
+    const svg = engine.renderToAnimatedSvg(stoppedDecorationScene, {
+      playback: { mode: "independent" },
     });
     expect(svg).toContain("@keyframes");
     expect(svg).not.toContain('data-boundsvg-text-decoration="underline"');
     expect(() =>
-      engine.renderToSvg(stoppedDecorationScene, { skipValidation: true }),
+      engine.renderToSvg(stoppedDecorationScene, { skipValidation: true, timeMs: 0 }),
     ).not.toThrow();
   });
 

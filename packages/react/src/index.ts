@@ -2,6 +2,7 @@
 
 // Re-export core types
 export type {
+  AnimatedSvgPlayback,
   AnimationEasing,
   AnimationKeyframe,
   AnimationSpec,
@@ -16,9 +17,13 @@ export type {
   CanvasVNode,
   ChildFor,
   ChildrenFor,
+  CompileOptions,
   DebugOverlayConfig,
   DebugOverlayPart,
   ElasticSegment,
+  EmitAnimatedSvgOptions,
+  EmitPngOptions,
+  EmitSvgOptions,
   Engine,
   EngineOptions,
   FlexProps,
@@ -37,16 +42,25 @@ export type {
   InlineRectProps,
   InlineRectVNode,
   InlineVNode,
+  OutputCommonOptions,
   PathProps,
   PathVNode,
+  RasterEmissionOptions,
+  ReducedMotionMode,
+  RenderAnimatedGifOptions,
+  RenderAnimatedSvgOptions,
+  RenderAnimatedWebpOptions,
   RenderFramesOptions,
-  RenderOptions,
+  RenderPngOptions,
+  RenderSvgOptions,
+  RenderWebpOptions,
   RtProps,
   RtVNode,
   RubyProps,
   RubyVNode,
   ShapeProps,
   StrokeScaling,
+  SvgEmissionOptions,
   SvgProps,
   SvgVNode,
   SymbolDefinition,
@@ -67,8 +81,8 @@ export type {
   VNodeType,
 } from "@boundsvg/core";
 export type { WasmModule } from "@boundsvg/core/wasm";
-export type { BoundSvgProps } from "./components/boundsvg.js";
-export { BoundSvg } from "./components/boundsvg.js";
+export type { AnimatedBoundSvgProps, BoundSvgProps } from "./components/boundsvg.js";
+export { AnimatedBoundSvg, BoundSvg } from "./components/boundsvg.js";
 export type { BoundSvgNodeComponent } from "./components/nodes.js";
 // Declarative JSX phantom components
 export {
@@ -90,6 +104,7 @@ export {
   TextOnPath,
 } from "./components/nodes.js";
 // Main-thread SVG render hook
+export { useRenderToAnimatedSvg } from "./hooks/use-render-animated-svg.js";
 export type { UseRenderToSvgResult } from "./hooks/use-render-svg.js";
 export { useRenderToSvg } from "./hooks/use-render-svg.js";
 // VNode conversion utility

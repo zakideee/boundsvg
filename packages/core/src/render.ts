@@ -3,7 +3,9 @@ import {
   type CompileOptions,
   createEngine,
   createEngineAsync,
-  type EmitOptions,
+  type EmitAnimatedSvgOptions,
+  type EmitPngOptions,
+  type EmitSvgOptions,
   type Engine,
   type EngineInput,
   type EngineOptions,
@@ -12,12 +14,17 @@ import {
   type LayeredSvgOptions,
   type LayoutRenderOptions,
   type RenderAnimatedGifOptions,
+  type RenderAnimatedSvgOptions,
   type RenderAnimatedWebpOptions,
   type RenderCompiledAnimatedGifOptions,
   type RenderCompiledAnimatedWebpOptions,
   type RenderCompiledFramesOptions,
   type RenderFramesOptions,
-  type RenderOptions,
+  type RenderIrOptions,
+  type RenderPngOptions,
+  type RenderSvgOptions,
+  type RenderTextOutlinesOptions,
+  type RenderWebpOptions,
 } from "./engine.js";
 import { FatalError } from "./errors.js";
 import type { IR } from "./ir/types.js";
@@ -117,15 +124,26 @@ function getEngine(): Engine {
 /**
  * Render a VNode/SceneNode tree to SVG string using the default engine.
  */
-export function renderToSvg(input: EngineInput, options?: RenderOptions): string {
+export function renderToSvg(input: EngineInput, options?: RenderSvgOptions): string {
   return getEngine().renderToSvg(input, options);
 }
 
 export function renderToSvgAndIR(
   input: EngineInput,
-  options?: RenderOptions,
+  options?: RenderSvgOptions,
 ): { svg: string; ir: IR } {
   return getEngine().renderToSvgAndIR(input, options);
+}
+
+export function renderToAnimatedSvg(input: EngineInput, options: RenderAnimatedSvgOptions): string {
+  return getEngine().renderToAnimatedSvg(input, options);
+}
+
+export function renderToAnimatedSvgAndIR(
+  input: EngineInput,
+  options: RenderAnimatedSvgOptions,
+): { svg: string; ir: IR } {
+  return getEngine().renderToAnimatedSvgAndIR(input, options);
 }
 
 export function renderToLayeredSvg(
@@ -154,11 +172,18 @@ export function compileLayoutTransition(
   return getEngine().compileLayoutTransition(input, options);
 }
 
-export function renderCompiledToSvg(compiled: CompiledScene, options?: EmitOptions): string {
+export function renderCompiledToSvg(compiled: CompiledScene, options?: EmitSvgOptions): string {
   return getEngine().renderCompiledToSvg(compiled, options);
 }
 
-export function renderCompiledToPng(compiled: CompiledScene, options?: EmitOptions): Uint8Array {
+export function renderCompiledToAnimatedSvg(
+  compiled: CompiledScene,
+  options: EmitAnimatedSvgOptions,
+): string {
+  return getEngine().renderCompiledToAnimatedSvg(compiled, options);
+}
+
+export function renderCompiledToPng(compiled: CompiledScene, options?: EmitPngOptions): Uint8Array {
   return getEngine().renderCompiledToPng(compiled, options);
 }
 
@@ -203,14 +228,14 @@ export function renderCompiledToAnimatedGif(
 /**
  * Render a VNode/SceneNode tree to PNG using the default engine.
  */
-export function renderToPng(input: EngineInput, options?: RenderOptions): Uint8Array {
+export function renderToPng(input: EngineInput, options?: RenderPngOptions): Uint8Array {
   return getEngine().renderToPng(input, options);
 }
 
 /**
  * Render a VNode/SceneNode tree to a lossless WebP using the default engine.
  */
-export function renderToWebp(input: EngineInput, options?: RenderOptions): Uint8Array {
+export function renderToWebp(input: EngineInput, options?: RenderWebpOptions): Uint8Array {
   return getEngine().renderToWebp(input, options);
 }
 
@@ -237,7 +262,7 @@ export function renderToAnimatedGif(
 
 export function renderToTextOutlines(
   input: EngineInput,
-  options?: RenderOptions,
+  options?: RenderTextOutlinesOptions,
 ): TextOutlineNode[] {
   return getEngine().renderToTextOutlines(input, options);
 }
@@ -255,7 +280,7 @@ export function renderToLayoutTree(
 /**
  * Render a VNode/SceneNode tree to IR using the default engine.
  */
-export function renderToIR(input: EngineInput, options?: RenderOptions): IR {
+export function renderToIR(input: EngineInput, options?: RenderIrOptions): IR {
   return getEngine().renderToIR(input, options);
 }
 

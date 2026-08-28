@@ -68,22 +68,22 @@ describe("Inline / InlineBox decoration animation", () => {
   });
 
   it("hides both decoration fragments before their delay in static sampling", () => {
-    const svg = engine.renderToSvg(decoratedScene(), { animation: "static", timeMs: 0 });
+    const svg = engine.renderToSvg(decoratedScene(), { timeMs: 0 });
     const opacities = iboxGroupOpacities(svg);
     expect(opacities).toHaveLength(2);
     expect(opacities).toEqual(["0", "0"]);
   });
 
   it("shows both decoration fragments after the animation settles", () => {
-    const svg = engine.renderToSvg(decoratedScene(), { animation: "static", timeMs: 1_000 });
+    const svg = engine.renderToSvg(decoratedScene(), { timeMs: 1_000 });
     const opacities = iboxGroupOpacities(svg);
     expect(opacities).toHaveLength(2);
     expect(opacities.every((value) => Number(value) === 1)).toBe(true);
   });
 
   it("emits declarative animations for both decoration fragments", () => {
-    const svg = engine.renderToSvg(decoratedScene(), {
-      animation: "declarative",
+    const svg = engine.renderToAnimatedSvg(decoratedScene(), {
+      playback: { mode: "independent" },
       resourceIdPrefix: "deco-anim",
     });
     expect(iboxGroupOpacities(svg)).toHaveLength(2);
@@ -99,7 +99,7 @@ describe("Inline / InlineBox decoration animation", () => {
         InlineBox({ background: "#445566" }, "box"),
       ),
     );
-    const svg = engine.renderToSvg(plain, { animation: "static", timeMs: 0 });
+    const svg = engine.renderToSvg(plain, { timeMs: 0 });
     expect(iboxGroupOpacities(svg)).toHaveLength(0);
     expect(svg).toContain("#112233");
     expect(svg).toContain("#445566");
@@ -135,8 +135,8 @@ describe("Shape node animation", () => {
           },
         ],
       } as CanvasSceneNode;
-      const before = shapeEngine.renderToSvg(scene, { animation: "static", timeMs: 0 });
-      const settled = shapeEngine.renderToSvg(scene, { animation: "static", timeMs: 1_000 });
+      const before = shapeEngine.renderToSvg(scene, { timeMs: 0 });
+      const settled = shapeEngine.renderToSvg(scene, { timeMs: 1_000 });
       expect(before).toContain('opacity="0"');
       expect(settled).not.toContain('opacity="0"');
     } finally {

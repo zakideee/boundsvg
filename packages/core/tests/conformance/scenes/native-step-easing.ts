@@ -73,6 +73,7 @@ function buildNativeStepEasingScene(): VNode {
 }
 
 export const nativeStepEasingScene: ConformanceScene = {
+  animatedSvg: true,
   id: "native-step-easing",
   build: buildNativeStepEasingScene,
   width: WIDTH,

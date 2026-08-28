@@ -1,4 +1,4 @@
-import type { RenderOptions, VNode } from "@boundsvg/react";
+import type { CompileOptions, OutputCommonOptions, VNode } from "@boundsvg/react";
 import { useBoundSvg } from "@boundsvg/react/provider";
 import Prism from "prismjs";
 import "prismjs/components/prism-markup";
@@ -100,7 +100,7 @@ export function TransformPage() {
 
   const vnode = useMemo(() => (engine ? buildVNode(deferred) : null), [engine, deferred]);
 
-  const renderOptions = useMemo<RenderOptions>(() => ({}), []);
+  const renderOptions = useMemo<CompileOptions & OutputCommonOptions>(() => ({}), []);
   const overlayDisplay = useMemo<EventEffectOverlayDisplayOptions>(
     () => ({
       mode: deferred.overlayMode,

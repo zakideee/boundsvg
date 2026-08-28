@@ -132,10 +132,7 @@ describe("Text animateUnits", () => {
     expect(text.glyphPaths?.map((path) => path.unitId)).toEqual(
       text.unitMap?.units.map((unit) => unit.unitId),
     );
-    const resolvedText = findText(
-      engine.renderToSvgAndIR(scene, { animation: "static", timeMs: 25 }).ir.root,
-      "units",
-    );
+    const resolvedText = findText(engine.renderToSvgAndIR(scene, { timeMs: 25 }).ir.root, "units");
     expect(resolvedText.unitAnimationSamples?.[0]?.opacity).toBeCloseTo(0.25);
     expect(resolvedText.unitAnimationSamples?.[0]?.bbox).toEqual(
       text.unitAnimationSamples?.[0]?.bbox,
@@ -249,8 +246,8 @@ describe("Text animateUnits", () => {
     expect(text.glyphPaths).toHaveLength(2);
     expect(text.unitAnimationSamples?.every((sample) => sample.bbox !== undefined)).toBe(true);
     expect(text.unitAnimationSamples?.every((sample) => sample.opacity === undefined)).toBe(true);
-    expect(engine.renderCompiledToSvg(compiled, { animation: "static", timeMs: 75 })).toBe(
-      engine.renderToSvg(scene, { animation: "static", timeMs: 75 }),
+    expect(engine.renderCompiledToSvg(compiled, { timeMs: 75 })).toBe(
+      engine.renderToSvg(scene, { timeMs: 75 }),
     );
   });
 
@@ -261,13 +258,12 @@ describe("Text animateUnits", () => {
     const countingEngine = createEngineFromHandle(handle, { resolveAndEmitSvgFromIrFn });
     const compiled = countingEngine.compile(clusterScene(), { textPathMode: "glyphs" });
 
-    countingEngine.renderCompiledToSvg(compiled, { animation: "static", timeMs: 25 });
+    countingEngine.renderCompiledToSvg(compiled, { timeMs: 25 });
     expect(JSON.parse(resolveAndEmitSvgFromIrFn.mock.calls[0]?.[1] ?? "{}")).toMatchObject({
       preserveResolvedUnitOutlines: true,
     });
 
     countingEngine.renderCompiledToSvg(compiled, {
-      animation: "static",
       timeMs: 25,
       showMissingGlyphs: true,
     });
@@ -280,7 +276,7 @@ describe("Text animateUnits", () => {
 
   it("keeps showMissingGlyphs per-call and compiled output identical", () => {
     const scene = clusterScene({ content: "A🦄" });
-    const options = { animation: "static" as const, timeMs: 25, showMissingGlyphs: true };
+    const options = { timeMs: 25, showMissingGlyphs: true };
 
     expect(engine.renderCompiledToSvg(engine.compile(scene), options)).toBe(
       engine.renderToSvg(scene, options),
@@ -298,7 +294,6 @@ describe("Text animateUnits", () => {
 
     expect(() =>
       engine.renderCompiledToSvg(compiled, {
-        animation: "static",
         timeMs: 25,
         showMissingGlyphs: true,
       }),
@@ -318,7 +313,6 @@ describe("Text animateUnits", () => {
 
     expect(() =>
       engine.renderCompiledToSvg(compiled, {
-        animation: "static",
         timeMs: 25,
         showMissingGlyphs: true,
       }),
@@ -357,7 +351,7 @@ describe("Text animateUnits", () => {
     const frames = [...engine.renderFrames(scene, { timesMs, format: "svg" })];
 
     expect(frames.map((frame) => frame.data)).toEqual(
-      timesMs.map((timeMs) => engine.renderToSvg(scene, { animation: "static", timeMs })),
+      timesMs.map((timeMs) => engine.renderToSvg(scene, { timeMs })),
     );
   });
 
@@ -365,9 +359,12 @@ describe("Text animateUnits", () => {
     0, 75, 200,
   ])("rasterizes declarative and static unit animation identically at timeMs=%i", (timeMs) => {
     const scene = clusterScene();
-    const declarativeSvg = engine.renderToSvg(scene, { animation: "declarative", timeMs });
-    const staticSvg = engine.renderToSvg(scene, { animation: "static", timeMs });
-    const staticPng = engine.renderToPng(scene, { animation: "static", timeMs });
+    const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
+      timeMs,
+    });
+    const staticSvg = engine.renderToSvg(scene, { timeMs });
+    const staticPng = engine.renderToPng(scene, { timeMs });
 
     expect(declarativeSvg).toContain("@keyframes");
     expect(rasterize(declarativeSvg)).toEqual(rasterize(staticSvg));
@@ -375,15 +372,18 @@ describe("Text animateUnits", () => {
   });
 
   it("neutralizes the browser transform origin after baking each unit bbox center", () => {
-    const svg = engine.renderToSvg(clusterScene(), { animation: "declarative", timeMs: 25 });
+    const svg = engine.renderToAnimatedSvg(clusterScene(), {
+      playback: { mode: "independent" },
+      timeMs: 25,
+    });
 
     expect(svg).toContain("transform-box: view-box;");
     expect(svg).toContain("transform-origin: 0 0;");
   });
 
   it("keeps node animation outside unit animation and emits one accessibility label", () => {
-    const svg = engine.renderToSvg(clusterScene({ outer: true }), {
-      animation: "declarative",
+    const svg = engine.renderToAnimatedSvg(clusterScene({ outer: true }), {
+      playback: { mode: "independent" },
       timeMs: 25,
     });
 
@@ -395,8 +395,8 @@ describe("Text animateUnits", () => {
 
   it("preserves layer-first shadow, stroke, fill order", () => {
     const scene = clusterScene({ content: "字幕", effects: true, fontSizePx: 34 });
-    const svg = engine.renderToSvg(scene, {
-      animation: "declarative",
+    const svg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
       timeMs: 25,
     });
     const firstShadowIndex = svg.indexOf('filter="url(#filter-units:ts0)"');
@@ -422,9 +422,9 @@ describe("Text animateUnits", () => {
     expect(allFillIndices).toHaveLength(2);
     expect(Math.max(...allShadowIndices)).toBeLessThan(Math.min(...allStrokeIndices));
     expect(Math.max(...allStrokeIndices)).toBeLessThan(Math.min(...allFillIndices));
-    expect(
-      engine.renderCompiledToSvg(engine.compile(scene), { animation: "static", timeMs: 0 }),
-    ).toBe(engine.renderToSvg(scene, { animation: "static", timeMs: 0 }));
+    expect(engine.renderCompiledToSvg(engine.compile(scene), { timeMs: 0 })).toBe(
+      engine.renderToSvg(scene, { timeMs: 0 }),
+    );
   });
 
   it("targets resolved lines without changing the logical Text node", () => {
@@ -491,11 +491,11 @@ describe("Text animateUnits", () => {
         narrow.unitMap?.units.flatMap((unit) => unit.members.map((member) => member.sourceRole)),
       ),
     ).toEqual(new Set(["content", "rubyBase", "rubyAnnotation"]));
-    expect(engine.renderCompiledToSvg(engine.compile(narrowScene), { animation: "static" })).toBe(
-      engine.renderToSvg(narrowScene, { animation: "static" }),
+    expect(engine.renderCompiledToSvg(engine.compile(narrowScene), { timeMs: 0 })).toBe(
+      engine.renderToSvg(narrowScene, { timeMs: 0 }),
     );
-    expect(engine.renderCompiledToSvg(engine.compile(wideScene), { animation: "static" })).toBe(
-      engine.renderToSvg(wideScene, { animation: "static" }),
+    expect(engine.renderCompiledToSvg(engine.compile(wideScene), { timeMs: 0 })).toBe(
+      engine.renderToSvg(wideScene, { timeMs: 0 }),
     );
   });
 
@@ -541,11 +541,11 @@ describe("Text animateUnits", () => {
         short.unitMap?.units.flatMap((unit) => unit.members.map((member) => member.sourceRole)),
       ),
     ).toEqual(new Set(["content", "rubyBase", "rubyAnnotation"]));
-    expect(engine.renderCompiledToSvg(engine.compile(shortScene), { animation: "static" })).toBe(
-      engine.renderToSvg(shortScene, { animation: "static" }),
+    expect(engine.renderCompiledToSvg(engine.compile(shortScene), { timeMs: 0 })).toBe(
+      engine.renderToSvg(shortScene, { timeMs: 0 }),
     );
-    expect(engine.renderCompiledToSvg(engine.compile(tallScene), { animation: "static" })).toBe(
-      engine.renderToSvg(tallScene, { animation: "static" }),
+    expect(engine.renderCompiledToSvg(engine.compile(tallScene), { timeMs: 0 })).toBe(
+      engine.renderToSvg(tallScene, { timeMs: 0 }),
     );
   });
 
@@ -572,7 +572,7 @@ describe("Text animateUnits", () => {
     const separate = findText(engine.renderToIR(buildRubyScene("separate")).root, "ruby-separate");
 
     expect(separate.unitMap?.units.length).toBeGreaterThan(withBase.unitMap?.units.length ?? 0);
-    const svg = engine.renderToSvg(buildRubyScene("separate"), { animation: "static", timeMs: 50 });
+    const svg = engine.renderToSvg(buildRubyScene("separate"), { timeMs: 50 });
     expect(svg.match(/aria-label=/g)).toHaveLength(1);
   });
 
@@ -700,9 +700,9 @@ describe("Text animateUnits", () => {
       const expectedOpacity = Math.max(0, (25 - orderIndex * 20) / 100);
       expect(samplesById.get(unit.unitId)?.opacity).toBeCloseTo(expectedOpacity);
     }
-    expect(
-      engine.renderCompiledToSvg(engine.compile(scene), { animation: "static", timeMs: 25 }),
-    ).toBe(engine.renderToSvg(scene, { animation: "static", timeMs: 25 }));
+    expect(engine.renderCompiledToSvg(engine.compile(scene), { timeMs: 25 })).toBe(
+      engine.renderToSvg(scene, { timeMs: 25 }),
+    );
   });
 
   it("uses sampled unit outline bounds for Text hit testing", () => {
@@ -744,21 +744,15 @@ describe("Text animateUnits", () => {
   });
 
   it("keeps unit fragments inside one Text layer and marks static manifests animated", () => {
-    const declarative = engine.renderToLayeredSvg(clusterScene(), {
-      animation: "declarative",
-      timeMs: 25,
-    });
     const sampled = engine.renderToLayeredSvg(clusterScene(), {
-      animation: "static",
       timeMs: 25,
     });
 
-    expect(declarative.layers).toHaveLength(1);
-    expect(declarative.layers[0]?.nodeIds).toEqual(["units"]);
-    expect(declarative.layers[0]?.svg).toContain("@keyframes");
-    expect(declarative.layers[0]?.svg.match(/aria-label="AB"/g)).toHaveLength(1);
-    expect(sampled.manifest).toMatchObject({ animated: true, timeMs: 25 });
     expect(sampled.layers).toHaveLength(1);
+    expect(sampled.layers[0]?.nodeIds).toEqual(["units"]);
+    expect(sampled.layers[0]?.svg).not.toContain("@keyframes");
+    expect(sampled.layers[0]?.svg.match(/aria-label="AB"/g)).toHaveLength(1);
+    expect(sampled.manifest).toMatchObject({ animated: true, timeMs: 25 });
   });
 
   it("keeps non-target Text SVG bytes unchanged in a mixed scene", () => {
@@ -788,8 +782,8 @@ describe("Text animateUnits", () => {
           ),
         ),
       );
-    const animatedSvg = engine.renderToSvg(buildScene(true), { animation: "static", timeMs: 25 });
-    const plainSvg = engine.renderToSvg(buildScene(false), { animation: "static", timeMs: 25 });
+    const animatedSvg = engine.renderToSvg(buildScene(true), { timeMs: 25 });
+    const plainSvg = engine.renderToSvg(buildScene(false), { timeMs: 25 });
 
     expect(extractTextGroup(animatedSvg, "PLAIN")).toBe(extractTextGroup(plainSvg, "PLAIN"));
   });
@@ -811,7 +805,7 @@ describe("Text animateUnits", () => {
       ),
     );
     engine.renderToSvg(warningScene, {
-      animation: "static",
+      timeMs: 0,
       onWarning: (warning) => warnings.push(warning.code),
     });
     expect(warnings).toEqual(["TEXT_ANIMATION_UNIT_COUNT_HIGH"]);
@@ -831,7 +825,7 @@ describe("Text animateUnits", () => {
     const compiledWarnings: string[] = [];
     const warningCompiled = engine.compile(warningScene);
     engine.renderCompiledToSvg(warningCompiled, {
-      animation: "static",
+      timeMs: 0,
       onWarning: (warning) => compiledWarnings.push(warning.code),
     });
     expect(compiledWarnings).toEqual(["TEXT_ANIMATION_UNIT_COUNT_HIGH"]);
@@ -948,7 +942,7 @@ describe("Text animateUnits", () => {
       "TEXT_ANIMATION_FRAGMENT_COUNT_HIGH",
     );
     engine.renderToSvg(buildScene(257), {
-      animation: "static",
+      timeMs: 0,
       onWarning: (warning) => warnings.push(warning.code),
     });
     expect(warnings).toContain("TEXT_ANIMATION_FRAGMENT_COUNT_HIGH");
@@ -956,7 +950,7 @@ describe("Text animateUnits", () => {
     const compiledWarnings: string[] = [];
     const warningScene = buildScene(257);
     engine.renderCompiledToSvg(engine.compile(warningScene), {
-      animation: "static",
+      timeMs: 0,
       onWarning: (warning) => compiledWarnings.push(warning.code),
     });
     expect(compiledWarnings).toEqual(["TEXT_ANIMATION_FRAGMENT_COUNT_HIGH"]);
@@ -1011,7 +1005,7 @@ describe("Text animateUnits", () => {
         "AB",
       ),
     );
-    const svg = engine.renderToSvg(scene, { animation: "declarative", timeMs: 0 });
+    const svg = engine.renderToAnimatedSvg(scene, { playback: { mode: "independent" }, timeMs: 0 });
     const linearRules = svg.match(/animation-timing-function: linear\(/g) ?? [];
     const unitCount = findText(engine.renderToIR(scene).root, "spring-units").unitMap?.units.length;
 
@@ -1039,7 +1033,7 @@ describe("Text animateUnits", () => {
         "AB",
       ),
     );
-    const svg = engine.renderToSvg(scene, { animation: "declarative", timeMs: 0 });
+    const svg = engine.renderToAnimatedSvg(scene, { playback: { mode: "independent" }, timeMs: 0 });
     const curves = [...svg.matchAll(/animation-timing-function: (linear\([^)]*\));/g)].map(
       (match) => match[1],
     );

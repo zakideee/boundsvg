@@ -591,7 +591,7 @@ describe("CLI entrypoint integration", () => {
     });
   });
 
-  it("passes --loop through to the animated WebP container", async () => {
+  it("passes --iterations through to the animated WebP container", async () => {
     await withTempDirAsync(async (tempDir) => {
       const inputPath = join(tempDir, "card.svg");
       const outputPath = join(tempDir, "card.webp");
@@ -617,8 +617,8 @@ describe("CLI entrypoint integration", () => {
             "200",
             "--fps",
             "10",
-            "--loop",
-            "3",
+            "--iterations",
+            "65535",
             "--scale",
             "1",
           ],
@@ -626,7 +626,7 @@ describe("CLI entrypoint integration", () => {
       );
 
       expect(exitCode).toBe(0);
-      expect(readFileSync(outputPath).readUInt16LE(42)).toBe(3);
+      expect(readFileSync(outputPath).readUInt16LE(42)).toBe(65_535);
     });
   });
 
@@ -697,7 +697,9 @@ describe("CLI entrypoint integration", () => {
       expect(missingDuration.join("")).toContain("--duration-ms is required for gif export");
 
       const exitCode = await resolveResult(
-        runCli({ argv: [...baseArgs, "--duration-ms", "300", "--fps", "10", "--loop", "2"] }),
+        runCli({
+          argv: [...baseArgs, "--duration-ms", "300", "--fps", "10", "--iterations", "65536"],
+        }),
       );
       expect(exitCode).toBe(0);
       const gif = readFileSync(outputPath);
@@ -706,9 +708,9 @@ describe("CLI entrypoint integration", () => {
       expect(gif.readUInt16LE(6)).toBe(240);
       expect(gif.readUInt16LE(8)).toBe(120);
       // Three 100 ms frames: one Graphic Control Extension each at 10 cs, and
-      // the --loop the command passed must reach the Netscape block.
+      // The largest GIF total-play count becomes the largest repeat field.
       expect(readGifFrameDelaysCs(gif)).toEqual([10, 10, 10]);
-      expect(readGifLoopCount(gif)).toBe(2);
+      expect(readGifLoopCount(gif)).toBe(65_535);
     });
   });
 
@@ -719,7 +721,7 @@ describe("CLI entrypoint integration", () => {
 
       for (const [flag, value] of [
         ["--fps", "10"],
-        ["--loop", "2"],
+        ["--iterations", "2"],
         ["--duration-ms", "300"],
       ]) {
         const stderr: string[] = [];
@@ -784,6 +786,47 @@ describe("CLI entrypoint integration", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr.join("")).toContain("--fps must be between 1 and 60");
+    });
+  });
+
+  it.each([
+    ["animated-webp", "65536", "65535"],
+    ["gif", "65537", "65536"],
+    ["animated-webp", "0", "65535"],
+    ["gif", "1.5", "65536"],
+  ])("rejects --iterations %s bounds before initializing the engine", async (format, iterations, max) => {
+    await withTempDirAsync(async (tempDir) => {
+      const inputPath = join(tempDir, "card.svg");
+      writeFileSync(inputPath, SIMPLE_SVG, "utf-8");
+      const stderr: string[] = [];
+
+      const exitCode = await resolveResult(
+        runCli({
+          argv: [
+            "node",
+            "boundsvg",
+            "export",
+            "--input",
+            inputPath,
+            "--output",
+            join(tempDir, format === "gif" ? "card.gif" : "card.webp"),
+            "--default-font",
+            "NotoSansJP",
+            "--font",
+            "NotoSansJP:400:normal:/nonexistent/font.ttf",
+            "--format",
+            format,
+            "--duration-ms",
+            "300",
+            "--iterations",
+            iterations,
+          ],
+          writeStderr: (message) => stderr.push(message),
+        }),
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stderr.join("")).toContain(`between 1 and ${max}`);
     });
   });
 

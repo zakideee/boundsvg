@@ -47,7 +47,7 @@ let wasmModule: WasmModule | null = null;
  * `crates/boundsvg/src/lib.rs`; both sides change in the same commit.
  * Bump whenever a WASM-boundary DTO shape or export signature changes.
  */
-export const EXPECTED_WASM_SCHEMA_VERSION = 26;
+export const EXPECTED_WASM_SCHEMA_VERSION = 27;
 
 function assertWasmSchemaVersion(preloaded: WasmModule): void {
   const readSchemaVersion = preloaded.wasm_schema_version;
@@ -489,7 +489,7 @@ export function createWasmShapeFn(fontData: Uint8Array): ShapeFn {
  */
 export type AnimationEncodeInput = {
   frames: Array<{ svg: string; durationMs: number }>;
-  loopCount: number;
+  iterations: number | "infinite";
   options: PngRenderOptions;
 };
 
@@ -1228,6 +1228,19 @@ export class WasmEngineHandle {
     return this.instance.render_to_svg(inputJson, optionsJson);
   }
 
+  /** Compute layout, build IR, and emit declarative animated SVG. */
+  renderToAnimatedSvg(inputJson: string, optionsJson: string): string {
+    this.ensureNotDisposed();
+    if (typeof this.instance.render_to_animated_svg !== "function") {
+      throw new FatalError(
+        "WASM_NO_RENDER_TO_ANIMATED_SVG",
+        "render_to_animated_svg is not available in this WASM build. Rebuild WASM.",
+        { stage: "wasm" },
+      );
+    }
+    return this.instance.render_to_animated_svg(inputJson, optionsJson);
+  }
+
   /** Emit an SVG string from a public-IR JSON payload in one WASM call. */
   emitSvgFromIr(irJson: string, optionsJson: string): string {
     this.ensureNotDisposed();
@@ -1239,6 +1252,19 @@ export class WasmEngineHandle {
       );
     }
     return this.instance.emit_svg_from_ir(irJson, optionsJson);
+  }
+
+  /** Emit declarative animated SVG from public IR. */
+  emitAnimatedSvgFromIr(irJson: string, optionsJson: string): string {
+    this.ensureNotDisposed();
+    if (typeof this.instance.emit_animated_svg_from_ir !== "function") {
+      throw new FatalError(
+        "WASM_NO_EMIT_ANIMATED_SVG_FROM_IR",
+        "emit_animated_svg_from_ir is not available in this WASM build. Rebuild WASM.",
+        { stage: "wasm" },
+      );
+    }
+    return this.instance.emit_animated_svg_from_ir(irJson, optionsJson);
   }
 
   /** Resolve every text outline and return a public-IR envelope. */
@@ -1346,6 +1372,19 @@ export class WasmEngineHandle {
       );
     }
     return this.instance.resolve_and_emit_svg_from_ir(irJson, optionsJson);
+  }
+
+  /** Resolve outlines and emit declarative animated SVG. */
+  resolveAndEmitAnimatedSvgFromIr(irJson: string, optionsJson: string): string {
+    this.ensureNotDisposed();
+    if (typeof this.instance.resolve_and_emit_animated_svg_from_ir !== "function") {
+      throw new FatalError(
+        "WASM_NO_RESOLVE_AND_EMIT_ANIMATED_IR",
+        "resolve_and_emit_animated_svg_from_ir is not available in this WASM build. Rebuild WASM.",
+        { stage: "wasm" },
+      );
+    }
+    return this.instance.resolve_and_emit_animated_svg_from_ir(irJson, optionsJson);
   }
 
   /** Sample per-node animation opacity/transform at a time, as JSON. */

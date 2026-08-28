@@ -2,8 +2,8 @@ import { createPngObjectUrl, pngToDataUrl, revokePngObjectUrl } from "@boundsvg/
 import type {
   CompiledScene,
   CompileOptions,
-  EmitOptions,
-  RenderOptions,
+  EmitPngOptions,
+  EmitSvgOptions,
   VNode,
 } from "@boundsvg/core";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,6 +19,7 @@ import {
   useStructurallyStableValue,
 } from "./hooks/use-structurally-stable-value.js";
 import { resolveMainThreadEngineError } from "./utils/main-thread-only.js";
+import { pickCompileOptions, pickOutputCommonOptions } from "./utils/render-options.js";
 
 export type UseCompiledSceneResult = {
   compiled: CompiledScene | null;
@@ -28,8 +29,8 @@ export type UseCompiledSceneResult = {
 
 export type UseRenderAssetOptions = {
   compileOptions?: CompileOptions;
-  svgOptions?: EmitOptions;
-  pngOptions?: EmitOptions;
+  svgOptions?: EmitSvgOptions;
+  pngOptions?: EmitPngOptions;
 };
 
 export type UseRenderAssetResult = {
@@ -99,10 +100,10 @@ export function useCompiledScene(
   vnode: VNode | null,
   options?: CompileOptions,
 ): UseCompiledSceneResult {
-  const { engine, workerEngine, status, defaultRenderOptions } = useBoundSvg();
+  const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
   const stableVNode = useStructurallyStableValue(vnode);
   const stableOptions = useStructurallyStableValue(options);
-  const stableDefaultRenderOptions = useStructurallyStableRenderOptions(defaultRenderOptions);
+  const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   return useMemo(() => {
     if (status !== "ready" || !engine || !stableVNode) {
@@ -114,14 +115,17 @@ export function useCompiledScene(
       return { compiled: null, error, isReady: false };
     }
     try {
-      const compileOptions = { ...stableDefaultRenderOptions, ...stableOptions };
+      const compileOptions = {
+        ...pickCompileOptions(stableDefaultCommonOptions),
+        ...stableOptions,
+      };
       const compiled = engine.compile(stableVNode, compileOptions);
       return { compiled, error: null, isReady: true };
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err));
       return { compiled: null, error, isReady: false };
     }
-  }, [engine, workerEngine, status, stableVNode, stableOptions, stableDefaultRenderOptions]);
+  }, [engine, workerEngine, status, stableVNode, stableOptions, stableDefaultCommonOptions]);
 }
 
 /**
@@ -131,12 +135,12 @@ export function useRenderAsset(
   vnode: VNode | null,
   options?: UseRenderAssetOptions,
 ): UseRenderAssetResult {
-  const { engine, workerEngine, status, defaultRenderOptions } = useBoundSvg();
+  const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
   const stableVNode = useStructurallyStableValue(vnode);
   const stableCompileOptions = useStructurallyStableValue(options?.compileOptions);
   const stableSvgOptions = useStructurallyStableRenderOptions(options?.svgOptions);
   const stablePngOptions = useStructurallyStableRenderOptions(options?.pngOptions);
-  const stableDefaultRenderOptions = useStructurallyStableRenderOptions(defaultRenderOptions);
+  const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   const computation = useMemo<AssetRenderComputation>(() => {
     if (status !== "ready" || !engine || !stableVNode) {
@@ -158,12 +162,16 @@ export function useRenderAsset(
       };
     }
 
-    const svgOptions: RenderOptions = { ...stableDefaultRenderOptions, ...stableSvgOptions };
-    const pngOptions: RenderOptions = { ...stableDefaultRenderOptions, ...stablePngOptions };
+    const outputCommonOptions = pickOutputCommonOptions(stableDefaultCommonOptions);
+    const svgOptions: EmitSvgOptions = { ...outputCommonOptions, ...stableSvgOptions };
+    const pngOptions: EmitPngOptions = { ...outputCommonOptions, ...stablePngOptions };
     const capturedSvg = captureRenderNotifications(svgOptions);
     const capturedPng = captureRenderNotifications(pngOptions);
     try {
-      const compileOptions = { ...stableDefaultRenderOptions, ...stableCompileOptions };
+      const compileOptions = {
+        ...pickCompileOptions(stableDefaultCommonOptions),
+        ...stableCompileOptions,
+      };
       const compiled = engine.compile(stableVNode, compileOptions);
       const svg = engine.renderCompiledToSvg(compiled, capturedSvg.options);
       const png = engine.renderCompiledToPng(compiled, capturedPng.options);
@@ -200,7 +208,7 @@ export function useRenderAsset(
     stableCompileOptions,
     stableSvgOptions,
     stablePngOptions,
-    stableDefaultRenderOptions,
+    stableDefaultCommonOptions,
   ]);
   useCommitPhaseRenderNotifications(computation.deliveries);
   return computation.result;

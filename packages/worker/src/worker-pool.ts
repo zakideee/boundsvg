@@ -4,8 +4,12 @@ import {
   type Frame,
   type GeometryDoc,
   isSceneNode,
-  type RenderFramesOptions,
-  type RenderOptions,
+  type OutputCommonOptions,
+  type RasterEmissionOptions,
+  type RenderPngFramesOptions,
+  type RenderPngOptions,
+  type RenderSvgFramesOptions,
+  type RenderSvgOptions,
   type SceneNode,
   type StructuredError,
   type SymbolDefinition,
@@ -18,7 +22,8 @@ import type {
   FontTransfer,
   IndexedFrameTime,
   WorkerFrameRenderOptions,
-  WorkerRenderOptions,
+  WorkerRenderPngOptions,
+  WorkerRenderSvgOptions,
 } from "./protocol.js";
 import {
   forwardWorkerWarnings,
@@ -55,12 +60,19 @@ export type WorkerPoolOptions = {
   timeout?: number;
 };
 
-export type WorkerPoolRenderFramesOptions = Omit<RenderFramesOptions, "timesMs"> & {
-  /** Non-negative finite sample times. Duplicates and non-monotonic order are preserved. */
-  timesMs: readonly number[];
-  /** Stops new work and closes every prepared Worker stream owned by this call. */
-  signal?: AbortSignal;
-};
+export type WorkerPoolRenderFramesOptions =
+  | (Omit<RenderSvgFramesOptions, "timesMs"> & {
+      /** Non-negative finite sample times. Duplicates and non-monotonic order are preserved. */
+      timesMs: readonly number[];
+      /** Stops new work and closes every prepared Worker stream owned by this call. */
+      signal?: AbortSignal;
+    })
+  | (Omit<RenderPngFramesOptions, "timesMs"> & {
+      /** Non-negative finite sample times. Duplicates and non-monotonic order are preserved. */
+      timesMs: readonly number[];
+      /** Stops new work and closes every prepared Worker stream owned by this call. */
+      signal?: AbortSignal;
+    });
 
 /** One fully materialized, independently renderable scene at an exact time. */
 export type MaterializedFrameInput = {
@@ -74,12 +86,19 @@ export type MaterializedFrameSource =
   | Iterable<MaterializedFrameInput>
   | AsyncIterable<MaterializedFrameInput>;
 
-export type WorkerPoolMaterializedFramesOptions = Omit<RenderOptions, "animation" | "timeMs"> & {
-  /** Payload format for every returned frame. */
-  format: "svg" | "png";
-  /** Stops source consumption, starts no new jobs, and closes the source iterator. */
-  signal?: AbortSignal;
-};
+export type WorkerPoolMaterializedFramesOptions =
+  | (Omit<RenderSvgOptions, "timeMs"> & {
+      /** Payload format for every returned frame. */
+      format: "svg";
+      /** Stops source consumption, starts no new jobs, and closes the source iterator. */
+      signal?: AbortSignal;
+    })
+  | (Omit<RenderPngOptions, "timeMs"> & {
+      /** Payload format for every returned frame. */
+      format: "png";
+      /** Stops source consumption, starts no new jobs, and closes the source iterator. */
+      signal?: AbortSignal;
+    });
 
 type AssetSnapshot = {
   fonts: FontTransfer[];
@@ -103,7 +122,10 @@ type FrameCompletion =
   | { kind: "frame"; stream: OpenedWorkerStream; frame: Frame | undefined }
   | { kind: "error"; stream: OpenedWorkerStream; error: unknown };
 
-type FrameCallbacks = Pick<RenderFramesOptions, "onWarning" | "onPngResolutionAdjusted">;
+type FrameCallbacks = {
+  onWarning?: OutputCommonOptions["onWarning"];
+  onPngResolutionAdjusted?: RasterEmissionOptions["onPngResolutionAdjusted"];
+};
 
 type RunFramesInput = {
   source:
@@ -115,12 +137,16 @@ type RunFramesInput = {
   signal?: AbortSignal;
 };
 
-type MaterializedCallbacks = Pick<RenderOptions, "onWarning" | "onPngResolutionAdjusted">;
+type MaterializedCallbacks = FrameCallbacks;
+
+type WorkerMaterializedRenderOptions =
+  | Omit<WorkerRenderSvgOptions, "timeMs">
+  | Omit<WorkerRenderPngOptions, "timeMs">;
 
 type RunMaterializedFramesInput = {
   source: MaterializedFrameSource;
   format: "svg" | "png";
-  workerOptions: Omit<WorkerRenderOptions, "animation" | "timeMs">;
+  workerOptions: WorkerMaterializedRenderOptions;
   callbacks: MaterializedCallbacks;
   signal?: AbortSignal;
 };
@@ -641,10 +667,11 @@ function createFactoryWorker(
 }
 
 function validateFrameSchedule(options: WorkerPoolRenderFramesOptions | undefined): number[] {
-  if (!options || (options.format !== "svg" && options.format !== "png")) {
+  const receivedFormat: unknown = options ? Reflect.get(options, "format") : undefined;
+  if (!options || (receivedFormat !== "svg" && receivedFormat !== "png")) {
     throw new FatalError(
       "ANIMATION_INVALID_FRAME_FORMAT",
-      `Frame format must be "svg" or "png", got ${String(options?.format)}`,
+      `Frame format must be "svg" or "png", got ${String(receivedFormat)}`,
       { stage: "emit" },
     );
   }
@@ -673,16 +700,24 @@ function splitFrameOptions(options: WorkerPoolRenderFramesOptions): {
   callbacks: FrameCallbacks;
   workerOptions: WorkerFrameRenderOptions;
 } {
-  const {
-    timesMs: _timesMs,
-    signal,
-    onWarning,
-    onPngResolutionAdjusted,
-    ...workerOptions
-  } = options;
+  if (options.format === "png") {
+    const {
+      timesMs: _timesMs,
+      signal,
+      onWarning,
+      onPngResolutionAdjusted,
+      ...workerOptions
+    } = options;
+    return {
+      signal,
+      callbacks: { onWarning, onPngResolutionAdjusted },
+      workerOptions,
+    };
+  }
+  const { timesMs: _timesMs, signal, onWarning, ...workerOptions } = options;
   return {
     signal,
-    callbacks: { onWarning, onPngResolutionAdjusted },
+    callbacks: { onWarning },
     workerOptions,
   };
 }
@@ -690,18 +725,28 @@ function splitFrameOptions(options: WorkerPoolRenderFramesOptions): {
 function splitMaterializedFrameOptions(
   options: WorkerPoolMaterializedFramesOptions | undefined,
 ): Omit<RunMaterializedFramesInput, "source"> {
-  if (!options || (options.format !== "svg" && options.format !== "png")) {
+  const receivedFormat: unknown = options ? Reflect.get(options, "format") : undefined;
+  if (!options || (receivedFormat !== "svg" && receivedFormat !== "png")) {
     throw new FatalError(
       "ANIMATION_INVALID_FRAME_FORMAT",
-      `Frame format must be "svg" or "png", got ${String(options?.format)}`,
+      `Frame format must be "svg" or "png", got ${String(receivedFormat)}`,
       { stage: "emit" },
     );
   }
-  const { signal, format, onWarning, onPngResolutionAdjusted, ...workerOptions } = options;
+  if (options.format === "png") {
+    const { signal, format, onWarning, onPngResolutionAdjusted, ...workerOptions } = options;
+    return {
+      signal,
+      format,
+      callbacks: { onWarning, onPngResolutionAdjusted },
+      workerOptions,
+    };
+  }
+  const { signal, format, onWarning, ...workerOptions } = options;
   return {
     signal,
     format,
-    callbacks: { onWarning, onPngResolutionAdjusted },
+    callbacks: { onWarning },
     workerOptions,
   };
 }
@@ -846,7 +891,7 @@ async function* yieldMaterializedFrames(input: {
   controller: MaterializedFrameController;
   endpoints: WorkerPoolEndpoint[];
   format: "svg" | "png";
-  workerOptions: Omit<WorkerRenderOptions, "animation" | "timeMs">;
+  workerOptions: WorkerMaterializedRenderOptions;
   callbacks: MaterializedCallbacks;
 }): AsyncGenerator<Frame, void, undefined> {
   const state: MaterializedQueueState = {
@@ -898,7 +943,7 @@ async function fillMaterializedQueue(input: {
   controller: MaterializedFrameController;
   endpoints: WorkerPoolEndpoint[];
   format: "svg" | "png";
-  workerOptions: Omit<WorkerRenderOptions, "animation" | "timeMs">;
+  workerOptions: WorkerMaterializedRenderOptions;
   state: MaterializedQueueState;
 }): Promise<void> {
   while (
@@ -948,12 +993,11 @@ function requestMaterializedFrame(input: {
   index: number;
   frameInput: MaterializedFrameInput;
   format: "svg" | "png";
-  workerOptions: Omit<WorkerRenderOptions, "animation" | "timeMs">;
+  workerOptions: WorkerMaterializedRenderOptions;
 }): Promise<MaterializedCompletion> {
   return input.endpoint
     .render(input.frameInput.scene, input.format, {
       ...input.workerOptions,
-      animation: "static",
       timeMs: input.frameInput.timeMs,
     })
     .then(

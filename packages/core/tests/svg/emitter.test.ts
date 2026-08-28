@@ -12,7 +12,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { IR, IRNode } from "../../src/ir/types.js";
 import { createResourceIdPrefix } from "../../src/svg/resource-id.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
-import { createFontedWasmHandle, emitSvgFromIrViaHandle } from "../helpers/wasm-render-engine.js";
+import {
+  createFontedWasmHandle,
+  emitAnimatedSvgFromIrViaHandle,
+  emitSvgFromIrViaHandle,
+} from "../helpers/wasm-render-engine.js";
 
 let handle: WasmEngineHandle;
 
@@ -39,6 +43,283 @@ function makeIR(children: IRNode[], drawOrder: string[], width = 800, height = 6
   };
 }
 
+function makeIdentifierNamespaceIR(): IR {
+  const animation = {
+    keyframes: [
+      { at: 0, opacity: 0 },
+      { at: 1, opacity: 1 },
+    ],
+    durationMs: 400,
+    easing: "linear" as const,
+  };
+  const sharedShapePart = { d: "M150 20H170V40H150Z" };
+
+  return makeIR(
+    [
+      {
+        type: "group",
+        nodeId: "panel",
+        bbox: { x: 10, y: 10, w: 120, h: 80 },
+        clipPath: { x: 10, y: 10, w: 120, h: 80 },
+        boxShadow: { dx: 1, dy: 2, blur: 4, spread: 0, color: "#0008" },
+        meta: { scope: "raw-resourceIdPrefix-doc-clip-" },
+        animation,
+        children: [
+          {
+            type: "rect",
+            nodeId: "panel:bg",
+            bbox: { x: 10, y: 10, w: 120, h: 80 },
+            gradient: {
+              type: "linear",
+              angle: 90,
+              stops: [
+                { color: "#000000", offset: 0 },
+                { color: "#ffffff", offset: 1 },
+              ],
+            },
+          },
+          {
+            type: "rect",
+            nodeId: "panel:border",
+            bbox: { x: 12, y: 12, w: 116, h: 76 },
+            fill: "none",
+            stroke: "#ffffff",
+            strokeWidth: 1,
+            strokeScaling: "canvas",
+          },
+          {
+            type: "path",
+            nodeId: "hairline-path",
+            bbox: { x: 20, y: 20, w: 80, h: 30 },
+            pathData: "M20 20H100V50",
+            fill: "none",
+            stroke: "#ff00ff",
+            strokeWidth: 2,
+            strokeScaling: "canvas",
+          },
+        ],
+      },
+      {
+        type: "text",
+        nodeId: "unit-text",
+        bbox: { x: 20, y: 100, w: 20, h: 20 },
+        lines: [{ text: "A", glyphs: [], width: 20, baselineY: 16 }],
+        font: "F",
+        fontSizePx: 16,
+        color: "#111111",
+        textAlign: "start",
+        layoutBox: { x: 20, y: 100, w: 20, h: 20 },
+        lineHeightPx: 20,
+        glyphPaths: [
+          {
+            nodeId: "unit-text",
+            d: "M20 100H36V116H20Z",
+            fill: "#111111",
+            glyphIds: [1],
+            text: "A",
+            bbox: { x: 20, y: 100, w: 16, h: 16 },
+            unitId: "unit-0",
+          },
+        ],
+        unitMap: {
+          kind: "cluster",
+          ruby: "with-base",
+          units: [
+            {
+              unitId: "unit-0",
+              kind: "cluster",
+              sourceStart: 0,
+              sourceEnd: 1,
+              lineId: "line-0",
+              logicalOrder: 0,
+              visualOrder: 0,
+              members: [{ lineIndex: 0, glyphIndex: 0, sourceRole: "content" }],
+            },
+          ],
+        },
+        unitAnimation: {
+          by: "cluster",
+          animation,
+          delayStepMs: 25,
+        },
+        unitAnimationSamples: [
+          {
+            unitId: "unit-0",
+            bbox: { x: 20, y: 100, w: 16, h: 16 },
+            opacity: 0.5,
+          },
+        ],
+      },
+      {
+        type: "shape",
+        nodeId: "shape-left",
+        bbox: { x: 150, y: 20, w: 20, h: 20 },
+        shapeParts: [sharedShapePart],
+        fill: "#2563eb",
+      },
+      {
+        type: "shape",
+        nodeId: "shape-right",
+        bbox: { x: 180, y: 20, w: 20, h: 20 },
+        shapeParts: [sharedShapePart],
+        fill: "#2563eb",
+      },
+      {
+        type: "svg",
+        nodeId: "raw-svg",
+        bbox: { x: 150, y: 80, w: 40, h: 40 },
+        svgContent: '<path data-token="raw-resourceIdPrefix-doc-clip-" d="M0 0H1"/>',
+        svgViewBox: "0 0 1 1",
+        preserveAspectRatio: "xMidYMid meet",
+      },
+    ],
+    [
+      "panel:bg",
+      "panel:border",
+      "hairline-path",
+      "unit-text",
+      "shape-left",
+      "shape-right",
+      "raw-svg",
+    ],
+    240,
+    160,
+  );
+}
+
+function makeNodeMetadataIR(): IR {
+  return makeIR(
+    [
+      {
+        type: "group",
+        nodeId: "group-node",
+        bbox: { x: 0, y: 0, w: 40, h: 40 },
+        meta: { scope: "kept-meta" },
+        children: [
+          {
+            type: "rect",
+            nodeId: "rect-node",
+            bbox: { x: 1, y: 1, w: 10, h: 8 },
+            fill: "#ef4444",
+          },
+          {
+            type: "rect",
+            nodeId: "rounded-rect-node",
+            bbox: { x: 14, y: 1, w: 10, h: 8 },
+            fill: "#f59e0b",
+            borderRadius: 2,
+          },
+        ],
+      },
+      {
+        type: "text",
+        nodeId: "text-node",
+        bbox: { x: 0, y: 44, w: 20, h: 12 },
+        lines: [{ text: "A", glyphs: [], width: 8, baselineY: 9 }],
+        font: "Fixture",
+        fontSizePx: 10,
+        color: "#111827",
+        textAlign: "start",
+        layoutBox: { x: 0, y: 44, w: 20, h: 12 },
+        lineHeightPx: 12,
+        glyphPaths: [
+          {
+            nodeId: "text-node",
+            d: "M0 44H8V52Z",
+            fill: "#111827",
+            glyphIds: [1],
+            text: "A",
+            bbox: { x: 0, y: 44, w: 8, h: 8 },
+          },
+        ],
+      },
+      {
+        type: "image",
+        nodeId: "image-node",
+        bbox: { x: 24, y: 44, w: 8, h: 8 },
+        src: "data:image/png;base64,AA==",
+        preserveAspectRatio: "xMidYMid meet",
+      },
+      {
+        type: "path",
+        nodeId: "path-node",
+        bbox: { x: 36, y: 44, w: 8, h: 8 },
+        pathData: "M0 0H8V8Z",
+        fill: "#22c55e",
+      },
+      {
+        type: "svg",
+        nodeId: "svg-node",
+        bbox: { x: 48, y: 44, w: 8, h: 8 },
+        svgContent:
+          '<path data-boundsvg-node-id="raw-authored" data-boundsvg-part-id="raw-part" d="M0 0H1"/>',
+        svgViewBox: "0 0 1 1",
+        preserveAspectRatio: "xMidYMid meet",
+      },
+      {
+        type: "shape",
+        nodeId: "shape-node",
+        bbox: { x: 60, y: 44, w: 8, h: 8 },
+        shapeParts: [{ partId: "shape-part", d: "M60 44H68V52Z" }],
+        fill: "#3b82f6",
+      },
+    ],
+    [
+      "rect-node",
+      "rounded-rect-node",
+      "text-node",
+      "image-node",
+      "path-node",
+      "svg-node",
+      "shape-node",
+    ],
+    80,
+    64,
+  );
+}
+
+type GeneratedIdentifierInventory = {
+  ids: Set<string>;
+  classes: Set<string>;
+  keyframes: Set<string>;
+  references: Set<string>;
+  animationNames: Set<string>;
+  selectorClasses: Set<string>;
+};
+
+function cssUnescapeGeneratedIdentifier(identifier: string): string {
+  return identifier.replace(/\\(.)/gu, "$1");
+}
+
+function captures(svg: string, pattern: RegExp): string[] {
+  return [...svg.matchAll(pattern)].flatMap((match) => (match[1] === undefined ? [] : [match[1]]));
+}
+
+function generatedIdentifierInventory(svg: string): GeneratedIdentifierInventory {
+  const ids = new Set(captures(svg, /(?:^|[<\s])id="([^"]+)"/gu));
+  const classes = new Set(
+    captures(svg, /\sclass="([^"]+)"/gu).flatMap((classList) => classList.split(/\s+/u)),
+  );
+  const keyframes = new Set(
+    captures(svg, /@keyframes\s+((?:\\.|[^\s{])+)/gu).map(cssUnescapeGeneratedIdentifier),
+  );
+  const references = new Set([
+    ...captures(svg, /url\(#([^)]+)\)/gu),
+    ...captures(svg, /\shref="#([^"]+)"/gu),
+  ]);
+  const animationNames = new Set(
+    captures(svg, /animation-name:\s+((?:\\.|[^;\s])+);/gu).map(cssUnescapeGeneratedIdentifier),
+  );
+  const selectorClasses = new Set(
+    captures(svg, /^\s*\.((?:\\.|[^\s,{])+)(?:\s*,|\s*\{)/gmu).map(cssUnescapeGeneratedIdentifier),
+  );
+  return { ids, classes, keyframes, references, animationNames, selectorClasses };
+}
+
+function sortedIntersection(left: Set<string>, right: Set<string>): string[] {
+  return [...left].filter((value) => right.has(value)).sort();
+}
+
 describe("emit_svg_from_ir", () => {
   it("generates valid SVG with viewBox", () => {
     const ir = makeIR([], []);
@@ -49,6 +330,44 @@ describe("emit_svg_from_ir", () => {
     expect(svg).toContain('viewBox="0 0 800 600"');
     expect(svg).toContain("<svg");
     expect(svg).toContain("</svg>");
+  });
+
+  it("omits only generated node metadata across every emitter site", () => {
+    const ir = makeNodeMetadataIR();
+    const irBefore = JSON.stringify(ir);
+    const generator = { name: "metadata-test", version: "0.3.0" };
+    const defaultSvg = emitSvgFromIrViaHandle(handle, ir, { generator });
+    const includedSvg = emitSvgFromIrViaHandle(handle, ir, {
+      generator,
+      nodeIdMetadata: "include",
+    });
+    const omittedSvg = emitSvgFromIrViaHandle(handle, ir, {
+      generator,
+      nodeIdMetadata: "omit",
+    });
+
+    expect(includedSvg).toBe(defaultSvg);
+    for (const nodeId of [
+      "root",
+      "group-node",
+      "rect-node",
+      "rounded-rect-node",
+      "text-node",
+      "image-node",
+      "path-node",
+      "svg-node",
+      "shape-node",
+    ]) {
+      expect(defaultSvg).toContain(`data-boundsvg-node-id="${nodeId}"`);
+      expect(omittedSvg).not.toContain(`data-boundsvg-node-id="${nodeId}"`);
+    }
+    expect(omittedSvg).toContain('data-boundsvg-node-id="raw-authored"');
+    expect(omittedSvg).toContain('data-boundsvg-part-id="raw-part"');
+    expect(omittedSvg).toContain('data-boundsvg-part-id="shape-part"');
+    expect(omittedSvg).toContain('data-boundsvg-meta-scope="kept-meta"');
+    expect(omittedSvg).toContain('data-boundsvg-generator="metadata-test"');
+    expect(omittedSvg).toContain('data-boundsvg-generator-version="0.3.0"');
+    expect(JSON.stringify(ir)).toBe(irBefore);
   });
 
   it("emits rect with fill", () => {
@@ -208,7 +527,11 @@ describe("emit_svg_from_ir", () => {
       20,
       20,
     );
-    const svg = emitSvgFromIrViaHandle(handle, ir, { reducedMotion: "pause", timeMs: 50 });
+    const svg = emitAnimatedSvgFromIrViaHandle(handle, ir, {
+      playback: { mode: "independent" },
+      reducedMotion: "pause",
+      timeMs: 50,
+    });
     expect(svg.match(/<style>/g)).toHaveLength(1);
     expect(svg).toContain("@keyframes");
     expect(svg).toContain("prefers-reduced-motion");
@@ -647,6 +970,89 @@ describe("emit_svg_from_ir", () => {
     expect(svg).toContain('filter="url(#doc-a-filter-panel)"');
     expect(svg).not.toContain('id="clip-panel"');
     expect(svg).not.toContain("url(#clip-panel)");
+  });
+
+  it("namespaces every generated document-global identifier and closes its references", () => {
+    const ir = makeIdentifierNamespaceIR();
+    const prefixA = createResourceIdPrefix("scope-a-000");
+    const prefixB = createResourceIdPrefix("scope-b-000");
+    const svgA = emitAnimatedSvgFromIrViaHandle(handle, ir, {
+      debug: true,
+      playback: { mode: "independent" },
+      resourceIdPrefix: prefixA,
+    });
+    const svgB = emitAnimatedSvgFromIrViaHandle(handle, ir, {
+      debug: true,
+      playback: { mode: "independent" },
+      resourceIdPrefix: prefixB,
+    });
+    const inventoryA = generatedIdentifierInventory(svgA);
+    const inventoryB = generatedIdentifierInventory(svgB);
+
+    expect(sortedIntersection(inventoryA.ids, inventoryB.ids)).toEqual([]);
+    expect(sortedIntersection(inventoryA.classes, inventoryB.classes)).toEqual([]);
+    expect(sortedIntersection(inventoryA.keyframes, inventoryB.keyframes)).toEqual([]);
+
+    for (const inventory of [inventoryA, inventoryB]) {
+      expect(inventory.ids.size).toBeGreaterThanOrEqual(4);
+      expect(inventory.classes.size).toBeGreaterThanOrEqual(5);
+      expect(inventory.keyframes.size).toBeGreaterThanOrEqual(2);
+      for (const reference of inventory.references) {
+        expect(inventory.ids.has(reference), `missing local definition for #${reference}`).toBe(
+          true,
+        );
+      }
+      for (const animationName of inventory.animationNames) {
+        expect(
+          inventory.keyframes.has(animationName),
+          `missing local @keyframes ${animationName}`,
+        ).toBe(true);
+      }
+      const styleBoundClasses = [...inventory.classes].filter(
+        (className) => className.includes("anim-") || className.includes("vstroke-"),
+      );
+      for (const className of styleBoundClasses) {
+        expect(
+          inventory.selectorClasses.has(className),
+          `missing local selector for .${className}`,
+        ).toBe(true);
+      }
+    }
+
+    expect(inventoryA.classes).toContain(`bsvg-${prefixA}vstroke-panel`);
+    expect(inventoryA.classes).toContain(`bsvg-${prefixA}vstroke-hairline-path`);
+    expect(inventoryA.classes).toContain(`bsvg-${prefixA}debug-overlay`);
+    expect([...inventoryA.ids]).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^scope-a-000-sp-/u)]),
+    );
+    expect([...inventoryA.keyframes]).toEqual(
+      expect.arrayContaining([
+        `${prefixA}anim-panel-keyframes`,
+        `${prefixA}anim-unit-text:unit:0-keyframes`,
+      ]),
+    );
+    for (const svg of [svgA, svgB]) {
+      expect(svg).toContain('data-boundsvg-meta-scope="raw-resourceIdPrefix-doc-clip-"');
+      expect(svg).toContain('<path data-token="raw-resourceIdPrefix-doc-clip-" d="M0 0H1"/>');
+    }
+  });
+
+  it("keeps the comprehensive generated-token fixture byte-identical without a prefix", () => {
+    const ir = makeIdentifierNamespaceIR();
+    const omitted = emitAnimatedSvgFromIrViaHandle(handle, ir, {
+      debug: true,
+      playback: { mode: "independent" },
+    });
+    const explicitEmpty = emitAnimatedSvgFromIrViaHandle(handle, ir, {
+      debug: true,
+      playback: { mode: "independent" },
+      resourceIdPrefix: "",
+    });
+
+    expect(explicitEmpty).toBe(omitted);
+    expect(omitted).toContain('<g class="debug-overlay" opacity="0.4">');
+    expect(omitted).toContain('class="bsvg-vstroke-panel"');
+    expect(omitted).toContain("@keyframes anim-panel-keyframes");
   });
 
   it("creates deterministic resource ID prefixes", () => {

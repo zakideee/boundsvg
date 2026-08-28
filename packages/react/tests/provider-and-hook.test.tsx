@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 
-import type { Engine, IR, RenderOptions, VNode } from "@boundsvg/core";
+import type { Engine, IR, RenderSvgOptions, VNode } from "@boundsvg/core";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { BoundSvgContext } from "../src/context.js";
@@ -96,7 +96,7 @@ function createContextValue(
     workerEngine: null,
     status,
     error: null,
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   };
 }
 
@@ -179,7 +179,44 @@ describe("useInteractiveSvg", () => {
     expect(snapshot!.error).toBeNull();
     expect(snapshot!.hoverNodeId).toBeNull();
     expect(renderToSvgAndIR).toHaveBeenCalledTimes(1);
-    expect(renderToSvgAndIR).toHaveBeenCalledWith(vnode, { textPathMode: "merged" });
+    expect(renderToSvgAndIR).toHaveBeenCalledWith(vnode, {
+      textPathMode: "merged",
+      nodeIdMetadata: "include",
+    });
+  });
+
+  it("selects the animated SVG + IR method explicitly and keeps hit-test metadata", () => {
+    const renderToAnimatedSvgAndIR = vi.fn(() => ({
+      svg: '<svg data-mode="animated"></svg>',
+      ir: sampleIr(),
+    }));
+    const engine = makeEngineMock({ renderToAnimatedSvgAndIR });
+    const vnode = sampleVNode();
+    let snapshot: UseInteractiveSvgResult | null = null;
+
+    function Probe() {
+      snapshot = useInteractiveSvg(vnode, new Map(), {
+        renderMode: "animated",
+        renderOptions: {
+          playback: { mode: "independent" },
+          nodeIdMetadata: "omit",
+        },
+      });
+      return null;
+    }
+
+    renderToString(
+      <BoundSvgContext.Provider value={createContextValue(engine, "ready")}>
+        <Probe />
+      </BoundSvgContext.Provider>,
+    );
+
+    expect(snapshot?.svg).toContain("animated");
+    expect(renderToAnimatedSvgAndIR).toHaveBeenCalledWith(vnode, {
+      textPathMode: "merged",
+      playback: { mode: "independent" },
+      nodeIdMetadata: "include",
+    });
   });
 
   it("surfaces render errors when engine throws", () => {
@@ -234,7 +271,7 @@ describe("useInteractiveSvg", () => {
 describe("useRenderToPng cache", () => {
   it("reuses PNG render results for the same vnode and options references", () => {
     const vnode = sampleVNode();
-    const options: RenderOptions = { scale: 2, textPathMode: "merged" };
+    const options: RenderSvgOptions = { scale: 2, textPathMode: "merged" };
     const png = new Uint8Array([137, 80, 78, 71]);
     const renderToPng = vi.fn(() => png);
     const engine = makeEngineMock({ renderToPng });
@@ -268,8 +305,8 @@ describe("useRenderToPng cache", () => {
 
   it("renders again when options reference changes", () => {
     const vnode = sampleVNode();
-    const firstOptions: RenderOptions = { scale: 1, textPathMode: "merged" };
-    const secondOptions: RenderOptions = { scale: 2, textPathMode: "merged" };
+    const firstOptions: RenderSvgOptions = { scale: 1, textPathMode: "merged" };
+    const secondOptions: RenderSvgOptions = { scale: 2, textPathMode: "merged" };
     const renderToPng = vi.fn(() => new Uint8Array([137, 80, 78, 71]));
     const engine = makeEngineMock({ renderToPng });
 

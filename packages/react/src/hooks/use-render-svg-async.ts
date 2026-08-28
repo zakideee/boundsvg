@@ -1,4 +1,4 @@
-import type { RenderOptions, VNode } from "@boundsvg/core";
+import type { RenderSvgOptions, VNode } from "@boundsvg/core";
 import { useWorkerRender } from "./use-worker-render.js";
 
 export type UseRenderToSvgAsyncResult = {
@@ -21,14 +21,14 @@ export type UseRenderToSvgAsyncResult = {
  */
 export function useRenderToSvgAsync(
   vnode: VNode | null,
-  renderOptions?: RenderOptions,
+  renderOptions?: RenderSvgOptions,
 ): UseRenderToSvgAsyncResult {
   const {
     data: svg,
     error,
     isRendering,
     isReady,
-  } = useWorkerRender({
+  } = useWorkerRender<string, RenderSvgOptions>({
     vnode,
     renderFn: (engine, scene, options) => engine.renderToSvg(scene, options),
     renderOptions,

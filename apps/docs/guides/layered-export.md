@@ -20,11 +20,12 @@ Static `transform` props are preserved during layered export. They are applied
 after layout, so per-layer `bbox` metadata remains the pre-transform layout box
 rather than the transformed visual bounds.
 
-Animated exports sample every layer at one shared `timeMs`. Declarative layers
-carry the same base pose plus CSS animation; layered PNG is always static. When
-the source contains an animation, the manifest records `animated: true` and the
-sampled `timeMs`. Layered export does not concatenate frames or create video;
-sample multiple times and use an external encoder when needed. See
+Layered SVG and layered PNG are static-only. If the source contains animation,
+pass an explicit `timeMs`; every layer is sampled at that shared time. The
+manifest records `animated: true` to describe the source and records the
+sampled `timeMs`, but that field does not mean the layer SVGs animate. There is
+no animated layered method in 0.3. Layered export does not concatenate frames
+or create video; sample multiple times and use an external encoder when needed. See
 [Animation](/guides/animation) for the output-mode contract.
 
 ## The `layer` prop
@@ -98,8 +99,8 @@ otherwise interleave with other content.
 const result = engine.renderToLayeredSvg(vnode, {
   debug: false,
   textPathMode: "merged",
-  animation: "declarative",
   timeMs: 400,
+  nodeIdMetadata: "omit",
   validateComposition: { enabled: true },
 });
 ```
@@ -113,7 +114,13 @@ const result = engine.renderToLayeredSvg(vnode, {
 | `manifest`              | `{ width, height, animated?, timeMs?, layers: LayerManifestEntry[] }` | Same layer metadata without the `svg` payload                               |
 
 Each layer is a full SVG document sized to the canvas. Stacking the layers in
-ascending `paintOrder` reproduces `renderToSvg` pixel-for-pixel.
+ascending `paintOrder` reproduces the static `renderToSvg` result at the same
+`timeMs` pixel-for-pixel.
+
+In 0.3, remove the old `animation` option from layered calls. The manifest's
+legacy-named `animated` flag remains read-only source information; do not use it
+as evidence that a layer contains CSS playback. `LayeredPngOptions` also rejects
+SVG-only `resourceIdPrefix` and `nodeIdMetadata`.
 
 ### `LayerEntry` fields
 

@@ -8,6 +8,7 @@ import {
   isWorkerRequest,
   isWorkerResponse,
   type RenderAnimatedGifOkResponse,
+  type RenderAnimatedSvgOkResponse,
   type RenderAnimatedWebpOkResponse,
   type RenderLayeredPngOkResponse,
   type RenderLayeredSvgOkResponse,
@@ -73,6 +74,28 @@ describe("isWorkerRequest", () => {
       scene: { type: "Canvas", width: 100, height: 100, children: [] },
     };
     expect(isWorkerRequest(request)).toBe(true);
+  });
+
+  it("requires options for animated SVG request kinds", () => {
+    const scene = { type: "Canvas", width: 100, height: 100, children: [] } as const;
+    expect(
+      isWorkerRequest({
+        id: 20,
+        type: "render-animated-svg",
+        scene,
+        options: { playback: { mode: "independent" } },
+      }),
+    ).toBe(true);
+    expect(
+      isWorkerRequest({
+        id: 21,
+        type: "render-animated-svg-and-ir",
+        scene,
+        options: { playback: { mode: "independent" }, nodeIdMetadata: "omit" },
+      }),
+    ).toBe(true);
+    expect(isWorkerRequest({ id: 22, type: "render-animated-svg", scene })).toBe(false);
+    expect(isWorkerRequest({ id: 23, type: "render-animated-svg-and-ir", scene })).toBe(false);
   });
 
   it("returns true for valid render-png request", () => {
@@ -355,6 +378,16 @@ describe("isWorkerResponse", () => {
     const response: RenderSvgOkResponse = {
       id: 2,
       type: "render-svg-ok",
+      svg: "<svg></svg>",
+      warnings: [],
+    };
+    expect(isWorkerResponse(response)).toBe(true);
+  });
+
+  it("returns true for valid render-animated-svg-ok response", () => {
+    const response: RenderAnimatedSvgOkResponse = {
+      id: 20,
+      type: "render-animated-svg-ok",
       svg: "<svg></svg>",
       warnings: [],
     };

@@ -59,19 +59,33 @@ boundsvg export \
   --input card.scene.json \
   --font NotoSansJP:400:normal:./fonts/NotoSansJP-Regular.ttf \
   --format animated-webp \
-  --duration-ms 2000 --fps 20 --loop 0 \
+  --duration-ms 2000 --fps 20 --iterations infinite \
   --output card.webp
 ```
 
 `--format gif` writes an animated GIF instead. For `animated-webp` and `gif`,
-`--fps` is 1–60 (default 20) and `--loop` is 0–65535 with 0 looping forever.
-`--duration-ms`, `--fps`, `--loop` and `--bitrate` are usage errors on a still
-format. `--scale` applies to every raster format.
+`--fps` is 1–60 (default 20). `--iterations` is a total-play count: use
+`1`–`65535` for animated WebP, `1`–`65536` for GIF, or `infinite`; omission
+defaults to `infinite`. `--duration-ms`, `--fps`, `--iterations` and `--bitrate`
+are usage errors on a still format. `--scale` applies to every raster format.
+This omission default is CLI-only: the Core and Worker animated-raster APIs
+require callers to supply `iterations` explicitly.
 
 `--format mp4` differs on all three: `--fps` goes up to 120 (default 30) and
 also accepts the NTSC decimals `23.976` / `29.97` / `59.94` and a rational such
-as `30000/1001`; `--loop` is refused, because video has no loop count; and
+as `30000/1001`; `--iterations` is refused, because video has no play-count
+field; and
 `--bitrate` applies only here. See [Video Export](/guides/video-export).
+
+The removed `--loop` flag is a migration error, not an alias. Convert old
+values as follows:
+
+| Format        | Old value           | Replacement             |
+| ------------- | ------------------- | ----------------------- |
+| animated WebP | `--loop 0`          | `--iterations infinite` |
+| animated WebP | `--loop N`, `N > 0` | `--iterations N`        |
+| GIF           | `--loop 0`          | `--iterations infinite` |
+| GIF           | `--loop N`, `N > 0` | `--iterations N+1`      |
 
 Because `animated-webp` and `webp` share the `.webp` extension, animated WebP
 always needs the explicit `--format`. `.gif` is unambiguous — there is no still

@@ -1,4 +1,4 @@
-import type { RenderOptions, VNode } from "@boundsvg/core";
+import type { RenderSvgOptions, VNode } from "@boundsvg/core";
 import { useMemo } from "react";
 import { resolveMainThreadEngineError } from "../utils/main-thread-only.js";
 import { useBoundSvg } from "./use-boundsvg.js";
@@ -31,11 +31,14 @@ type SvgRenderComputation = {
  * Reactively render a VNode to an SVG string.
  * Re-renders when the VNode or render-option values change.
  */
-export function useRenderToSvg(vnode: VNode | null, options?: RenderOptions): UseRenderToSvgResult {
-  const { engine, workerEngine, status, defaultRenderOptions } = useBoundSvg();
+export function useRenderToSvg(
+  vnode: VNode | null,
+  options?: RenderSvgOptions,
+): UseRenderToSvgResult {
+  const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
   const stableVNode = useStructurallyStableValue(vnode);
   const stableOptions = useStructurallyStableRenderOptions(options);
-  const stableDefaultRenderOptions = useStructurallyStableRenderOptions(defaultRenderOptions);
+  const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   const computation = useMemo<SvgRenderComputation>(() => {
     if (status !== "ready" || !engine || !stableVNode) {
@@ -50,7 +53,7 @@ export function useRenderToSvg(vnode: VNode | null, options?: RenderOptions): Us
       };
     }
 
-    const mergedOptions = { ...stableDefaultRenderOptions, ...stableOptions };
+    const mergedOptions = { ...stableDefaultCommonOptions, ...stableOptions };
     const captured = captureRenderNotifications(mergedOptions);
     try {
       const svg = engine.renderToSvg(stableVNode, captured.options);
@@ -65,7 +68,7 @@ export function useRenderToSvg(vnode: VNode | null, options?: RenderOptions): Us
         deliveries: [captured.delivery],
       };
     }
-  }, [engine, workerEngine, status, stableVNode, stableOptions, stableDefaultRenderOptions]);
+  }, [engine, workerEngine, status, stableVNode, stableOptions, stableDefaultCommonOptions]);
   useCommitPhaseRenderNotifications(computation.deliveries);
   return computation.result;
 }

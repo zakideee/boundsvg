@@ -856,7 +856,9 @@ describe("WorkerPool materialized frames", () => {
         .flatMap((worker) => worker.renderRequests)
         .every(
           (request) =>
-            request.options?.animation === "static" && typeof request.options.timeMs === "number",
+            request.options !== undefined &&
+            !("animation" in request.options) &&
+            typeof request.options.timeMs === "number",
         ),
     ).toBe(true);
     pool.dispose();

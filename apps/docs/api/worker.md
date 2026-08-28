@@ -163,13 +163,12 @@ type MaterializedFrameSource =
   | Iterable<MaterializedFrameInput>
   | AsyncIterable<MaterializedFrameInput>;
 
-type WorkerPoolMaterializedFramesOptions = Omit<
-  RenderOptions,
-  "animation" | "timeMs"
-> & {
-  format: "svg" | "png";
-  signal?: AbortSignal;
-};
+type WorkerPoolMaterializedFramesOptions =
+  | (Omit<RenderSvgOptions, "timeMs"> & { format: "svg"; signal?: AbortSignal })
+  | (Omit<RenderPngOptions, "timeMs"> & {
+      format: "png";
+      signal?: AbortSignal;
+    });
 ```
 
 The source is consumed lazily and total pending or buffered frames are bounded
@@ -179,7 +178,8 @@ already yielded remain valid, and no later frame is yielded.
 
 Recoverable warnings from each materialized render are forwarded once,
 immediately before that frame is yielded in input order. Supply `onWarning` in
-the options (inherited from `RenderOptions`) to receive them.
+the format-specific options to receive them. SVG-only namespace/metadata keys
+are rejected on PNG streams, and raster-only keys are rejected on SVG streams.
 
 Materialized scenes use a strict JSON-lossless transport contract. Plain
 objects, arrays, strings, booleans, finite numbers, and `null` are accepted.
@@ -240,7 +240,8 @@ and terminates every Worker. A pool cannot be reused after disposal.
 ## WorkerEngine
 
 `WorkerEngine.create(options)` creates a single-Worker proxy for asynchronous
-one-shot SVG, PNG, WebP, animated WebP, animated GIF, IR, layered, and text
+one-shot static SVG, independent animated SVG, PNG, WebP, animated WebP,
+animated GIF, IR, layered, and text
 measurement calls. Raster buffers are transferred back without an extra copy. Use `WorkerPool` when you need ordered
 multi-frame scheduling; use `WorkerEngine` when a single off-main-thread engine
 is sufficient.
@@ -251,6 +252,30 @@ through an application-owned loading layer. `WorkerEngine.create` transfers
 the supplied font `ArrayBuffer`s directly, detaching them on the caller side;
 copy buffers first if the application must retain them. `WorkerPool.create`
 does not detach caller buffers because it snapshots every font before transfer.
+
+Static and animated SVG calls are distinct and match the Core contract:
+
+```ts
+const still = await workerEngine.renderToSvg(scene, { timeMs: 400 });
+const animated = await workerEngine.renderToAnimatedSvg(scene, {
+  playback: { mode: "independent" },
+  resourceIdPrefix: "worker-0042-",
+  nodeIdMetadata: "omit",
+});
+
+const stillArtifacts = await workerEngine.renderToSvgAndIR(scene, {
+  timeMs: 400,
+});
+const animatedArtifacts = await workerEngine.renderToAnimatedSvgAndIR(scene, {
+  playback: { mode: "independent" },
+});
+```
+
+An animated scene sent to a static SVG method requires explicit `timeMs`.
+Worker-safe protocol option types omit callbacks that cannot be cloned;
+`WorkerEngine` accepts the corresponding Core types, returns warnings in the
+response, and invokes callbacks on the caller side. Structured fatal errors and
+unknown/legacy option rejection match the direct Engine.
 
 ## Worker error codes
 

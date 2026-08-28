@@ -878,6 +878,24 @@ pub fn validate_animations(ir: &Ir) -> Result<(), EngineError> {
     validate_node(&ir.root)
 }
 
+/// Return whether the IR contains any authored node or text-unit animation.
+#[must_use]
+pub fn has_animations(ir: &Ir) -> bool {
+    fn node_has_animations(node: &IrNode) -> bool {
+        match &node.kind {
+            IrNodeKind::Group {
+                children,
+                animation,
+                ..
+            } => animation.is_some() || children.iter().any(node_has_animations),
+            IrNodeKind::Text { unit_animation, .. } => unit_animation.is_some(),
+            _ => false,
+        }
+    }
+
+    node_has_animations(&ir.root)
+}
+
 pub(crate) fn text_animation_budget_counts(root: &IrNode) -> (usize, usize) {
     fn text_fragment_count(
         lines: &[crate::text::types::Line],

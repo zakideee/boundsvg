@@ -46,8 +46,8 @@ export type ExportOptions = {
   fpsArg: string | undefined;
   /** Animation length for animated formats. Undefined when not supplied. */
   durationMs: number | undefined;
-  /** Loop count for animated formats. Undefined when not supplied; 0 loops forever. */
-  loop: number | undefined;
+  /** Total play count for animated raster formats. Omission resolves to infinite playback. */
+  iterations: number | "infinite" | undefined;
   /** Target bitrate in bits per second for mp4. Undefined leaves the encoder on quality mode. */
   bitrate: number | undefined;
   debug: boolean;
@@ -99,6 +99,16 @@ function readNumberArg(
     return undefined;
   }
   return parsed;
+}
+
+function readIterationsArg(
+  state: ExportParseState,
+  raw: string | undefined,
+): number | "infinite" | undefined {
+  if (raw === "infinite") {
+    return raw;
+  }
+  return readNumberArg(state, "--iterations", raw);
 }
 
 /**
@@ -228,7 +238,9 @@ type ExportParseState = {
   fps: number | undefined;
   fpsArg: string | undefined;
   durationMs: number | undefined;
-  loop: number | undefined;
+  iterations: number | "infinite" | undefined;
+  /** Valid numeric value supplied through the removed `--loop` flag. */
+  legacyLoop: number | undefined;
   bitrate: number | undefined;
   /** Whether --format was supplied, which suppresses output-extension inference. */
   formatExplicit: boolean;
@@ -269,6 +281,7 @@ const VALUE_FLAGS = new Set([
   "--scale",
   "--fps",
   "--duration-ms",
+  "--iterations",
   "--loop",
   "--bitrate",
   "--report",
@@ -373,8 +386,12 @@ const exportArgHandlers: Record<
     state.durationMs = readNumberArg(state, "--duration-ms", args[i + 1]);
     return i + 1;
   },
+  "--iterations": (args, i, state) => {
+    state.iterations = readIterationsArg(state, args[i + 1]);
+    return i + 1;
+  },
   "--loop": (args, i, state) => {
-    state.loop = readNumberArg(state, "--loop", args[i + 1]);
+    state.legacyLoop = readNumberArg(state, "--loop", args[i + 1]);
     return i + 1;
   },
   "--bitrate": (args, i, state) => {
@@ -429,7 +446,8 @@ function scanExportArgs(args: string[]): ExportParseState {
     fpsArg: undefined,
     bitrate: undefined,
     durationMs: undefined,
-    loop: undefined,
+    iterations: undefined,
+    legacyLoop: undefined,
     formatExplicit: false,
     invalidFlagValues: [],
     valuelessFlagsWithValue: [],
@@ -530,7 +548,7 @@ function buildExportOptions(
     fpsArg: state.fpsArg,
     bitrate: state.bitrate,
     durationMs: state.durationMs,
-    loop: state.loop,
+    iterations: state.iterations,
     debug: state.debug,
     verbose: state.verbose,
     inspect: state.inspect,
@@ -678,6 +696,21 @@ function resolveFileExport(
 
 const defaultWriteStderr: StderrWriter = (message) => process.stderr.write(message);
 
+function legacyLoopMigrationError(format: ExportOutputFormat, loop: number): string {
+  if (format === "animated-webp") {
+    const replacement = loop === 0 ? "infinite" : String(loop);
+    return `Error: --loop was removed; animated-webp --loop ${loop} maps to --iterations ${replacement}\n`;
+  }
+  if (format === "gif") {
+    const replacement = loop === 0 ? "infinite" : String(loop + 1);
+    return `Error: --loop was removed; gif --loop ${loop} maps to --iterations ${replacement}\n`;
+  }
+  if (format === "mp4") {
+    return "Error: --loop was removed and does not apply to mp4 export; video has no play-count field\n";
+  }
+  return "Error: --loop was removed; use --iterations only with animated-webp or gif export\n";
+}
+
 /**
  * Parse export subcommand arguments.
  * `args` should already have `node`, script path, and `export` stripped.
@@ -711,11 +744,16 @@ export function parseExportArgs(
   }
   const { inputSource, outputTarget } = resolveExportIoSources(state);
 
-  if (inputSource === "stdin") {
-    return resolveStdinExport(state, outputTarget, writeStderr);
+  const parsed =
+    inputSource === "stdin"
+      ? resolveStdinExport(state, outputTarget, writeStderr)
+      : resolveFileExport(state, outputTarget, writeStderr);
+  if (parsed && state.legacyLoop !== undefined) {
+    writeStderr(legacyLoopMigrationError(parsed.options.format, state.legacyLoop));
+    printExportUsage(writeStderr);
+    return null;
   }
-
-  return resolveFileExport(state, outputTarget, writeStderr);
+  return parsed;
 }
 
 function printExportUsage(writeStderr: StderrWriter = defaultWriteStderr): void {
@@ -750,8 +788,8 @@ Options:
                                mp4 takes a whole number, 23.976 / 29.97 / 59.94, or a rational
                                  such as 30000/1001, up to 120fps (default: 30)
   --duration-ms <n>            Animation length for animated formats (required)
-  --loop <n>                   Animation loop count for animated formats, 0 = forever (default: 0)
-                                 (not accepted for mp4 — video has no loop count)
+  --iterations <n|infinite>    Total plays for animated-webp (1-65535) or gif (1-65536)
+                                 (default: infinite; not accepted for mp4)
   --bitrate <n>                Target bits per second for mp4 (default: constant quality)
   --dry-run                    Preview changes without writing files
   --watch                      Watch input files and re-export on change

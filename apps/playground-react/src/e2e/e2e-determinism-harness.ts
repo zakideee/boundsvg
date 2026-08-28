@@ -27,7 +27,7 @@ type DeterminismHarness = {
 
 // Must stay in sync with the Node golden suite
 // (packages/core/tests/determinism/golden.test.ts).
-const ANIMATED_SCHEDULE = { durationMs: 300, fps: 10 } as const;
+const ANIMATED_SCHEDULE = { durationMs: 300, fps: 10, iterations: "infinite" } as const;
 
 declare global {
   // biome-ignore lint/style/useConsistentTypeDefinitions: global augmentation requires interface

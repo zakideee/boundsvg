@@ -102,7 +102,7 @@ supported props and error codes.
   `timeMs` pose is uniform. Non-uniform scales that cancel only after ancestor
   composition are still rejected.
 - In a browser, the non-scaling width is pinned to the authored `borderWidth`
-  or `strokeWidth` multiplied by `RenderOptions.scale` CSS pixels. SVG and raster widths agree
+  or `strokeWidth` multiplied by the format-specific render option `scale` in CSS pixels. SVG and raster widths agree
   at the emitted SVG's intrinsic `width` and `height`; resizing that SVG with
   CSS does not scale its canvas-stable strokes.
 - Canvas-stable width reduces scale-driven stroke pulsing, but a translated
@@ -210,8 +210,10 @@ supported props and error codes.
   long; a smaller overshoot is unavoidable for most durations and is not
   reported, so one short frame inside a long animation can be stretched
   quietly.
-- Animated output is capped at 300 frames, per-frame durations at 1–60000 ms,
-  and loop counts at 0–65535 (0 loops forever).
+- Animated output is capped at 300 frames and per-frame durations at 1–60000
+  ms. Total plays are explicit: animated WebP accepts 1–65535, GIF accepts
+  1–65536, and both accept `"infinite"`. GIF stores finite total plays as one
+  fewer repeat and omits the repeat extension when the total is one.
 - Animated output is additionally capped at 256 MiB for the assembled file and
   64 MiB of characters for the sampled SVG frames.
 - Reading animated WebP or GIF is not supported. `<Image>` decodes still WebP

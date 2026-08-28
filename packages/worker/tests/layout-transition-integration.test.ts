@@ -22,6 +22,21 @@ type ActiveStream = {
   schedule: Array<{ index: number; timeMs: number }>;
 };
 
+function readWebpLoopField(webp: Uint8Array): number {
+  return new DataView(webp.buffer, webp.byteOffset + 42, 2).getUint16(0, true);
+}
+
+function readGifRepeatField(gif: Uint8Array): number | undefined {
+  const identifier = new TextEncoder().encode("NETSCAPE2.0");
+  const view = new DataView(gif.buffer, gif.byteOffset, gif.byteLength);
+  for (let offset = 0; offset + identifier.length + 4 < gif.length; offset++) {
+    if (identifier.every((byte, index) => gif[offset + index] === byte)) {
+      return view.getUint16(offset + identifier.length + 2, true);
+    }
+  }
+  return undefined;
+}
+
 /**
  * Executes real core operations behind the Worker request/response boundary.
  * Dedicated dispatch tests pin the worker-script switch; this fixture pins the
@@ -242,7 +257,7 @@ describe("portable layout transition through fixed Worker protocol families", ()
     const schedule = {
       timesMs,
       frameDurationsMs: [300, 400, 300, 100],
-      loop: 2,
+      iterations: 2,
     } as const;
 
     const webp = await workerEngine.renderLayoutTransitionToAnimatedWebp(
@@ -257,6 +272,8 @@ describe("portable layout transition through fixed Worker protocol families", ()
     expect(new TextDecoder().decode(webp.subarray(0, 4))).toBe("RIFF");
     expect(new TextDecoder().decode(webp.subarray(8, 12))).toBe("WEBP");
     expect(new TextDecoder().decode(gif.subarray(0, 6))).toBe("GIF89a");
+    expect(readWebpLoopField(webp)).toBe(2);
+    expect(readGifRepeatField(gif)).toBe(1);
     expect(coreWorker.compileCount).toBe(2);
     workerEngine.dispose();
   });
@@ -279,7 +296,7 @@ describe("portable layout transition through fixed Worker protocol families", ()
     const compiled = directEngine.compileLayoutTransition(transition);
     const expectedDigests = timesMs.map((timeMs) =>
       createHash("sha256")
-        .update(directEngine.renderCompiledToPng(compiled, { animation: "static", timeMs }))
+        .update(directEngine.renderCompiledToPng(compiled, { timeMs }))
         .digest("hex"),
     );
     expect(frames.map((frame) => frame.timeMs)).toEqual(timesMs);

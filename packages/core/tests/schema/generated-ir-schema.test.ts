@@ -398,14 +398,18 @@ describe("generated IR validator against real WASM output", () => {
     inputValidator = inputAjv.compile(inputSchema);
 
     engine = await createConformanceEngine();
-    const conformanceIr = CONFORMANCE_SCENES.map(
-      (scene) => engine.renderToSvgAndIR(scene.build(), scene.renderOptions).ir,
+    const conformanceIr = CONFORMANCE_SCENES.map((scene) =>
+      scene.animatedSvg
+        ? engine.renderToAnimatedSvgAndIR(scene.build(), {
+            ...scene.renderOptions,
+            playback: { mode: "independent" },
+          }).ir
+        : engine.renderToSvgAndIR(scene.build(), scene.renderOptions).ir,
     );
     const imageBytes = engine.renderToPng(
       createElement("Canvas", { width: 2, height: 2, background: "#336699" }),
     );
     const fullGraphIr = engine.renderToSvgAndIR(fullGraphScene(imageBytes), {
-      animation: "static",
       timeMs: 100,
     }).ir;
     actualCorpus = [...conformanceIr, fullGraphIr] as GeneratedOutputIr[];

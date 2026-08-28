@@ -72,7 +72,7 @@ function createContextValue(engine: Engine): BoundSvgContextValue {
     workerEngine: null,
     status: "ready",
     error: null,
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   };
 }
 

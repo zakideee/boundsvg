@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine } from "../../src/engine.js";
+import { FatalError } from "../../src/errors.js";
+import type { IRNode } from "../../src/ir/types.js";
 import { validate } from "../../src/validate/index.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
@@ -7,6 +10,55 @@ import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-
 
 let handle: WasmEngineHandle;
 let engine: Engine;
+
+type EmbeddedIdFixtureCase =
+  | { name: string; input: string; status: "ok"; output: string }
+  | { name: string; input: string; status: "error"; error: string };
+
+type EmbeddedIdFixture = {
+  prefix: string;
+  cases: EmbeddedIdFixtureCase[];
+};
+
+const embeddedIdFixture = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../../fixtures/conformance/embedded-svg-id-reference-cases.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as EmbeddedIdFixture;
+
+function findSvgContent(node: IRNode): string | undefined {
+  if (node.type === "svg") {
+    return node.svgContent;
+  }
+  for (const child of node.children ?? []) {
+    const content = findSvgContent(child);
+    if (content !== undefined) {
+      return content;
+    }
+  }
+  return undefined;
+}
+
+function embeddedSvgScene(
+  content: string,
+  contentIdPrefix?: string,
+): ReturnType<typeof createElement> {
+  return createElement(
+    "Canvas",
+    { width: 100, height: 100 },
+    createElement("Svg", {
+      id: "svg1",
+      content: `<svg viewBox="0 0 100 100">${content}</svg>`,
+      ...(contentIdPrefix !== undefined && { contentIdPrefix }),
+      width: 100,
+      height: 100,
+    }),
+  );
+}
 
 beforeAll(async () => {
   handle = await createFontedWasmHandle();
@@ -68,19 +120,7 @@ describe("contentIdPrefix rewrites <style> id selectors", () => {
       }),
     );
     const ir = engine.renderToIR(vnode);
-    const findSvg = (node: (typeof ir)["root"]): string | undefined => {
-      if (node.type === "svg") {
-        return node.svgContent;
-      }
-      for (const child of node.children ?? []) {
-        const found = findSvg(child);
-        if (found !== undefined) {
-          return found;
-        }
-      }
-      return undefined;
-    };
-    const content = findSvg(ir.root) ?? "";
+    const content = findSvgContent(ir.root) ?? "";
 
     // Element ids and url() references were already prefixed; the selector
     // rewrite is what used to be missing, detaching every style rule.
@@ -89,5 +129,49 @@ describe("contentIdPrefix rewrites <style> id selectors", () => {
     expect(content).toContain("#p-target {");
     expect(content).toContain("#p-target:hover");
     expect(content).not.toMatch(/#target[\s{:]/);
+  });
+
+  it("matches the shared reference rewrite fixture through real WASM", () => {
+    for (const fixtureCase of embeddedIdFixture.cases) {
+      if (fixtureCase.status === "error") {
+        continue;
+      }
+      const ir = engine.renderToIR(embeddedSvgScene(fixtureCase.input, embeddedIdFixture.prefix));
+
+      expect(findSvgContent(ir.root), fixtureCase.name).toBe(fixtureCase.output);
+    }
+  });
+
+  it("fails atomically with structured IR errors for unsupported local references", () => {
+    for (const fixtureCase of embeddedIdFixture.cases) {
+      if (fixtureCase.status === "ok") {
+        continue;
+      }
+      try {
+        engine.renderToIR(embeddedSvgScene(fixtureCase.input, embeddedIdFixture.prefix));
+        expect.unreachable(`${fixtureCase.name} should fail`);
+      } catch (error) {
+        expect(error, fixtureCase.name).toBeInstanceOf(FatalError);
+        expect(error, fixtureCase.name).toMatchObject({
+          code: fixtureCase.error,
+          stage: "ir",
+          nodeId: "svg1",
+        });
+      }
+    }
+  });
+
+  it("preserves bytes and bypasses structural scanning without a non-empty prefix", () => {
+    for (const fixtureCase of embeddedIdFixture.cases) {
+      const absent = engine.renderToIR(embeddedSvgScene(fixtureCase.input));
+      const empty = engine.renderToIR(embeddedSvgScene(fixtureCase.input, ""));
+
+      expect(findSvgContent(absent.root), `${fixtureCase.name}: absent prefix`).toBe(
+        fixtureCase.input,
+      );
+      expect(findSvgContent(empty.root), `${fixtureCase.name}: empty prefix`).toBe(
+        fixtureCase.input,
+      );
+    }
   });
 });

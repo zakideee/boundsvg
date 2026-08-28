@@ -242,15 +242,15 @@ describe("mp4 export flag validation", () => {
     expect(io.stderr.join("")).toContain("--fps for mp4 must be");
   });
 
-  it("refuses --loop, which video has no concept of", async () => {
+  it("refuses --iterations, which video has no play-count field", async () => {
     const io = createTestIo();
     const exitCode = await runExport(
       io,
-      exportArgs(join(workDir, "x.mp4"), ["--duration-ms", "100", "--loop", "3"]),
+      exportArgs(join(workDir, "x.mp4"), ["--duration-ms", "100", "--iterations", "3"]),
     );
 
     expect(exitCode).toBe(1);
-    expect(io.stderr.join("")).toContain("--loop does not apply to mp4 export");
+    expect(io.stderr.join("")).toContain("--iterations does not apply to mp4 export");
   });
 
   it("refuses a request past the frame ceiling", async () => {

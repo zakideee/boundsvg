@@ -378,33 +378,55 @@ node-level `animate` can still move/fade the complete decorated result.
 ## Output modes
 
 ```ts
-const animatedSvg = engine.renderToSvg(scene, {
-  animation: "declarative",
+const animatedSvg = engine.renderToAnimatedSvg(scene, {
+  playback: { mode: "independent" },
   timeMs: 0,
 });
 
 const stillSvg = engine.renderToSvg(scene, {
-  animation: "static",
   timeMs: 400,
 });
 
 const stillPng = engine.renderToPng(scene, {
-  animation: "static",
   timeMs: 400,
 });
 ```
 
-| Output                          | Behavior                                                                                                                    |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| SVG, `animation: "declarative"` | Default for SVG. Emits CSS `@keyframes` and starts viewer playback from `timeMs`.                                           |
-| SVG, `animation: "static"`      | Emits no animation CSS. Opacity and transform are baked into attributes at `timeMs`.                                        |
-| PNG / WebP                      | Always static. The engine samples the scene at `timeMs` before rasterization, even if `animation: "declarative"` is passed. |
-| Animated WebP / GIF             | Sampled at each frame time in the schedule; `animation` and `timeMs` do not apply.                                          |
+| Output                            | Behavior                                                                                             |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `renderToAnimatedSvg`             | Emits CSS `@keyframes`; required `playback: { mode: "independent" }` preserves every authored track. |
+| `renderToSvg`                     | Emits a static pose with no animation CSS. Animated input requires an explicit `timeMs`.             |
+| `renderToPng` / `renderToWebp`    | Samples a static pose at `timeMs`; SVG-only playback and namespace options are rejected.             |
+| `renderToAnimatedWebp` / `...Gif` | Samples the requested frame schedule; a required `iterations` controls total container plays.        |
 
-`timeMs` defaults to `0` and must be a non-negative finite number. When more
+`timeMs` must be a non-negative finite number. It is optional for nonanimated
+static input and selects the base pose of animated SVG output. When more
 than one generated SVG is embedded inline in the same document, give each one
-a stable, unique `resourceIdPrefix` to keep generated animation and resource
-identifiers separate.
+a stable `resourceIdPrefix`. The prefixes, after boundsvg's CSS-safe
+normalization, must be non-empty and pairwise prefix-free for generated
+animation names, classes, resources, and references to be guaranteed disjoint.
+For example, fixed-width scopes are suitable; `doc-` and `doc-clip-` are not,
+because the former is a prefix of the latter.
+
+The animated SVG method does not infer or synchronize a document duration.
+The 0.3 `AnimatedSvgPlayback` union supports only independent authored tracks;
+there is no `mode: "timeline"`, document `durationMs`, or document-level
+iteration option.
+
+### Migrating output-mode calls to 0.3
+
+Audit every no-option `renderToSvg(scene)` call whose scene may contain
+`animate` or `animateUnits`; choose either a deterministic static time or the
+animated entry point. Then migrate mechanically:
+
+- `renderToSvg(scene, { animation: "static", timeMs })` becomes
+  `renderToSvg(scene, { timeMs })`.
+- `renderToSvg(scene, { animation: "declarative", ... })` becomes
+  `renderToAnimatedSvg(scene, { playback: { mode: "independent" }, ... })`.
+- Remove `animation` from PNG/WebP calls and keep the explicit `timeMs`.
+- Make the same choice for `renderToSvgAndIR`, compiled methods, Worker calls,
+  React components, and hooks. Removed or artifact-incompatible own keys fail;
+  they are not silently projected away.
 
 ### Canvas-stable strokes
 
@@ -447,8 +469,11 @@ of a camera's post-layout scale while retaining normal layout and geometry:
 Declarative SVG uses the standard SVG non-scaling stroke behavior in viewers
 that support it. The same SVG also contains a deterministic `timeMs` fallback
 width for static renderers, so PNG, WebP, GIF, and sampled MP4 frames use the
-same canvas-space meaning. `RenderOptions.scale` remains an output-resolution
-multiplier: a 1 px canvas-space stroke produces 2 device pixels at scale 2.
+same canvas-space meaning. The render method's `scale` remains an
+output-resolution multiplier: a 1 px canvas-space stroke produces 2 device
+pixels at scale 2. For SVG, scale multiplies root `width` / `height` and the
+canvas-stroke restoration CSS width; it leaves `viewBox`, child geometry, and
+ordinary non-canvas-stroke attributes unchanged.
 
 Only similarity transforms are accepted for an ancestor of a canvas-stable
 stroke. Non-uniform scale, axis reflection, and dashed strokes fail explicitly
@@ -461,10 +486,10 @@ subpixel antialiasing changes.
 `timeMs` is part of the render input. Given the same scene, assets, boundsvg
 version, render options, and `timeMs`, static SVG and PNG bytes are reproducible.
 
-A declarative SVG also carries the sampled `timeMs` pose in ordinary SVG
+An animated SVG also carries the sampled `timeMs` pose in ordinary SVG
 attributes. A static renderer such as resvg ignores the animation CSS and sees
 that **base pose**. Rasterizing it produces the same PNG bytes as
-`renderToPng(scene, { animation: "static", timeMs })`.
+`renderToPng(scene, { timeMs })`.
 
 ## What is not guaranteed
 
@@ -480,7 +505,10 @@ that block the animation style show the `timeMs` base-pose still image instead.
 render started:
 
 ```ts
-engine.renderToSvg(scene, { animation: "declarative", reducedMotion: "pause" });
+engine.renderToAnimatedSvg(scene, {
+  playback: { mode: "independent" },
+  reducedMotion: "pause",
+});
 ```
 
 ```css
@@ -502,35 +530,36 @@ option and one that passes `"keep"` produce identical bytes. Opting in is
 deliberate: the extra CSS changes the output, and the determinism contract makes
 that the caller's choice rather than a silent default.
 
-Nothing is emitted in static mode, which has no animation CSS to pause.
+Static SVG has no animation CSS and does not accept `reducedMotion`.
 
 The application embedding the SVG may prefer to own the policy instead. Render a
 representative poster frame in static mode when reduced motion is requested:
 
 ```tsx
-const renderOptions = prefersReducedMotion
-  ? { animation: "static" as const, timeMs: 400 }
-  : { animation: "declarative" as const, timeMs: 0 };
-
-<BoundSvg vnode={scene} renderOptions={renderOptions} />;
+return prefersReducedMotion ? (
+  <BoundSvg vnode={scene} renderOptions={{ timeMs: 400 }} />
+) : (
+  <AnimatedBoundSvg
+    vnode={scene}
+    renderOptions={{ playback: { mode: "independent" }, timeMs: 0 }}
+  />
+);
 ```
 
 ## Sampling, IR, and compiled scenes
 
 `renderToIR(scene, { timeMs })` always returns the pose sampled at `timeMs` plus
-the semantic `animation` track. Its `animation` render option does not select a
-different IR mode; only `timeMs` changes the sampled pose. Pause an editor at a
+the semantic `animation` track. Only `timeMs` changes the sampled pose. Pause an editor at a
 fixed time, request a new IR, and use that IR for hit-testing or selection.
 
 `compile(scene)` keeps the raw animation track. Each
-`renderCompiledToSvg`/`renderCompiledToPng` call samples that immutable compiled
-scene at its own `timeMs`, so one layout can produce many deterministic frames.
+static compiled call samples that immutable compiled scene at its own `timeMs`,
+while `renderCompiledToAnimatedSvg` preserves independent playback.
 
 ```ts
 const compiled = engine.compile(scene);
 const frames = [0, 100, 200, 300].map((timeMs) =>
   engine.renderCompiledToPng(compiled, {
-    animation: "static",
     timeMs,
   }),
 );
@@ -561,7 +590,9 @@ pending/buffered results by concurrency, and supports `AbortSignal`. See the
 [`@boundsvg/worker` API](/api/worker).
 
 `renderToAnimatedWebp` and `renderToAnimatedGif` package the same sampling into
-a single animated file — see [PNG, WebP & GIF Export](/guides/png-export).
+a single animated file. Their required `iterations` option controls total
+container plays independently of each node animation's own iteration setting —
+see [PNG, WebP & GIF Export](/guides/png-export).
 There is still no APNG API; for MP4 see [Video Export](/guides/video-export),
 or pass sampled PNG frames to an external encoder for any other movie format.
 

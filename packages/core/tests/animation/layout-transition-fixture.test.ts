@@ -402,14 +402,12 @@ describe("portable layout transition fixture", () => {
     expect(Object.keys(compiled).sort()).toEqual(["height", "ir", "textPathMode", "width"]);
     expect(compiled.width).toBe(PORTABLE_LAYOUT_TRANSITION_CANVAS.width);
     expect(compiled.height).toBe(PORTABLE_LAYOUT_TRANSITION_CANVAS.height);
-    expect(engine.renderCompiledToSvg(compiled, { animation: "static", timeMs: 0 })).toContain(
+    expect(engine.renderCompiledToSvg(compiled, { timeMs: 0 })).toContain(
       '<svg xmlns="http://www.w3.org/2000/svg"',
     );
-    expect(
-      Array.from(
-        engine.renderCompiledToPng(compiled, { animation: "static", timeMs: 0 }).slice(0, 8),
-      ),
-    ).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    expect(Array.from(engine.renderCompiledToPng(compiled, { timeMs: 0 }).slice(0, 8))).toEqual([
+      137, 80, 78, 71, 13, 10, 26, 10,
+    ]);
   });
 
   it("renders transition CompiledScene checkpoints through compiled SVG and PNG frames", () => {
@@ -425,13 +423,13 @@ describe("portable layout transition fixture", () => {
         index,
         timeMs,
         format: "svg",
-        data: engine.renderCompiledToSvg(compiled, { animation: "static", timeMs }),
+        data: engine.renderCompiledToSvg(compiled, { timeMs }),
       });
       expect(pngFrames[index]).toEqual({
         index,
         timeMs,
         format: "png",
-        data: engine.renderCompiledToPng(compiled, { animation: "static", timeMs }),
+        data: engine.renderCompiledToPng(compiled, { timeMs }),
       });
     }
   });
@@ -542,7 +540,9 @@ describe("portable layout transition fixture", () => {
 
   it("emits generated outer and authored inner animations in declarative SVG", () => {
     const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput());
-    const declarativeSvg = engine.renderCompiledToSvg(compiled, { animation: "declarative" });
+    const declarativeSvg = engine.renderCompiledToAnimatedSvg(compiled, {
+      playback: { mode: "independent" },
+    });
 
     expect(declarativeSvg).toContain(
       'data-boundsvg-node-id="__boundsvg:layout-transition-wrapper:7:tail"',
@@ -575,7 +575,6 @@ describe("portable layout transition fixture", () => {
     const layered = renderLayeredSvg({
       ir: compiled.ir,
       sourceNodeMap,
-      options: { animation: "declarative" },
       emitLayerSvg: (layerIr) => JSON.stringify(layerIr),
     });
 
@@ -624,7 +623,6 @@ describe("portable layout transition fixture", () => {
     const layered = renderLayeredSvg({
       ir: compiled.ir,
       sourceNodeMap,
-      options: { animation: "declarative" },
       emitLayerSvg: (layerIr) => JSON.stringify(layerIr),
     });
 
@@ -795,14 +793,10 @@ describe("portable layout transition fixture", () => {
   it("allows uniform generated scale for canvas-stable stroke and rejects non-uniform scale", () => {
     for (const kind of ["box", "path"] as const) {
       const uniform = engine.compileLayoutTransition(createCanvasStrokeTransition(80, 80, kind));
-      expect(engine.renderCompiledToSvg(uniform, { animation: "static", timeMs: 300 })).toContain(
-        'stroke="#ffffff"',
-      );
-      expect(
-        Array.from(
-          engine.renderCompiledToPng(uniform, { animation: "static", timeMs: 300 }).slice(0, 8),
-        ),
-      ).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+      expect(engine.renderCompiledToSvg(uniform, { timeMs: 300 })).toContain('stroke="#ffffff"');
+      expect(Array.from(engine.renderCompiledToPng(uniform, { timeMs: 300 }).slice(0, 8))).toEqual([
+        137, 80, 78, 71, 13, 10, 26, 10,
+      ]);
 
       let thrown: unknown;
       try {
@@ -847,9 +841,9 @@ describe("portable layout transition fixture", () => {
     expect(authoredChild.type === "group" ? authoredChild.transform : undefined).toMatchObject({
       translateX: 3,
     });
-    expect(
-      engine.renderCompiledToSvg(cancelledWorldScale, { animation: "static", timeMs: 300 }),
-    ).toContain('data-boundsvg-node-id="residual-child"');
+    expect(engine.renderCompiledToSvg(cancelledWorldScale, { timeMs: 300 })).toContain(
+      'data-boundsvg-node-id="residual-child"',
+    );
 
     let thrown: unknown;
     try {

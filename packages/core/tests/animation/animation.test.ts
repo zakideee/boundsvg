@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Engine } from "../../src/engine.js";
+import type { Engine, RenderSvgOptions } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
 import type { IRNode } from "../../src/ir/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
@@ -164,12 +164,11 @@ describe("declarative animation v1", () => {
   });
 
   it("emits semantic CSS only in declarative mode", () => {
-    const declarative = engine.renderToSvg(nativeAnimatedScene.build(), {
-      animation: "declarative",
+    const declarative = engine.renderToAnimatedSvg(nativeAnimatedScene.build(), {
+      playback: { mode: "independent" },
       timeMs: 600,
     });
     const sampled = engine.renderToSvg(nativeAnimatedScene.build(), {
-      animation: "static",
       timeMs: 600,
     });
 
@@ -182,8 +181,8 @@ describe("declarative animation v1", () => {
   });
 
   it("serializes resource ids as CSS identifiers without changing class tokens", () => {
-    const svg = engine.renderToSvg(nativeAnimatedScene.build(), {
-      animation: "declarative",
+    const svg = engine.renderToAnimatedSvg(nativeAnimatedScene.build(), {
+      playback: { mode: "independent" },
       resourceIdPrefix: "scope:one.",
     });
 
@@ -204,16 +203,16 @@ describe("declarative animation v1", () => {
     expect(stepBoxOpacity(engine, easing, 100)).toBeCloseTo(1 / 3);
     expect(stepBoxOpacity(engine, easing, 150)).toBeCloseTo(2 / 3);
 
-    const defaultPositionSvg = engine.renderToSvg(stepScene({ type: "steps", count: 4 }), {
-      animation: "declarative",
+    const defaultPositionSvg = engine.renderToAnimatedSvg(stepScene({ type: "steps", count: 4 }), {
+      playback: { mode: "independent" },
       timeMs: 100,
     });
-    const keywordSvg = engine.renderToSvg(stepScene("step-start"), {
-      animation: "declarative",
+    const keywordSvg = engine.renderToAnimatedSvg(stepScene("step-start"), {
+      playback: { mode: "independent" },
       timeMs: 100,
     });
-    const largeCountSvg = engine.renderToSvg(stepScene({ type: "steps", count: 1e21 }), {
-      animation: "declarative",
+    const largeCountSvg = engine.renderToAnimatedSvg(stepScene({ type: "steps", count: 1e21 }), {
+      playback: { mode: "independent" },
       timeMs: 100,
     });
     expect(defaultPositionSvg).toContain("animation-timing-function: steps(4, jump-end);");
@@ -223,8 +222,8 @@ describe("declarative animation v1", () => {
     );
 
     const compiled = engine.compile(stepScene(easing));
-    expect(engine.renderCompiledToSvg(compiled, { animation: "static", timeMs: 150 })).toBe(
-      engine.renderToSvg(stepScene(easing), { animation: "static", timeMs: 150 }),
+    expect(engine.renderCompiledToSvg(compiled, { timeMs: 150 })).toBe(
+      engine.renderToSvg(stepScene(easing), { timeMs: 150 }),
     );
   });
 
@@ -232,18 +231,20 @@ describe("declarative animation v1", () => {
     99, 100, 150, 200,
   ])("rasterizes declarative steps identically to static PNG at timeMs=%i", (timeMs) => {
     const scene = stepScene({ type: "steps", count: 2, position: "jump-both" });
-    const declarativeSvg = engine.renderToSvg(scene, { animation: "declarative", timeMs });
-    expect(rasterize(declarativeSvg)).toEqual(
-      engine.renderToPng(scene, { animation: "static", timeMs }),
-    );
+    const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
+      timeMs,
+    });
+    expect(rasterize(declarativeSvg)).toEqual(engine.renderToPng(scene, { timeMs }));
   });
 
   it("keeps the declarative SVG base pose identical to static output at an exact boundary", () => {
     const scene = stepBoundaryScene();
-    const declarativeSvg = engine.renderToSvg(scene, { animation: "declarative", timeMs: 150 });
-    expect(rasterize(declarativeSvg)).toEqual(
-      engine.renderToPng(scene, { animation: "static", timeMs: 150 }),
-    );
+    const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
+      timeMs: 150,
+    });
+    expect(rasterize(declarativeSvg)).toEqual(engine.renderToPng(scene, { timeMs: 150 }));
     const node = findNode(engine.renderToIR(scene, { timeMs: 150 }).root, "step-boundary-box");
     expect(node?.type === "group" ? node.opacity : undefined).toBe(0.4);
   });
@@ -271,16 +272,20 @@ describe("declarative animation v1", () => {
 
   it("is byte-deterministic for the same scene and time and changes PNG across times", () => {
     const scene = nativeAnimatedScene.build();
-    const firstSvg = engine.renderToSvg(scene, { animation: "declarative", timeMs: 600 });
-    const secondSvg = engine.renderToSvg(scene, { animation: "declarative", timeMs: 600 });
-    const startPng = engine.renderToPng(scene, { animation: "static", timeMs: 0 });
-    const middlePng = engine.renderToPng(scene, { animation: "static", timeMs: 600 });
+    const firstSvg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
+      timeMs: 600,
+    });
+    const secondSvg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
+      timeMs: 600,
+    });
+    const startPng = engine.renderToPng(scene, { timeMs: 0 });
+    const middlePng = engine.renderToPng(scene, { timeMs: 600 });
 
     expect(secondSvg).toBe(firstSvg);
     expect(sha256(middlePng)).not.toBe(sha256(startPng));
-    expect(sha256(engine.renderToPng(scene, { animation: "static", timeMs: 600 }))).toBe(
-      sha256(middlePng),
-    );
+    expect(sha256(engine.renderToPng(scene, { timeMs: 600 }))).toBe(sha256(middlePng));
   });
 
   it("retains raw tracks in CompiledScene and samples them at each emit", () => {
@@ -295,9 +300,12 @@ describe("declarative animation v1", () => {
     expect(rawCard.opacity).toBeUndefined();
     expect(rawCard.transform).toBeUndefined();
 
-    expect(engine.renderCompiledToSvg(compiled, { animation: "declarative", timeMs: 600 })).toBe(
-      engine.renderToSvg(scene, { animation: "declarative", timeMs: 600 }),
-    );
+    expect(
+      engine.renderCompiledToAnimatedSvg(compiled, {
+        playback: { mode: "independent" },
+        timeMs: 600,
+      }),
+    ).toBe(engine.renderToAnimatedSvg(scene, { playback: { mode: "independent" }, timeMs: 600 }));
     expect(engine.renderCompiledToPng(compiled, { timeMs: 600 })).toEqual(
       engine.renderToPng(scene, { timeMs: 600 }),
     );
@@ -307,19 +315,18 @@ describe("declarative animation v1", () => {
     0, 600, 1400,
   ])("rasterizes declarative SVG identically to static PNG at timeMs=%i", (timeMs) => {
     const scene = nativeAnimatedScene.build();
-    const declarativeSvg = engine.renderToSvg(scene, {
-      animation: "declarative",
+    const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
       timeMs,
     });
     const declarativePng = rasterize(declarativeSvg);
-    const staticPng = engine.renderToPng(scene, { animation: "static", timeMs });
+    const staticPng = engine.renderToPng(scene, { timeMs });
 
     expect(declarativePng).toEqual(staticPng);
   });
 
   it("marks layered manifests with animation sampling metadata", () => {
     const result = engine.renderToLayeredSvg(nativeAnimatedScene.build(), {
-      animation: "static",
       timeMs: 600,
     });
 
@@ -327,7 +334,7 @@ describe("declarative animation v1", () => {
     expect(result.manifest.timeMs).toBe(600);
   });
 
-  it("projects an animated ancestor into every independent layer", () => {
+  it("samples an animated ancestor into every static layer", () => {
     const scene = createElement(
       "Canvas",
       { width: 120, height: 60 },
@@ -365,8 +372,8 @@ describe("declarative animation v1", () => {
     const result = engine.renderToLayeredSvg(scene, { timeMs: 250 });
     expect(result.layers.map((layer) => layer.id)).toEqual(["a", "b"]);
     for (const layer of result.layers) {
-      expect(layer.svg).toContain("@keyframes anim-animated-parent-keyframes");
-      expect(layer.svg).toContain('class="bsvg-anim-animated-parent"');
+      expect(layer.svg).not.toContain("@keyframes");
+      expect(layer.svg).not.toContain('class="bsvg-anim-animated-parent"');
     }
   });
 
@@ -420,16 +427,16 @@ describe("declarative animation v1", () => {
 
   it.each([
     { animation: "invalid" as "static", timeMs: 0 },
-    { animation: "static" as const, timeMs: -1 },
-    { animation: "static" as const, timeMs: Number.NaN },
+    { timeMs: -1 },
+    { timeMs: Number.NaN },
   ])("rejects invalid render timeline options", (options) => {
     expect(() => engine.renderToSvg(nativeAnimatedScene.build(), options)).toThrow(FatalError);
   });
 
   describe("spring easing", () => {
     it("expands spring easing into a CSS linear() timing function", () => {
-      const svg = engine.renderToSvg(springScene({ type: "spring" }), {
-        animation: "declarative",
+      const svg = engine.renderToAnimatedSvg(springScene({ type: "spring" }), {
+        playback: { mode: "independent" },
         timeMs: 0,
       });
       const timingFunction = /animation-timing-function: (linear\([^)]*\));/.exec(svg)?.[1];
@@ -444,8 +451,8 @@ describe("declarative animation v1", () => {
       // emitter.rs only pins the host libm. This pins the wasm32 build at full
       // precision; the conformance SVG snapshot rounds to two decimals and
       // cannot catch a last-digit drift.
-      const svg = engine.renderToSvg(springScene({ type: "spring" }), {
-        animation: "declarative",
+      const svg = engine.renderToAnimatedSvg(springScene({ type: "spring" }), {
+        playback: { mode: "independent" },
         timeMs: 0,
       });
       const timingFunction = /animation-timing-function: (linear\([^)]*\));/.exec(svg)?.[1];
@@ -539,19 +546,20 @@ describe("declarative animation v1", () => {
       // ...while opacity stays inside the range its own validation enforces.
       expect(node?.type === "group" ? node.opacity : undefined).toBe(1);
 
-      const declarativeSvg = engine.renderToSvg(scene, { animation: "declarative", timeMs });
+      const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+        playback: { mode: "independent" },
+        timeMs,
+      });
       expect(declarativeSvg).not.toMatch(/opacity="1\.\d+"/);
-      expect(rasterize(declarativeSvg)).toEqual(
-        engine.renderToPng(scene, { animation: "static", timeMs }),
-      );
+      expect(rasterize(declarativeSvg)).toEqual(engine.renderToPng(scene, { timeMs }));
     });
 
     it("declares a linear fallback before the linear() curve", () => {
       // A viewer without linear() support drops that declaration at parse time.
       // Without a preceding one the property would revert to `ease`; ordering
       // these two degrades the spring to straight interpolation instead.
-      const svg = engine.renderToSvg(springScene({ type: "spring" }), {
-        animation: "declarative",
+      const svg = engine.renderToAnimatedSvg(springScene({ type: "spring" }), {
+        playback: { mode: "independent" },
         timeMs: 0,
       });
       const declarations = [...svg.matchAll(/animation-timing-function: ([^;]*);/g)].map(
@@ -564,8 +572,8 @@ describe("declarative animation v1", () => {
     });
 
     it("emits no fallback declaration for non-spring easing", () => {
-      const svg = engine.renderToSvg(springScene({ type: "steps", count: 4 }), {
-        animation: "declarative",
+      const svg = engine.renderToAnimatedSvg(springScene({ type: "steps", count: 4 }), {
+        playback: { mode: "independent" },
         timeMs: 0,
       });
       const declarations = [...svg.matchAll(/animation-timing-function: ([^;]*);/g)];
@@ -575,8 +583,8 @@ describe("declarative animation v1", () => {
 
     it("keeps declarative spring output byte identical across renders", () => {
       const render = () =>
-        engine.renderToSvg(springScene({ type: "spring", stiffness: 170, damping: 14 }), {
-          animation: "declarative",
+        engine.renderToAnimatedSvg(springScene({ type: "spring", stiffness: 170, damping: 14 }), {
+          playback: { mode: "independent" },
           timeMs: 0,
         });
       expect(render()).toBe(render());
@@ -606,8 +614,8 @@ describe("declarative animation v1", () => {
     it("derives the emitted linear() from the first authored segment", () => {
       const timing = (offsets: readonly number[]) =>
         /animation-timing-function: (linear\([^)]*\));/.exec(
-          engine.renderToSvg(springKeyframeScene(offsets, { type: "spring" }), {
-            animation: "declarative",
+          engine.renderToAnimatedSvg(springKeyframeScene(offsets, { type: "spring" }), {
+            playback: { mode: "independent" },
             timeMs: 0,
           }),
         )?.[1];
@@ -623,10 +631,11 @@ describe("declarative animation v1", () => {
       0, 120, 400, 900,
     ])("keeps the declarative spring base pose identical to static PNG at timeMs=%i", (timeMs) => {
       const scene = springScene({ type: "spring", stiffness: 170, damping: 14 });
-      const declarativeSvg = engine.renderToSvg(scene, { animation: "declarative", timeMs });
-      expect(rasterize(declarativeSvg)).toEqual(
-        engine.renderToPng(scene, { animation: "static", timeMs }),
-      );
+      const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+        playback: { mode: "independent" },
+        timeMs,
+      });
+      expect(rasterize(declarativeSvg)).toEqual(engine.renderToPng(scene, { timeMs }));
     });
 
     it.each([
@@ -639,21 +648,21 @@ describe("declarative animation v1", () => {
       { type: "spring", stiffness: Number.NaN },
       { type: "spring", stiffness: Number.POSITIVE_INFINITY },
     ] as const)("rejects out-of-range spring parameters (%o)", (easing) => {
-      expect(() => engine.renderToSvg(springScene(easing), { animation: "declarative" })).toThrow(
-        FatalError,
-      );
+      expect(() =>
+        engine.renderToAnimatedSvg(springScene(easing), { playback: { mode: "independent" } }),
+      ).toThrow(FatalError);
     });
 
     it("rejects unknown spring keys", () => {
       const easing = { type: "spring", velocity: 2 } as unknown as AnimationEasing;
-      expect(() => engine.renderToSvg(springScene(easing), { animation: "declarative" })).toThrow(
-        FatalError,
-      );
+      expect(() =>
+        engine.renderToAnimatedSvg(springScene(easing), { playback: { mode: "independent" } }),
+      ).toThrow(FatalError);
     });
 
     it("still accepts steps easing objects", () => {
-      const svg = engine.renderToSvg(springScene({ type: "steps", count: 4 }), {
-        animation: "declarative",
+      const svg = engine.renderToAnimatedSvg(springScene({ type: "steps", count: 4 }), {
+        playback: { mode: "independent" },
         timeMs: 0,
       });
       expect(svg).toContain("animation-timing-function: steps(4, jump-end);");
@@ -664,11 +673,14 @@ describe("declarative animation v1", () => {
 
     it("leaves output byte identical when unspecified or explicitly kept", () => {
       const scene = () => nativeAnimatedScene.build();
-      const base = engine.renderToSvg(scene(), { animation: "declarative", timeMs: 250 });
+      const base = engine.renderToAnimatedSvg(scene(), {
+        playback: { mode: "independent" },
+        timeMs: 250,
+      });
 
       expect(
-        engine.renderToSvg(scene(), {
-          animation: "declarative",
+        engine.renderToAnimatedSvg(scene(), {
+          playback: { mode: "independent" },
           timeMs: 250,
           reducedMotion: "keep",
         }),
@@ -677,8 +689,8 @@ describe("declarative animation v1", () => {
     });
 
     it("appends exactly one media block covering every animated class", () => {
-      const svg = engine.renderToSvg(nativeAnimatedScene.build(), {
-        animation: "declarative",
+      const svg = engine.renderToAnimatedSvg(nativeAnimatedScene.build(), {
+        playback: { mode: "independent" },
         timeMs: 250,
         reducedMotion: "pause",
       });
@@ -700,8 +712,8 @@ describe("declarative animation v1", () => {
     });
 
     it("keeps the pause block inside the single style element", () => {
-      const svg = engine.renderToSvg(nativeAnimatedScene.build(), {
-        animation: "declarative",
+      const svg = engine.renderToAnimatedSvg(nativeAnimatedScene.build(), {
+        playback: { mode: "independent" },
         reducedMotion: "pause",
       });
       const styleBlocks = svg.match(/<style>/g) ?? [];
@@ -740,7 +752,10 @@ describe("declarative animation v1", () => {
           "AB",
         ),
       );
-      const svg = engine.renderToSvg(scene, { animation: "declarative", reducedMotion: "pause" });
+      const svg = engine.renderToAnimatedSvg(scene, {
+        playback: { mode: "independent" },
+        reducedMotion: "pause",
+      });
       const selectors = /@media \(prefers-reduced-motion: reduce\) \{\s*\n\s*([^\n]*?) \{/.exec(
         svg,
       )?.[1];
@@ -749,22 +764,21 @@ describe("declarative animation v1", () => {
       expect(selectors?.split(", ")).toHaveLength(2);
     });
 
-    it("emits nothing extra in static mode, which has no CSS to pause", () => {
-      const svg = engine.renderToSvg(nativeAnimatedScene.build(), {
-        animation: "static",
-        reducedMotion: "pause",
-      });
-
-      expect(svg).not.toContain(REDUCED_MOTION_BLOCK);
-      expect(svg).not.toContain("<style>");
+    it("rejects reducedMotion on the static SVG entry point", () => {
+      expect(() =>
+        engine.renderToSvg(nativeAnimatedScene.build(), {
+          timeMs: 0,
+          reducedMotion: "pause",
+        } as unknown as RenderSvgOptions),
+      ).toThrow(expect.objectContaining({ code: "UNSUPPORTED_RENDER_OPTION" }));
     });
 
     it("honors reducedMotion through the compiled emit path", () => {
-      // EmitOptions declares and validates reducedMotion, so it must not be
+      // Animated SVG emit options declare reducedMotion, so it must not be
       // dropped on the way to the emitter.
       const compiled = engine.compile(nativeAnimatedScene.build());
-      const svg = engine.renderCompiledToSvg(compiled, {
-        animation: "declarative",
+      const svg = engine.renderCompiledToAnimatedSvg(compiled, {
+        playback: { mode: "independent" },
         timeMs: 200,
         reducedMotion: "pause",
       });
@@ -776,20 +790,19 @@ describe("declarative animation v1", () => {
       // The whole safety argument for `animation: none` is the base pose
       // invariant, so pin it with the block present.
       const scene = nativeAnimatedScene.build();
-      const declarativeSvg = engine.renderToSvg(scene, {
-        animation: "declarative",
+      const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+        playback: { mode: "independent" },
         timeMs: 250,
         reducedMotion: "pause",
       });
 
-      expect(rasterize(declarativeSvg)).toEqual(
-        engine.renderToPng(scene, { animation: "static", timeMs: 250 }),
-      );
+      expect(rasterize(declarativeSvg)).toEqual(engine.renderToPng(scene, { timeMs: 250 }));
     });
 
     it("rejects an unknown reducedMotion mode", () => {
       expect(() =>
-        engine.renderToSvg(nativeAnimatedScene.build(), {
+        engine.renderToAnimatedSvg(nativeAnimatedScene.build(), {
+          playback: { mode: "independent" },
           reducedMotion: "off" as "keep",
         }),
       ).toThrow(FatalError);
@@ -911,7 +924,7 @@ describe("declarative animation v1", () => {
           },
         }),
       );
-      const svg = engine.renderToSvg(scene, { animation: "static", timeMs: 400 });
+      const svg = engine.renderToSvg(scene, { timeMs: 400 });
       const attr = /data-boundsvg-node-id="card" transform="([^"]*)"/.exec(svg)?.[1];
       const rotate = /rotate\(([-\d.]+) ([-\d.]+) ([-\d.]+)\)/.exec(attr ?? "");
       const scale = /scale\(([-\d.]+) ([-\d.]+)\)/.exec(attr ?? "");

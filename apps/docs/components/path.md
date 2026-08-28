@@ -42,13 +42,13 @@ node's layout box.
 ::: info
 Set `strokeScaling="canvas"` to keep a solid Path stroke at its authored
 canvas-space width under ancestor translation, rotation, and uniform scale.
-Declarative SVG uses `vector-effect: non-scaling-stroke`; static SVG and raster
-formats use a deterministic fallback sampled at `timeMs`. `RenderOptions.scale`
-remains an output-resolution multiplier. Dashed strokes, non-uniform scale, and
+Animated SVG uses `vector-effect: non-scaling-stroke`; static SVG and raster
+formats use a deterministic fallback sampled at `timeMs`. The format-specific
+render option `scale` remains an output-resolution multiplier. Dashed strokes, non-uniform scale, and
 axis reflection fail explicitly rather than being approximated.
 
-The Path viewport clips paint at its `width` / `height` edges in both
-declarative SVG and static/raster output. A canvas-stable stroke can therefore
+The Path viewport clips paint at its `width` / `height` edges in both animated
+SVG and static/raster output. A canvas-stable stroke can therefore
 meet the clip under a uniform scale below `1`; inset the path geometry or
 enlarge the viewport when edge strokes need additional clearance.
 :::

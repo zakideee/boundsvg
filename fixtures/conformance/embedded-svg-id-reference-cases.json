@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "prefix": "p-",
+  "cases": [
+    {
+      "name": "exact-id-and-entity-equivalence",
+      "input": "<g id = 'alpha'/><g data-id=\"alpha\" data-boundsvg-node-id=\"alpha\" ID=\"alpha\"/><g id=\"a&#108;pha\"/><g id=\"a&amp;b\"/><use href=\"#a&#38;b\"/>",
+      "status": "ok",
+      "definitions": ["alpha", "alpha", "a&b"],
+      "references": [{ "attribute": "href", "kind": "href", "syntax": "fragment", "id": "a&b" }],
+      "output": "<g id = 'p-alpha'/><g data-id=\"alpha\" data-boundsvg-node-id=\"alpha\" ID=\"alpha\"/><g id=\"p-a&#108;pha\"/><g id=\"p-a&amp;b\"/><use href=\"#p-a&#38;b\"/>"
+    },
+    {
+      "name": "structural-false-positives-and-href",
+      "input": "<!-- <g id=\"x\" href=\"#x\" style=\"fill:url(#x)\"/> --><![CDATA[<g id=\"x\" href=\"#x\"/>]]><metadata>id=\"x\" href=\"#x\" url(#x)</metadata><path id=\"x\"/><use data-href=\"#x\" data-fill=\"url(#x)\" href = \"#x\"/><use xlink:href='#x'/><use href=\"other.svg#x\"/><use href=\"#unknown\"/>",
+      "status": "ok",
+      "definitions": ["x"],
+      "references": [
+        { "attribute": "href", "kind": "href", "syntax": "fragment", "id": "x" },
+        { "attribute": "xlink:href", "kind": "xlink:href", "syntax": "fragment", "id": "x" }
+      ],
+      "output": "<!-- <g id=\"x\" href=\"#x\" style=\"fill:url(#x)\"/> --><![CDATA[<g id=\"x\" href=\"#x\"/>]]><metadata>id=\"x\" href=\"#x\" url(#x)</metadata><path id=\"p-x\"/><use data-href=\"#x\" data-fill=\"url(#x)\" href = \"#p-x\"/><use xlink:href='#p-x'/><use href=\"other.svg#x\"/><use href=\"#unknown\"/>"
+    },
+    {
+      "name": "url-style-attribute-and-style-body",
+      "input": "<defs><linearGradient id=\"paint\"/></defs><rect id=\"target\" fill=\"url(#paint)\" stroke='url( \"#paint\" )' style=\"filter: url( #paint ); color:#paint\"/><style>/* #target url(#paint) */ #target:hover { fill: url('#paint'); color:#target } .keep { fill: url(#unknown) }</style>",
+      "status": "ok",
+      "definitions": ["paint", "target"],
+      "references": [
+        { "attribute": "fill", "kind": "url", "syntax": "url", "id": "paint" },
+        { "attribute": "stroke", "kind": "url", "syntax": "url", "id": "paint" },
+        { "attribute": "style", "kind": "url", "syntax": "url", "id": "paint" },
+        { "attribute": "style", "kind": "css-selector", "syntax": "id-selector", "id": "target" },
+        { "attribute": "style", "kind": "url", "syntax": "url", "id": "paint" }
+      ],
+      "output": "<defs><linearGradient id=\"p-paint\"/></defs><rect id=\"p-target\" fill=\"url(#p-paint)\" stroke='url( \"#p-paint\" )' style=\"filter: url( #p-paint ); color:#paint\"/><style>/* #target url(#paint) */ #p-target:hover { fill: url('#p-paint'); color:#target } .keep { fill: url(#unknown) }</style>"
+    },
+    {
+      "name": "aria-single-list-and-entity-equivalence",
+      "input": "<g id=\"active\"/><g id=\"detail\"/><g id=\"label&#x2d;a\"/><g aria-activedescendant = \"active\" aria-details='detail' aria-errormessage=\"unknown\"/><g aria-controls=\"active  unknown\" aria-describedby=\"detail\tunknown\" aria-flowto=\"active\" aria-labelledby = \"label-a   label&#x2d;a unknown\" aria-owns=\"detail active\" data-aria-labelledby=\"label-a\"/>",
+      "status": "ok",
+      "definitions": ["active", "detail", "label-a"],
+      "references": [
+        {
+          "attribute": "aria-activedescendant",
+          "kind": "aria",
+          "syntax": "single",
+          "id": "active"
+        },
+        { "attribute": "aria-details", "kind": "aria", "syntax": "single", "id": "detail" },
+        { "attribute": "aria-controls", "kind": "aria", "syntax": "list", "id": "active" },
+        { "attribute": "aria-describedby", "kind": "aria", "syntax": "list", "id": "detail" },
+        { "attribute": "aria-flowto", "kind": "aria", "syntax": "list", "id": "active" },
+        { "attribute": "aria-labelledby", "kind": "aria", "syntax": "list", "id": "label-a" },
+        { "attribute": "aria-labelledby", "kind": "aria", "syntax": "list", "id": "label-a" },
+        { "attribute": "aria-owns", "kind": "aria", "syntax": "list", "id": "detail" },
+        { "attribute": "aria-owns", "kind": "aria", "syntax": "list", "id": "active" }
+      ],
+      "output": "<g id=\"p-active\"/><g id=\"p-detail\"/><g id=\"p-label&#x2d;a\"/><g aria-activedescendant = \"p-active\" aria-details='p-detail' aria-errormessage=\"unknown\"/><g aria-controls=\"p-active  unknown\" aria-describedby=\"p-detail\tunknown\" aria-flowto=\"p-active\" aria-labelledby = \"p-label-a   p-label&#x2d;a unknown\" aria-owns=\"p-detail p-active\" data-aria-labelledby=\"label-a\"/>"
+    },
+    {
+      "name": "smil-supported-forms",
+      "input": "<g id=\"clock\"/><g id=\"media\"/><g id=\"a.b\"/><g id=\"wallclock\"/><animate begin=\"clock.begin - 1s; clock.click+2s; clock.repeat(2); media.marker(chapter); a\\.b.end; \\wallclock.begin; id(clock)(begin); 5s; indefinite; unknown.end\" end='clock.end+250ms'/>",
+      "status": "ok",
+      "definitions": ["clock", "media", "a.b", "wallclock"],
+      "references": [
+        { "attribute": "begin", "kind": "smil", "syntax": "syncbase", "id": "clock" },
+        { "attribute": "begin", "kind": "smil", "syntax": "eventbase", "id": "clock" },
+        { "attribute": "begin", "kind": "smil", "syntax": "repeat", "id": "clock" },
+        { "attribute": "begin", "kind": "smil", "syntax": "marker", "id": "media" },
+        { "attribute": "begin", "kind": "smil", "syntax": "syncbase", "id": "a.b" },
+        { "attribute": "begin", "kind": "smil", "syntax": "syncbase", "id": "wallclock" },
+        { "attribute": "begin", "kind": "smil", "syntax": "deprecated-id", "id": "clock" },
+        { "attribute": "end", "kind": "smil", "syntax": "syncbase", "id": "clock" }
+      ],
+      "output": "<g id=\"p-clock\"/><g id=\"p-media\"/><g id=\"p-a.b\"/><g id=\"p-wallclock\"/><animate begin=\"p-clock.begin - 1s; p-clock.click+2s; p-clock.repeat(2); p-media.marker(chapter); p-a\\.b.end; p-\\wallclock.begin; id(p-clock)(begin); 5s; indefinite; unknown.end\" end='p-clock.end+250ms'/>"
+    },
+    {
+      "name": "style-group-at-rule-is-rejected",
+      "input": "<g id=\"x\"/><style>@media (min-width: 1px) { #x { fill: red } }</style>",
+      "status": "error",
+      "error": "CONTENT_ID_PREFIX_UNSUPPORTED_REFERENCE"
+    },
+    {
+      "name": "style-css-nesting-is-rejected",
+      "input": "<g id=\"x\"/><style>.outer { & #x { fill: red } }</style>",
+      "status": "error",
+      "error": "CONTENT_ID_PREFIX_UNSUPPORTED_REFERENCE"
+    },
+    {
+      "name": "malformed-known-local-smil",
+      "input": "<g id=\"x\"/><animate begin=\"0s; x.repeat(\"/>",
+      "status": "error",
+      "error": "CONTENT_ID_PREFIX_UNSUPPORTED_REFERENCE"
+    },
+    {
+      "name": "malformed-known-local-url",
+      "input": "<g id=\"x\"/><rect fill=\"url(#x\"/>",
+      "status": "error",
+      "error": "CONTENT_ID_PREFIX_UNSUPPORTED_REFERENCE"
+    },
+    {
+      "name": "malformed-unknown-is-preserved",
+      "input": "<g id=\"x\"/><animate begin=\"unknown.repeat(\"/><rect fill=\"url(#unknown\"/>",
+      "status": "ok",
+      "definitions": ["x"],
+      "references": [],
+      "output": "<g id=\"p-x\"/><animate begin=\"unknown.repeat(\"/><rect fill=\"url(#unknown\"/>"
+    },
+    {
+      "name": "malformed-unknown-url-does-not-hide-later-local-reference",
+      "input": "<g id=\"x\"/><rect style=\"fill:url('#unknown' bad); stroke:url(#x)\"/>",
+      "status": "ok",
+      "definitions": ["x"],
+      "references": [{ "attribute": "style", "kind": "url", "syntax": "url", "id": "x" }],
+      "output": "<g id=\"p-x\"/><rect style=\"fill:url('#unknown' bad); stroke:url(#p-x)\"/>"
+    },
+    {
+      "name": "malformed-xml-start-tag",
+      "input": "<g id=\"x/><animate begin='x.begin'/>",
+      "status": "error",
+      "error": "CONTENT_ID_PREFIX_MALFORMED_XML"
+    }
+  ]
+}

@@ -33,7 +33,10 @@ import {
   type WorkerAnimatedWebpRenderOptions,
   type WorkerLayeredPngRenderOptions,
   type WorkerLayeredSvgRenderOptions,
-  type WorkerRenderOptions,
+  type WorkerRenderAnimatedSvgOptions,
+  type WorkerRenderPngOptions,
+  type WorkerRenderSvgOptions,
+  type WorkerRenderWebpOptions,
   type WorkerRequest,
   type WorkerResponse,
 } from "./protocol.js";
@@ -90,8 +93,14 @@ async function handleMessage(request: WorkerRequest): Promise<void> {
       case "render-svg":
         handleRenderSvg(request.id, request.scene, request.options);
         break;
+      case "render-animated-svg":
+        handleRenderAnimatedSvg(request.id, request.scene, request.options);
+        break;
       case "render-svg-and-ir":
         handleRenderSvgAndIr(request.id, request.scene, request.options);
+        break;
+      case "render-animated-svg-and-ir":
+        handleRenderAnimatedSvgAndIr(request.id, request.scene, request.options);
         break;
       case "render-png":
         handleRenderPng(request.id, request.scene, request.options);
@@ -193,7 +202,7 @@ async function handleInit(request: Extract<WorkerRequest, { type: "init" }>): Pr
   respond({ id: request.id, type: "init-ok" });
 }
 
-function handleRenderSvg(id: number, scene: SceneNode, options?: WorkerRenderOptions): void {
+function handleRenderSvg(id: number, scene: SceneNode, options?: WorkerRenderSvgOptions): void {
   const eng = requireEngine(id);
   if (!eng) {
     return;
@@ -207,7 +216,29 @@ function handleRenderSvg(id: number, scene: SceneNode, options?: WorkerRenderOpt
   respond({ id, type: "render-svg-ok", svg, warnings });
 }
 
-function handleRenderSvgAndIr(id: number, scene: SceneNode, options?: WorkerRenderOptions): void {
+function handleRenderAnimatedSvg(
+  id: number,
+  scene: SceneNode,
+  options: WorkerRenderAnimatedSvgOptions,
+): void {
+  const eng = requireEngine(id);
+  if (!eng) {
+    return;
+  }
+
+  const warnings: StructuredError[] = [];
+  const svg = eng.renderToAnimatedSvg(scene, {
+    ...options,
+    onWarning: (warning) => warnings.push(warning.toJSON()),
+  });
+  respond({ id, type: "render-animated-svg-ok", svg, warnings });
+}
+
+function handleRenderSvgAndIr(
+  id: number,
+  scene: SceneNode,
+  options?: WorkerRenderSvgOptions,
+): void {
   const eng = requireEngine(id);
   if (!eng) {
     return;
@@ -224,7 +255,26 @@ function handleRenderSvgAndIr(id: number, scene: SceneNode, options?: WorkerRend
   respond({ id, type: "render-svg-and-ir-ok", svg, ir: serializableIr, warnings });
 }
 
-function handleRenderPng(id: number, scene: SceneNode, options?: WorkerRenderOptions): void {
+function handleRenderAnimatedSvgAndIr(
+  id: number,
+  scene: SceneNode,
+  options: WorkerRenderAnimatedSvgOptions,
+): void {
+  const eng = requireEngine(id);
+  if (!eng) {
+    return;
+  }
+
+  const warnings: StructuredError[] = [];
+  const { svg, ir } = eng.renderToAnimatedSvgAndIR(scene, {
+    ...options,
+    onWarning: (warning) => warnings.push(warning.toJSON()),
+  });
+  const { warnings: _irWarnings, ...serializableIr } = ir;
+  respond({ id, type: "render-animated-svg-and-ir-ok", svg, ir: serializableIr, warnings });
+}
+
+function handleRenderPng(id: number, scene: SceneNode, options?: WorkerRenderPngOptions): void {
   const eng = requireEngine(id);
   if (!eng) {
     return;
@@ -240,7 +290,7 @@ function handleRenderPng(id: number, scene: SceneNode, options?: WorkerRenderOpt
   self.postMessage(response, collectResponseTransferables(response));
 }
 
-function handleRenderWebp(id: number, scene: SceneNode, options?: WorkerRenderOptions): void {
+function handleRenderWebp(id: number, scene: SceneNode, options?: WorkerRenderWebpOptions): void {
   const eng = requireEngine(id);
   if (!eng) {
     return;

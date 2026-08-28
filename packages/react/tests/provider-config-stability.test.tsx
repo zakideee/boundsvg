@@ -5,7 +5,7 @@ import type { BrowserFontDefinition, ResolvedBrowserFont } from "@boundsvg/brows
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BoundSvgContextValue } from "../src/types.js";
+import type { BoundSvgConfig, BoundSvgContextValue } from "../src/types.js";
 
 type MockEngine = {
   dispose: ReturnType<typeof vi.fn>;
@@ -63,6 +63,18 @@ const mockWorkerEngineCreate = vi.fn(async (_options?: unknown) => {
 const mockInitWasm = vi.fn(async (_module?: unknown) => undefined);
 const mockLoadWasmModule = vi.fn(async () => ({}));
 
+class MockFatalError extends Error {
+  readonly code: string;
+  readonly stage: string | undefined;
+
+  constructor(code: string, message: string, context?: { stage?: string }) {
+    super(message);
+    this.name = "FatalError";
+    this.code = code;
+    this.stage = context?.stage;
+  }
+}
+
 vi.stubGlobal("Worker", MockWorker);
 
 vi.mock("@boundsvg/browser/fonts", () => ({
@@ -71,6 +83,7 @@ vi.mock("@boundsvg/browser/fonts", () => ({
 
 vi.mock("@boundsvg/core", () => ({
   createEngineAsync: mockCreateEngineAsync,
+  FatalError: MockFatalError,
 }));
 
 vi.mock("@boundsvg/core/wasm", () => ({
@@ -153,6 +166,99 @@ afterEach(() => {
 });
 
 describe("BoundSvgProvider config stability", () => {
+  it.each([
+    ["main thread", undefined],
+    ["Worker", { mode: "required" as const }],
+  ])("rejects legacy Provider defaults synchronously before %s initialization", (_label, worker) => {
+    const config = {
+      fonts: [],
+      defaultRenderOptions: { scale: 2 },
+      ...(worker && { worker }),
+    } as unknown as BoundSvgConfig;
+    let thrown: unknown;
+    try {
+      mount(
+        <BoundSvgProvider config={config}>
+          <ContextProbe />
+        </BoundSvgProvider>,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      name: "FatalError",
+      code: "UNSUPPORTED_LEGACY_RENDER_OPTION",
+      stage: "validate",
+    });
+    expect(mockPreloadFonts).not.toHaveBeenCalled();
+    expect(mockCreateEngineAsync).not.toHaveBeenCalled();
+    expect(mockWorkerEngineCreate).not.toHaveBeenCalled();
+    expect(createdWorkers).toHaveLength(0);
+  });
+
+  it.each([
+    ["main thread", undefined],
+    ["Worker", { mode: "required" as const }],
+  ])("rejects legacy keys inside defaultCommonOptions before %s initialization", (_label, worker) => {
+    const config = {
+      fonts: [],
+      defaultCommonOptions: { animation: "declarative" },
+      ...(worker && { worker }),
+    } as unknown as BoundSvgConfig;
+    let thrown: unknown;
+    try {
+      mount(
+        <BoundSvgProvider config={config}>
+          <ContextProbe />
+        </BoundSvgProvider>,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      name: "FatalError",
+      code: "UNSUPPORTED_LEGACY_RENDER_OPTION",
+      stage: "validate",
+    });
+    expect(mockPreloadFonts).not.toHaveBeenCalled();
+    expect(mockCreateEngineAsync).not.toHaveBeenCalled();
+    expect(mockWorkerEngineCreate).not.toHaveBeenCalled();
+    expect(createdWorkers).toHaveLength(0);
+  });
+
+  it.each([
+    ["main thread", undefined],
+    ["Worker", { mode: "required" as const }],
+  ])("rejects artifact-specific common defaults synchronously before %s initialization", (_label, worker) => {
+    const config = {
+      fonts: [],
+      defaultCommonOptions: { resourceIdPrefix: "preview-" },
+      ...(worker && { worker }),
+    } as unknown as BoundSvgConfig;
+    let thrown: unknown;
+    try {
+      mount(
+        <BoundSvgProvider config={config}>
+          <ContextProbe />
+        </BoundSvgProvider>,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      name: "FatalError",
+      code: "UNSUPPORTED_RENDER_OPTION",
+      stage: "validate",
+    });
+    expect(mockPreloadFonts).not.toHaveBeenCalled();
+    expect(mockCreateEngineAsync).not.toHaveBeenCalled();
+    expect(mockWorkerEngineCreate).not.toHaveBeenCalled();
+    expect(createdWorkers).toHaveLength(0);
+  });
+
   it("does not recreate a main-thread Engine for a fresh equal inline config", async () => {
     let setLabel!: (label: string) => void;
     function Parent() {
@@ -188,7 +294,7 @@ describe("BoundSvgProvider config stability", () => {
         <BoundSvgProvider
           config={{
             fonts: [{ alias: "sans", source: "/font.woff2" }],
-            defaultRenderOptions: {
+            defaultCommonOptions: {
               debug: { parts: ["layout"] },
               onWarning: () => warningLabels.push(label),
             },
@@ -203,14 +309,14 @@ describe("BoundSvgProvider config stability", () => {
     }
     const mounted = mount(<Parent />);
     await flush();
-    const firstDefaultRenderOptions = currentSnapshot?.defaultRenderOptions;
+    const firstDefaultCommonOptions = currentSnapshot?.defaultCommonOptions;
     act(() => setLabel("latest"));
     await flush();
 
     expect(mockPreloadFonts).toHaveBeenCalledTimes(1);
     expect(mockCreateEngineAsync).toHaveBeenCalledTimes(1);
-    expect(currentSnapshot?.defaultRenderOptions).toBe(firstDefaultRenderOptions);
-    currentSnapshot?.defaultRenderOptions?.onWarning?.(new Error("test warning") as never);
+    expect(currentSnapshot?.defaultCommonOptions).toBe(firstDefaultCommonOptions);
+    currentSnapshot?.defaultCommonOptions?.onWarning?.(new Error("test warning") as never);
     expect(warningLabels).toEqual(["latest"]);
     mounted.unmount();
   });
@@ -269,14 +375,14 @@ describe("BoundSvgProvider config stability", () => {
     mounted.unmount();
   });
 
-  it("updates default render options without recreating the Engine", async () => {
+  it("updates default common options without recreating the Engine", async () => {
     let setScale!: (scale: number) => void;
     function Parent() {
       const [scale, setValue] = useState(1);
       setScale = setValue;
       return (
         <BoundSvgProvider
-          config={{ fonts: [], defaultRenderOptions: { scale } }}
+          config={{ fonts: [], defaultCommonOptions: { scale } }}
           fallback={<ContextProbe />}
         >
           <ContextProbe />
@@ -290,7 +396,7 @@ describe("BoundSvgProvider config stability", () => {
 
     expect(mockCreateEngineAsync).toHaveBeenCalledTimes(1);
     expect(createdEngines[0]?.dispose).not.toHaveBeenCalled();
-    expect(currentSnapshot?.defaultRenderOptions?.scale).toBe(2);
+    expect(currentSnapshot?.defaultCommonOptions?.scale).toBe(2);
     expect(currentSnapshot?.status).toBe("ready");
     mounted.unmount();
   });

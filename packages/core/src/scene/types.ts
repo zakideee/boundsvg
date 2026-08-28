@@ -499,6 +499,10 @@ export type SvgSceneNode = PositionProps &
     width: number;
     height: number;
     preserveAspectRatio?: "none" | "meet" | "slice";
+    /**
+     * Prefix for exact embedded `id` attributes and their supported same-document references.
+     * A non-empty prefix enables structural validation and fails on unsafe known-local syntax.
+     */
     contentIdPrefix?: string;
     opacity?: number;
     zIndex?: number;

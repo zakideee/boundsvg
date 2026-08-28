@@ -420,9 +420,9 @@ describe("TextOnPath animation hardening", () => {
 
   it("keeps no-decoration rich unit paint layer-first across static and declarative routes", () => {
     const scene = textOnPathScene({ children: richPathChildren("cool") });
-    const staticSvg = engine.renderToSvg(scene, { animation: "static", timeMs: 180 });
-    const declarativeSvg = engine.renderToSvg(scene, {
-      animation: "declarative",
+    const staticSvg = engine.renderToSvg(scene, { timeMs: 180 });
+    const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
       timeMs: 180,
     });
     const shadowIndex = declarativeSvg.indexOf('fill="#083344"');
@@ -434,12 +434,9 @@ describe("TextOnPath animation hardening", () => {
     expect(accentFillIndex).toBeGreaterThan(strokeIndex);
     expect(declarativeSvg).toContain("@keyframes");
     expect(rasterize(declarativeSvg)).toEqual(rasterize(staticSvg));
-    expect(engine.renderToPng(scene, { animation: "static", timeMs: 180 })).toEqual(
-      rasterize(staticSvg),
-    );
+    expect(engine.renderToPng(scene, { timeMs: 180 })).toEqual(rasterize(staticSvg));
     expect(
       engine.renderCompiledToSvg(engine.compile(scene), {
-        animation: "static",
         timeMs: 180,
       }),
     ).toBe(staticSvg);
@@ -540,7 +537,10 @@ describe("TextOnPath animation hardening", () => {
     expect(hidden.glyphPaths).toEqual([]);
     expect(hidden.bbox).toEqual({ x: 0, y: 0, w: 0, h: 0 });
     expect(engine.hitTest(hiddenIr, 230, 110)).toBeNull();
-    const svg = engine.renderToSvg(hiddenScene, { animation: "declarative", timeMs: 200 });
+    const svg = engine.renderToAnimatedSvg(hiddenScene, {
+      playback: { mode: "independent" },
+      timeMs: 200,
+    });
     expect(svg).toContain('aria-label="ABCD"');
     expect(svg).not.toContain("@keyframes");
   });
@@ -563,10 +563,10 @@ describe("TextOnPath animation hardening", () => {
     0, 180, 700,
   ])("keeps declarative, static, PNG, and compiled output equal at timeMs=%i", (timeMs) => {
     const scene = textOnPathScene({ effects: true });
-    const renderOptions = { animation: "static" as const, timeMs };
+    const renderOptions = { timeMs };
     const staticSvg = engine.renderToSvg(scene, renderOptions);
-    const declarativeSvg = engine.renderToSvg(scene, {
-      animation: "declarative",
+    const declarativeSvg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
       timeMs,
     });
 
@@ -582,7 +582,7 @@ describe("TextOnPath animation hardening", () => {
     const frames = [...engine.renderFrames(scene, { timesMs, format: "svg" })];
 
     expect(frames.map((frame) => frame.data)).toEqual(
-      timesMs.map((timeMs) => engine.renderToSvg(scene, { animation: "static", timeMs })),
+      timesMs.map((timeMs) => engine.renderToSvg(scene, { timeMs })),
     );
   });
 
@@ -610,8 +610,8 @@ describe("TextOnPath animation hardening", () => {
     expect(start.unitAnimationSamples?.map((sample) => sample.bbox)).not.toEqual(
       end.unitAnimationSamples?.map((sample) => sample.bbox),
     );
-    expect(engine.renderToSvg(startScene, { animation: "static", timeMs: 180 })).not.toBe(
-      engine.renderToSvg(endScene, { animation: "static", timeMs: 180 }),
+    expect(engine.renderToSvg(startScene, { timeMs: 180 })).not.toBe(
+      engine.renderToSvg(endScene, { timeMs: 180 }),
     );
   });
 
@@ -644,8 +644,8 @@ describe("TextOnPath animation hardening", () => {
     expect(start.lines[0]?.positionedGlyphs?.[0]?.inlineScale).not.toBe(
       end.lines[0]?.positionedGlyphs?.[0]?.inlineScale,
     );
-    expect(engine.renderToSvg(startScene, { animation: "static", timeMs: 180 })).not.toBe(
-      engine.renderToSvg(endScene, { animation: "static", timeMs: 180 }),
+    expect(engine.renderToSvg(startScene, { timeMs: 180 })).not.toBe(
+      engine.renderToSvg(endScene, { timeMs: 180 }),
     );
   });
 
@@ -705,8 +705,8 @@ describe("TextOnPath animation hardening", () => {
     expect(geometryText.unitAnimationSamples?.map((sample) => sample.bbox)).not.toEqual(
       straightText.unitAnimationSamples?.map((sample) => sample.bbox),
     );
-    expect(engine.renderToSvg(paintChanged, { animation: "static", timeMs: 180 })).not.toBe(
-      engine.renderToSvg(straight, { animation: "static", timeMs: 180 }),
+    expect(engine.renderToSvg(paintChanged, { timeMs: 180 })).not.toBe(
+      engine.renderToSvg(straight, { timeMs: 180 }),
     );
   });
 
@@ -719,8 +719,8 @@ describe("TextOnPath animation hardening", () => {
       text: content,
       effects: true,
     });
-    const artifacts = engine.renderToSvgAndIR(scene, {
-      animation: "declarative",
+    const artifacts = engine.renderToAnimatedSvgAndIR(scene, {
+      playback: { mode: "independent" },
       timeMs: 180,
       textPathMode: "glyphs",
     });
@@ -748,7 +748,7 @@ describe("TextOnPath animation hardening", () => {
     expect(
       engine.hitTest(artifacts.ir, text.bbox.x + text.bbox.w / 2, text.bbox.y + text.bbox.h / 2),
     ).toBe("path-units");
-    const renderOptions = { animation: "static" as const, timeMs: 180 };
+    const renderOptions = { timeMs: 180 };
     expect(engine.renderCompiledToSvg(engine.compile(scene), renderOptions)).toBe(
       engine.renderToSvg(scene, renderOptions),
     );
@@ -760,8 +760,8 @@ describe("TextOnPath animation hardening", () => {
   it("preserves layer-first effects and missing-glyph unit bounds", () => {
     const scene = textOnPathScene({ text: "A🦄", effects: true });
     const warnings: string[] = [];
-    const svg = engine.renderToSvg(scene, {
-      animation: "declarative",
+    const svg = engine.renderToAnimatedSvg(scene, {
+      playback: { mode: "independent" },
       timeMs: 180,
       showMissingGlyphs: true,
       onWarning: (warning) => warnings.push(warning.code),
@@ -773,7 +773,6 @@ describe("TextOnPath animation hardening", () => {
     const fillIndex = svg.indexOf('fill="#f8fafc"');
     const text = findText(
       engine.renderToSvgAndIR(scene, {
-        animation: "static",
         timeMs: 180,
         showMissingGlyphs: true,
       }).ir.root,
@@ -801,18 +800,12 @@ describe("TextOnPath animation hardening", () => {
     const scene = textMotionV2Scene();
     const compiled = engine.compile(scene);
     const timesMs = [700, 0, 180, 700, 360];
-    const expectedSvg = timesMs.map((timeMs) =>
-      engine.renderToSvg(scene, { animation: "static", timeMs }),
-    );
-    const expectedPng = timesMs.map((timeMs) =>
-      engine.renderToPng(scene, { animation: "static", timeMs }),
-    );
+    const expectedSvg = timesMs.map((timeMs) => engine.renderToSvg(scene, { timeMs }));
+    const expectedPng = timesMs.map((timeMs) => engine.renderToPng(scene, { timeMs }));
 
-    expect(
-      timesMs.map((timeMs) =>
-        engine.renderCompiledToSvg(compiled, { animation: "static", timeMs }),
-      ),
-    ).toEqual(expectedSvg);
+    expect(timesMs.map((timeMs) => engine.renderCompiledToSvg(compiled, { timeMs }))).toEqual(
+      expectedSvg,
+    );
     expect(
       [...engine.renderFrames(scene, { timesMs, format: "svg" })].map((frame) => frame.data),
     ).toEqual(expectedSvg);
@@ -820,8 +813,8 @@ describe("TextOnPath animation hardening", () => {
       [...engine.renderFrames(scene, { timesMs, format: "png" })].map((frame) => frame.data),
     ).toEqual(expectedPng);
 
-    const { ir, svg } = engine.renderToSvgAndIR(scene, {
-      animation: "declarative",
+    const { ir, svg } = engine.renderToAnimatedSvgAndIR(scene, {
+      playback: { mode: "independent" },
       timeMs: 180,
       textPathMode: "glyphs",
     });
@@ -861,7 +854,6 @@ describe("TextOnPath animation hardening", () => {
       const compiled = engine.compile(scene, { textPathMode });
       const expectedSvg = timesMs.map((timeMs) =>
         engine.renderToSvg(scene, {
-          animation: "static",
           timeMs,
           textPathMode,
           resourceIdPrefix,
@@ -869,17 +861,14 @@ describe("TextOnPath animation hardening", () => {
       );
       const expectedPng = timesMs.map((timeMs) =>
         engine.renderToPng(scene, {
-          animation: "static",
           timeMs,
           textPathMode,
-          resourceIdPrefix,
         }),
       );
 
       expect(
         timesMs.map((timeMs) =>
           engine.renderCompiledToSvg(compiled, {
-            animation: "static",
             timeMs,
             resourceIdPrefix,
           }),
@@ -888,9 +877,7 @@ describe("TextOnPath animation hardening", () => {
       expect(
         timesMs.map((timeMs) =>
           engine.renderCompiledToPng(compiled, {
-            animation: "static",
             timeMs,
-            resourceIdPrefix,
           }),
         ),
       ).toEqual(expectedPng);
@@ -910,14 +897,13 @@ describe("TextOnPath animation hardening", () => {
             timesMs,
             format: "png",
             textPathMode,
-            resourceIdPrefix,
           }),
         ].map((frame) => frame.data),
       ).toEqual(expectedPng);
     }
 
-    const { ir, svg } = engine.renderToSvgAndIR(scene, {
-      animation: "declarative",
+    const { ir, svg } = engine.renderToAnimatedSvgAndIR(scene, {
+      playback: { mode: "independent" },
       timeMs: 180,
       textPathMode: "glyphs",
       resourceIdPrefix,
@@ -962,17 +948,15 @@ describe("TextOnPath animation hardening", () => {
     expect(svg).not.toContain("<textPath");
     expect(rasterize(svg)).toEqual(
       engine.renderToPng(scene, {
-        animation: "static",
         timeMs: 180,
         textPathMode: "glyphs",
-        resourceIdPrefix,
       }),
     );
   }, 30_000);
 
   it("recovers fresh V2 bytes after path and decoration fatal errors", async () => {
     const healthyScene = textMotionV2Scene();
-    const healthyOptions = { animation: "static" as const, timeMs: 180 };
+    const healthyOptions = { timeMs: 180 };
     const healthySvg = engine.renderToSvg(healthyScene, healthyOptions);
     const healthyPng = engine.renderToPng(healthyScene, healthyOptions);
 

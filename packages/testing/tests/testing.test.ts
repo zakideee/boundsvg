@@ -4,7 +4,8 @@ import {
   type Engine,
   type EngineInput,
   type IR,
-  type RenderOptions,
+  type RenderPngOptions,
+  type RenderSvgOptions,
 } from "@boundsvg/core";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -39,7 +40,7 @@ describe("@boundsvg/testing", () => {
 
   it("renders and normalizes SVG snapshots through the supplied Engine route", () => {
     const input = Canvas({ width: 10, height: 20 });
-    const options: RenderOptions = { debug: { showLayout: true } };
+    const options: RenderSvgOptions = { debug: { showLayout: true } };
     const renderToSvg = vi.fn(() => '<svg width="10.1234" height="20" x="2"></svg>');
     const engine = { renderToSvg } as unknown as Engine;
 
@@ -57,7 +58,7 @@ describe("@boundsvg/testing", () => {
     pngView.setUint32(16, 321, false);
     pngView.setUint32(20, 123, false);
     const input = Canvas({ width: 1, height: 1 });
-    const options: RenderOptions = { scale: 2 };
+    const options: RenderPngOptions = { scale: 2 };
     const renderToPng = vi.fn(() => png);
     const engine = { renderToPng } as unknown as Engine;
 
@@ -72,9 +73,9 @@ describe("@boundsvg/testing", () => {
   it("renders named matrices with per-case options and warning counts", () => {
     const firstInput = Canvas({ width: 10, height: 10 });
     const secondInput = Canvas({ width: 20, height: 20 });
-    const secondOptions: RenderOptions = { scale: 3 };
+    const secondOptions: RenderSvgOptions = { scale: 3 };
     const renderToSvgAndIR = vi.fn(
-      (input: EngineInput, options?: RenderOptions): { svg: string; ir: IR } => {
+      (input: EngineInput, options?: RenderSvgOptions): { svg: string; ir: IR } => {
         if (input === firstInput) {
           return { svg: '<svg y="2" x="1.2345"></svg>', ir: createIr(["first warning"]) };
         }

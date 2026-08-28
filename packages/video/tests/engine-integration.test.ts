@@ -384,7 +384,6 @@ describe("renderCompiledToMp4 against a real engine", () => {
       createHash("sha256")
         .update(
           engine.renderCompiledToPng(compiled, {
-            animation: "static",
             timeMs,
             rasterBackground: "#ffffff",
           }),

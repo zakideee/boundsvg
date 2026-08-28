@@ -178,7 +178,6 @@ function measureFrame(engine: Engine | undefined, frame: TimelineFrame): FrameSt
     return { lineCount: 0, glyphCount: 0, svgBytes: 0 };
   }
   const { svg, ir } = engine.renderToSvgAndIR(framePreview(frame), {
-    animation: "static",
     timeMs: frame.timeMs,
   });
   return {
@@ -323,7 +322,6 @@ const vnode = Canvas(
 );
 
 const { svg, ir } = engine.renderToSvgAndIR(vnode, {
-  animation: "static",
   timeMs: frameTimeMs,
 });
 const svgBytes = new TextEncoder().encode(svg).byteLength;

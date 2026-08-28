@@ -112,7 +112,6 @@ export async function runInspect(io: CliIo, args: string[]): Promise<number> {
 
     const inspection = inspectCliScene(engine, vnodeResult.vnode, {
       textPathMode: parsed.options.textPathMode,
-      debug: parsed.options.debug,
     });
     const report =
       outputFormat === "json" ? `${formatInspectionJson(inspection)}\n` : toTableReport(inspection);

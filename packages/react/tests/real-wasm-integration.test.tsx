@@ -137,7 +137,7 @@ describe("React hooks against a real WASM engine", () => {
     expect(hookSvg).toContain('viewBox="0 0 240 80"');
   });
 
-  it("merges defaultRenderOptions from the provider with per-call options", () => {
+  it("merges defaultCommonOptions from the provider with per-call options", () => {
     // A clipped box emits clip-path="url(#<prefix>clip-...)", so a dropped
     // prefix is visible in the output.
     const vnode = toVNode(
@@ -150,19 +150,18 @@ describe("React hooks against a real WASM engine", () => {
     let hookSvg: string | null = null;
 
     function Probe() {
-      hookSvg = useRenderToSvg(vnode).svg;
+      hookSvg = useRenderToSvg(vnode, { resourceIdPrefix: "pfx-" }).svg;
       return null;
     }
 
     renderToString(
-      <BoundSvgContext.Provider
-        value={contextValue({ defaultRenderOptions: { resourceIdPrefix: "pfx-" } })}
-      >
+      <BoundSvgContext.Provider value={contextValue({ defaultCommonOptions: { scale: 2 } })}>
         <Probe />
       </BoundSvgContext.Provider>,
     );
 
     expect(hookSvg).toContain("url(#pfx-clip-clipper)");
+    expect(hookSvg).toContain('width="200"');
   });
 
   it("delivers recoverable warnings from the real engine after commit", () => {

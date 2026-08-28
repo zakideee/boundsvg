@@ -15,6 +15,7 @@ export type {
   AnalyzeEmbeddedSvgIdsResult,
   EmbeddedSvgIdReference,
   EmbeddedSvgReferenceKind,
+  EmbeddedSvgReferenceSyntax,
 } from "./svg/embedded-id-analyzer.js";
 export { analyzeEmbeddedSvgIds } from "./svg/embedded-id-analyzer.js";
 export type {

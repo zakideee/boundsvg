@@ -25,7 +25,7 @@ import { BoundSvgProvider } from "@boundsvg/react/provider";
         source: "/fonts/NotoSansJP.ttf",
       },
     ],
-    defaultRenderOptions: { debug: false },
+    defaultCommonOptions: { debug: false },
   }}
   fallback={<div>Loading...</div>}
 >
@@ -35,16 +35,24 @@ import { BoundSvgProvider } from "@boundsvg/react/provider";
 
 ### BoundSvgConfig
 
-| Property               | Type                 | Required | Description                                                                                     |
-| ---------------------- | -------------------- | -------- | ----------------------------------------------------------------------------------------------- |
-| `fonts`                | `FontDefinition[]`   | Yes      | Font definitions. `source` accepts URL string, `URL`, or `Uint8Array`                           |
-| `wasm`                 | `WasmModule`         | No       | Pre-loaded WASM module. Auto-loaded from `@boundsvg/browser` if omitted                         |
-| `worker`               | `WorkerConfig`       | No       | Enable Worker rendering: `{ mode: "prefer" \| "required"; url?: URL; timeoutMs?; onFallback? }` |
-| `fontLoader`           | `FontLoader`         | No       | Override how font bytes are fetched                                                             |
-| `fontFetchOptions`     | `RequestInit`        | No       | Passed to the default font fetch                                                                |
-| `geometries`           | `Array<{ id, doc }>` | No       | Geometry registry entries loaded at engine creation                                             |
-| `symbols`              | `Array<{ id, def }>` | No       | Symbol registry entries loaded at engine creation                                               |
-| `defaultRenderOptions` | `RenderOptions`      | No       | Default options for hooks and `<BoundSvg>`                                                      |
+| Property               | Type                           | Required | Description                                                                                     |
+| ---------------------- | ------------------------------ | -------- | ----------------------------------------------------------------------------------------------- |
+| `fonts`                | `FontDefinition[]`             | Yes      | Font definitions. `source` accepts URL string, `URL`, or `Uint8Array`                           |
+| `wasm`                 | `WasmModule`                   | No       | Pre-loaded WASM module. Auto-loaded from `@boundsvg/browser` if omitted                         |
+| `worker`               | `WorkerConfig`                 | No       | Enable Worker rendering: `{ mode: "prefer" \| "required"; url?: URL; timeoutMs?; onFallback? }` |
+| `fontLoader`           | `FontLoader`                   | No       | Override how font bytes are fetched                                                             |
+| `fontFetchOptions`     | `RequestInit`                  | No       | Passed to the default font fetch                                                                |
+| `geometries`           | `Array<{ id, doc }>`           | No       | Geometry registry entries loaded at engine creation                                             |
+| `symbols`              | `Array<{ id, def }>`           | No       | Symbol registry entries loaded at engine creation                                               |
+| `defaultCommonOptions` | `BoundSvgDefaultCommonOptions` | No       | Compile/output-common defaults only; artifact-specific options stay on each component or hook   |
+
+`defaultCommonOptions` accepts only `CompileOptions & OutputCommonOptions`.
+SVG namespace/metadata, `timeMs`, playback/reduced-motion, and raster-only
+fields must be passed to the individual component or hook. Configuration keys
+are checked synchronously before font fetching, Engine creation, Worker
+creation, or effects begin. The removed `defaultRenderOptions` and legacy
+default fields throw `UNSUPPORTED_LEGACY_RENDER_OPTION`; unknown or
+artifact-specific default fields throw `UNSUPPORTED_RENDER_OPTION`.
 
 ### FontDefinition
 
@@ -59,22 +67,24 @@ import { BoundSvgProvider } from "@boundsvg/react/provider";
 
 **Main-thread mode** (default):
 
-1. Fetch each font (if URL) → resolve to `Uint8Array`
-2. Use `config.wasm` if provided, otherwise dynamic import `@boundsvg/browser` → `loadWasmModule()`
-3. `initWasm(wasmModule)` to initialize core
-4. `createEngineAsync({ fonts })` — creates a `BoundSvgEngine` instance and registers all fonts at creation time
-5. Set `engine` + `status` in Context
+1. Validate config own keys and `defaultCommonOptions` synchronously
+2. Fetch each font (if URL) → resolve to `Uint8Array`
+3. Use `config.wasm` if provided, otherwise dynamic import `@boundsvg/browser` → `loadWasmModule()`
+4. `initWasm(wasmModule)` to initialize core
+5. `createEngineAsync({ fonts })` — creates a `BoundSvgEngine` instance and registers all fonts at creation time
+6. Set `engine` + `status` in Context
 
 Fonts are resolved before either branch is taken, so a font-fetch failure aborts
 before any WASM is loaded.
 
 **Worker mode** (`worker: { mode, url? }`):
 
-1. Fetch each font (if URL) on the main thread, as above
-2. Create a `WorkerEngine` via `@boundsvg/worker`, transferring the font bytes into it
-3. Initialize the Worker (WASM loading + font registration happen inside the Worker)
-4. Set `workerEngine` + `status` in Context (`engine` stays `null` on this path)
-5. On Worker init failure, `mode: "prefer"` falls back to a main-thread Engine and invokes `onFallback`; `mode: "required"` reports the failure without falling back
+1. Validate config own keys and `defaultCommonOptions` synchronously
+2. Fetch each font (if URL) on the main thread, as above
+3. Create a `WorkerEngine` via `@boundsvg/worker`, transferring the font bytes into it
+4. Initialize the Worker (WASM loading + font registration happen inside the Worker)
+5. Set `workerEngine` + `status` in Context (`engine` stays `null` on this path)
+6. On Worker init failure, `mode: "prefer"` falls back to a main-thread Engine and invokes `onFallback`; `mode: "required"` reports the failure without falling back
 
 **Status transitions:** `idle` → `loading` → `ready` | `error`
 
@@ -82,13 +92,9 @@ before any WASM is loaded.
 
 ## Hooks
 
-The eight hooks below plus the three in [`/assets`](#boundsvg-react-assets) and
-one in [`/inspect`](#boundsvg-react-inspect) (`useBoundSvgInspection`). Two more exist and are listed under
-[Public Exports](#public-exports) without a reference section here:
-`useRenderToSvgAndIrAsync` (`@boundsvg/react/worker`) and `useTextCopy`
-(`@boundsvg/react/interactive`).
-
-Only `useRenderToSvg` is on the package root; each heading names its entry point.
+The main-thread static and animated SVG hooks are on the package root. PNG,
+Worker, interactive, asset, and inspection hooks live on the subpath named by
+each heading. The complete inventory is under [Public Exports](#public-exports).
 
 ### `useBoundSvg()`
 
@@ -100,7 +106,7 @@ Worker initialized, `engine` otherwise — including after a `mode: "prefer"`
 fallback.
 
 ```ts
-const { engine, workerEngine, status, error, defaultRenderOptions } =
+const { engine, workerEngine, status, error, defaultCommonOptions } =
   useBoundSvg();
 ```
 
@@ -122,7 +128,23 @@ const { svg, error, isReady } = useRenderToSvg(vnode, options?);
 | `error`   | `Error \| null`  | Rendering error          |
 | `isReady` | `boolean`        | Whether SVG is available |
 
-`useMemo`-based — recomputes when the VNode or the resolved render-option **values** change. The VNode passes through a structural comparison first, so a fresh object with identical structure is treated as unchanged and does not re-render. Re-rendering on every React render is typically practical; for very large trees, memoizing the VNode with `useMemo` skips that comparison. Options are merged with `defaultRenderOptions`.
+`useMemo`-based — recomputes when the VNode or the resolved render-option **values** change. The VNode passes through a structural comparison first, so a fresh object with identical structure is treated as unchanged and does not re-render. Re-rendering on every React render is typically practical; for very large trees, memoizing the VNode with `useMemo` skips that comparison. Options are merged with `defaultCommonOptions`.
+
+This is a static hook. Animated input requires an explicit `timeMs`.
+
+### `useRenderToAnimatedSvg(vnode, options)`
+
+<sub>`@boundsvg/react`</sub>
+
+Render an independently playing animated SVG on the main thread. Options are
+required and must include `playback: { mode: "independent" }`.
+
+```ts
+const { svg, error, isReady } = useRenderToAnimatedSvg(vnode, {
+  playback: { mode: "independent" },
+  reducedMotion: "pause",
+});
+```
 
 ### `useRenderToPng(vnode, options?)`
 
@@ -171,6 +193,24 @@ const { svg, error, isRendering, isReady } = useRenderToSvgAsync(vnode, options?
 | `error`       | `Error \| null`  | Rendering error                      |
 | `isRendering` | `boolean`        | Whether a Worker render is in-flight |
 | `isReady`     | `boolean`        | Whether SVG is available             |
+
+### `useRenderToAnimatedSvgAsync(vnode, options)`
+
+<sub>`@boundsvg/react/worker`</sub>
+
+The Worker equivalent of `useRenderToAnimatedSvg`. Its required options carry
+the same independent playback, base-pose, namespace, metadata, and reduced
+motion contract.
+
+```ts
+const result = useRenderToAnimatedSvgAsync(vnode, {
+  playback: { mode: "independent" },
+  nodeIdMetadata: "omit",
+});
+```
+
+`useRenderToAnimatedSvgAndIrAsync` returns the matching `{ svg, ir }` artifacts
+for Worker-backed inspection flows.
 
 ### `useRenderToPngAsync(vnode, options?)`
 
@@ -279,17 +319,34 @@ Renders a VNode tree inline using `dangerouslySetInnerHTML`. The SVG generated b
 />
 ```
 
-| Prop            | Type                                       | Description                                        |
-| --------------- | ------------------------------------------ | -------------------------------------------------- |
-| `vnode`         | `VNode \| null`                            | VNode tree to render (legacy mode)                 |
-| `width`         | `number`                                   | Canvas width (declarative mode)                    |
-| `height`        | `number`                                   | Canvas height (declarative mode)                   |
-| `background`    | `string`                                   | Canvas background (declarative mode)               |
-| `children`      | `ReactNode`                                | Declarative children (boundsvg phantom components) |
-| `renderOptions` | `RenderOptions`                            | SVG rendering options                              |
-| `className`     | `string`                                   | Wrapper div class                                  |
-| `fallback`      | `ReactNode`                                | Fallback UI while engine is loading                |
-| `errorFallback` | `ReactNode \| (error: Error) => ReactNode` | Fallback UI when rendering fails                   |
+| Prop            | Type                                       | Description                                          |
+| --------------- | ------------------------------------------ | ---------------------------------------------------- |
+| `vnode`         | `VNode \| null`                            | VNode tree to render (legacy mode)                   |
+| `width`         | `number`                                   | Canvas width (declarative mode)                      |
+| `height`        | `number`                                   | Canvas height (declarative mode)                     |
+| `background`    | `string`                                   | Canvas background (declarative mode)                 |
+| `children`      | `ReactNode`                                | Declarative children (boundsvg phantom components)   |
+| `renderOptions` | `RenderSvgOptions`                         | Static SVG options; animated input requires `timeMs` |
+| `className`     | `string`                                   | Wrapper div class                                    |
+| `fallback`      | `ReactNode`                                | Fallback UI while engine is loading                  |
+| `errorFallback` | `ReactNode \| (error: Error) => ReactNode` | Fallback UI when rendering fails                     |
+
+### `<AnimatedBoundSvg>`
+
+Uses the same VNode/declarative-child and fallback props as `<BoundSvg>`, but
+calls the animated SVG family on either the main thread or Worker. Its
+`renderOptions: RenderAnimatedSvgOptions` prop is required.
+
+```tsx
+<AnimatedBoundSvg
+  vnode={vnode}
+  renderOptions={{
+    playback: { mode: "independent" },
+    resourceIdPrefix: "preview-0042-",
+    reducedMotion: "pause",
+  }}
+/>
+```
 
 ### `<InteractiveBoundSvg>`
 
@@ -299,6 +356,7 @@ Renders a VNode tree with pointer event handling (click, hover, context menu). S
 <InteractiveBoundSvg
   vnode={vnode}
   handlers={handlerMap}
+  renderMode="static"
   renderOptions={{ debug: true }}
   className="interactive-output"
   showPointerCursor={true}
@@ -307,23 +365,28 @@ Renders a VNode tree with pointer event handling (click, hover, context menu). S
 />
 ```
 
-| Prop                | Type                                       | Description                                  |
-| ------------------- | ------------------------------------------ | -------------------------------------------- |
-| `vnode`             | `VNode \| null`                            | VNode tree to render (explicit mode)         |
-| `handlers`          | `Map<string, EventCallback>`               | Handler map for explicit VNode mode          |
-| `width`             | `number`                                   | Canvas width (declarative mode)              |
-| `height`            | `number`                                   | Canvas height (declarative mode)             |
-| `background`        | `string`                                   | Canvas background (declarative mode)         |
-| `children`          | `ReactNode`                                | Declarative children with function handlers  |
-| `renderOptions`     | `RenderOptions`                            | SVG rendering options                        |
-| `className`         | `string`                                   | Wrapper div class                            |
-| `showPointerCursor` | `boolean`                                  | Show cursor:pointer on interactive elements  |
-| `onHoverChange`     | `(nodeId: string \| null) => void`         | Callback when hover state changes            |
-| `fallback`          | `ReactNode`                                | Fallback UI while engine is loading          |
-| `errorFallback`     | `ReactNode \| (error: Error) => ReactNode` | Fallback UI when rendering fails             |
-| `onRender`          | `(ir: IR) => void`                         | Called with the IR after each render         |
-| `enableTextCopy`    | `boolean`                                  | Enable the text-copy selection behaviour     |
-| `onTextCopyMenu`    | `(info: TextCopyMenuInfo) => void`         | Called when the text-copy context menu opens |
+| Prop                | Type                                           | Description                                              |
+| ------------------- | ---------------------------------------------- | -------------------------------------------------------- |
+| `vnode`             | `VNode \| null`                                | VNode tree to render (explicit mode)                     |
+| `handlers`          | `Map<string, EventCallback>`                   | Handler map for explicit VNode mode                      |
+| `width`             | `number`                                       | Canvas width (declarative mode)                          |
+| `height`            | `number`                                       | Canvas height (declarative mode)                         |
+| `background`        | `string`                                       | Canvas background (declarative mode)                     |
+| `children`          | `ReactNode`                                    | Declarative children with function handlers              |
+| `renderMode`        | `"static" \| "animated"`                       | Explicitly selects the static or animated SVG family     |
+| `renderOptions`     | `RenderSvgOptions \| RenderAnimatedSvgOptions` | Must match `renderMode`; animated mode requires playback |
+| `className`         | `string`                                       | Wrapper div class                                        |
+| `showPointerCursor` | `boolean`                                      | Show cursor:pointer on interactive elements              |
+| `onHoverChange`     | `(nodeId: string \| null) => void`             | Callback when hover state changes                        |
+| `fallback`          | `ReactNode`                                    | Fallback UI while engine is loading                      |
+| `errorFallback`     | `ReactNode \| (error: Error) => ReactNode`     | Fallback UI when rendering fails                         |
+| `onRender`          | `(ir: IR) => void`                             | Called with the IR after each render                     |
+| `enableTextCopy`    | `boolean`                                      | Enable the text-copy selection behaviour                 |
+| `onTextCopyMenu`    | `(info: TextCopyMenuInfo) => void`             | Called when the text-copy context menu opens             |
+
+Interactive rendering always emits `data-boundsvg-node-id` for hit testing,
+even if the supplied SVG options request `nodeIdMetadata: "omit"`. Use a
+noninteractive static or animated component for final metadata-free export.
 
 ### JSX Phantom Components
 
@@ -510,12 +573,13 @@ const objectUrl = usePngObjectUrl(png);
 ## Public Exports
 
 Every export of every entry point. Types re-exported from `@boundsvg/core`
-(`VNode`, `RenderOptions`, the `*Props`/`*VNode` families, geometry and animation
+(`VNode`, format-specific render options, the `*Props`/`*VNode` families, geometry and animation
 types) are listed under the package root because that is where they are re-exported.
 
 ```ts
 // Package root — components, the sync SVG hook, and VNode conversion
 export {
+  AnimatedBoundSvg,
   BoundSvg,
   Box,
   Canvas,
@@ -535,9 +599,12 @@ export {
   TextOnPath,
   toVNode,
   toVNodeFromChildren,
+  useRenderToAnimatedSvg,
   useRenderToSvg,
 };
 export type {
+  AnimatedBoundSvgProps,
+  AnimatedSvgPlayback,
   AnimationEasing,
   AnimationKeyframe,
   AnimationSpec,
@@ -577,8 +644,11 @@ export type {
   InlineVNode,
   PathProps,
   PathVNode,
+  RenderAnimatedSvgOptions,
   RenderFramesOptions,
-  RenderOptions,
+  RenderPngOptions,
+  RenderSvgOptions,
+  RenderWebpOptions,
   RtProps,
   RtVNode,
   RubyProps,
@@ -611,6 +681,7 @@ export { BoundSvgProvider, useBoundSvg };
 export type {
   BoundSvgConfig,
   BoundSvgContextValue,
+  BoundSvgDefaultCommonOptions,
   BoundSvgProviderProps,
   BoundSvgStatus,
   FontDefinition,
@@ -623,6 +694,8 @@ export type { UseRenderToPngResult };
 
 // "@boundsvg/react/worker" — Worker-based async rendering
 export {
+  useRenderToAnimatedSvgAndIrAsync,
+  useRenderToAnimatedSvgAsync,
   useRenderToLayeredPngAsync,
   useRenderToLayeredSvgAsync,
   useRenderToPngAsync,

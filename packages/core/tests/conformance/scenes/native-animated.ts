@@ -113,6 +113,7 @@ function buildNativeAnimatedScene(): VNode {
 }
 
 export const nativeAnimatedScene: ConformanceScene = {
+  animatedSvg: true,
   id: "native-animated",
   build: buildNativeAnimatedScene,
   width: WIDTH,

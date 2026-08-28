@@ -257,8 +257,8 @@ describe("InlineRect real WASM rendering", () => {
       text.unitAnimationSamples?.map(({ unitId: _unitId, ...sample }) => sample);
     expect(unitProjection(rectText)).toEqual(unitProjection(plainText));
     expect(sampleProjection(rectText)).toEqual(sampleProjection(plainText));
-    expect(engine.renderToSvg(rectScene)).toContain('aria-label="AB"');
-    expect(engine.renderToSvg(rectScene)).not.toContain(
+    expect(engine.renderToSvg(rectScene, { timeMs: 0 })).toContain('aria-label="AB"');
+    expect(engine.renderToSvg(rectScene, { timeMs: 0 })).not.toContain(
       "inline-rect:0:rect" + " data-boundsvg-text",
     );
   });
@@ -288,21 +288,19 @@ describe("InlineRect real WASM rendering", () => {
       ),
     );
     const caretOpacityAt = (timeMs: number) => {
-      const caret = findNode(
-        engine.renderToIR(animated, { animation: "static", timeMs }).root,
-        "typing:inline-rect:0",
-      );
+      const caret = findNode(engine.renderToIR(animated, { timeMs }).root, "typing:inline-rect:0");
       return caret.type === "group" ? caret.opacity : undefined;
     };
     expect(caretOpacityAt(0)).toBe(1);
     expect(caretOpacityAt(250)).toBe(0);
     expect(caretOpacityAt(500)).toBe(1);
 
-    const declarative = engine.renderToSvg(animated, { animation: "declarative", timeMs: 250 });
+    const declarative = engine.renderToAnimatedSvg(animated, {
+      playback: { mode: "independent" },
+      timeMs: 250,
+    });
     expect(declarative).toContain("steps(2, jump-none)");
-    expect(rasterize(declarative)).toEqual(
-      engine.renderToPng(animated, { animation: "static", timeMs: 250 }),
-    );
+    expect(rasterize(declarative)).toEqual(engine.renderToPng(animated, { timeMs: 250 }));
 
     for (const opacity of [0, 1]) {
       const direct = typingScene([
@@ -314,12 +312,8 @@ describe("InlineRect real WASM rendering", () => {
         }),
       ]);
       const materializedA2Frame = fromSceneDocument(toSceneDocument(direct));
-      expect(engine.renderToSvg(materializedA2Frame, { animation: "static" })).toBe(
-        engine.renderToSvg(direct, { animation: "static" }),
-      );
-      expect(engine.renderToPng(materializedA2Frame, { animation: "static" })).toEqual(
-        engine.renderToPng(direct, { animation: "static" }),
-      );
+      expect(engine.renderToSvg(materializedA2Frame, {})).toBe(engine.renderToSvg(direct, {}));
+      expect(engine.renderToPng(materializedA2Frame, {})).toEqual(engine.renderToPng(direct, {}));
     }
   });
 });

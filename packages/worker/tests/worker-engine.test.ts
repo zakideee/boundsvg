@@ -1,5 +1,6 @@
 import {
   FatalError,
+  type IR,
   type PngResolutionAdjustedWarning,
   RecoverableError,
   type SceneNode,
@@ -77,6 +78,17 @@ class MockWorker {
 // ---------------------------------------------------------------------------
 
 const SCENE: SceneNode = { type: "Canvas", width: 100, height: 100, children: [] };
+const WORKER_IR: Omit<IR, "warnings"> = {
+  root: {
+    type: "group",
+    nodeId: "root",
+    bbox: { x: 0, y: 0, w: 100, h: 100 },
+    children: [],
+  },
+  drawOrder: ["root"],
+  width: 100,
+  height: 100,
+};
 const TRANSITION: WorkerLayoutTransitionInput = {
   states: {
     A: SCENE,
@@ -389,24 +401,55 @@ describe("WorkerEngine", () => {
       };
 
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
-        if (request.type === "render-svg") {
+        if (request.type === "render-animated-svg") {
           mockWorker.respond({
             id: request.id,
-            type: "render-svg-ok",
+            type: "render-animated-svg-ok",
             svg: "<svg></svg>",
             warnings: [],
           });
         }
       });
 
-      await engine.renderToSvg(scene, { animation: "declarative", timeMs: 250 });
+      await engine.renderToAnimatedSvg(scene, {
+        playback: { mode: "independent" },
+        timeMs: 250,
+      });
 
       const request = mockWorker.lastRequest();
-      expect(request.type).toBe("render-svg");
-      if (request.type === "render-svg") {
+      expect(request.type).toBe("render-animated-svg");
+      if (request.type === "render-animated-svg") {
         expect(request.scene).toEqual(scene);
-        expect(request.options).toMatchObject({ animation: "declarative", timeMs: 250 });
+        expect(request.options).toEqual({ playback: { mode: "independent" }, timeMs: 250 });
       }
+      engine.dispose();
+    });
+
+    it("renders animated SVG + IR through its dedicated request family", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-animated-svg-and-ir") {
+          mockWorker.respond({
+            id: request.id,
+            type: "render-animated-svg-and-ir-ok",
+            svg: '<svg data-animated="true"/>',
+            ir: WORKER_IR,
+            warnings: [],
+          });
+        }
+      });
+
+      const result = await engine.renderToAnimatedSvgAndIR(SCENE, {
+        playback: { mode: "independent" },
+        nodeIdMetadata: "include",
+      });
+
+      expect(result.svg).toContain("data-animated");
+      expect(result.ir).toEqual({ ...WORKER_IR, warnings: [] });
+      expect(mockWorker.lastRequest()).toMatchObject({
+        type: "render-animated-svg-and-ir",
+        options: { playback: { mode: "independent" }, nodeIdMetadata: "include" },
+      });
       engine.dispose();
     });
 
@@ -742,12 +785,17 @@ describe("WorkerEngine", () => {
         }
       });
 
-      const gif = await engine.renderToAnimatedGif(SCENE, { durationMs: 400, fps: 10 });
+      const gif = await engine.renderToAnimatedGif(SCENE, {
+        durationMs: 400,
+        fps: 10,
+        iterations: "infinite",
+      });
       expect(gif).toEqual(gifBytes);
       const gifRequest = requests.find((req) => req.type === "render-animated-gif");
       expect(gifRequest?.type === "render-animated-gif" && gifRequest.options).toEqual({
         durationMs: 400,
         fps: 10,
+        iterations: "infinite",
       });
       engine.dispose();
     });
@@ -765,9 +813,9 @@ describe("WorkerEngine", () => {
         }
       });
 
-      await expect(engine.renderToAnimatedGif(SCENE, { durationMs: 400 })).rejects.toThrow(
-        FatalError,
-      );
+      await expect(
+        engine.renderToAnimatedGif(SCENE, { iterations: "infinite", durationMs: 400 }),
+      ).rejects.toThrow(FatalError);
       engine.dispose();
     });
   });
@@ -794,13 +842,17 @@ describe("WorkerEngine", () => {
         }
       });
 
-      const webp = await engine.renderToAnimatedWebp(SCENE, { durationMs: 500, fps: 10, loop: 2 });
+      const webp = await engine.renderToAnimatedWebp(SCENE, {
+        durationMs: 500,
+        fps: 10,
+        iterations: 2,
+      });
       expect(webp).toEqual(animatedBytes);
       const animatedRequest = requests.find((req) => req.type === "render-animated-webp");
       expect(animatedRequest?.type === "render-animated-webp" && animatedRequest.options).toEqual({
         durationMs: 500,
         fps: 10,
-        loop: 2,
+        iterations: 2,
       });
       engine.dispose();
     });
@@ -822,9 +874,9 @@ describe("WorkerEngine", () => {
         }
       });
 
-      await expect(engine.renderToAnimatedWebp(SCENE, { durationMs: 500 })).rejects.toThrow(
-        FatalError,
-      );
+      await expect(
+        engine.renderToAnimatedWebp(SCENE, { iterations: "infinite", durationMs: 500 }),
+      ).rejects.toThrow(FatalError);
       engine.dispose();
     });
   });
@@ -847,6 +899,7 @@ describe("WorkerEngine", () => {
       const pending = engine.renderLayoutTransitionToAnimatedWebp(input, {
         durationMs: 300,
         fps: 10,
+        iterations: 2,
         textPathMode: "glyphs",
       });
       const firstState = input.states.A;
@@ -862,6 +915,7 @@ describe("WorkerEngine", () => {
         expect(request.options).toMatchObject({
           durationMs: 300,
           fps: 10,
+          iterations: 2,
           textPathMode: "glyphs",
         });
       }
@@ -892,6 +946,7 @@ describe("WorkerEngine", () => {
       await expect(
         engine.renderLayoutTransitionToAnimatedGif(TRANSITION, {
           durationMs: 300,
+          iterations: "infinite",
           onWarning: (warning) => warningCodes.push(warning.code),
         }),
       ).resolves.toEqual(bytes);
@@ -913,7 +968,10 @@ describe("WorkerEngine", () => {
       });
 
       await expect(
-        engine.renderLayoutTransitionToAnimatedWebp(TRANSITION, { durationMs: 300 }),
+        engine.renderLayoutTransitionToAnimatedWebp(TRANSITION, {
+          durationMs: 300,
+          iterations: "infinite",
+        }),
       ).rejects.toMatchObject({ code: "LAYOUT_TRANSITION_INCOMPATIBLE" });
       engine.dispose();
     });
@@ -924,7 +982,10 @@ describe("WorkerEngine", () => {
       mockWorker.postMessage.mockImplementation(() => {});
 
       await expect(
-        engine.renderLayoutTransitionToAnimatedGif(TRANSITION, { durationMs: 300 }),
+        engine.renderLayoutTransitionToAnimatedGif(TRANSITION, {
+          durationMs: 300,
+          iterations: "infinite",
+        }),
       ).rejects.toMatchObject({
         code: "WORKER_REQUEST_TIMEOUT",
         context: expect.objectContaining({

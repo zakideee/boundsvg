@@ -59,15 +59,15 @@ function buildFontDefinitions(assetId: EditorAssetId): FontDefinition[] {
 export const ASSET_PROVIDER_CONFIGS: Record<EditorAssetId, BoundSvgConfig> = {
   headline: {
     fonts: buildFontDefinitions("headline"),
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   },
   badge: {
     fonts: buildFontDefinitions("badge"),
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   },
   stamp: {
     fonts: buildFontDefinitions("stamp"),
-    defaultRenderOptions: { textPathMode: "merged" },
+    defaultCommonOptions: { textPathMode: "merged" },
   },
 };
 

@@ -292,7 +292,9 @@ fn svgs_to_animated_gif_uses_instance_registry() {
                 duration_ms: 100,
             },
         ],
-        loop_count: None,
+        iterations: boundsvg::raster_anim::AnimatedRasterIterations::Infinite(
+            boundsvg::raster_anim::AnimatedRasterInfinite::Infinite,
+        ),
         options: None,
     };
     let gif_bytes = gif_anim::encode_animated_gif(&input, &alias_map, &font_arcs)

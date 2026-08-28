@@ -2,6 +2,7 @@ import { cloneAnimationSpecForIR, cloneIRForLayeredTransform } from "./ir/clone.
 import type { IR, IRGroupNode, IRNode } from "./ir/types.js";
 import type { BBox, LayoutNode } from "./layout/types.js";
 import { LAYOUT_TRANSITION_WRAPPER_META } from "./layout-transition.js";
+import { toCssSafeResourceId } from "./svg/resource-id.js";
 import type { DebugOverlayConfig } from "./svg/types.js";
 import {
   type AffineMatrix,
@@ -109,8 +110,8 @@ export type LayeredPngResult = {
 type RenderLayeredSvgOptions = {
   debug?: boolean | DebugOverlayConfig;
   resourceIdPrefix?: string;
+  nodeIdMetadata?: "include" | "omit";
   scale?: number;
-  animation?: "declarative" | "static";
   timeMs?: number;
   generator?: {
     name: string;
@@ -153,13 +154,8 @@ export type LayerEmitOptions = {
   scale?: number;
   debug?: boolean | DebugOverlayConfig;
   resourceIdPrefix?: string;
-  animation?: "declarative" | "static";
+  nodeIdMetadata?: "include" | "omit";
   timeMs?: number;
-  /**
-   * Forwarded by the compiled emit path. Layered rendering never sets it —
-   * `LayeredSvgOptions` deliberately does not accept a reduced-motion mode.
-   */
-  reducedMotion?: "keep" | "pause";
   generator?: {
     name: string;
     version: string;
@@ -251,9 +247,20 @@ export function renderLayeredSvg(input: RenderLayeredSvgInput): LayeredSvgResult
   collectNodeMeta(ir.root, metaByNodeId);
   const partIdsByNodeId: Record<string, CollectedPart[]> = {};
   collectNodeParts(ir.root, partIdsByNodeId, createIdentityAffineMatrix());
+  const normalizedResourceIdPrefix =
+    options?.resourceIdPrefix === undefined
+      ? undefined
+      : toCssSafeResourceId(options.resourceIdPrefix);
 
-  const layers = segments.map((segment) => {
+  const layers = segments.map((segment, layerIndex) => {
     const manifestEntry = buildManifestEntry(segment, metaByNodeId, partIdsByNodeId);
+    // A non-empty document prefix gets a stable, delimiter-terminated numeric
+    // sub-prefix per layer. `layer-1-` is not a prefix of `layer-10-`, so the
+    // generated identifier sets remain disjoint across layered SVGs.
+    const layerResourceIdPrefix =
+      normalizedResourceIdPrefix !== undefined && normalizedResourceIdPrefix.length > 0
+        ? `${normalizedResourceIdPrefix}layer-${layerIndex}-`
+        : normalizedResourceIdPrefix;
     const layerSvg = emitLayerSvg(
       {
         root: {
@@ -269,9 +276,9 @@ export function renderLayeredSvg(input: RenderLayeredSvgInput): LayeredSvgResult
       },
       {
         debug: options?.debug ?? ir.debug,
-        resourceIdPrefix: options?.resourceIdPrefix,
+        resourceIdPrefix: layerResourceIdPrefix,
+        nodeIdMetadata: options?.nodeIdMetadata,
         scale: options?.scale,
-        animation: options?.animation,
         timeMs: options?.timeMs,
         generator: options?.generator,
       },
@@ -837,7 +844,7 @@ function wrapWithTransformAncestors(
   return wrappedNode;
 }
 
-function hasAnimatedNode(node: IRNode): boolean {
+export function hasAnimatedNode(node: IRNode): boolean {
   if (node.type === "text") {
     return node.unitAnimation !== undefined;
   }
