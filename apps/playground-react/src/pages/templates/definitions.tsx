@@ -1118,6 +1118,7 @@ export const TEMPLATE_GROUPS: TemplateGroupDef[] = [
     key: "text-motion",
     label: "Text Motion",
     templateKeys: [
+      "animated-svg-timeline",
       "typing-ime-timeline",
       "text-on-path-basics",
       "decoration-path-fit",

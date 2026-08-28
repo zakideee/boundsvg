@@ -151,10 +151,13 @@ supported props and error codes.
   each scene receives a normal full-scene layout.
 - Custom animation `originX`/`originY` values and full Unicode bidi reordering
   for `animateUnits.order: "visual"` are not supported.
-- CSS playback timing depends on the SVG viewer. A viewer without CSS animation
-  support shows the deterministic `timeMs` base-pose still image.
-- The `prefers-reduced-motion` opt-out is opt-in and coarse. `reducedMotion:
-"pause"` appends one media block that stops every animation the render
+- CSS playback scheduling depends on the SVG viewer. Document timeline mode
+  contracts computed values outside/around bounded discontinuity windows, but
+  does not control the wall-clock instant at which a viewer paints a frame. A
+  viewer without CSS animation support shows the deterministic `timeMs`
+  base-pose still image.
+- The `prefers-reduced-motion` opt-out is opt-in and coarse. Passing
+  `reducedMotion: "pause"` appends one media block that stops every animation the render
   started; the default `"keep"` emits nothing, so output stays byte identical to
   a render that never passed the option. There is no per-node or per-channel
   reduced-motion control, and PNG/raster output is unaffected because it is

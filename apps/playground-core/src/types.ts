@@ -1,4 +1,4 @@
-import type { Engine, VNode } from "@boundsvg/core";
+import type { Engine, RenderAnimatedSvgOptions, VNode } from "@boundsvg/core";
 
 export type Preset = {
   title: string;
@@ -10,6 +10,8 @@ export type Preset = {
    * offer animated WebP and GIF export; the rest offer still formats only.
    */
   animationDurationMs?: number;
+  /** Animated SVG preview options. Omitted presets keep independent playback. */
+  animatedSvgOptions?: RenderAnimatedSvgOptions;
 };
 
 export type DragTarget = {

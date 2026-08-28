@@ -136,15 +136,25 @@ This is a static hook. Animated input requires an explicit `timeMs`.
 
 <sub>`@boundsvg/react`</sub>
 
-Render an independently playing animated SVG on the main thread. Options are
-required and must include `playback: { mode: "independent" }`.
+Render an animated SVG on the main thread. Options are required and must select
+either independently playing tracks or one shared document timeline.
 
 ```ts
 const { svg, error, isReady } = useRenderToAnimatedSvg(vnode, {
-  playback: { mode: "independent" },
+  playback: {
+    mode: "timeline",
+    durationMs: 2400,
+    iterations: "infinite",
+  },
   reducedMotion: "pause",
 });
 ```
+
+Use `playback: { mode: "independent" }` to preserve each authored track's own
+duration, delay, and iteration schedule. Timeline playback instead maps every
+track onto the shared document clock; see the
+[animation guide](/guides/animation#document-timeline-playback) for its strict
+validation and exact-time semantics.
 
 ### `useRenderToPng(vnode, options?)`
 
@@ -199,12 +209,12 @@ const { svg, error, isRendering, isReady } = useRenderToSvgAsync(vnode, options?
 <sub>`@boundsvg/react/worker`</sub>
 
 The Worker equivalent of `useRenderToAnimatedSvg`. Its required options carry
-the same independent playback, base-pose, namespace, metadata, and reduced
-motion contract.
+the same independent-or-timeline playback, base-pose, namespace, metadata, and
+reduced-motion contract.
 
 ```ts
 const result = useRenderToAnimatedSvgAsync(vnode, {
-  playback: { mode: "independent" },
+  playback: { mode: "timeline", durationMs: 2400, iterations: 2 },
   nodeIdMetadata: "omit",
 });
 ```
@@ -341,7 +351,11 @@ calls the animated SVG family on either the main thread or Worker. Its
 <AnimatedBoundSvg
   vnode={vnode}
   renderOptions={{
-    playback: { mode: "independent" },
+    playback: {
+      mode: "timeline",
+      durationMs: 2400,
+      iterations: "infinite",
+    },
     resourceIdPrefix: "preview-0042-",
     reducedMotion: "pause",
   }}
@@ -606,10 +620,12 @@ export type {
   AnimatedBoundSvgProps,
   AnimatedSvgPlayback,
   AnimationEasing,
+  AnimationIterationCount,
   AnimationKeyframe,
   AnimationSpec,
   AnimationSpring,
   AnimationStepPosition,
+  AnimationTimeline,
   AnimationTransform2D,
   AnyVNode,
   BooleanOp,
