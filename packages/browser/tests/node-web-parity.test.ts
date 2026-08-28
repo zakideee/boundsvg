@@ -140,6 +140,30 @@ function buildTimelineAnimatedScene(): VNode {
   );
 }
 
+function buildDocumentCutCubicScene(): VNode {
+  return createElement(
+    "Canvas",
+    { width: 160, height: 80 },
+    createElement("Box", {
+      id: "cut-cubic-box",
+      width: 40,
+      height: 30,
+      background: "#2563eb",
+      animate: {
+        keyframes: [
+          { at: 0, transform: { translateX: 0 } },
+          { at: 1, transform: { translateX: 100 } },
+        ],
+        durationMs: 1_600,
+        delayMs: -250,
+        easing: [0, 13 / 9, 1, 0],
+        iterations: 1,
+        fill: "both",
+      },
+    }),
+  );
+}
+
 function buildSpringAnimatedScene(): VNode {
   return createElement(
     "Canvas",
@@ -249,6 +273,22 @@ describe("nodejs/web WASM public parity", () => {
         expectedCompiledSvg,
       );
     }
+  });
+
+  it("renders document-cut cubic extrema identically in every WASM artifact", () => {
+    const scene = buildDocumentCutCubicScene();
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1_100, iterations: "infinite" as const },
+      resourceIdPrefix: "cut-cubic-parity-",
+      nodeIdMetadata: "omit" as const,
+    };
+    const expected = nodeEngine.renderToAnimatedSvg(scene, options);
+    for (const engine of timelineEngines) {
+      expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
+      expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
+      expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
+    }
+    expect((expected.match(/^\s*\d+(?:\.\d+)?%\s*\{/gm) ?? []).length).toBe(4);
   });
 
   it("returns the same timeline representability error and context", () => {
