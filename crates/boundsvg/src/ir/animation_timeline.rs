@@ -662,6 +662,24 @@ fn derivative_roots(first: f64, second: f64) -> Vec<f64> {
             roots.push((-quadratic_b + square_root) / (2.0 * quadratic_a));
         }
     }
+    if first == 0.0
+        && let Some((root_index, root)) = roots
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
+        && same_time(*root, 0.0)
+    {
+        roots.remove(root_index);
+    }
+    if second == 1.0
+        && let Some((root_index, root)) = roots
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| (1.0 - **left).abs().total_cmp(&(1.0 - **right).abs()))
+        && same_time(*root, 1.0)
+    {
+        roots.remove(root_index);
+    }
     roots.retain(|root| *root > 0.0 && *root < 1.0 && root.is_finite());
     roots.sort_by(f64::total_cmp);
     roots.dedup_by(|left, right| same_time(*left, *right));
@@ -2041,6 +2059,30 @@ mod tests {
                 .last()
                 .map(|keyframe| keyframe.time_ms),
             Some(200.0)
+        );
+    }
+
+    #[test]
+    fn keeps_an_exact_cubic_endpoint_as_one_timeline_stop() {
+        let mut spec = opacity_spec(AnimationEasing::Named("ease".to_string()));
+        spec.duration_ms = 600.0;
+        spec.delay_ms = Some(0.0);
+        spec.iterations = Some(AnimationIterations::Count(1.0));
+        spec.fill = Some("both".to_string());
+        let playback = DocumentPlayback {
+            duration_ms: 1_000.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+        let plan = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
+            .expect("the standard cubic endpoint should not create a numeric duplicate");
+
+        assert_eq!(
+            plan.tracks[0]
+                .keyframes
+                .iter()
+                .map(|keyframe| keyframe.time_ms)
+                .collect::<Vec<_>>(),
+            vec![0.0, 600.0, 1_000.0]
         );
     }
 
