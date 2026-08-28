@@ -116,6 +116,41 @@ describe("animated SVG document timeline", () => {
     expect((direct.match(/animation-timing-function: cubic-bezier\(/g) ?? []).length).toBe(3);
   });
 
+  it("keeps mixed-channel clamp extrema identical across public render paths", () => {
+    const scene = createElement(
+      "Canvas",
+      { width: 160, height: 48 },
+      createElement("Box", {
+        id: "mixed-cubic-box",
+        width: 32,
+        height: 20,
+        animate: {
+          keyframes: [
+            { at: 0, opacity: 0, transform: { translateX: 0 } },
+            { at: 1, opacity: 1, transform: { translateX: 100 } },
+          ],
+          durationMs: 1_000,
+          easing: [0, 2, 1, 1],
+          iterations: 1,
+          fill: "both",
+        },
+      }),
+    );
+    const options = {
+      playback: { mode: "timeline", durationMs: 1_000, iterations: "infinite" },
+      resourceIdPrefix: "mixed-cubic-",
+      nodeIdMetadata: "omit",
+    } as const satisfies RenderAnimatedSvgOptions;
+    const compiled = engine.compile(scene);
+    const direct = engine.renderToAnimatedSvg(scene, options);
+
+    expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+    expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+    expect((direct.match(/^\s*\d+(?:\.\d+)?%\s*\{/gm) ?? []).length).toBe(4);
+    expect(direct).toContain("15.625%");
+    expect(direct).toContain("50%");
+  });
+
   it("enforces the published inclusive keyframe stop limit", () => {
     const stepScene = (count: number) =>
       createElement(

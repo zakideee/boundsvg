@@ -164,6 +164,29 @@ function buildDocumentCutCubicScene(): VNode {
   );
 }
 
+function buildMixedClampCubicScene(): VNode {
+  return createElement(
+    "Canvas",
+    { width: 160, height: 80 },
+    createElement("Box", {
+      id: "mixed-cubic-box",
+      width: 40,
+      height: 30,
+      background: "#2563eb",
+      animate: {
+        keyframes: [
+          { at: 0, opacity: 0, transform: { translateX: 0 } },
+          { at: 1, opacity: 1, transform: { translateX: 100 } },
+        ],
+        durationMs: 1_000,
+        easing: [0, 2, 1, 1],
+        iterations: 1,
+        fill: "both",
+      },
+    }),
+  );
+}
+
 function buildSpringAnimatedScene(): VNode {
   return createElement(
     "Canvas",
@@ -280,6 +303,22 @@ describe("nodejs/web WASM public parity", () => {
     const options = {
       playback: { mode: "timeline" as const, durationMs: 1_100, iterations: "infinite" as const },
       resourceIdPrefix: "cut-cubic-parity-",
+      nodeIdMetadata: "omit" as const,
+    };
+    const expected = nodeEngine.renderToAnimatedSvg(scene, options);
+    for (const engine of timelineEngines) {
+      expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
+      expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
+      expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
+    }
+    expect((expected.match(/^\s*\d+(?:\.\d+)?%\s*\{/gm) ?? []).length).toBe(4);
+  });
+
+  it("renders mixed-channel clamp extrema identically in every WASM artifact", () => {
+    const scene = buildMixedClampCubicScene();
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1_000, iterations: "infinite" as const },
+      resourceIdPrefix: "mixed-cubic-parity-",
       nodeIdMetadata: "omit" as const,
     };
     const expected = nodeEngine.renderToAnimatedSvg(scene, options);
