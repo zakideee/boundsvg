@@ -1217,10 +1217,13 @@ fn interpolate_transform(
     end: &AnimationTransform2D,
     progress: f64,
 ) -> AnimationTransform2D {
-    let interpolate = |start: Option<f64>, end: Option<f64>, identity: f64| {
-        let start_value = start.unwrap_or(identity);
-        let end_value = end.unwrap_or(identity);
-        Some(start_value + (end_value - start_value) * progress)
+    let interpolate = |start_component: Option<f64>, end_component: Option<f64>, identity: f64| {
+        let resolved_start_component = start_component.unwrap_or(identity);
+        let resolved_end_component = end_component.unwrap_or(identity);
+        Some(
+            resolved_start_component
+                + (resolved_end_component - resolved_start_component) * progress,
+        )
     };
     AnimationTransform2D {
         translate_x: interpolate(start.translate_x, end.translate_x, 0.0),
@@ -1252,15 +1255,15 @@ fn interpolate_track_values(start: &TrackValue, end: &TrackValue, progress: f64)
     }
     TrackValue {
         opacity: match (start.opacity, end.opacity) {
-            (Some(from_opacity), Some(to_opacity)) => {
-                Some((from_opacity + (to_opacity - from_opacity) * progress).clamp(0.0, 1.0))
+            (Some(start_opacity), Some(end_opacity)) => {
+                Some((start_opacity + (end_opacity - start_opacity) * progress).clamp(0.0, 1.0))
             }
             _ => None,
         },
         transform: match (start.transform.as_ref(), end.transform.as_ref()) {
-            (Some(from_transform), Some(to_transform)) => Some(interpolate_transform(
-                from_transform,
-                to_transform,
+            (Some(start_transform), Some(end_transform)) => Some(interpolate_transform(
+                start_transform,
+                end_transform,
                 progress,
             )),
             _ => None,
@@ -1287,8 +1290,8 @@ fn segment_interpolation_is_constant(spec: &AnimationSpec, segment_index: usize)
             start_keyframe.transform.as_ref(),
             end_keyframe.transform.as_ref(),
         ) {
-            (Some(from_transform), Some(to_transform)) => {
-                transform_interpolation_is_constant(from_transform, to_transform)
+            (Some(start_transform), Some(end_transform)) => {
+                transform_interpolation_is_constant(start_transform, end_transform)
             }
             (None, None) => true,
             _ => false,
@@ -1307,11 +1310,11 @@ fn cubic_raw_opacity_leaves_clamp_range(
     }
     let start_keyframe = &spec.keyframes[segment_index];
     let end_keyframe = &spec.keyframes[segment_index + 1];
-    let (Some(from_opacity), Some(to_opacity)) = (start_keyframe.opacity, end_keyframe.opacity)
+    let (Some(start_opacity), Some(end_opacity)) = (start_keyframe.opacity, end_keyframe.opacity)
     else {
         return false;
     };
-    if from_opacity == to_opacity {
+    if start_opacity == end_opacity {
         return false;
     }
 
@@ -1325,7 +1328,7 @@ fn cubic_raw_opacity_leaves_clamp_range(
     );
     parameters.into_iter().any(|parameter| {
         let eased_progress = cubic_coordinate(parameter, curve[1], curve[3]);
-        let raw_opacity = from_opacity + (to_opacity - from_opacity) * eased_progress;
+        let raw_opacity = start_opacity + (end_opacity - start_opacity) * eased_progress;
         !(0.0..=1.0).contains(&raw_opacity)
     })
 }
