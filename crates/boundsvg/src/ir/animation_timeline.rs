@@ -332,6 +332,7 @@ struct TrackIdentity<'a> {
     unit_id: Option<&'a str>,
 }
 
+#[cfg(test)]
 impl TrackSource {
     fn identity(&self) -> TrackIdentity<'_> {
         TrackIdentity {
@@ -665,22 +666,37 @@ fn collect_validated_timeline_node_sources(
     node: &IrNode,
     sources: &mut Vec<TrackSource>,
 ) -> Result<(), EngineError> {
-    let first_source_index = sources.len();
-    collect_track_sources_at_node(node, sources);
     let IrNodeKind::Text {
+        unit_map: Some(unit_map),
         unit_animation: Some(unit_animation),
         ..
     } = &node.kind
     else {
+        collect_track_sources_at_node(node, sources);
         return Ok(());
     };
+    let use_visual_order = matches!(unit_animation.order, Some(TextUnitAnimationOrder::Visual));
     let base_delay_ms = unit_animation.animation.delay_ms.unwrap_or(0.0);
-    for source in &sources[first_source_index..] {
-        let effective_delay_ms = source.spec.delay_ms.unwrap_or(0.0);
+    let delay_step_ms = unit_animation.delay_step_ms.unwrap_or(0.0);
+    for unit in &unit_map.units {
+        let order_index = if use_visual_order {
+            unit.visual_order
+        } else {
+            unit.logical_order
+        };
+        let effective_delay_ms = base_delay_ms + f64::from(order_index) * delay_step_ms;
         if effective_delay_ms != base_delay_ms {
-            validate_authored_timeline_delay_domain(source.identity(), effective_delay_ms)?;
+            validate_authored_timeline_delay_domain(
+                TrackIdentity {
+                    owner_kind: TimelineOwnerKind::TextUnit,
+                    owner_id: &node.node_id,
+                    unit_id: Some(unit.unit_id.as_str()),
+                },
+                effective_delay_ms,
+            )?;
         }
     }
+    collect_track_sources_at_node(node, sources);
     Ok(())
 }
 
@@ -4740,7 +4756,7 @@ mod tests {
     }
 
     #[test]
-    fn compiles_text_units_in_sample_order_with_visual_delay_order() {
+    fn compiles_text_units_in_sample_order_and_validates_every_visual_delay() {
         let root: IrNode = serde_json::from_value(json!({
                 "nodeId": "copy",
                 "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
@@ -4828,7 +4844,21 @@ mod tests {
                 .any(|keyframe| same_time(keyframe.time_ms, 20.0))
         );
 
-        let mut out_of_domain_source = source.clone();
+        let mut boundary_source = source.clone();
+        let IrNodeKind::Text {
+            unit_animation: Some(unit_animation),
+            unit_animation_samples: Some(samples),
+            ..
+        } = &mut boundary_source.root.kind
+        else {
+            panic!("text-unit fixture expected");
+        };
+        unit_animation.delay_step_ms = Some(MAX_AUTHORED_TIMELINE_DELAY_MS);
+        samples[0].bbox = None;
+        compile_document_animation_plan(&boundary_source, infinite_playback(), 0.0)
+            .expect("a bbox-less unit at the inclusive delay boundary should compile");
+
+        let mut out_of_domain_source = boundary_source;
         let IrNodeKind::Text {
             unit_animation: Some(unit_animation),
             ..
@@ -4839,7 +4869,7 @@ mod tests {
         unit_animation.delay_step_ms = Some(next_up(MAX_AUTHORED_TIMELINE_DELAY_MS));
         let error =
             compile_document_animation_plan(&out_of_domain_source, infinite_playback(), 0.0)
-                .expect_err("an expanded text-unit delay outside the domain should fail");
+                .expect_err("a bbox-less unit delay outside the domain should fail");
         let EngineError::StructuredContext { code, context, .. } = error else {
             panic!("effective text-unit delay should carry timeline context");
         };

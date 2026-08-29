@@ -8,6 +8,7 @@ import type {
   RenderAnimatedSvgOptions,
 } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
+import type { IRNode } from "../../src/ir/types.js";
 import { animatedSvgTimelineLimits } from "../../src/render-capabilities.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
@@ -48,6 +49,115 @@ function timelineScene(easing: "linear" | { type: "spring" } = "linear") {
       },
     }),
   );
+}
+
+type AuthoredDomainField = "durationMs" | "delayMs" | "iterations";
+
+function authoredDomainProbeScene(
+  owner: EndpointOwner,
+  authoredField?: AuthoredDomainField,
+  received?: number,
+): { scene: ReturnType<typeof createElement>; ownerId: string } {
+  const ownerId = `transport-domain-${owner}`;
+  const animation: AnimationSpec = {
+    keyframes: [
+      { at: 0, opacity: 0 },
+      { at: 1, opacity: 1 },
+    ],
+    durationMs: 100,
+    delayMs: 0,
+    easing: "linear",
+    iterations: 1,
+    fill: "both",
+  };
+  if (authoredField !== undefined && received !== undefined) {
+    animation[authoredField] = received;
+  }
+  const animated =
+    owner === "node"
+      ? createElement("Box", { id: ownerId, width: 32, height: 20, animate: animation })
+      : createElement(
+          "Text",
+          {
+            id: ownerId,
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return {
+    scene: createElement("Canvas", { width: 96, height: 48 }, animated),
+    ownerId,
+  };
+}
+
+function hiddenTextUnitDomainScene(delayStepMs: number) {
+  return createElement(
+    "Canvas",
+    { width: 460, height: 220 },
+    createElement(
+      "TextOnPath",
+      {
+        id: "hidden-domain-units",
+        d: "M20 170C100 20 350 20 440 170",
+        width: 460,
+        height: 220,
+        font: "NotoSansJP",
+        fontSizePx: 30,
+        color: "#f8fafc",
+        startOffsetPx: -10_000,
+        pathOverflow: "hidden",
+        animateUnits: {
+          by: "cluster",
+          animation: {
+            keyframes: [
+              { at: 0, opacity: 0 },
+              { at: 1, opacity: 1 },
+            ],
+            durationMs: 100,
+            delayMs: 0,
+            easing: "linear",
+            iterations: 1,
+            fill: "both",
+          },
+          delayStepMs,
+          order: "logical",
+        },
+      },
+      "AB",
+    ),
+  );
+}
+
+function findAuthoredAnimation(node: IRNode, ownerId: string): AnimationSpec {
+  const find = (currentNode: IRNode): AnimationSpec | undefined => {
+    if (currentNode.nodeId === ownerId) {
+      if (currentNode.type === "group" && currentNode.animation !== undefined) {
+        return currentNode.animation;
+      }
+      if (currentNode.type === "text" && currentNode.unitAnimation !== undefined) {
+        return currentNode.unitAnimation.animation;
+      }
+    }
+    if (currentNode.type === "group") {
+      for (const child of currentNode.children ?? []) {
+        const animation = find(child);
+        if (animation !== undefined) {
+          return animation;
+        }
+      }
+    }
+    return undefined;
+  };
+  const animation = find(node);
+  if (animation !== undefined) {
+    return animation;
+  }
+  throw new TypeError(`Missing animation owner ${ownerId}`);
 }
 
 type EndpointOwner = "node" | "textUnit";
@@ -715,6 +825,85 @@ describe("animated SVG document timeline", () => {
         expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
       }
     }
+  });
+
+  it("validates effective delays for bbox-less text units at the authored boundary", () => {
+    const options = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+    } as const satisfies RenderAnimatedSvgOptions;
+    const boundaryScene = hiddenTextUnitDomainScene(2 ** 32);
+    const boundaryCompiled = engine.compile(boundaryScene);
+    expect(() => engine.renderToAnimatedSvg(boundaryScene, options)).not.toThrow();
+    expect(() => engine.renderToAnimatedSvgAndIR(boundaryScene, options)).not.toThrow();
+    expect(() => engine.renderCompiledToAnimatedSvg(boundaryCompiled, options)).not.toThrow();
+
+    const aboveDelayUpperBound = 2 ** 32 + 2 ** -20;
+    const outsideScene = hiddenTextUnitDomainScene(aboveDelayUpperBound);
+    const outsideCompiled = engine.compile(outsideScene);
+    for (const render of [
+      () => engine.renderToAnimatedSvg(outsideScene, options),
+      () => engine.renderToAnimatedSvgAndIR(outsideScene, options),
+      () => engine.renderCompiledToAnimatedSvg(outsideCompiled, options),
+    ]) {
+      const fatal = captureFatal(render);
+      expect(fatal).toMatchObject({
+        code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+        context: {
+          ownerKind: "textUnit",
+          ownerId: "hidden-domain-units",
+          unitId: expect.any(String),
+          reason: "authored-value-out-of-domain",
+          field: "delayMs",
+          received: String(aboveDelayUpperBound),
+        },
+      });
+      expect(fatal.context).not.toHaveProperty("boundaryTimeMs");
+    }
+  });
+
+  it.each([
+    ["durationMs", Number.NaN],
+    ["delayMs", Number.POSITIVE_INFINITY],
+    ["delayMs", Number.NEGATIVE_INFINITY],
+    ["iterations", -0],
+  ] as const)("routes authored %s=%s to the domain error across owners and public paths", (authoredField, received) => {
+    const options = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      const invalid = authoredDomainProbeScene(owner, authoredField, received);
+      const valid = authoredDomainProbeScene(owner);
+      const compiled = engine.compile(valid.scene);
+      findAuthoredAnimation(compiled.ir.root, valid.ownerId)[authoredField] = received;
+      for (const render of [
+        () => engine.renderToAnimatedSvg(invalid.scene, options),
+        () => engine.renderToAnimatedSvgAndIR(invalid.scene, options),
+        () => engine.renderCompiledToAnimatedSvg(compiled, options),
+      ]) {
+        const fatal = captureFatal(render);
+        expect(fatal.context).toEqual({
+          ownerKind: owner,
+          ownerId: invalid.ownerId,
+          reason: "authored-value-out-of-domain",
+          field: authoredField,
+          received: String(received),
+          migration:
+            "Use playback mode independent or change the authored value to the supported timeline range.",
+          stage: "emit",
+          nodeId: invalid.ownerId,
+        });
+        expect(fatal.code).toBe("ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+      }
+    }
+  });
+
+  it("preserves independent-mode validation for non-finite authored timing", () => {
+    const invalid = authoredDomainProbeScene("node", "durationMs", Number.NaN);
+    const fatal = captureFatal(() =>
+      engine.renderToAnimatedSvg(invalid.scene, { playback: { mode: "independent" } }),
+    );
+    expect(fatal).toMatchObject({ code: "ANIMATION_INVALID_SPEC" });
   });
 
   it("keeps out-of-timeline-domain authored values available in independent mode", () => {

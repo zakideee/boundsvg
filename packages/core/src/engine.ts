@@ -11,6 +11,10 @@ import {
   resolveGifDelaysCs,
 } from "./animation-schedule.js";
 import { invokeMeasurementTransport } from "./engine/measurement-transport.js";
+import {
+  assertAnimatedSvgTimelineIrJsonRepresentable,
+  assertAnimatedSvgTimelineVNodeJsonRepresentable,
+} from "./engine/timeline-domain-transport.js";
 import { FatalError, RecoverableError, type StructuredError } from "./errors.js";
 import { GENERIC_FONT_FAMILIES } from "./font/generic-families.js";
 import { DEFAULT_FONT_WEIGHT } from "./font/types.js";
@@ -55,7 +59,7 @@ import { collectTextFontAliases } from "./text/inline-runs.js";
 import { projectResolvedTextOutlines } from "./text/outline-projection.js";
 import { assertRichTextNodeDepth } from "./text/rich-text-limits.js";
 import type { RichTextNode, TextOutlineNode, TextPathMode } from "./text/types.js";
-import { validate } from "./validate/index.js";
+import { validate, validateAnimatedSvgTimeline } from "./validate/index.js";
 import type { AnimationSpec, VNode } from "./vnode/types.js";
 import type {
   AnimationEncodeInput,
@@ -2501,7 +2505,13 @@ export class Engine {
       );
     }
     const vnode = this.resolveInput(input);
-    if (!renderOpts?.skipValidation) {
+    if (renderOpts?.playback?.mode === "timeline") {
+      if (renderOpts.skipValidation) {
+        assertAnimatedSvgTimelineVNodeJsonRepresentable(vnode);
+      } else {
+        validateAnimatedSvgTimeline(vnode);
+      }
+    } else if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
     this.assertVNodeFontAliasesRegistered(vnode);
@@ -2902,6 +2912,9 @@ export class Engine {
     assertValidAnimationRenderOptions(emitOpts);
     this.ensureNotDisposed();
     assertRenderableCanvas(compiled.ir);
+    if (emitOpts.playback.mode === "timeline") {
+      assertAnimatedSvgTimelineIrJsonRepresentable(compiled.ir);
+    }
     const requestedScale = emitOpts?.scale ?? 1;
     if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
       throw new FatalError(

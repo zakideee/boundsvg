@@ -1,4 +1,5 @@
 import { parseColor } from "../color.js";
+import type { TimelineAuthoredDomainOwner } from "../engine/timeline-domain-transport.js";
 import { FatalError } from "../errors.js";
 import { countTextOnPathRunResources, flattenTextOnPathRuns } from "../text/inline-runs.js";
 import { assertVNodeRichTextDepth } from "../text/rich-text-limits.js";
@@ -338,6 +339,7 @@ const TEXT_UNIT_ANIMATION_KEYS = new Set(["by", "animation", "delayStepMs", "ord
 function validateTextUnitAnimation(
   node: VNodeFor<"Text"> | VNodeFor<"TextOnPath">,
   nid: string,
+  timelineOwner?: TimelineAuthoredDomainOwner,
 ): void {
   const animateUnits: unknown = node.props.animateUnits;
   if (animateUnits === undefined) {
@@ -377,13 +379,17 @@ function validateTextUnitAnimation(
   ) {
     throw animationValidationError(nid, 'animateUnits.ruby must be "with-base" or "separate"');
   }
-  validateAnimationValue(animateUnits.animation, nid);
+  validateAnimationValue(animateUnits.animation, nid, timelineOwner);
 }
 
-export function validateTextNode(node: VNodeFor<"Text">, nid: string): void {
+export function validateTextNode(
+  node: VNodeFor<"Text">,
+  nid: string,
+  timelineOwner?: TimelineAuthoredDomainOwner,
+): void {
   assertVNodeRichTextDepth(node);
   validateTextEffects(node, nid);
-  validateTextUnitAnimation(node, nid);
+  validateTextUnitAnimation(node, nid, timelineOwner);
   validateTextFlow(node, nid);
   const decorationRangeCount = countTextDecorationRanges(node);
   if (decorationRangeCount > MAX_TEXT_DECORATION_RANGES) {
@@ -500,7 +506,11 @@ function validateTextOnPathEnum(options: {
   }
 }
 
-export function validateTextOnPathNode(node: VNodeFor<"TextOnPath">, nid: string): void {
+export function validateTextOnPathNode(
+  node: VNodeFor<"TextOnPath">,
+  nid: string,
+  timelineOwner?: TimelineAuthoredDomainOwner,
+): void {
   assertVNodeRichTextDepth(node);
   const props = node.props as Record<string, unknown>;
   validateTextOnPathRootProps(props, nid);
@@ -550,7 +560,7 @@ export function validateTextOnPathNode(node: VNodeFor<"TextOnPath">, nid: string
     );
   }
   validateTextEffects(node, nid);
-  validateTextUnitAnimation(node, nid);
+  validateTextUnitAnimation(node, nid, timelineOwner);
 }
 
 function validateTextOnPathRootProps(props: Record<string, unknown>, nid: string): void {
