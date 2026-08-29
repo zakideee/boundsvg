@@ -599,18 +599,18 @@ describe("animated SVG document timeline", () => {
       timeMs: 0.5,
     } as const satisfies RenderAnimatedSvgOptions;
 
-    for (const [delayMs, iterations, fill, expectedOpacity] of [
-      [-1e308, 1, "both", 0],
-      [-1e308, 1, "none", 1],
-      [1e308, 1, "both", 0],
-      [1e308, 1, "none", 1],
-      [-1e308, "infinite", "none", 0],
+    for (const [delayMs, iterations, fill, keyframeOpacities, expectedOpacity] of [
+      [-1e308, 1, "both", [0, 1], 1],
+      [-1e308, 1, "none", [0, 1], 1],
+      [1e308, 1, "both", [0, 1], 0],
+      [1e308, 1, "none", [0, 1], 1],
+      [-1e308, "infinite", "none", [0, 0], 0],
     ] as const) {
       for (const owner of ["node", "textUnit"] as const) {
         const scene = largeSourcePositionScene(
           owner,
           iterations,
-          { keyframeOpacities: [0, 0], fill },
+          { keyframeOpacities, fill },
           { durationMs: 1e-300, delayMs },
         );
         const compiled = engine.compile(scene);

@@ -1684,7 +1684,12 @@ fn build_canonical_boundary_program(
     let mut tail = None;
     let mut active_source_range = None;
     let mut construction_precision_failure = false;
-    if !spec_values_are_constant(&source.spec) {
+    let finite_source_ended_by_document_start = finite_source_end.is_some_and(|iteration_count| {
+        let active_time_at_document_start_ms = 0.0 - delay_ms;
+        let active_duration_ms = source_duration_ms * iteration_count;
+        active_time_at_document_start_ms >= active_duration_ms
+    });
+    if !spec_values_are_constant(&source.spec) && !finite_source_ended_by_document_start {
         let source_start = ((0.0 - delay_ms) / source_duration_ms).max(0.0);
         let source_end = finite_source_end
             .map_or(document_end_position, |count| {
@@ -4907,27 +4912,52 @@ mod tests {
             fill: Some(fill.to_string()),
         };
 
-        for (delay_ms, iterations, fill, uses_authored_value) in [
-            (-1.0e308, AnimationIterations::Count(1.0), "both", true),
-            (-1.0e308, AnimationIterations::Count(1.0), "none", false),
-            (1.0e308, AnimationIterations::Count(1.0), "both", true),
-            (1.0e308, AnimationIterations::Count(1.0), "none", false),
+        for (delay_ms, iterations, fill, keyframe_opacities, authored_opacity) in [
+            (
+                -1.0e308,
+                AnimationIterations::Count(1.0),
+                "both",
+                [0.0, 1.0],
+                Some(1.0),
+            ),
+            (
+                -1.0e308,
+                AnimationIterations::Count(1.0),
+                "none",
+                [0.0, 1.0],
+                None,
+            ),
+            (
+                1.0e308,
+                AnimationIterations::Count(1.0),
+                "both",
+                [0.0, 1.0],
+                Some(0.0),
+            ),
+            (
+                1.0e308,
+                AnimationIterations::Count(1.0),
+                "none",
+                [0.0, 1.0],
+                None,
+            ),
             (
                 -1.0e308,
                 AnimationIterations::Infinite("infinite".to_string()),
                 "none",
-                true,
+                [0.0, 0.0],
+                Some(0.0),
             ),
         ] {
             let keyframes = vec![
                 AnimationKeyframe {
                     at: 0.0,
-                    opacity: Some(0.0),
+                    opacity: Some(keyframe_opacities[0]),
                     transform: None,
                 },
                 AnimationKeyframe {
                     at: 1.0,
-                    opacity: Some(0.0),
+                    opacity: Some(keyframe_opacities[1]),
                     transform: None,
                 },
             ];
@@ -4946,18 +4976,14 @@ mod tests {
                     1.0,
                 ),
             ] {
-                let expected_opacity = if uses_authored_value {
-                    0.0
-                } else {
-                    base_opacity
-                };
+                let expected_opacity = authored_opacity.unwrap_or(base_opacity);
                 let expected_value = TrackValue {
                     opacity: Some(expected_opacity),
                     transform: None,
                 }
                 .to_keyframe();
                 let plan = compile_document_animation_plan(&source, playback, 0.5)
-                    .expect("a constant opacity track should preserve its overflow phase");
+                    .expect("an opacity track should preserve its overflow phase");
                 assert!(
                     plan.tracks[0]
                         .keyframes
@@ -4967,45 +4993,41 @@ mod tests {
             }
         }
 
-        for (delay_ms, iterations, fill, expected_transform) in [
+        for (delay_ms, iterations, fill, keyframe_translate_x, expected_translate_x) in [
             (
                 -1.0e308,
                 AnimationIterations::Count(1.0),
                 "both",
-                AnimationTransform2D {
-                    translate_x: Some(7.0),
-                    ..AnimationTransform2D::default()
-                },
+                [7.0, 9.0],
+                Some(9.0),
             ),
             (
                 -1.0e308,
                 AnimationIterations::Count(1.0),
                 "none",
-                AnimationTransform2D::default(),
+                [7.0, 9.0],
+                None,
             ),
             (
                 1.0e308,
                 AnimationIterations::Count(1.0),
                 "both",
-                AnimationTransform2D {
-                    translate_x: Some(7.0),
-                    ..AnimationTransform2D::default()
-                },
+                [7.0, 9.0],
+                Some(7.0),
             ),
             (
                 1.0e308,
                 AnimationIterations::Count(1.0),
                 "none",
-                AnimationTransform2D::default(),
+                [7.0, 9.0],
+                None,
             ),
             (
                 -1.0e308,
                 AnimationIterations::Infinite("infinite".to_string()),
                 "none",
-                AnimationTransform2D {
-                    translate_x: Some(7.0),
-                    ..AnimationTransform2D::default()
-                },
+                [7.0, 7.0],
+                Some(7.0),
             ),
         ] {
             let keyframes = vec![
@@ -5013,7 +5035,7 @@ mod tests {
                     at: 0.0,
                     opacity: None,
                     transform: Some(AnimationTransform2D {
-                        translate_x: Some(7.0),
+                        translate_x: Some(keyframe_translate_x[0]),
                         ..AnimationTransform2D::default()
                     }),
                 },
@@ -5021,7 +5043,7 @@ mod tests {
                     at: 1.0,
                     opacity: None,
                     transform: Some(AnimationTransform2D {
-                        translate_x: Some(7.0),
+                        translate_x: Some(keyframe_translate_x[1]),
                         ..AnimationTransform2D::default()
                     }),
                 },
@@ -5039,10 +5061,13 @@ mod tests {
                 },
             ] {
                 let plan = compile_document_animation_plan(&source, playback, 0.5)
-                    .expect("a constant transform track should preserve its overflow phase");
+                    .expect("a transform track should preserve its overflow phase");
                 let expected_value = TrackValue {
                     opacity: None,
-                    transform: Some(expected_transform.clone()),
+                    transform: Some(AnimationTransform2D {
+                        translate_x: expected_translate_x,
+                        ..AnimationTransform2D::default()
+                    }),
                 }
                 .canonicalized()
                 .to_keyframe();
