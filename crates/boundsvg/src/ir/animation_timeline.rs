@@ -798,16 +798,13 @@ enum CanonicalBoundaryCoordinate {
 struct CanonicalBoundaryEvent {
     coordinate: CanonicalBoundaryCoordinate,
     left: CanonicalBoundarySide,
+    exact: TrackValue,
     right: CanonicalBoundarySide,
 }
 
 impl CanonicalBoundaryEvent {
     fn plan_value(&self) -> &TrackValue {
-        if self.coordinate == CanonicalBoundaryCoordinate::DocumentEnd {
-            &self.left.value
-        } else {
-            &self.right.value
-        }
+        &self.exact
     }
 }
 
@@ -903,72 +900,16 @@ impl CanonicalBoundaryProgram {
         }
     }
 
-    fn first_construction_precision_candidate(
-        &self,
-        source_start: f64,
-        source_end: f64,
-    ) -> PrecisionCandidatePair {
+    fn unconstructable_precision_candidate(&self) -> PrecisionCandidatePair {
         let active_start_time_ms = self
             .leading_events
             .last()
             .map_or(0.0, |event| self.time_ms(event.coordinate));
-        if !source_start.is_finite() || !source_end.is_finite() {
-            return PrecisionCandidatePair {
-                left_time: active_start_time_ms,
-                right_time: active_start_time_ms,
-                nominal_gap: 0.0,
-                rounding_error_bound: f64::INFINITY,
-            };
-        }
-
-        let iteration_index = source_start.floor();
-        let lower_progress = source_start - iteration_index;
-        let end_iteration = source_end.floor();
-        let upper_progress = if end_iteration == iteration_index {
-            source_end - end_iteration
-        } else {
-            1.0
-        };
-        let candidates = self
-            .local_pattern
-            .precision_gap_candidates(lower_progress, upper_progress);
-        let Some([left_progress, right_progress]) = candidates.first_chunk::<2>() else {
-            return PrecisionCandidatePair {
-                left_time: active_start_time_ms,
-                right_time: active_start_time_ms,
-                nominal_gap: 0.0,
-                rounding_error_bound: f64::INFINITY,
-            };
-        };
-        let left_position = iteration_index + left_progress;
-        let right_position = iteration_index + right_progress;
-        let coordinate_for_position = |source_position| {
-            if source_position == source_start {
-                return self
-                    .leading_events
-                    .last()
-                    .map_or(CanonicalBoundaryCoordinate::DocumentStart, |event| {
-                        event.coordinate
-                    });
-            }
-            if source_position == source_end {
-                return self
-                    .trailing_events
-                    .first()
-                    .map_or(CanonicalBoundaryCoordinate::DocumentEnd, |event| {
-                        event.coordinate
-                    });
-            }
-            CanonicalBoundaryCoordinate::SourcePosition(source_position)
-        };
-        let left_coordinate = coordinate_for_position(left_position);
-        let right_coordinate = coordinate_for_position(right_position);
         PrecisionCandidatePair {
-            left_time: self.time_ms(left_coordinate),
-            right_time: self.time_ms(right_coordinate),
-            nominal_gap: (right_position - left_position) * self.source_duration_ms,
-            rounding_error_bound: coordinate_mapping_error_bound_ms(self, left_coordinate)
-                + coordinate_mapping_error_bound_ms(self, right_coordinate),
+            left_time: active_start_time_ms,
+            right_time: active_start_time_ms,
+            nominal_gap: 0.0,
+            rounding_error_bound: f64::INFINITY,
         }
     }
 
@@ -976,9 +917,11 @@ impl CanonicalBoundaryProgram {
         source_position: f64,
         local_event: LocalBoundaryEvent,
     ) -> CanonicalBoundaryEvent {
+        let exact = local_event.right.value.clone();
         CanonicalBoundaryEvent {
             coordinate: CanonicalBoundaryCoordinate::SourcePosition(source_position),
             left: local_event.left,
+            exact,
             right: local_event.right,
         }
     }
@@ -1531,6 +1474,12 @@ fn source_boundary_event(
     coordinate: CanonicalBoundaryCoordinate,
     resolved_easing: ResolvedEasing,
 ) -> CanonicalBoundaryEvent {
+    let right = source_boundary_side(
+        source,
+        source_position,
+        CanonicalBoundaryDirection::Right,
+        resolved_easing,
+    );
     CanonicalBoundaryEvent {
         coordinate,
         left: source_boundary_side(
@@ -1539,12 +1488,8 @@ fn source_boundary_event(
             CanonicalBoundaryDirection::Left,
             resolved_easing,
         ),
-        right: source_boundary_side(
-            source,
-            source_position,
-            CanonicalBoundaryDirection::Right,
-            resolved_easing,
-        ),
+        exact: right.value.clone(),
+        right,
     }
 }
 
@@ -1624,9 +1569,16 @@ fn build_canonical_boundary_program(
         CanonicalBoundaryDirection::Left,
         resolved_easing,
     );
+    let document_end_exact = source_boundary_side(
+        source,
+        document_end_position,
+        CanonicalBoundaryDirection::Right,
+        resolved_easing,
+    );
     let mut leading_events = vec![CanonicalBoundaryEvent {
         coordinate: CanonicalBoundaryCoordinate::DocumentStart,
         left: document_end_left.clone(),
+        exact: document_start_right.value.clone(),
         right: document_start_right.clone(),
     }];
     let mut trailing_events = Vec::new();
@@ -1654,6 +1606,7 @@ fn build_canonical_boundary_program(
     trailing_events.push(CanonicalBoundaryEvent {
         coordinate: CanonicalBoundaryCoordinate::DocumentEnd,
         left: document_end_left,
+        exact: document_end_exact.value,
         right: document_start_right,
     });
 
@@ -1661,7 +1614,7 @@ fn build_canonical_boundary_program(
     let mut pattern = None;
     let mut tail = None;
     let mut active_source_range = None;
-    let mut construction_precision_range = None;
+    let mut construction_precision_failure = false;
     if !spec_values_are_constant(&source.spec) {
         let source_start = ((0.0 - delay_ms) / source_duration_ms).max(0.0);
         let source_end = finite_source_end
@@ -1669,12 +1622,8 @@ fn build_canonical_boundary_program(
                 count.min(document_end_position)
             })
             .max(0.0);
-        if !source_start.is_finite()
-            || !source_end.is_finite()
-            || source_start > MAX_TIMELINE_TIME_MS
-            || source_end > MAX_TIMELINE_TIME_MS
-        {
-            construction_precision_range = Some((source_start, source_end));
+        if !source_start.is_finite() || !source_end.is_finite() {
+            construction_precision_failure = true;
         } else if source_end > source_start {
             active_source_range = Some((source_start, source_end));
             let start_iteration = source_start.floor();
@@ -1740,9 +1689,7 @@ fn build_canonical_boundary_program(
         event_count,
     };
     program.construction_precision_candidate =
-        construction_precision_range.map(|(source_start, source_end)| {
-            program.first_construction_precision_candidate(source_start, source_end)
-        });
+        construction_precision_failure.then(|| program.unconstructable_precision_candidate());
     program
 }
 fn function_piece(
@@ -2467,15 +2414,7 @@ fn precision_preflight_repeated_pattern(
 fn precision_preflight_program(program: &CanonicalBoundaryProgram) -> Result<(), EngineError> {
     if let Some(candidate) = program.construction_precision_candidate {
         precision_preflight_events(program, &program.leading_events)?;
-        precision_preflight_candidate_pair(program, candidate)?;
-        // Crossing the source-position construction bound is itself a
-        // separation-proof failure. Keep its context on the concrete adjacent
-        // pair selected above if the cheaper pair checks did not reject first.
-        return Err(timeline_precision_error(
-            "separation",
-            candidate.left_time,
-            candidate.right_time,
-        ));
+        return precision_preflight_candidate_pair(program, candidate);
     }
 
     if program.active_source_range.is_none() {
@@ -3376,6 +3315,61 @@ mod tests {
             assert!(plan.tracks[0].keyframes.iter().all(|keyframe| {
                 keyframe.value.transform.as_ref() == Some(&identity_animation_transform())
             }));
+        }
+    }
+
+    #[test]
+    fn preserves_the_authored_exact_value_at_a_document_end_step_cut() {
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(1.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: 1_000.0,
+            delay_ms: Some(0.0),
+            easing: Some(AnimationEasing::Steps(AnimationSteps {
+                kind: "steps".to_string(),
+                count: 2.0,
+                position: Some("jump-end".to_string()),
+            })),
+            iterations: Some(AnimationIterations::Infinite("infinite".to_string())),
+            fill: Some("both".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 500.0,
+            iterations: DocumentIterationCount::Finite(1.0),
+        };
+
+        for source in [
+            timeline_ir(spec.clone()),
+            Ir {
+                root: animated_text_unit("text-owner", "unit-0", &spec),
+                draw_order: Vec::new(),
+                width: 100.0,
+                height: 20.0,
+                debug: None,
+                warnings: Vec::new(),
+            },
+        ] {
+            for (time_ms, final_hold) in [(0.0, false), (500.0, true)] {
+                let plan = compile_document_animation_plan(&source, playback, time_ms)
+                    .expect("a representable document-end step cut should compile");
+                assert_eq!(plan.final_hold, final_hold);
+                let last_keyframe = plan.tracks[0]
+                    .keyframes
+                    .last()
+                    .expect("the document-end keyframe should exist");
+                assert_eq!(last_keyframe.time_ms, 500.0);
+                assert_eq!(last_keyframe.value.opacity, Some(0.5));
+            }
         }
     }
 
@@ -4416,6 +4410,46 @@ mod tests {
         assert_eq!(context["kind"], "f32-order");
         assert_eq!(context["leftTimeMs"], 0.0);
         assert_eq!(context["rightTimeMs"], 1.0e-300);
+    }
+
+    #[test]
+    fn accepts_a_passing_pair_beyond_the_source_position_guard() {
+        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(1.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: 1.0,
+            delay_ms: Some(-source_start),
+            easing: Some(AnimationEasing::Named("step-end".to_string())),
+            iterations: Some(AnimationIterations::Infinite("infinite".to_string())),
+            fill: Some("both".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        let plan = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
+            .expect("a concrete pair that passes every precision proof should compile");
+        assert_eq!(plan.tracks[0].keyframes.len(), 2);
+        assert_eq!(plan.tracks[0].keyframes[0].time_ms, 0.0);
+        assert_eq!(plan.tracks[0].keyframes[1].time_ms, 1.0);
+        assert!(
+            plan.tracks[0]
+                .keyframes
+                .iter()
+                .all(|keyframe| keyframe.value.opacity == Some(0.0))
+        );
     }
 
     #[test]

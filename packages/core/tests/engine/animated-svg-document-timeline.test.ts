@@ -152,6 +152,64 @@ function tinyTriangleScene() {
   );
 }
 
+function documentEndStepCutScene(owner: EndpointOwner) {
+  const animation: AnimationSpec = {
+    keyframes: [
+      { at: 0, opacity: 0 },
+      { at: 1, opacity: 1 },
+    ],
+    durationMs: 1_000,
+    easing: { type: "steps", count: 2, position: "jump-end" },
+    iterations: "infinite",
+    fill: "both",
+  };
+  const animated =
+    owner === "node"
+      ? createElement("Box", {
+          id: "document-end-step-node",
+          width: 32,
+          height: 20,
+          animate: animation,
+        })
+      : createElement(
+          "Text",
+          {
+            id: "document-end-step-text",
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return createElement("Canvas", { width: 96, height: 48 }, animated);
+}
+
+function passingLargeSourcePositionScene() {
+  return createElement(
+    "Canvas",
+    { width: 96, height: 48 },
+    createElement("Box", {
+      id: "large-source-position-node",
+      width: 32,
+      height: 20,
+      animate: {
+        keyframes: [
+          { at: 0, opacity: 0 },
+          { at: 1, opacity: 1 },
+        ],
+        durationMs: 1,
+        delayMs: -(2 ** 52 + 1),
+        easing: { type: "steps", count: 1, position: "jump-end" },
+        iterations: "infinite",
+        fill: "both",
+      },
+    }),
+  );
+}
+
 function overshootCubicScene(
   owner: EndpointOwner,
   withTransform: boolean,
@@ -419,6 +477,37 @@ describe("animated SVG document timeline", () => {
       expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
       expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
     }
+  });
+
+  it("preserves document-end step values across owners, times, and public render paths", () => {
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = documentEndStepCutScene(owner);
+      const compiled = engine.compile(scene);
+      for (const timeMs of [0, 500]) {
+        const options = {
+          playback: { mode: "timeline", durationMs: 500, iterations: 1 },
+          timeMs,
+        } as const satisfies RenderAnimatedSvgOptions;
+        const direct = engine.renderToAnimatedSvg(scene, options);
+        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+        expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+        expect(direct).toContain("100% { opacity: 0.5; }");
+      }
+    }
+  });
+
+  it("accepts a passing compressed pair beyond the source-position guard", () => {
+    const scene = passingLargeSourcePositionScene();
+    const options = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+    } as const satisfies RenderAnimatedSvgOptions;
+    const compiled = engine.compile(scene);
+    const direct = engine.renderToAnimatedSvg(scene, options);
+
+    expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+    expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+    expect(direct).toContain("0% { opacity: 0; }");
+    expect(direct).toContain("100% { opacity: 0; }");
   });
 
   it("reports the first concrete pair before the construction precision guard", () => {

@@ -293,6 +293,64 @@ function buildTinyTriangleScene(): VNode {
   );
 }
 
+function buildDocumentEndStepCutScene(owner: EndpointOwner): VNode {
+  const animation: AnimationSpec = {
+    keyframes: [
+      { at: 0, opacity: 0 },
+      { at: 1, opacity: 1 },
+    ],
+    durationMs: 1_000,
+    easing: { type: "steps", count: 2, position: "jump-end" },
+    iterations: "infinite",
+    fill: "both",
+  };
+  const animated =
+    owner === "node"
+      ? createElement("Box", {
+          id: "document-end-step-node",
+          width: 32,
+          height: 20,
+          animate: animation,
+        })
+      : createElement(
+          "Text",
+          {
+            id: "document-end-step-text",
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return createElement("Canvas", { width: 96, height: 48 }, animated);
+}
+
+function buildPassingLargeSourcePositionScene(): VNode {
+  return createElement(
+    "Canvas",
+    { width: 96, height: 48 },
+    createElement("Box", {
+      id: "large-source-position-node",
+      width: 32,
+      height: 20,
+      animate: {
+        keyframes: [
+          { at: 0, opacity: 0 },
+          { at: 1, opacity: 1 },
+        ],
+        durationMs: 1,
+        delayMs: -(2 ** 52 + 1),
+        easing: { type: "steps", count: 1, position: "jump-end" },
+        iterations: "infinite",
+        fill: "both",
+      },
+    }),
+  );
+}
+
 function buildOvershootCubicScene(
   owner: EndpointOwner,
   withTransform: boolean,
@@ -622,6 +680,41 @@ describe("nodejs/web WASM public parity", () => {
         expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
         expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
       }
+    }
+  });
+
+  it("preserves document-end step values in every WASM artifact", () => {
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = buildDocumentEndStepCutScene(owner);
+      for (const timeMs of [0, 500]) {
+        const options = {
+          playback: { mode: "timeline" as const, durationMs: 500, iterations: 1 },
+          timeMs,
+        };
+        const expected = nodeEngine.renderToAnimatedSvg(scene, options);
+        expect(expected).toContain("100% { opacity: 0.5; }");
+        for (const engine of timelineEngines) {
+          expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
+          expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
+          expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
+        }
+      }
+    }
+  });
+
+  it("accepts a passing compressed pair beyond the source-position guard in every WASM artifact", () => {
+    const scene = buildPassingLargeSourcePositionScene();
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
+    };
+    const expected = nodeEngine.renderToAnimatedSvg(scene, options);
+    expect(expected).toContain("0% { opacity: 0; }");
+    expect(expected).toContain("100% { opacity: 0; }");
+
+    for (const engine of timelineEngines) {
+      expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
+      expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
+      expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
     }
   });
 
