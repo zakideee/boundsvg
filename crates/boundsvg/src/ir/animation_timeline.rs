@@ -14,7 +14,7 @@ use std::{
 use boundshape::Transform2D;
 use serde_json::json;
 
-use super::animation::{self, ResolvedEasing};
+use super::animation::{self, AnimationStepPosition, ResolvedEasing};
 use super::types::{
     AnimationIterations, AnimationKeyframe, AnimationSpec, AnimationTransform2D, BBox, Ir, IrNode,
     IrNodeKind, TextUnitAnimationOrder,
@@ -36,7 +36,7 @@ static COMPILE_TRACK_TRACE: LazyLock<Mutex<HashMap<ThreadId, Vec<String>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[cfg(test)]
-static BOUNDARY_VISIT_TRACE: LazyLock<Mutex<HashMap<ThreadId, usize>>> =
+static PREFLIGHT_WINDOW_TRACE: LazyLock<Mutex<HashMap<ThreadId, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -398,16 +398,6 @@ fn identity_animation_transform() -> AnimationTransform2D {
     }
 }
 
-fn sampled_transform_value(transform: &Transform2D) -> AnimationTransform2D {
-    AnimationTransform2D {
-        translate_x: Some(transform.translate_x.unwrap_or(0.0)),
-        translate_y: Some(transform.translate_y.unwrap_or(0.0)),
-        scale_x: Some(transform.scale_x.unwrap_or(1.0)),
-        scale_y: Some(transform.scale_y.unwrap_or(1.0)),
-        rotate_deg: Some(transform.rotate_deg.unwrap_or(0.0)),
-    }
-}
-
 fn base_transform_value(transform: Option<&Transform2D>, bbox: BBox) -> AnimationTransform2D {
     let Some(transform) = transform else {
         return identity_animation_transform();
@@ -564,6 +554,7 @@ fn same_time(left: f64, right: f64) -> bool {
     (left - right).abs() <= f64::EPSILON * scale * 16.0
 }
 
+#[cfg(test)]
 fn previous_f64(value: f64) -> f64 {
     if value > 0.0 {
         f64::from_bits(value.to_bits() - 1)
@@ -572,182 +563,472 @@ fn previous_f64(value: f64) -> f64 {
     }
 }
 
-fn push_boundary(boundaries: &mut Vec<f64>, time_ms: f64, duration_ms: f64) {
-    if time_ms >= 0.0 && time_ms <= duration_ms && time_ms.is_finite() {
-        boundaries.push(time_ms.clamp(0.0, duration_ms));
-    }
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CanonicalPieceEndpoint {
+    segment_index: usize,
+    input_progress: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct BoundaryOffset {
+#[derive(Debug, Clone, PartialEq)]
+struct CanonicalBoundarySide {
+    value: TrackValue,
+    piece_endpoint: Option<CanonicalPieceEndpoint>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct LocalBoundaryEvent {
     progress: f64,
-    opacity_clamp: Option<f64>,
+    left: CanonicalBoundarySide,
+    right: CanonicalBoundarySide,
 }
 
-impl BoundaryOffset {
-    fn plain(progress: f64) -> Self {
-        Self {
+#[derive(Debug, Clone)]
+struct LocalStepSegment {
+    segment_index: usize,
+    start_progress: f64,
+    end_progress: f64,
+    step_count: f64,
+    step_position: AnimationStepPosition,
+    from_value: TrackValue,
+    to_value: TrackValue,
+}
+
+impl LocalStepSegment {
+    fn boundary_event(&self, step_index: f64) -> LocalBoundaryEvent {
+        let input_progress = step_index / self.step_count;
+        let progress =
+            self.start_progress + input_progress * (self.end_progress - self.start_progress);
+        let easing = ResolvedEasing::Steps {
+            count: self.step_count,
+            position: self.step_position,
+        };
+        let left_progress = animation::apply_easing(input_progress, easing, true, 1.0);
+        let right_progress = animation::apply_easing(input_progress, easing, false, 1.0);
+        let piece_endpoint = Some(CanonicalPieceEndpoint {
+            segment_index: self.segment_index,
+            input_progress,
+        });
+        LocalBoundaryEvent {
             progress,
-            opacity_clamp: None,
+            left: CanonicalBoundarySide {
+                value: interpolate_track_values(&self.from_value, &self.to_value, left_progress),
+                piece_endpoint,
+            },
+            right: CanonicalBoundarySide {
+                value: interpolate_track_values(&self.from_value, &self.to_value, right_progress),
+                piece_endpoint,
+            },
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct TimelineBoundary {
-    time_ms: f64,
-    opacity_clamp: Option<f64>,
-}
-
-impl TimelineBoundary {
-    fn plain(time_ms: f64) -> Self {
-        Self {
-            time_ms,
-            opacity_clamp: None,
-        }
-    }
-}
-
-fn sort_and_merge_boundary_offsets_by(boundaries: &mut Vec<BoundaryOffset>, merge_nearby: bool) {
-    boundaries.sort_by(|left, right| left.progress.total_cmp(&right.progress));
-    let mut merged: Vec<BoundaryOffset> = Vec::with_capacity(boundaries.len());
-    for boundary in boundaries.drain(..) {
-        if let Some(previous) = merged.last_mut()
-            && if merge_nearby {
-                same_time(previous.progress, boundary.progress)
-            } else {
-                previous.progress == boundary.progress
-            }
-            && match (previous.opacity_clamp, boundary.opacity_clamp) {
-                (Some(previous_clamp), Some(boundary_clamp)) => previous_clamp == boundary_clamp,
-                _ => true,
-            }
-        {
-            if previous.opacity_clamp.is_none() {
-                previous.opacity_clamp = boundary.opacity_clamp;
-            }
-            continue;
-        }
-        merged.push(boundary);
-    }
-    *boundaries = merged;
-}
-
-fn sort_and_merge_boundary_offsets(boundaries: &mut Vec<BoundaryOffset>) {
-    sort_and_merge_boundary_offsets_by(boundaries, false);
-}
-
-fn sort_and_merge_nearby_boundary_offsets(boundaries: &mut Vec<BoundaryOffset>) {
-    sort_and_merge_boundary_offsets_by(boundaries, true);
-}
-
-fn merge_timeline_boundary(
-    retained_boundary: &mut TimelineBoundary,
-    candidate_boundary: TimelineBoundary,
-) -> bool {
-    if retained_boundary.time_ms != candidate_boundary.time_ms {
-        return false;
-    }
-    match (
-        retained_boundary.opacity_clamp,
-        candidate_boundary.opacity_clamp,
-    ) {
-        (Some(retained_clamp), Some(candidate_clamp)) if retained_clamp != candidate_clamp => false,
-        (None, Some(candidate_clamp)) => {
-            retained_boundary.opacity_clamp = Some(candidate_clamp);
-            true
-        }
-        _ => true,
-    }
-}
-
-fn sort_and_merge_timeline_boundaries(boundaries: &mut Vec<TimelineBoundary>) {
-    boundaries.sort_by(|left, right| left.time_ms.total_cmp(&right.time_ms));
-    let mut merged: Vec<TimelineBoundary> = Vec::with_capacity(boundaries.len());
-    for boundary in boundaries.drain(..) {
-        if let Some(previous) = merged.last_mut()
-            && merge_timeline_boundary(previous, boundary)
-        {
-            continue;
-        }
-        merged.push(boundary);
-    }
-    *boundaries = merged;
 }
 
 #[derive(Debug, Clone)]
 struct LocalBoundaryPattern {
-    fixed_offsets: Vec<BoundaryOffset>,
-    step_segments: Vec<(f64, f64, f64)>,
+    fixed_events: Vec<LocalBoundaryEvent>,
+    step_segments: Vec<LocalStepSegment>,
 }
 
 impl LocalBoundaryPattern {
     fn count_offsets_between(&self, lower: f64, upper: f64) -> f64 {
         let fixed_count = self
-            .fixed_offsets
+            .fixed_events
             .iter()
-            .filter(|offset| offset.progress > lower && offset.progress < upper)
+            .filter(|event| event.progress > lower && event.progress < upper)
             .count() as f64;
         self.step_segments
             .iter()
-            .fold(fixed_count, |count, (start, end, steps)| {
-                let span = end - start;
-                let first = ((((lower - start) / span) * steps).floor() + 1.0).max(1.0);
-                let last = ((((upper - start) / span) * steps).ceil() - 1.0).min(steps - 1.0);
+            .fold(fixed_count, |count, segment| {
+                let span = segment.end_progress - segment.start_progress;
+                let first = ((((lower - segment.start_progress) / span) * segment.step_count)
+                    .floor()
+                    + 1.0)
+                    .max(1.0);
+                let last =
+                    ((((upper - segment.start_progress) / span) * segment.step_count).ceil() - 1.0)
+                        .min(segment.step_count - 1.0);
                 count + (last - first + 1.0).max(0.0)
             })
     }
 
-    fn count_offsets_in_open_source_range(&self, start: f64, end: f64) -> f64 {
-        if end <= start {
-            return 0.0;
+    fn collect_events_between(&self, lower: f64, upper: f64, events: &mut Vec<LocalBoundaryEvent>) {
+        events.extend(
+            self.fixed_events
+                .iter()
+                .filter(|event| event.progress > lower && event.progress < upper)
+                .cloned(),
+        );
+        for segment in &self.step_segments {
+            let segment_span = segment.end_progress - segment.start_progress;
+            let first_step =
+                ((((lower - segment.start_progress) / segment_span) * segment.step_count).floor()
+                    + 1.0)
+                    .max(1.0);
+            let step_end =
+                ((((upper - segment.start_progress) / segment_span) * segment.step_count).ceil())
+                    .min(segment.step_count);
+            let mut step_index = first_step;
+            while step_index < step_end {
+                events.push(segment.boundary_event(step_index));
+                step_index += 1.0;
+            }
         }
-        let start_iteration = start.floor();
-        let end_iteration = end.floor();
-        let start_progress = start - start_iteration;
-        let end_progress = end - end_iteration;
-        if start_iteration == end_iteration {
-            return self.count_offsets_between(start_progress, end_progress);
-        }
-        let first_count = self.count_offsets_between(start_progress, 1.0);
-        let full_iteration_count = (end_iteration - start_iteration - 1.0).max(0.0);
-        let offsets_per_iteration = self.count_offsets_between(-1.0, 1.0);
-        let last_count = self.count_offsets_between(-1.0, end_progress);
-        first_count + full_iteration_count * offsets_per_iteration + last_count
+        events.sort_by(|left, right| left.progress.total_cmp(&right.progress));
     }
 
-    fn minimum_full_iteration_gap(&self) -> Option<f64> {
-        if !self.step_segments.is_empty() {
-            let mut minimum_gap = f64::INFINITY;
-            let mut previous_boundary = 0.0_f64;
-            for (segment_start, segment_end, steps) in &self.step_segments {
-                let leading_gap = segment_start - previous_boundary;
-                if leading_gap > 0.0 {
-                    minimum_gap = minimum_gap.min(leading_gap);
-                }
-                let step_gap = (segment_end - segment_start) / steps;
-                if step_gap > 0.0 {
-                    minimum_gap = minimum_gap.min(step_gap);
-                }
-                previous_boundary = *segment_end;
+    fn precision_gap_candidates(&self, lower: f64, upper: f64) -> Vec<f64> {
+        let mut candidates = vec![lower, upper];
+        candidates.extend(
+            self.fixed_events
+                .iter()
+                .map(|event| event.progress)
+                .filter(|progress| *progress > lower && *progress < upper),
+        );
+        for segment in &self.step_segments {
+            let segment_span = segment.end_progress - segment.start_progress;
+            let first_step =
+                ((((lower - segment.start_progress) / segment_span) * segment.step_count).floor()
+                    + 1.0)
+                    .max(1.0);
+            let step_end =
+                ((((upper - segment.start_progress) / segment_span) * segment.step_count).ceil())
+                    .min(segment.step_count);
+            let last_step = step_end - 1.0;
+            let mut step_indices = [first_step, first_step + 1.0, last_step - 1.0, last_step]
+                .into_iter()
+                .filter(|step_index| *step_index >= first_step && *step_index < step_end)
+                .collect::<Vec<_>>();
+            step_indices.sort_by(f64::total_cmp);
+            step_indices.dedup_by(|left, right| *left == *right);
+            for step_index in step_indices {
+                candidates.push(
+                    segment.start_progress + (step_index / segment.step_count) * segment_span,
+                );
             }
-            let trailing_gap = 1.0 - previous_boundary;
-            if trailing_gap > 0.0 {
-                minimum_gap = minimum_gap.min(trailing_gap);
-            }
-            return minimum_gap.is_finite().then_some(minimum_gap);
         }
-        self.fixed_offsets
-            .iter()
-            .map(|offset| offset.progress)
-            .chain(std::iter::once(1.0))
-            .try_fold((None, f64::INFINITY), |(previous, minimum), offset| {
-                let next_minimum = previous.map_or(minimum, |previous_offset| {
-                    minimum.min(offset - previous_offset)
-                });
-                Some((Some(offset), next_minimum))
+        candidates.sort_by(f64::total_cmp);
+        candidates
+    }
+
+    fn first_nonincrementing_step_progress(&self, lower: f64, upper: f64) -> Option<f64> {
+        const FIRST_NONINCREMENTING_INTEGER: f64 = 9_007_199_254_740_992.0;
+        self.step_segments.iter().find_map(|segment| {
+            let segment_span = segment.end_progress - segment.start_progress;
+            let first_step =
+                ((((lower - segment.start_progress) / segment_span) * segment.step_count).floor()
+                    + 1.0)
+                    .max(1.0);
+            let step_end =
+                ((((upper - segment.start_progress) / segment_span) * segment.step_count).ceil())
+                    .min(segment.step_count);
+            let step_index = first_step.max(FIRST_NONINCREMENTING_INTEGER);
+            (step_index < step_end && step_index + 1.0 == step_index).then_some(
+                segment.start_progress + (step_index / segment.step_count) * segment_span,
+            )
+        })
+    }
+
+    fn events_near(&self, target: f64) -> Vec<LocalBoundaryEvent> {
+        let mut events = self.fixed_events.clone();
+        for segment in &self.step_segments {
+            let segment_span = segment.end_progress - segment.start_progress;
+            let target_step = ((target - segment.start_progress) / segment_span
+                * segment.step_count)
+                .clamp(0.0, segment.step_count);
+            let floor_step = target_step.floor();
+            for step_index in [
+                floor_step - 1.0,
+                floor_step,
+                target_step.ceil(),
+                target_step.ceil() + 1.0,
+            ] {
+                if step_index <= 0.0 || step_index >= segment.step_count {
+                    continue;
+                }
+                events.push(segment.boundary_event(step_index));
+            }
+        }
+        events.sort_by(|left, right| left.progress.total_cmp(&right.progress));
+        events.dedup_by(|left, right| left.progress == right.progress);
+        events
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CanonicalBoundaryCoordinate {
+    DocumentStart,
+    DocumentEnd,
+    SourcePosition(f64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CanonicalBoundaryEvent {
+    coordinate: CanonicalBoundaryCoordinate,
+    left: CanonicalBoundarySide,
+    right: CanonicalBoundarySide,
+}
+
+impl CanonicalBoundaryEvent {
+    fn plan_value(&self) -> &TrackValue {
+        if self.coordinate == CanonicalBoundaryCoordinate::DocumentEnd {
+            &self.left.value
+        } else {
+            &self.right.value
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BoundaryProgramWindow {
+    iteration_index: f64,
+    lower_progress: f64,
+    upper_progress: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RepeatedBoundaryProgram {
+    first_iteration: f64,
+    repetitions: f64,
+}
+
+/// One immutable boundary program shared by every compiler stage.
+///
+/// Document/active cuts and the visible partial iteration are the bounded
+/// head, complete local iterations are the compressed pattern, and the final
+/// partial iteration plus active/document cuts are the tail. Count and
+/// materialization therefore cannot derive different event sets or values.
+#[derive(Debug, Clone)]
+struct CanonicalBoundaryProgram {
+    playback: DocumentPlayback,
+    delay_ms: f64,
+    source_duration_ms: f64,
+    local_pattern: LocalBoundaryPattern,
+    leading_events: Vec<CanonicalBoundaryEvent>,
+    head: Option<BoundaryProgramWindow>,
+    pattern: Option<RepeatedBoundaryProgram>,
+    tail: Option<BoundaryProgramWindow>,
+    trailing_events: Vec<CanonicalBoundaryEvent>,
+    active_source_range: Option<(f64, f64)>,
+    construction_precision_failure: bool,
+    event_count: f64,
+}
+
+impl CanonicalBoundaryProgram {
+    fn window_start_progress(window: BoundaryProgramWindow) -> f64 {
+        window.lower_progress.max(0.0)
+    }
+
+    fn source_position(window: BoundaryProgramWindow, progress: f64) -> f64 {
+        window.iteration_index + progress
+    }
+
+    fn coordinate_for_source_position(&self, source_position: f64) -> CanonicalBoundaryCoordinate {
+        if let Some((source_start, source_end)) = self.active_source_range {
+            if source_position == source_start {
+                return self
+                    .leading_events
+                    .last()
+                    .map_or(CanonicalBoundaryCoordinate::DocumentStart, |event| {
+                        event.coordinate
+                    });
+            }
+            if source_position == source_end {
+                return self
+                    .trailing_events
+                    .first()
+                    .map_or(CanonicalBoundaryCoordinate::DocumentEnd, |event| {
+                        event.coordinate
+                    });
+            }
+        }
+        CanonicalBoundaryCoordinate::SourcePosition(source_position)
+    }
+
+    fn coordinate_for_window_progress(
+        &self,
+        window: BoundaryProgramWindow,
+        progress: f64,
+    ) -> CanonicalBoundaryCoordinate {
+        self.coordinate_for_source_position(Self::source_position(window, progress))
+    }
+
+    fn time_ms(&self, coordinate: CanonicalBoundaryCoordinate) -> f64 {
+        match coordinate {
+            CanonicalBoundaryCoordinate::DocumentStart => 0.0,
+            CanonicalBoundaryCoordinate::DocumentEnd => self.playback.duration_ms,
+            CanonicalBoundaryCoordinate::SourcePosition(source_position) => (self.delay_ms
+                + source_position * self.source_duration_ms)
+                .clamp(0.0, self.playback.duration_ms),
+        }
+    }
+
+    fn canonical_local_event(
+        source_position: f64,
+        local_event: LocalBoundaryEvent,
+    ) -> CanonicalBoundaryEvent {
+        CanonicalBoundaryEvent {
+            coordinate: CanonicalBoundaryCoordinate::SourcePosition(source_position),
+            left: local_event.left,
+            right: local_event.right,
+        }
+    }
+
+    fn explicit_event_for_source_position(
+        &self,
+        source_position: f64,
+    ) -> Option<CanonicalBoundaryEvent> {
+        let (source_start, source_end) = self.active_source_range?;
+        if source_position == source_start {
+            return self.leading_events.last().cloned();
+        }
+        if source_position == source_end {
+            return self.trailing_events.first().cloned();
+        }
+        None
+    }
+
+    fn endpoint_event_for_window_progress(
+        &self,
+        window: BoundaryProgramWindow,
+        progress: f64,
+    ) -> CanonicalBoundaryEvent {
+        let source_position = Self::source_position(window, progress);
+        if let Some(event) = self.explicit_event_for_source_position(source_position) {
+            return event;
+        }
+        let local_event = self.local_pattern.fixed_events[0].clone();
+        Self::canonical_local_event(source_position, local_event)
+    }
+
+    fn materialize_window(
+        &self,
+        window: BoundaryProgramWindow,
+        boundaries: &mut Vec<CanonicalBoundaryEvent>,
+    ) {
+        let mut local_events = Vec::new();
+        self.local_pattern.collect_events_between(
+            window.lower_progress,
+            window.upper_progress,
+            &mut local_events,
+        );
+        boundaries.extend(local_events.into_iter().map(|local_event| {
+            let source_position = Self::source_position(window, local_event.progress);
+            Self::canonical_local_event(source_position, local_event)
+        }));
+    }
+
+    fn materialize(&self) -> Vec<CanonicalBoundaryEvent> {
+        let mut boundaries = self.leading_events.clone();
+        if let Some(head) = self.head {
+            self.materialize_window(head, &mut boundaries);
+        }
+        if let Some(pattern) = self.pattern {
+            let mut repetition_index = 0.0;
+            while repetition_index < pattern.repetitions {
+                self.materialize_window(
+                    BoundaryProgramWindow {
+                        iteration_index: pattern.first_iteration + repetition_index,
+                        lower_progress: -1.0,
+                        upper_progress: 1.0,
+                    },
+                    &mut boundaries,
+                );
+                repetition_index += 1.0;
+            }
+        }
+        if let Some(tail) = self.tail {
+            self.materialize_window(tail, &mut boundaries);
+        }
+        boundaries.extend(self.trailing_events.iter().cloned());
+        boundaries
+    }
+
+    fn representative_windows(&self) -> Vec<BoundaryProgramWindow> {
+        let mut windows = Vec::new();
+        if let Some(head) = self.head {
+            windows.push(head);
+        }
+        if let Some(pattern) = self.pattern {
+            let mut repetition_indices = vec![0.0];
+            if pattern.repetitions > 1.0 {
+                repetition_indices.push(1.0);
+                repetition_indices.push(pattern.repetitions - 1.0);
+            }
+            repetition_indices.sort_by(f64::total_cmp);
+            repetition_indices.dedup_by(|left, right| *left == *right);
+            windows.extend(repetition_indices.into_iter().map(|repetition_index| {
+                BoundaryProgramWindow {
+                    iteration_index: pattern.first_iteration + repetition_index,
+                    lower_progress: -1.0,
+                    upper_progress: 1.0,
+                }
+            }));
+        }
+        if let Some(tail) = self.tail {
+            windows.push(tail);
+        }
+        windows
+    }
+
+    fn representability_sections(&self) -> Vec<Vec<CanonicalBoundaryEvent>> {
+        self.representative_windows()
+            .into_iter()
+            .map(|window| {
+                let start_progress = Self::window_start_progress(window);
+                let mut events =
+                    vec![self.endpoint_event_for_window_progress(window, start_progress)];
+                events.extend(
+                    self.local_pattern
+                        .fixed_events
+                        .iter()
+                        .filter(|event| {
+                            event.progress > start_progress
+                                && event.progress < window.upper_progress
+                        })
+                        .map(|event| {
+                            Self::canonical_local_event(
+                                Self::source_position(window, event.progress),
+                                event.clone(),
+                            )
+                        }),
+                );
+                events.push(self.endpoint_event_for_window_progress(window, window.upper_progress));
+                events
             })
-            .and_then(|(_, minimum)| (minimum > 0.0).then_some(minimum))
+            .collect()
+    }
+
+    fn nearby_boundary_events(&self, target_time_ms: f64) -> Vec<CanonicalBoundaryEvent> {
+        let mut boundaries = self
+            .leading_events
+            .iter()
+            .chain(&self.trailing_events)
+            .cloned()
+            .collect::<Vec<_>>();
+        let target_position = (target_time_ms - self.delay_ms) / self.source_duration_ms;
+        let target_iteration = target_position.floor();
+        for iteration_index in [
+            (target_iteration - 1.0).max(0.0),
+            target_iteration.max(0.0),
+            target_iteration + 1.0,
+        ] {
+            let target_progress = target_position - iteration_index;
+            for local_event in self.local_pattern.events_near(target_progress) {
+                let source_position = iteration_index + local_event.progress;
+                if self.contains_open_source_position(source_position) {
+                    boundaries.push(Self::canonical_local_event(source_position, local_event));
+                }
+            }
+        }
+        boundaries.sort_by(|left, right| {
+            self.time_ms(left.coordinate)
+                .total_cmp(&self.time_ms(right.coordinate))
+        });
+        boundaries
+    }
+
+    fn contains_open_source_position(&self, source_position: f64) -> bool {
+        self.active_source_range
+            .is_some_and(|(start, end)| source_position > start && source_position < end)
     }
 }
 
@@ -806,47 +1087,6 @@ fn cubic_coordinate_derivative(parameter: f64, first: f64, second: f64) -> f64 {
     3.0 * (1.0 - parameter) * (1.0 - parameter) * first
         + 6.0 * (1.0 - parameter) * parameter * (second - first)
         + 3.0 * parameter * parameter * (1.0 - second)
-}
-
-fn cubic_roots_for_value(first: f64, second: f64, target: f64) -> Vec<f64> {
-    let mut partitions = vec![0.0];
-    partitions.extend(derivative_roots(first, second));
-    partitions.push(1.0);
-    let mut roots = Vec::new();
-    for pair in partitions.windows(2) {
-        let [low_bound, high_bound] = pair else {
-            continue;
-        };
-        let low_value = cubic_coordinate(*low_bound, first, second) - target;
-        let high_value = cubic_coordinate(*high_bound, first, second) - target;
-        if low_value.abs() <= 1.0e-12 {
-            roots.push(*low_bound);
-        }
-        if high_value.abs() <= 1.0e-12 {
-            roots.push(*high_bound);
-        }
-        if low_value.signum() == high_value.signum() || low_value == 0.0 || high_value == 0.0 {
-            continue;
-        }
-        let mut low = *low_bound;
-        let mut high = *high_bound;
-        let mut current_low_value = low_value;
-        for _ in 0..80 {
-            let middle = f64::midpoint(low, high);
-            let middle_value = cubic_coordinate(middle, first, second) - target;
-            if middle_value.signum() == current_low_value.signum() {
-                low = middle;
-                current_low_value = middle_value;
-            } else {
-                high = middle;
-            }
-        }
-        roots.push(f64::midpoint(low, high));
-    }
-    roots.retain(|root| *root > 0.0 && *root < 1.0 && root.is_finite());
-    roots.sort_by(f64::total_cmp);
-    roots.dedup_by(|left, right| same_time(*left, *right));
-    roots
 }
 
 fn parameter_for_x(curve: [f64; 4], input_progress: f64) -> f64 {
@@ -936,6 +1176,26 @@ fn interpolate_keyframes(
     to: &AnimationKeyframe,
     progress: f64,
 ) -> TrackValue {
+    interpolate_track_values(
+        &TrackValue {
+            opacity: from.opacity,
+            transform: from.transform.clone(),
+        },
+        &TrackValue {
+            opacity: to.opacity,
+            transform: to.transform.clone(),
+        },
+        progress,
+    )
+}
+
+fn interpolate_track_values(from: &TrackValue, to: &TrackValue, progress: f64) -> TrackValue {
+    if progress == 0.0 {
+        return from.clone();
+    }
+    if progress == 1.0 {
+        return to.clone();
+    }
     TrackValue {
         opacity: match (from.opacity, to.opacity) {
             (Some(from_opacity), Some(to_opacity)) => {
@@ -965,54 +1225,51 @@ fn transform_interpolation_is_constant(
         && from.rotate_deg.unwrap_or(0.0) == to.rotate_deg.unwrap_or(0.0)
 }
 
-fn cubic_piece_constant_value(
+fn segment_interpolation_is_constant(spec: &AnimationSpec, segment_index: usize) -> bool {
+    let from = &spec.keyframes[segment_index];
+    let to = &spec.keyframes[segment_index + 1];
+    from.opacity == to.opacity
+        && match (from.transform.as_ref(), to.transform.as_ref()) {
+            (Some(from_transform), Some(to_transform)) => {
+                transform_interpolation_is_constant(from_transform, to_transform)
+            }
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+fn cubic_raw_opacity_leaves_clamp_range(
     spec: &AnimationSpec,
     segment_index: usize,
     input_start: f64,
     input_end: f64,
     curve: [f64; 4],
-) -> Option<TrackValue> {
+) -> bool {
+    if (0.0..=1.0).contains(&curve[1]) && (0.0..=1.0).contains(&curve[3]) {
+        return false;
+    }
     let from = &spec.keyframes[segment_index];
     let to = &spec.keyframes[segment_index + 1];
-    if let (Some(from_transform), Some(to_transform)) =
-        (from.transform.as_ref(), to.transform.as_ref())
-        && !transform_interpolation_is_constant(from_transform, to_transform)
-    {
-        return None;
+    let (Some(from_opacity), Some(to_opacity)) = (from.opacity, to.opacity) else {
+        return false;
+    };
+    if from_opacity == to_opacity {
+        return false;
     }
 
-    let input_midpoint = f64::midpoint(input_start, input_end);
-    if let (Some(from_opacity), Some(to_opacity)) = (from.opacity, to.opacity)
-        && from_opacity != to_opacity
-    {
-        // Clamp roots are timeline boundaries, so a strict interior raw value
-        // identifies the side of the entire open piece without rounding its endpoints.
-        let segment_duration_ms = spec.duration_ms * (to.at - from.at);
-        let eased_midpoint = animation::apply_easing(
-            input_midpoint,
-            ResolvedEasing::Cubic(curve),
-            false,
-            segment_duration_ms,
-        );
-        let raw_midpoint = from_opacity + (to_opacity - from_opacity) * eased_midpoint;
-        if (0.0..=1.0).contains(&raw_midpoint) {
-            return None;
-        }
-    }
-
-    Some(evaluate_segment(
-        spec,
-        segment_index,
-        input_midpoint,
-        ResolvedEasing::Cubic(curve),
-    ))
-}
-
-fn keyframe_segment_index(keyframes: &[AnimationKeyframe], progress: f64) -> Option<usize> {
-    if keyframes.len() < 2 || progress < keyframes.first()?.at || progress >= keyframes.last()?.at {
-        return None;
-    }
-    keyframes.windows(2).position(|pair| progress < pair[1].at)
+    let parameter_start = parameter_for_x(curve, input_start);
+    let parameter_end = parameter_for_x(curve, input_end);
+    let mut parameters = vec![parameter_start, parameter_end];
+    parameters.extend(
+        derivative_roots(curve[1], curve[3])
+            .into_iter()
+            .filter(|parameter| *parameter > parameter_start && *parameter < parameter_end),
+    );
+    parameters.into_iter().any(|parameter| {
+        let eased_progress = cubic_coordinate(parameter, curve[1], curve[3]);
+        let raw_opacity = from_opacity + (to_opacity - from_opacity) * eased_progress;
+        !(0.0..=1.0).contains(&raw_opacity)
+    })
 }
 
 fn evaluate_segment(
@@ -1020,6 +1277,7 @@ fn evaluate_segment(
     segment_index: usize,
     input_progress: f64,
     resolved_easing: ResolvedEasing,
+    before: bool,
 ) -> TrackValue {
     let from = &spec.keyframes[segment_index];
     let to = &spec.keyframes[segment_index + 1];
@@ -1027,607 +1285,449 @@ fn evaluate_segment(
     let eased_progress = animation::apply_easing(
         input_progress.clamp(0.0, 1.0),
         resolved_easing,
-        false,
+        before,
         segment_duration_ms,
     );
     interpolate_keyframes(from, to, eased_progress)
 }
 
-fn exact_track_value(source: &TrackSource, time_ms: f64) -> Result<TrackValue, EngineError> {
-    let (sampled_opacity, sampled_transform) = animation::sample_spec(
-        &source.spec,
-        &source.owner_id,
-        time_ms,
-        source.spec.delay_ms.unwrap_or(0.0),
-        source.bbox.w,
-        source.bbox.h,
-    )?;
-    Ok(TrackValue {
-        opacity: source
-            .base_value
-            .opacity
-            .map(|base_opacity| sampled_opacity.unwrap_or(base_opacity)),
-        transform: source.base_value.transform.as_ref().map(|base_transform| {
-            sampled_transform
-                .as_ref()
-                .map_or_else(|| base_transform.clone(), sampled_transform_value)
-        }),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanonicalBoundaryDirection {
+    Left,
+    Right,
+}
+
+fn active_piece_endpoint(
+    spec: &AnimationSpec,
+    progress: f64,
+    direction: CanonicalBoundaryDirection,
+) -> Option<CanonicalPieceEndpoint> {
+    let first = spec.keyframes.first()?;
+    let last = spec.keyframes.last()?;
+    let segment_index = match direction {
+        CanonicalBoundaryDirection::Left => {
+            if progress <= first.at || progress > last.at {
+                return None;
+            }
+            spec.keyframes
+                .windows(2)
+                .position(|pair| progress > pair[0].at && progress <= pair[1].at)?
+        }
+        CanonicalBoundaryDirection::Right => {
+            if progress < first.at || progress >= last.at {
+                return None;
+            }
+            spec.keyframes
+                .windows(2)
+                .position(|pair| progress >= pair[0].at && progress < pair[1].at)?
+        }
+    };
+    let from = &spec.keyframes[segment_index];
+    let to = &spec.keyframes[segment_index + 1];
+    let input_progress = if progress == from.at {
+        0.0
+    } else if progress == to.at {
+        1.0
+    } else {
+        (progress - from.at) / (to.at - from.at)
+    };
+    Some(CanonicalPieceEndpoint {
+        segment_index,
+        input_progress,
     })
 }
 
-fn canonicalize_boundary_value(mut value: TrackValue, boundary: TimelineBoundary) -> TrackValue {
-    if value.opacity.is_some()
-        && let Some(opacity_clamp) = boundary.opacity_clamp
-    {
-        value.opacity = Some(opacity_clamp);
+fn active_boundary_side(
+    spec: &AnimationSpec,
+    progress: f64,
+    direction: CanonicalBoundaryDirection,
+    resolved_easing: ResolvedEasing,
+) -> CanonicalBoundarySide {
+    let piece_endpoint = active_piece_endpoint(spec, progress, direction);
+    let value = piece_endpoint.map_or_else(
+        || {
+            let keyframe = if progress <= spec.keyframes[0].at {
+                &spec.keyframes[0]
+            } else {
+                &spec.keyframes[spec.keyframes.len() - 1]
+            };
+            TrackValue {
+                opacity: keyframe.opacity,
+                transform: keyframe.transform.clone(),
+            }
+        },
+        |endpoint| {
+            evaluate_segment(
+                spec,
+                endpoint.segment_index,
+                endpoint.input_progress,
+                resolved_easing,
+                direction == CanonicalBoundaryDirection::Left,
+            )
+        },
+    );
+    CanonicalBoundarySide {
+        value,
+        piece_endpoint,
     }
-    value
 }
 
-fn exact_track_value_at_boundary(
+fn inactive_boundary_side(value: TrackValue) -> CanonicalBoundarySide {
+    CanonicalBoundarySide {
+        value,
+        piece_endpoint: None,
+    }
+}
+
+fn source_boundary_side(
     source: &TrackSource,
-    boundary: TimelineBoundary,
-) -> Result<TrackValue, EngineError> {
-    exact_track_value(source, boundary.time_ms)
-        .map(|value| canonicalize_boundary_value(value, boundary))
-}
-
-fn cubic_segment_boundary_progresses(
-    spec: &AnimationSpec,
-    segment_index: usize,
-    curve: [f64; 4],
-) -> Vec<BoundaryOffset> {
-    let from = &spec.keyframes[segment_index];
-    let to = &spec.keyframes[segment_index + 1];
-    let segment_span = to.at - from.at;
-    let mut parameters = Vec::new();
-    if let (Some(from_opacity), Some(to_opacity)) = (from.opacity, to.opacity)
-        && from_opacity != to_opacity
+    source_position: f64,
+    direction: CanonicalBoundaryDirection,
+    resolved_easing: ResolvedEasing,
+) -> CanonicalBoundarySide {
+    if !source_position.is_finite() {
+        return inactive_boundary_side(source.base_value.clone());
+    }
+    let fill_both = source.spec.fill.as_deref() == Some("both");
+    if source_position < 0.0
+        || (source_position == 0.0 && direction == CanonicalBoundaryDirection::Left)
     {
-        for threshold in [0.0, 1.0] {
-            let target = (threshold - from_opacity) / (to_opacity - from_opacity);
-            parameters.extend(
-                cubic_roots_for_value(curve[1], curve[3], target)
-                    .into_iter()
-                    .map(|parameter| (parameter, threshold)),
-            );
-        }
-    }
-    parameters.sort_by(|left, right| left.0.total_cmp(&right.0));
-    parameters.dedup_by(|left, right| left.1 == right.1 && same_time(left.0, right.0));
-    let mut boundaries = parameters
-        .into_iter()
-        .map(|(parameter, threshold)| BoundaryOffset {
-            progress: from.at + cubic_coordinate(parameter, curve[0], curve[2]) * segment_span,
-            opacity_clamp: Some(threshold),
-        })
-        .collect();
-    sort_and_merge_nearby_boundary_offsets(&mut boundaries);
-    boundaries
-}
-
-fn required_cubic_extrema_progresses(
-    spec: &AnimationSpec,
-    segment_index: usize,
-    curve: [f64; 4],
-    visible_start: f64,
-    visible_end: f64,
-    existing_progresses: &[BoundaryOffset],
-) -> Vec<BoundaryOffset> {
-    let from = &spec.keyframes[segment_index];
-    let to = &spec.keyframes[segment_index + 1];
-    let segment_span = to.at - from.at;
-    let input_start = ((visible_start - from.at) / segment_span).clamp(0.0, 1.0);
-    let input_end = ((visible_end - from.at) / segment_span).clamp(0.0, 1.0);
-    let mut input_boundaries = vec![input_start];
-    input_boundaries.extend(existing_progresses.iter().filter_map(|boundary| {
-        let input = (boundary.progress - from.at) / segment_span;
-        (input > input_start && input < input_end).then_some(input)
-    }));
-    input_boundaries.push(input_end);
-    input_boundaries.sort_by(f64::total_cmp);
-    input_boundaries.dedup_by(|left, right| same_time(*left, *right));
-
-    let mut progresses = Vec::new();
-    for pair in input_boundaries.windows(2) {
-        let [piece_start, piece_end] = pair else {
-            continue;
+        return if fill_both {
+            active_boundary_side(
+                &source.spec,
+                0.0,
+                CanonicalBoundaryDirection::Left,
+                resolved_easing,
+            )
+        } else {
+            inactive_boundary_side(source.base_value.clone())
         };
-        if cubic_subcurve(curve, *piece_start, *piece_end).is_some() {
-            continue;
-        }
-        let start_value = evaluate_segment(
-            spec,
-            segment_index,
-            *piece_start,
-            ResolvedEasing::Cubic(curve),
-        );
-        let extrema = derivative_roots(curve[1], curve[3])
-            .into_iter()
-            .filter_map(|parameter| {
-                let input = cubic_coordinate(parameter, curve[0], curve[2]);
-                (input > *piece_start && input < *piece_end).then_some((input, parameter))
-            })
-            .collect::<Vec<_>>();
-        let output_varies = extrema.iter().any(|(input, _)| {
-            evaluate_segment(spec, segment_index, *input, ResolvedEasing::Cubic(curve))
-                != start_value
-        });
-        if output_varies {
-            progresses.extend(
-                extrema
-                    .into_iter()
-                    .map(|(input, _)| BoundaryOffset::plain(from.at + input * segment_span)),
-            );
-        }
     }
-    sort_and_merge_nearby_boundary_offsets(&mut progresses);
-    progresses
+
+    if let Some(iteration_count) = source_iterations(&source.spec)
+        && (source_position > iteration_count
+            || (source_position == iteration_count
+                && direction == CanonicalBoundaryDirection::Right))
+    {
+        return if fill_both {
+            let fraction = iteration_count.fract();
+            active_boundary_side(
+                &source.spec,
+                if fraction == 0.0 { 1.0 } else { fraction },
+                CanonicalBoundaryDirection::Right,
+                resolved_easing,
+            )
+        } else {
+            inactive_boundary_side(source.base_value.clone())
+        };
+    }
+
+    let mut progress = source_position - source_position.floor();
+    if direction == CanonicalBoundaryDirection::Left && source_position > 0.0 && progress == 0.0 {
+        progress = 1.0;
+    }
+    active_boundary_side(&source.spec, progress, direction, resolved_easing)
 }
 
-fn full_cubic_segment_boundary_progresses(
-    spec: &AnimationSpec,
-    segment_index: usize,
-    curve: [f64; 4],
-) -> Vec<BoundaryOffset> {
-    let from = &spec.keyframes[segment_index];
-    let to = &spec.keyframes[segment_index + 1];
-    let mut progresses = cubic_segment_boundary_progresses(spec, segment_index, curve);
-    let extrema =
-        required_cubic_extrema_progresses(spec, segment_index, curve, from.at, to.at, &progresses);
-    progresses.extend(extrema);
-    sort_and_merge_nearby_boundary_offsets(&mut progresses);
-    progresses
+fn source_boundary_event(
+    source: &TrackSource,
+    source_position: f64,
+    coordinate: CanonicalBoundaryCoordinate,
+    resolved_easing: ResolvedEasing,
+) -> CanonicalBoundaryEvent {
+    CanonicalBoundaryEvent {
+        coordinate,
+        left: source_boundary_side(
+            source,
+            source_position,
+            CanonicalBoundaryDirection::Left,
+            resolved_easing,
+        ),
+        right: source_boundary_side(
+            source,
+            source_position,
+            CanonicalBoundaryDirection::Right,
+            resolved_easing,
+        ),
+    }
 }
 
 fn local_boundary_pattern(
     spec: &AnimationSpec,
     resolved_easing: ResolvedEasing,
 ) -> LocalBoundaryPattern {
-    let mut fixed_offsets = vec![BoundaryOffset::plain(0.0)];
-    fixed_offsets.extend(
+    let mut fixed_progresses = vec![0.0];
+    fixed_progresses.extend(
         spec.keyframes
             .iter()
-            .map(|keyframe| BoundaryOffset::plain(keyframe.at))
-            .filter(|offset| offset.progress > 0.0 && offset.progress < 1.0),
+            .map(|keyframe| keyframe.at)
+            .filter(|progress| *progress > 0.0 && *progress < 1.0),
     );
-    let mut step_segments = Vec::new();
-    match resolved_easing {
-        ResolvedEasing::Cubic(curve) => {
-            for segment_index in 0..spec.keyframes.len().saturating_sub(1) {
-                fixed_offsets.extend(full_cubic_segment_boundary_progresses(
-                    spec,
-                    segment_index,
-                    curve,
-                ));
-            }
-        }
-        ResolvedEasing::Steps { count, .. } => {
-            step_segments.extend(
-                spec.keyframes
-                    .windows(2)
-                    .map(|pair| (pair[0].at, pair[1].at, count)),
-            );
-        }
-        ResolvedEasing::Spring { .. } => {}
-    }
-    sort_and_merge_boundary_offsets(&mut fixed_offsets);
+    fixed_progresses.sort_by(f64::total_cmp);
+    fixed_progresses.dedup_by(|left, right| *left == *right);
+    let fixed_events = fixed_progresses
+        .into_iter()
+        .map(|progress| LocalBoundaryEvent {
+            progress,
+            left: active_boundary_side(
+                spec,
+                if progress == 0.0 { 1.0 } else { progress },
+                CanonicalBoundaryDirection::Left,
+                resolved_easing,
+            ),
+            right: active_boundary_side(
+                spec,
+                progress,
+                CanonicalBoundaryDirection::Right,
+                resolved_easing,
+            ),
+        })
+        .collect();
+    let step_segments = match resolved_easing {
+        ResolvedEasing::Steps { count, position } => spec
+            .keyframes
+            .windows(2)
+            .enumerate()
+            .map(|(segment_index, pair)| LocalStepSegment {
+                segment_index,
+                start_progress: pair[0].at,
+                end_progress: pair[1].at,
+                step_count: count,
+                step_position: position,
+                from_value: TrackValue {
+                    opacity: pair[0].opacity,
+                    transform: pair[0].transform.clone(),
+                },
+                to_value: TrackValue {
+                    opacity: pair[1].opacity,
+                    transform: pair[1].transform.clone(),
+                },
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     LocalBoundaryPattern {
-        fixed_offsets,
+        fixed_events,
         step_segments,
     }
 }
 
-fn semantic_track_stop_count(
+fn build_canonical_boundary_program(
     source: &TrackSource,
     playback: DocumentPlayback,
     resolved_easing: ResolvedEasing,
-) -> f64 {
+) -> CanonicalBoundaryProgram {
     let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    if spec_values_are_constant(&source.spec) {
-        let mut boundaries = vec![0.0, playback.duration_ms];
-        push_boundary(&mut boundaries, delay_ms, playback.duration_ms);
-        if let Some(iterations) = source_iterations(&source.spec) {
-            push_boundary(
-                &mut boundaries,
-                delay_ms + iterations * source.spec.duration_ms,
-                playback.duration_ms,
-            );
-        }
-        boundaries.sort_by(f64::total_cmp);
-        boundaries.dedup_by(|left, right| *left == *right);
-        return boundaries.len() as f64;
-    }
+    let source_duration_ms = source.spec.duration_ms;
+    let local_pattern = local_boundary_pattern(&source.spec, resolved_easing);
+    let document_start_position = (0.0 - delay_ms) / source_duration_ms;
+    let document_end_position = (playback.duration_ms - delay_ms) / source_duration_ms;
+    let document_start_right = source_boundary_side(
+        source,
+        document_start_position,
+        CanonicalBoundaryDirection::Right,
+        resolved_easing,
+    );
+    let document_end_left = source_boundary_side(
+        source,
+        document_end_position,
+        CanonicalBoundaryDirection::Left,
+        resolved_easing,
+    );
+    let mut leading_events = vec![CanonicalBoundaryEvent {
+        coordinate: CanonicalBoundaryCoordinate::DocumentStart,
+        left: document_end_left.clone(),
+        right: document_start_right.clone(),
+    }];
+    let mut trailing_events = Vec::new();
 
-    let active_start_ms = delay_ms.max(0.0).min(playback.duration_ms);
-    let active_end_ms = source_iterations(&source.spec)
-        .map_or(playback.duration_ms, |iterations| {
-            (delay_ms + iterations * source.spec.duration_ms).min(playback.duration_ms)
-        });
-    if !active_start_ms.is_finite()
-        || !active_end_ms.is_finite()
-        || active_end_ms <= active_start_ms
-    {
-        return 2.0;
-    }
-
-    let source_start = (active_start_ms - delay_ms) / source.spec.duration_ms;
-    let source_end = (active_end_ms - delay_ms) / source.spec.duration_ms;
-    if !source_start.is_finite() || !source_end.is_finite() {
-        return f64::INFINITY;
-    }
-    let pattern = local_boundary_pattern(&source.spec, resolved_easing);
-    let mut stop_count = 2.0
-        + pattern.count_offsets_in_open_source_range(source_start.max(0.0), source_end.max(0.0));
-    if active_start_ms > 0.0 && active_start_ms < playback.duration_ms {
-        stop_count += 1.0;
-    }
-    if active_end_ms > active_start_ms && active_end_ms < playback.duration_ms {
-        stop_count += 1.0;
-    }
-    stop_count
-}
-
-fn visit_iteration_boundaries<F>(
-    source: &TrackSource,
-    iteration_start_ms: f64,
-    iteration_progress_limit: f64,
-    playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
-    visitor: &mut F,
-) -> Result<(), EngineError>
-where
-    F: FnMut(TimelineBoundary) -> Result<(), EngineError>,
-{
-    let visible_start_ms = iteration_start_ms.max(0.0);
-    let visible_end_ms = (iteration_start_ms + iteration_progress_limit * source.spec.duration_ms)
-        .min(playback.duration_ms);
-    if visible_end_ms <= visible_start_ms {
-        return Ok(());
-    }
-    let visible_progress_start =
-        ((visible_start_ms - iteration_start_ms) / source.spec.duration_ms).clamp(0.0, 1.0);
-    let visible_progress_end = ((visible_end_ms - iteration_start_ms) / source.spec.duration_ms)
-        .clamp(0.0, iteration_progress_limit);
-
-    for (segment_index, pair) in source.spec.keyframes.windows(2).enumerate() {
-        let segment_start = pair[0].at;
-        let segment_end = pair[1].at;
-        let segment_visible_start = segment_start.max(visible_progress_start);
-        let segment_visible_end = segment_end.min(visible_progress_end);
-        if segment_visible_end <= segment_visible_start {
-            if segment_start >= visible_progress_end {
-                break;
-            }
-            continue;
-        }
-        let boundary_time_ms =
-            |progress: f64| iteration_start_ms + progress * source.spec.duration_ms;
-        visitor(TimelineBoundary::plain(boundary_time_ms(
-            segment_visible_start,
-        )))?;
-
-        match resolved_easing {
-            ResolvedEasing::Steps { count, .. } => {
-                let segment_span = segment_end - segment_start;
-                let first_step =
-                    ((((segment_visible_start - segment_start) / segment_span) * count).floor()
-                        + 1.0)
-                        .max(1.0);
-                let step_end = ((((segment_visible_end - segment_start) / segment_span) * count)
-                    .ceil())
-                .min(count);
-                let mut step_index = first_step;
-                while step_index < step_end {
-                    let step_progress = step_index / count;
-                    let iteration_progress = segment_start + step_progress * segment_span;
-                    let step_time_ms = boundary_time_ms(iteration_progress);
-                    visitor(TimelineBoundary::plain(step_time_ms))?;
-                    let next_step_index = step_index + 1.0;
-                    if next_step_index == step_index && next_step_index < step_end {
-                        return Err(timeline_precision_error(
-                            "f32-order",
-                            step_time_ms,
-                            step_time_ms,
-                        ));
-                    }
-                    step_index = next_step_index;
-                }
-            }
-            ResolvedEasing::Cubic(curve) => {
-                let mut progresses =
-                    full_cubic_segment_boundary_progresses(&source.spec, segment_index, curve);
-                let extrema = required_cubic_extrema_progresses(
-                    &source.spec,
-                    segment_index,
-                    curve,
-                    segment_visible_start,
-                    segment_visible_end,
-                    &progresses,
-                );
-                progresses.extend(extrema);
-                sort_and_merge_nearby_boundary_offsets(&mut progresses);
-                for boundary in progresses {
-                    let timeline_time_ms = boundary_time_ms(boundary.progress);
-                    if timeline_time_ms >= visible_start_ms && timeline_time_ms <= visible_end_ms {
-                        visitor(TimelineBoundary {
-                            time_ms: timeline_time_ms,
-                            opacity_clamp: boundary.opacity_clamp,
-                        })?;
-                    }
-                }
-            }
-            ResolvedEasing::Spring { .. } => {
-                return Err(timeline_unrepresentable(
-                    source,
-                    "spring-easing",
-                    visible_start_ms,
-                    Some("Use playback mode independent for this animation track."),
-                ));
-            }
-        }
-        visitor(TimelineBoundary::plain(boundary_time_ms(
-            segment_visible_end,
-        )))?;
-        if segment_end >= visible_progress_end {
-            break;
-        }
-    }
-    Ok(())
-}
-
-fn queue_timeline_boundary<F>(
-    pending_boundary: &mut Option<TimelineBoundary>,
-    boundary: TimelineBoundary,
-    playback: DocumentPlayback,
-    visitor: &mut F,
-) -> Result<(), EngineError>
-where
-    F: FnMut(TimelineBoundary) -> Result<(), EngineError>,
-{
-    let time_ms = boundary.time_ms;
-    if !time_ms.is_finite() || time_ms < 0.0 || time_ms > playback.duration_ms {
-        return Ok(());
-    }
-    #[cfg(test)]
-    {
-        let mut trace = BOUNDARY_VISIT_TRACE
-            .lock()
-            .expect("boundary visit trace should not be poisoned");
-        *trace.entry(std::thread::current().id()).or_default() += 1;
-    }
-    let clamped_time_ms = time_ms.clamp(0.0, playback.duration_ms);
-    let clamped_boundary = TimelineBoundary {
-        time_ms: clamped_time_ms,
-        opacity_clamp: boundary.opacity_clamp,
-    };
-    if let Some(retained_boundary) = pending_boundary.as_mut() {
-        if merge_timeline_boundary(retained_boundary, clamped_boundary) {
-            return Ok(());
-        }
-        visitor(*retained_boundary)?;
-        *retained_boundary = clamped_boundary;
-    } else {
-        *pending_boundary = Some(clamped_boundary);
-    }
-    Ok(())
-}
-
-fn flush_pending_boundary<F>(
-    pending_boundary: &mut Option<TimelineBoundary>,
-    visitor: &mut F,
-) -> Result<(), EngineError>
-where
-    F: FnMut(TimelineBoundary) -> Result<(), EngineError>,
-{
-    if let Some(boundary) = pending_boundary.take() {
-        visitor(boundary)?;
-    }
-    Ok(())
-}
-
-fn visit_track_boundaries_with<F>(
-    source: &TrackSource,
-    playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
-    visitor: &mut F,
-) -> Result<(), EngineError>
-where
-    F: FnMut(TimelineBoundary) -> Result<(), EngineError>,
-{
-    // Retain one boundary so an exact-time clamp root can enrich a plain cut
-    // before either reaches precision/count sinks. Incompatible roots stay
-    // separate, and the full vector remains deferred to the post-budget sink.
-    let mut pending_boundary = None;
-    queue_timeline_boundary(
-        &mut pending_boundary,
-        TimelineBoundary::plain(0.0),
-        playback,
-        visitor,
-    )?;
-    let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    let source_iteration_count = source_iterations(&source.spec);
-
-    if spec_values_are_constant(&source.spec) {
-        let mut boundaries = Vec::with_capacity(2);
-        push_boundary(&mut boundaries, delay_ms, playback.duration_ms);
-        if let Some(count) = source_iteration_count {
-            push_boundary(
-                &mut boundaries,
-                delay_ms + count * source.spec.duration_ms,
-                playback.duration_ms,
-            );
-        }
-        boundaries.sort_by(f64::total_cmp);
-        boundaries.dedup_by(|left, right| *left == *right);
-        for boundary in boundaries {
-            queue_timeline_boundary(
-                &mut pending_boundary,
-                TimelineBoundary::plain(boundary),
-                playback,
-                visitor,
-            )?;
-        }
-        queue_timeline_boundary(
-            &mut pending_boundary,
-            TimelineBoundary::plain(playback.duration_ms),
-            playback,
-            visitor,
-        )?;
-        return flush_pending_boundary(&mut pending_boundary, visitor);
-    }
-
-    let first_iteration = ((-delay_ms) / source.spec.duration_ms).floor().max(0.0);
-    if !first_iteration.is_finite() || first_iteration > MAX_TIMELINE_TIME_MS {
-        return Err(timeline_precision_error(
-            "f32-order",
+    if delay_ms > 0.0 && delay_ms < playback.duration_ms {
+        leading_events.push(source_boundary_event(
+            source,
             0.0,
-            playback.duration_ms,
+            CanonicalBoundaryCoordinate::SourcePosition(0.0),
+            resolved_easing,
         ));
     }
-    let mut iteration_index = first_iteration;
-    loop {
-        if let Some(count) = source_iteration_count
-            && iteration_index >= count.ceil()
-        {
-            break;
-        }
-        let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
-        if iteration_start_ms >= playback.duration_ms {
-            break;
-        }
-        let iteration_progress_limit =
-            source_iteration_count.map_or(1.0, |count| (count - iteration_index).clamp(0.0, 1.0));
-        let iteration_end_ms =
-            iteration_start_ms + iteration_progress_limit * source.spec.duration_ms;
-        if iteration_end_ms > 0.0 {
-            visit_iteration_boundaries(
+    let finite_source_end = source_iterations(&source.spec);
+    if let Some(source_end) = finite_source_end {
+        let source_end_time_ms = delay_ms + source_end * source_duration_ms;
+        if source_end_time_ms > 0.0 && source_end_time_ms < playback.duration_ms {
+            trailing_events.push(source_boundary_event(
                 source,
-                iteration_start_ms,
-                iteration_progress_limit,
-                playback,
+                source_end,
+                CanonicalBoundaryCoordinate::SourcePosition(source_end),
                 resolved_easing,
-                &mut |boundary| {
-                    queue_timeline_boundary(&mut pending_boundary, boundary, playback, visitor)
-                },
-            )?;
-        }
-        let next_iteration_index = iteration_index + 1.0;
-        if next_iteration_index == iteration_index {
-            return Err(timeline_precision_error(
-                "f32-order",
-                iteration_start_ms.max(0.0),
-                iteration_start_ms.max(0.0),
             ));
         }
-        iteration_index = next_iteration_index;
     }
-    queue_timeline_boundary(
-        &mut pending_boundary,
-        TimelineBoundary::plain(playback.duration_ms),
+    trailing_events.push(CanonicalBoundaryEvent {
+        coordinate: CanonicalBoundaryCoordinate::DocumentEnd,
+        left: document_end_left,
+        right: document_start_right,
+    });
+
+    let mut head = None;
+    let mut pattern = None;
+    let mut tail = None;
+    let mut active_source_range = None;
+    let mut construction_precision_failure = false;
+    if !spec_values_are_constant(&source.spec) {
+        let source_start = ((0.0 - delay_ms) / source_duration_ms).max(0.0);
+        let source_end = finite_source_end
+            .map_or(document_end_position, |count| {
+                count.min(document_end_position)
+            })
+            .max(0.0);
+        if !source_start.is_finite()
+            || !source_end.is_finite()
+            || source_start > MAX_TIMELINE_TIME_MS
+            || source_end > MAX_TIMELINE_TIME_MS
+        {
+            construction_precision_failure = true;
+        } else if source_end > source_start {
+            active_source_range = Some((source_start, source_end));
+            let start_iteration = source_start.floor();
+            let end_iteration = source_end.floor();
+            let start_progress = source_start - start_iteration;
+            let end_progress = source_end - end_iteration;
+            if start_iteration == end_iteration {
+                head = Some(BoundaryProgramWindow {
+                    iteration_index: start_iteration,
+                    lower_progress: start_progress,
+                    upper_progress: end_progress,
+                });
+            } else {
+                head = Some(BoundaryProgramWindow {
+                    iteration_index: start_iteration,
+                    lower_progress: start_progress,
+                    upper_progress: 1.0,
+                });
+                let repetitions = (end_iteration - start_iteration - 1.0).max(0.0);
+                if repetitions > 0.0 {
+                    pattern = Some(RepeatedBoundaryProgram {
+                        first_iteration: start_iteration + 1.0,
+                        repetitions,
+                    });
+                }
+                if end_progress > 0.0 {
+                    tail = Some(BoundaryProgramWindow {
+                        iteration_index: end_iteration,
+                        lower_progress: -1.0,
+                        upper_progress: end_progress,
+                    });
+                }
+            }
+        }
+    }
+
+    let head_count = head.map_or(0.0, |window| {
+        local_pattern.count_offsets_between(window.lower_progress, window.upper_progress)
+    });
+    let pattern_count = pattern.map_or(0.0, |repeated| {
+        local_pattern.count_offsets_between(-1.0, 1.0) * repeated.repetitions
+    });
+    let tail_count = tail.map_or(0.0, |window| {
+        local_pattern.count_offsets_between(window.lower_progress, window.upper_progress)
+    });
+    let explicit_count = (leading_events.len() + trailing_events.len()) as f64;
+    let event_count = [explicit_count, head_count, pattern_count, tail_count]
+        .into_iter()
+        .fold(0.0, saturating_finite_stop_count);
+
+    CanonicalBoundaryProgram {
         playback,
-        visitor,
-    )?;
-    flush_pending_boundary(&mut pending_boundary, visitor)
+        delay_ms,
+        source_duration_ms,
+        local_pattern,
+        leading_events,
+        head,
+        pattern,
+        tail,
+        trailing_events,
+        active_source_range,
+        construction_precision_failure,
+        event_count,
+    }
 }
-
-fn collect_boundaries(
-    source: &TrackSource,
-    playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
-) -> Result<Vec<TimelineBoundary>, EngineError> {
-    let mut boundaries = Vec::new();
-    visit_track_boundaries_with(source, playback, resolved_easing, &mut |boundary| {
-        boundaries.push(boundary);
-        Ok(())
-    })?;
-    Ok(boundaries)
-}
-
 fn function_piece(
     source: &TrackSource,
-    start_boundary: TimelineBoundary,
-    end_boundary: TimelineBoundary,
+    program: &CanonicalBoundaryProgram,
+    start_event: &CanonicalBoundaryEvent,
+    end_event: &CanonicalBoundaryEvent,
     resolved_easing: ResolvedEasing,
 ) -> Result<FunctionPiece, EngineError> {
-    let start_ms = start_boundary.time_ms;
-    let end_ms = end_boundary.time_ms;
-    let midpoint_ms = f64::midpoint(start_ms, end_ms);
-    let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    let active_time_ms = midpoint_ms - delay_ms;
-    let source_iteration_count = source_iterations(&source.spec);
-    let after_active = source_iteration_count
-        .is_some_and(|count| active_time_ms >= source.spec.duration_ms * count);
-    if active_time_ms < 0.0 || after_active {
-        let value = exact_track_value(source, midpoint_ms)?;
-        return Ok(FunctionPiece {
-            start_ms,
-            end_ms,
-            start_value: value.clone(),
-            end_value: value,
-            easing: PieceEasing::Constant,
-        });
-    }
-
-    let iteration_position = active_time_ms / source.spec.duration_ms;
-    let iteration_index = iteration_position.floor();
-    let midpoint_progress = iteration_position - iteration_index;
-    let Some(segment_index) = keyframe_segment_index(&source.spec.keyframes, midpoint_progress)
-    else {
-        let value = exact_track_value(source, midpoint_ms)?;
-        return Ok(FunctionPiece {
-            start_ms,
-            end_ms,
-            start_value: value.clone(),
-            end_value: value,
-            easing: PieceEasing::Constant,
-        });
-    };
-    let from = &source.spec.keyframes[segment_index];
-    let to = &source.spec.keyframes[segment_index + 1];
-    let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
-    let progress_at = |time_ms: f64| {
-        ((time_ms - iteration_start_ms) / source.spec.duration_ms - from.at) / (to.at - from.at)
-    };
-    let input_start = progress_at(start_ms).clamp(0.0, 1.0);
-    let input_end = progress_at(end_ms).clamp(0.0, 1.0);
-    match resolved_easing {
-        ResolvedEasing::Steps { .. } => {
-            let value = evaluate_segment(
-                &source.spec,
-                segment_index,
-                progress_at(midpoint_ms),
-                resolved_easing,
-            );
-            Ok(FunctionPiece {
+    let start_ms = program.time_ms(start_event.coordinate);
+    let end_ms = program.time_ms(end_event.coordinate);
+    let start_value = start_event.right.value.clone();
+    let end_value = end_event.left.value.clone();
+    let (start_endpoint, end_endpoint) = match (
+        start_event.right.piece_endpoint,
+        end_event.left.piece_endpoint,
+    ) {
+        (None, None) => {
+            if start_value != end_value {
+                return Err(timeline_unrepresentable(
+                    source,
+                    "linear-jump-unrepresentable",
+                    end_ms,
+                    None,
+                ));
+            }
+            return Ok(FunctionPiece {
                 start_ms,
                 end_ms,
-                start_value: value.clone(),
-                end_value: value,
+                start_value,
+                end_value,
                 easing: PieceEasing::Constant,
-            })
+            });
         }
+        (Some(start_endpoint), Some(end_endpoint))
+            if start_endpoint.segment_index == end_endpoint.segment_index =>
+        {
+            (start_endpoint, end_endpoint)
+        }
+        _ => {
+            return Err(timeline_unrepresentable(
+                source,
+                "linear-jump-unrepresentable",
+                end_ms,
+                None,
+            ));
+        }
+    };
+    let segment_index = start_endpoint.segment_index;
+    let input_start = start_endpoint.input_progress;
+    let input_end = end_endpoint.input_progress;
+    match resolved_easing {
+        ResolvedEasing::Steps { .. } => Ok(FunctionPiece {
+            start_ms,
+            end_ms,
+            start_value,
+            end_value,
+            easing: PieceEasing::Constant,
+        }),
         ResolvedEasing::Cubic(curve) => {
-            let start_value = canonicalize_boundary_value(
-                evaluate_segment(&source.spec, segment_index, input_start, resolved_easing),
-                start_boundary,
-            );
-            let end_value = canonicalize_boundary_value(
-                evaluate_segment(&source.spec, segment_index, input_end, resolved_easing),
-                end_boundary,
-            );
-            if let Some(constant_value) = cubic_piece_constant_value(
+            if cubic_raw_opacity_leaves_clamp_range(
                 &source.spec,
                 segment_index,
                 input_start,
                 input_end,
                 curve,
             ) {
+                return Err(timeline_unrepresentable(
+                    source,
+                    "clamped-overshoot-cubic",
+                    start_ms,
+                    Some("Use playback mode independent for this animation track."),
+                ));
+            }
+            if segment_interpolation_is_constant(&source.spec, segment_index) {
                 return Ok(FunctionPiece {
                     start_ms,
                     end_ms,
-                    start_value: constant_value.clone(),
-                    end_value: constant_value,
+                    start_value,
+                    end_value,
                     easing: PieceEasing::Constant,
                 });
             }
@@ -1791,6 +1891,13 @@ impl PrecisionPreflightState {
         let selector = format_js_number(normalized * 100.0);
         if let Some((previous_time_ms, previous_normalized_f32, previous_selector)) = &self.previous
         {
+            if time_ms == *previous_time_ms {
+                return Err(timeline_precision_error(
+                    "separation",
+                    *previous_time_ms,
+                    time_ms,
+                ));
+            }
             if normalized_f32 <= *previous_normalized_f32 {
                 return Err(timeline_precision_error(
                     "f32-order",
@@ -1842,6 +1949,15 @@ fn retain_earliest_representability_failure(
     }
 }
 
+fn representability_error_time(error: &EngineError, fallback_time_ms: f64) -> f64 {
+    match error {
+        EngineError::StructuredContext { context, .. } => context["boundaryTimeMs"]
+            .as_f64()
+            .unwrap_or(fallback_time_ms),
+        _ => fallback_time_ms,
+    }
+}
+
 fn base_transition_failure(
     source: &TrackSource,
     playback: DocumentPlayback,
@@ -1875,106 +1991,11 @@ fn base_transition_failure(
     })
 }
 
-fn selected_representability_iterations(
-    source: &TrackSource,
-    playback: DocumentPlayback,
-) -> Vec<f64> {
-    if spec_values_are_constant(&source.spec) {
-        return Vec::new();
-    }
-    let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    let first_iteration = ((-delay_ms) / source.spec.duration_ms).floor().max(0.0);
-    let active_end_ms = source_iterations(&source.spec).map_or(playback.duration_ms, |count| {
-        delay_ms + count * source.spec.duration_ms
-    });
-    let visible_end_ms = active_end_ms.min(playback.duration_ms);
-    if !first_iteration.is_finite() || visible_end_ms <= 0.0 || delay_ms >= playback.duration_ms {
-        return Vec::new();
-    }
-    let end_position = (visible_end_ms - delay_ms) / source.spec.duration_ms;
-    if !end_position.is_finite() || end_position <= first_iteration {
-        return Vec::new();
-    }
-    let last_iteration = previous_f64(end_position).floor().max(first_iteration);
-    // Authored iterations repeat exactly. The visible head, the first complete
-    // successor (when present), and the visible tail cover every distinct
-    // authored interval plus the earliest seam and both document cuts.
-    let mut iterations = vec![first_iteration];
-    let second_iteration = first_iteration + 1.0;
-    if second_iteration > first_iteration && second_iteration <= last_iteration {
-        iterations.push(second_iteration);
-    }
-    if last_iteration > first_iteration {
-        iterations.push(last_iteration);
-    }
-    iterations.sort_by(f64::total_cmp);
-    iterations.dedup_by(|left, right| *left == *right);
-    iterations
-}
-
-fn document_cut_extra_boundary_times(
-    source: &TrackSource,
-    playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
-) -> Vec<f64> {
-    let ResolvedEasing::Cubic(curve) = resolved_easing else {
-        return Vec::new();
-    };
-    if spec_values_are_constant(&source.spec) {
-        return Vec::new();
-    }
-
-    let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    let source_iteration_count = source_iterations(&source.spec);
-    let mut extra_boundaries = Vec::new();
-    for iteration_index in selected_representability_iterations(source, playback) {
-        let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
-        let iteration_progress_limit =
-            source_iteration_count.map_or(1.0, |count| (count - iteration_index).clamp(0.0, 1.0));
-        let visible_start_ms = iteration_start_ms.max(0.0);
-        let visible_end_ms = (iteration_start_ms
-            + iteration_progress_limit * source.spec.duration_ms)
-            .min(playback.duration_ms);
-        if visible_end_ms <= visible_start_ms {
-            continue;
-        }
-        let visible_progress_start =
-            ((visible_start_ms - iteration_start_ms) / source.spec.duration_ms).clamp(0.0, 1.0);
-        let visible_progress_end = ((visible_end_ms - iteration_start_ms)
-            / source.spec.duration_ms)
-            .clamp(0.0, iteration_progress_limit);
-        for (segment_index, pair) in source.spec.keyframes.windows(2).enumerate() {
-            let segment_visible_start = pair[0].at.max(visible_progress_start);
-            let segment_visible_end = pair[1].at.min(visible_progress_end);
-            if segment_visible_end <= segment_visible_start {
-                continue;
-            }
-            let full_progresses =
-                full_cubic_segment_boundary_progresses(&source.spec, segment_index, curve);
-            for boundary in required_cubic_extrema_progresses(
-                &source.spec,
-                segment_index,
-                curve,
-                segment_visible_start,
-                segment_visible_end,
-                &full_progresses,
-            ) {
-                let boundary_ms = iteration_start_ms + boundary.progress * source.spec.duration_ms;
-                if boundary_ms > 0.0 && boundary_ms < playback.duration_ms {
-                    extra_boundaries.push(boundary_ms);
-                }
-            }
-        }
-    }
-    extra_boundaries.sort_by(f64::total_cmp);
-    extra_boundaries.dedup_by(|left, right| *left == *right);
-    extra_boundaries
-}
-
 fn representability_preflight(
     source: &TrackSource,
     playback: DocumentPlayback,
     resolved_easing: ResolvedEasing,
+    program: &CanonicalBoundaryProgram,
 ) -> Result<(), EngineError> {
     let mut earliest = base_transition_failure(source, playback);
     if matches!(resolved_easing, ResolvedEasing::Spring { .. }) {
@@ -1993,53 +2014,43 @@ fn representability_preflight(
     }
 
     if !matches!(resolved_easing, ResolvedEasing::Steps { .. }) {
-        let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-        let source_iteration_count = source_iterations(&source.spec);
-        for iteration_index in selected_representability_iterations(source, playback) {
-            let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
-            let iteration_progress_limit = source_iteration_count
-                .map_or(1.0, |count| (count - iteration_index).clamp(0.0, 1.0));
-            let mut boundaries = Vec::new();
-            visit_iteration_boundaries(
-                source,
-                iteration_start_ms,
-                iteration_progress_limit,
-                playback,
-                resolved_easing,
-                &mut |boundary| {
-                    boundaries.push(boundary);
-                    Ok(())
-                },
-            )?;
-            sort_and_merge_timeline_boundaries(&mut boundaries);
+        for boundaries in program.representability_sections() {
             for pair in boundaries.windows(2) {
-                let [start_boundary, end_boundary] = pair else {
+                let [start_event, end_event] = pair else {
                     continue;
                 };
-                if end_boundary.time_ms <= start_boundary.time_ms {
+                let start_ms = program.time_ms(start_event.coordinate);
+                let end_ms = program.time_ms(end_event.coordinate);
+                if end_ms <= start_ms {
                     continue;
                 }
-                let piece =
-                    match function_piece(source, *start_boundary, *end_boundary, resolved_easing) {
-                        Ok(piece) => piece,
-                        Err(error) => {
-                            retain_earliest_representability_failure(
-                                &mut earliest,
-                                RepresentabilityFailure {
-                                    boundary_time_ms: end_boundary.time_ms,
-                                    tie_priority: 2,
-                                    error,
-                                },
-                            );
-                            continue;
-                        }
-                    };
-                let right_value = exact_track_value_at_boundary(source, *end_boundary)?;
-                if let Err(error) = compile_piece_easing(source, &piece, &right_value) {
+                let piece = match function_piece(
+                    source,
+                    program,
+                    start_event,
+                    end_event,
+                    resolved_easing,
+                ) {
+                    Ok(piece) => piece,
+                    Err(error) => {
+                        let boundary_time_ms = representability_error_time(&error, start_ms);
+                        retain_earliest_representability_failure(
+                            &mut earliest,
+                            RepresentabilityFailure {
+                                boundary_time_ms,
+                                tie_priority: 2,
+                                error,
+                            },
+                        );
+                        continue;
+                    }
+                };
+                let right_value = end_event.plan_value();
+                if let Err(error) = compile_piece_easing(source, &piece, right_value) {
                     retain_earliest_representability_failure(
                         &mut earliest,
                         RepresentabilityFailure {
-                            boundary_time_ms: end_boundary.time_ms,
+                            boundary_time_ms: end_ms,
                             tie_priority: 2,
                             error,
                         },
@@ -2049,7 +2060,7 @@ fn representability_preflight(
         }
     }
 
-    if let Some(boundary_time_ms) = final_hold_discontinuity(source, playback, resolved_easing)? {
+    if let Some(boundary_time_ms) = final_hold_discontinuity(playback, program) {
         retain_earliest_representability_failure(
             &mut earliest,
             RepresentabilityFailure {
@@ -2067,212 +2078,50 @@ fn representability_preflight(
     earliest.map_or(Ok(()), |failure| Err(failure.error))
 }
 
-fn push_nearby_step_boundaries(
-    candidates: &mut Vec<TimelineBoundary>,
-    source: &TrackSource,
-    iteration_index: f64,
-    iteration_progress_limit: f64,
-    target_progress: f64,
-    count: f64,
-) {
-    let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
-    for pair in source.spec.keyframes.windows(2) {
-        let segment_start = pair[0].at;
-        let segment_end = pair[1].at;
-        let visible_segment_end = segment_end.min(iteration_progress_limit);
-        if visible_segment_end <= segment_start {
-            continue;
-        }
-        let segment_span = segment_end - segment_start;
-        let target_step =
-            ((target_progress - segment_start) / segment_span * count).clamp(0.0, count);
-        let floor_step = target_step.floor();
-        for step_index in [
-            floor_step - 1.0,
-            floor_step,
-            target_step.ceil(),
-            target_step.ceil() + 1.0,
-        ] {
-            if step_index <= 0.0 || step_index >= count {
-                continue;
-            }
-            let progress = segment_start + (step_index / count) * segment_span;
-            if progress < visible_segment_end {
-                candidates.push(TimelineBoundary::plain(
-                    iteration_start_ms + progress * source.spec.duration_ms,
-                ));
-            }
-        }
-    }
-}
-
-fn resolve_document_endpoint_boundary(
-    source: &TrackSource,
-    playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
-    endpoint_time_ms: f64,
-) -> Result<Option<TimelineBoundary>, EngineError> {
-    let mut endpoint_boundaries = vec![TimelineBoundary::plain(endpoint_time_ms)];
-    if matches!(resolved_easing, ResolvedEasing::Cubic(_))
-        && !spec_values_are_constant(&source.spec)
-    {
-        let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-        let source_iteration_count = source_iterations(&source.spec);
-        for iteration_index in selected_representability_iterations(source, playback) {
-            let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
-            let iteration_progress_limit = source_iteration_count
-                .map_or(1.0, |count| (count - iteration_index).clamp(0.0, 1.0));
-            visit_iteration_boundaries(
-                source,
-                iteration_start_ms,
-                iteration_progress_limit,
-                playback,
-                resolved_easing,
-                &mut |boundary| {
-                    if boundary.time_ms == endpoint_time_ms {
-                        endpoint_boundaries.push(TimelineBoundary {
-                            time_ms: endpoint_time_ms,
-                            opacity_clamp: boundary.opacity_clamp,
-                        });
-                    }
-                    Ok(())
-                },
-            )?;
-        }
-    }
-    sort_and_merge_timeline_boundaries(&mut endpoint_boundaries);
-    // Incompatible roots are a precision failure. Keep the endpoint unresolved
-    // so representability does not preempt the later precision stage.
-    Ok((endpoint_boundaries.len() == 1).then_some(endpoint_boundaries[0]))
-}
-
 fn final_hold_discontinuity(
-    source: &TrackSource,
     playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
-) -> Result<Option<f64>, EngineError> {
+    program: &CanonicalBoundaryProgram,
+) -> Option<f64> {
     let DocumentIterationCount::Finite(iterations) = playback.iterations else {
-        return Ok(None);
+        return None;
     };
     let fraction = iterations.fract();
     if fraction == 0.0 {
-        return Ok(None);
+        return None;
     }
     let hold_time_ms = fraction * playback.duration_ms;
     let delta_ms = playback.delta_ms();
-    let document_start =
-        resolve_document_endpoint_boundary(source, playback, resolved_easing, 0.0)?;
-    let document_end = resolve_document_endpoint_boundary(
-        source,
-        playback,
-        resolved_easing,
-        playback.duration_ms,
-    )?;
-    if let (Some(start_boundary), Some(end_boundary)) = (document_start, document_end) {
-        let exact_start = exact_track_value_at_boundary(source, start_boundary)?;
-        let exact_end = exact_track_value_at_boundary(source, end_boundary)?;
-        if exact_start != exact_end && hold_time_ms < delta_ms {
-            return Ok(Some(0.0));
-        }
+    let exact_start = &program.leading_events[0].right.value;
+    let exact_end = &program.trailing_events[program.trailing_events.len() - 1]
+        .left
+        .value;
+    if exact_start != exact_end && hold_time_ms < delta_ms {
+        return Some(0.0);
     }
 
-    let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    let mut candidates = vec![
-        TimelineBoundary::plain(0.0),
-        TimelineBoundary::plain(playback.duration_ms),
-        TimelineBoundary::plain(delay_ms),
-    ];
-    if let Some(count) = source_iterations(&source.spec) {
-        candidates.push(TimelineBoundary::plain(
-            delay_ms + count * source.spec.duration_ms,
-        ));
-    }
-    if !spec_values_are_constant(&source.spec) {
-        let target_position = (hold_time_ms - delay_ms) / source.spec.duration_ms;
-        let target_iteration = target_position.floor();
-        let pattern = local_boundary_pattern(&source.spec, resolved_easing);
-        for iteration_index in [
-            (target_iteration - 1.0).max(0.0),
-            target_iteration.max(0.0),
-            (target_iteration + 1.0).max(0.0),
-        ] {
-            if let Some(count) = source_iterations(&source.spec)
-                && iteration_index >= count.ceil()
-            {
-                continue;
-            }
-            let iteration_progress_limit = source_iterations(&source.spec)
-                .map_or(1.0, |count| (count - iteration_index).clamp(0.0, 1.0));
-            if iteration_progress_limit <= 0.0 {
-                continue;
-            }
-            let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
-            for boundary in
-                pattern
-                    .fixed_offsets
-                    .iter()
-                    .copied()
-                    .chain(std::iter::once(BoundaryOffset::plain(
-                        iteration_progress_limit,
-                    )))
-            {
-                if boundary.progress <= iteration_progress_limit {
-                    candidates.push(TimelineBoundary {
-                        time_ms: iteration_start_ms + boundary.progress * source.spec.duration_ms,
-                        opacity_clamp: boundary.opacity_clamp,
-                    });
-                }
-            }
-            if let ResolvedEasing::Steps { count, .. } = resolved_easing {
-                push_nearby_step_boundaries(
-                    &mut candidates,
-                    source,
-                    iteration_index,
-                    iteration_progress_limit,
-                    target_position - iteration_index,
-                    count,
-                );
-            }
-        }
-    }
-
-    candidates.retain(|candidate| {
-        candidate.time_ms.is_finite()
-            && candidate.time_ms >= 0.0
-            && candidate.time_ms <= playback.duration_ms
-    });
-    sort_and_merge_timeline_boundaries(&mut candidates);
+    let candidates = program.nearby_boundary_events(hold_time_ms);
     let mut discontinuities = Vec::new();
-    for pair in candidates.windows(2) {
-        let [piece_start, candidate] = pair else {
-            continue;
-        };
-        if candidate.time_ms == 0.0 || candidate.time_ms <= piece_start.time_ms {
+    for candidate in candidates {
+        let candidate_ms = program.time_ms(candidate.coordinate);
+        if candidate_ms == 0.0 || candidate.left.value == candidate.right.value {
             continue;
         }
-        let left_piece = function_piece(source, *piece_start, *candidate, resolved_easing)?;
-        let right_value = exact_track_value_at_boundary(source, *candidate)?;
-        if left_piece.end_value == right_value {
-            continue;
-        }
-        discontinuities.push(if candidate.time_ms == playback.duration_ms {
+        discontinuities.push(if candidate_ms == playback.duration_ms {
             0.0
         } else {
-            candidate.time_ms
+            candidate_ms
         });
     }
     discontinuities.sort_by(f64::total_cmp);
     discontinuities.dedup_by(|left, right| *left == *right);
-    Ok(discontinuities
+    discontinuities
         .into_iter()
-        .find(|boundary| (hold_time_ms - boundary).abs() < delta_ms))
+        .find(|boundary| (hold_time_ms - boundary).abs() < delta_ms)
 }
-
 fn compile_track(
     source: &TrackSource,
-    playback: DocumentPlayback,
     resolved_easing: ResolvedEasing,
+    program: &CanonicalBoundaryProgram,
 ) -> Result<DocumentTrackPlan, EngineError> {
     #[cfg(test)]
     COMPILE_TRACK_TRACE
@@ -2282,44 +2131,43 @@ fn compile_track(
         .or_default()
         .push(source.owner_id.clone());
 
-    let boundaries = collect_boundaries(source, playback, resolved_easing)?;
+    let boundaries = program.materialize();
     let mut pieces = Vec::with_capacity(boundaries.len().saturating_sub(1));
     for pair in boundaries.windows(2) {
-        let [start_boundary, end_boundary] = pair else {
+        let [start_event, end_event] = pair else {
             continue;
         };
-        if end_boundary.time_ms > start_boundary.time_ms {
-            pieces.push(function_piece(
-                source,
-                *start_boundary,
-                *end_boundary,
-                resolved_easing,
-            )?);
+        let start_ms = program.time_ms(start_event.coordinate);
+        let end_ms = program.time_ms(end_event.coordinate);
+        if end_ms > start_ms {
+            pieces.push((
+                function_piece(source, program, start_event, end_event, resolved_easing)?,
+                end_event,
+            ));
         }
     }
     if pieces.is_empty() {
         return Err(timeline_precision_error(
             "f32-order",
             0.0,
-            playback.duration_ms,
+            program.playback.duration_ms,
         ));
     }
-    let exact_start = exact_track_value_at_boundary(source, boundaries[0])?;
-    let exact_end =
-        exact_track_value_at_boundary(source, boundaries[boundaries.len().saturating_sub(1)])?;
+    let exact_start = boundaries[0].right.value.clone();
+    let exact_end = boundaries[boundaries.len().saturating_sub(1)]
+        .left
+        .value
+        .clone();
     let mut keyframes = vec![DocumentKeyframe {
         time_ms: 0.0,
         value: exact_start.to_keyframe(),
         easing_to_next: None,
     }];
     let mut discontinuities_ms = Vec::new();
-    for (piece_index, piece) in pieces.iter().enumerate() {
-        let right_value = pieces.get(piece_index + 1).map_or_else(
-            || exact_end.clone(),
-            |next_piece| next_piece.start_value.clone(),
-        );
+    for (piece, end_event) in &pieces {
+        let right_value = end_event.plan_value().clone();
         if piece.end_value != right_value {
-            discontinuities_ms.push(if piece.end_ms == playback.duration_ms {
+            discontinuities_ms.push(if piece.end_ms == program.playback.duration_ms {
                 0.0
             } else {
                 piece.end_ms
@@ -2351,144 +2199,196 @@ fn compile_track(
     })
 }
 
-fn repeated_track_precision_is_guaranteed(
-    source: &TrackSource,
-    playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
-) -> bool {
-    if spec_values_are_constant(&source.spec) {
-        return false;
-    }
-    let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    let active_start_ms = delay_ms.max(0.0).min(playback.duration_ms);
-    let active_end_ms = source_iterations(&source.spec)
-        .map_or(playback.duration_ms, |iterations| {
-            (delay_ms + iterations * source.spec.duration_ms).min(playback.duration_ms)
-        });
-    if active_end_ms <= active_start_ms {
-        return true;
-    }
-    let source_start = (active_start_ms - delay_ms) / source.spec.duration_ms;
-    let source_end = (active_end_ms - delay_ms) / source.spec.duration_ms;
-    if !source_start.is_finite()
-        || !source_end.is_finite()
-        || source_start.fract() != 0.0
-        || source_end.fract() != 0.0
-    {
-        return false;
-    }
-    let Some(local_gap) =
-        local_boundary_pattern(&source.spec, resolved_easing).minimum_full_iteration_gap()
-    else {
-        return false;
-    };
-    let minimum_separation_ms = 4.0 * playback.delta_ms().max(0.001);
-    let mut minimum_gap_ms = local_gap * source.spec.duration_ms;
-    if active_start_ms > 0.0 {
-        minimum_gap_ms = minimum_gap_ms.min(active_start_ms);
-    }
-    if active_end_ms < playback.duration_ms {
-        minimum_gap_ms = minimum_gap_ms.min(playback.duration_ms - active_end_ms);
-    }
-    // The separation floor is at least D / 2^18. That is wider than the
-    // binary32 offset ULP throughout [0, 1] and cannot collapse two finite
-    // shortest-roundtrip percentage selectors, so one periodic gap proof
-    // closes all three precision checks.
-    minimum_gap_ms >= minimum_separation_ms
-}
-
 fn saturating_finite_stop_count(left: f64, right: f64) -> f64 {
     let sum = left + right;
     if sum.is_finite() { sum } else { f64::MAX }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct TrackAnalysis {
-    // Representation is proven from bounded head/pattern/tail windows. The
-    // precision pass then streams offsets, and budget failure precedes the
-    // only DocumentTrackPlan expansion.
-    resolved_easing: ResolvedEasing,
-}
-
-fn bounded_non_steps_precision_boundaries(
-    source: &TrackSource,
+fn precision_check_pair(
     playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
-) -> Result<Vec<TimelineBoundary>, EngineError> {
-    let mut boundaries = vec![
-        TimelineBoundary::plain(0.0),
-        TimelineBoundary::plain(playback.duration_ms),
-    ];
-    let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    if delay_ms >= 0.0 && delay_ms <= playback.duration_ms && delay_ms.is_finite() {
-        boundaries.push(TimelineBoundary::plain(delay_ms));
-    }
-    if let Some(iterations) = source_iterations(&source.spec) {
-        let active_end_ms = delay_ms + iterations * source.spec.duration_ms;
-        if active_end_ms >= 0.0
-            && active_end_ms <= playback.duration_ms
-            && active_end_ms.is_finite()
-        {
-            boundaries.push(TimelineBoundary::plain(active_end_ms));
-        }
-    }
-    if !spec_values_are_constant(&source.spec) {
-        let source_iteration_count = source_iterations(&source.spec);
-        for iteration_index in selected_representability_iterations(source, playback) {
-            let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
-            let iteration_progress_limit = source_iteration_count
-                .map_or(1.0, |count| (count - iteration_index).clamp(0.0, 1.0));
-            visit_iteration_boundaries(
-                source,
-                iteration_start_ms,
-                iteration_progress_limit,
-                playback,
-                resolved_easing,
-                &mut |boundary| {
-                    boundaries.push(boundary);
-                    Ok(())
-                },
-            )?;
-        }
-    }
-    boundaries.retain(|boundary| {
-        boundary.time_ms.is_finite()
-            && boundary.time_ms >= 0.0
-            && boundary.time_ms <= playback.duration_ms
-    });
-    sort_and_merge_timeline_boundaries(&mut boundaries);
-    Ok(boundaries)
-}
-
-fn precision_preflight_track(
-    source: &TrackSource,
-    playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
+    left_time_ms: f64,
+    right_time_ms: f64,
 ) -> Result<(), EngineError> {
-    if repeated_track_precision_is_guaranteed(source, playback, resolved_easing) {
-        return Ok(());
-    }
     let mut state = PrecisionPreflightState::new(playback);
-    if !matches!(resolved_easing, ResolvedEasing::Steps { .. }) {
-        for boundary in bounded_non_steps_precision_boundaries(source, playback, resolved_easing)? {
-            state.visit(boundary.time_ms)?;
-        }
-        return Ok(());
-    }
-    visit_track_boundaries_with(source, playback, resolved_easing, &mut |boundary| {
-        state.visit(boundary.time_ms)
-    })
+    state.visit(left_time_ms)?;
+    state.visit(right_time_ms)
 }
 
-fn analyzed_track_stop_count(
-    source: &TrackSource,
-    playback: DocumentPlayback,
-    resolved_easing: ResolvedEasing,
+fn source_mapping_error_bound_ms(program: &CanonicalBoundaryProgram, source_position: f64) -> f64 {
+    let position_rounding = f64::EPSILON * source_position.abs();
+    let scaled_position = source_position * program.source_duration_ms;
+    let multiplication_rounding = f64::EPSILON * scaled_position.abs();
+    let addition_rounding = f64::EPSILON * (program.delay_ms.abs() + scaled_position.abs());
+    4.0 * (position_rounding * program.source_duration_ms.abs()
+        + multiplication_rounding
+        + addition_rounding)
+}
+
+fn coordinate_mapping_error_bound_ms(
+    program: &CanonicalBoundaryProgram,
+    coordinate: CanonicalBoundaryCoordinate,
 ) -> f64 {
-    let semantic_count = semantic_track_stop_count(source, playback, resolved_easing);
-    let cut_extra_count =
-        document_cut_extra_boundary_times(source, playback, resolved_easing).len() as f64;
-    saturating_finite_stop_count(semantic_count, cut_extra_count)
+    match coordinate {
+        CanonicalBoundaryCoordinate::DocumentStart | CanonicalBoundaryCoordinate::DocumentEnd => {
+            0.0
+        }
+        CanonicalBoundaryCoordinate::SourcePosition(source_position) => {
+            source_mapping_error_bound_ms(program, source_position)
+        }
+    }
+}
+
+fn precision_preflight_window(
+    program: &CanonicalBoundaryProgram,
+    window: BoundaryProgramWindow,
+) -> Result<(), EngineError> {
+    #[cfg(test)]
+    {
+        let mut trace = PREFLIGHT_WINDOW_TRACE
+            .lock()
+            .expect("preflight window trace should not be poisoned");
+        *trace.entry(std::thread::current().id()).or_default() += 1;
+    }
+    let lower_progress = CanonicalBoundaryProgram::window_start_progress(window);
+    let candidates = program
+        .local_pattern
+        .precision_gap_candidates(lower_progress, window.upper_progress);
+    let minimum_separation_ms = 4.0 * program.playback.delta_ms().max(0.001);
+    for pair in candidates.windows(2) {
+        let [left_progress, right_progress] = pair else {
+            continue;
+        };
+        let left_position = window.iteration_index + left_progress;
+        let right_position = window.iteration_index + right_progress;
+        let left_coordinate = program.coordinate_for_source_position(left_position);
+        let right_coordinate = program.coordinate_for_source_position(right_position);
+        let left_time_ms = program.time_ms(left_coordinate);
+        let right_time_ms = program.time_ms(right_coordinate);
+        precision_check_pair(program.playback, left_time_ms, right_time_ms)?;
+
+        let nominal_gap_ms = (right_position - left_position) * program.source_duration_ms;
+        let rounding_error_bound_ms = coordinate_mapping_error_bound_ms(program, left_coordinate)
+            + coordinate_mapping_error_bound_ms(program, right_coordinate);
+        if nominal_gap_ms - rounding_error_bound_ms < minimum_separation_ms {
+            return Err(timeline_precision_error(
+                "separation",
+                left_time_ms,
+                right_time_ms,
+            ));
+        }
+    }
+    if let Some(progress) = program
+        .local_pattern
+        .first_nonincrementing_step_progress(lower_progress, window.upper_progress)
+    {
+        let coordinate = program.coordinate_for_window_progress(window, progress);
+        let time_ms = program.time_ms(coordinate);
+        return Err(timeline_precision_error("separation", time_ms, time_ms));
+    }
+    Ok(())
+}
+
+fn precision_preflight_events<'a>(
+    program: &CanonicalBoundaryProgram,
+    events: impl IntoIterator<Item = &'a CanonicalBoundaryEvent>,
+) -> Result<(), EngineError> {
+    let times = events
+        .into_iter()
+        .map(|event| program.time_ms(event.coordinate))
+        .collect::<Vec<_>>();
+    for pair in times.windows(2) {
+        let [left_time_ms, right_time_ms] = pair else {
+            continue;
+        };
+        precision_check_pair(program.playback, *left_time_ms, *right_time_ms)?;
+    }
+    Ok(())
+}
+
+fn repeated_precision_window(
+    pattern: RepeatedBoundaryProgram,
+    repetition_index: f64,
+) -> BoundaryProgramWindow {
+    BoundaryProgramWindow {
+        iteration_index: pattern.first_iteration + repetition_index,
+        lower_progress: -1.0,
+        upper_progress: 1.0,
+    }
+}
+
+fn precision_preflight_repeated_pattern(
+    program: &CanonicalBoundaryProgram,
+    pattern: RepeatedBoundaryProgram,
+) -> Result<(), EngineError> {
+    precision_preflight_window(program, repeated_precision_window(pattern, 0.0))?;
+    if pattern.repetitions <= 1.0 {
+        return Ok(());
+    }
+
+    let last_repetition = pattern.repetitions - 1.0;
+    let last_window = repeated_precision_window(pattern, last_repetition);
+    let Err(last_error) = precision_preflight_window(program, last_window) else {
+        return Ok(());
+    };
+
+    // The proof bound grows monotonically with a non-negative source position.
+    // Locate the first failing instance without expanding the repetition.
+    let mut safe_repetition = 0.0;
+    let mut failing_repetition = last_repetition;
+    while failing_repetition - safe_repetition > 1.0 {
+        let midpoint = (safe_repetition + (failing_repetition - safe_repetition) / 2.0).floor();
+        if precision_preflight_window(program, repeated_precision_window(pattern, midpoint)).is_ok()
+        {
+            safe_repetition = midpoint;
+        } else {
+            failing_repetition = midpoint;
+        }
+    }
+    if failing_repetition == last_repetition {
+        return Err(last_error);
+    }
+    precision_preflight_window(
+        program,
+        repeated_precision_window(pattern, failing_repetition),
+    )
+}
+
+fn precision_preflight_program(program: &CanonicalBoundaryProgram) -> Result<(), EngineError> {
+    if program.construction_precision_failure {
+        return Err(timeline_precision_error(
+            "f32-order",
+            0.0,
+            program.playback.duration_ms,
+        ));
+    }
+
+    if program.active_source_range.is_none() {
+        return precision_preflight_events(
+            program,
+            program
+                .leading_events
+                .iter()
+                .chain(&program.trailing_events),
+        );
+    }
+
+    precision_preflight_events(program, &program.leading_events)?;
+    if let Some(head) = program.head {
+        precision_preflight_window(program, head)?;
+    }
+    if let Some(pattern) = program.pattern {
+        precision_preflight_repeated_pattern(program, pattern)?;
+    }
+    if let Some(tail) = program.tail {
+        precision_preflight_window(program, tail)?;
+    }
+    precision_preflight_events(program, &program.trailing_events)
+}
+
+#[derive(Debug, Clone)]
+struct TrackAnalysis {
+    resolved_easing: ResolvedEasing,
+    program: CanonicalBoundaryProgram,
 }
 
 fn preflight_document_tracks(
@@ -2498,20 +2398,21 @@ fn preflight_document_tracks(
     let mut analyses = Vec::with_capacity(sources.len());
     for source in sources {
         let resolved_easing = resolve_track_easing(source)?;
-        representability_preflight(source, playback, resolved_easing)?;
-        analyses.push(TrackAnalysis { resolved_easing });
+        let program = build_canonical_boundary_program(source, playback, resolved_easing);
+        representability_preflight(source, playback, resolved_easing, &program)?;
+        analyses.push(TrackAnalysis {
+            resolved_easing,
+            program,
+        });
     }
 
-    for (source, analysis) in sources.iter().zip(&analyses) {
-        precision_preflight_track(source, playback, analysis.resolved_easing)?;
+    for analysis in &analyses {
+        precision_preflight_program(&analysis.program)?;
     }
 
-    let mut stop_count = 0.0;
-    for (source, analysis) in sources.iter().zip(&analyses) {
-        let track_stop_count =
-            analyzed_track_stop_count(source, playback, analysis.resolved_easing);
-        stop_count = saturating_finite_stop_count(stop_count, track_stop_count);
-    }
+    let stop_count = analyses.iter().fold(0.0, |count, analysis| {
+        saturating_finite_stop_count(count, analysis.program.event_count)
+    });
     if stop_count > MAX_TIMELINE_KEYFRAME_STOPS as f64 {
         return Err(timeline_limit_error(
             "keyframeStops",
@@ -2521,7 +2422,6 @@ fn preflight_document_tracks(
     }
     Ok((analyses, stop_count))
 }
-
 #[cfg(test)]
 fn compile_document_animation_plan(
     ir: &Ir,
@@ -2552,8 +2452,8 @@ pub fn compile_document_animation_plan_with_prefix(
     collect_track_sources(&ir.root, &mut sources);
     let (analyses, preflight_stop_count) = preflight_document_tracks(&sources, playback)?;
     let mut tracks = Vec::with_capacity(sources.len());
-    for (source, analysis) in sources.iter().zip(analyses) {
-        let track = compile_track(source, playback, analysis.resolved_easing)?;
+    for (source, analysis) in sources.iter().zip(&analyses) {
+        let track = compile_track(source, analysis.resolved_easing, &analysis.program)?;
         tracks.push(track);
     }
     let keyframe_stop_count = tracks.iter().try_fold(0_usize, |count, track| {
@@ -2965,10 +2865,22 @@ mod tests {
 
     #[test]
     fn cuts_a_cubic_curve_at_the_document_end() {
-        let mut spec = opacity_spec(AnimationEasing::CubicBezier([0.3, 1.6, 0.7, 1.4]));
-        spec.duration_ms = 200.0;
-        spec.delay_ms = Some(120.0);
-        spec.iterations = Some(AnimationIterations::Count(1.0));
+        let keyframe = |at, translate_x| AnimationKeyframe {
+            at,
+            opacity: None,
+            transform: Some(AnimationTransform2D {
+                translate_x: Some(translate_x),
+                ..AnimationTransform2D::default()
+            }),
+        };
+        let spec = AnimationSpec {
+            keyframes: vec![keyframe(0.0, 0.0), keyframe(1.0, 100.0)],
+            duration_ms: 200.0,
+            delay_ms: Some(120.0),
+            easing: Some(AnimationEasing::CubicBezier([0.3, 1.6, 0.7, 1.4])),
+            iterations: Some(AnimationIterations::Count(1.0)),
+            fill: Some("both".to_string()),
+        };
         let plan = compile_document_animation_plan(&timeline_ir(spec), infinite_playback(), 0.0)
             .expect("cut cubic should compile");
         assert!(plan.tracks[0].keyframes.iter().any(|keyframe| matches!(
@@ -2985,7 +2897,7 @@ mod tests {
     }
 
     #[test]
-    fn splits_a_nonmonotone_document_cut_cubic_at_output_extrema() {
+    fn rejects_a_nonmonotone_document_cut_cubic_without_synthetic_extrema() {
         let spec = AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
@@ -3016,33 +2928,14 @@ mod tests {
             iterations: DocumentIterationCount::Infinite,
         };
 
-        let plan = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
-            .expect("document-cut output extrema should make every cubic piece representable");
-        let low_parameter = (13.0 - 13.0_f64.sqrt()) / 24.0;
-        let high_parameter = (13.0 + 13.0_f64.sqrt()) / 24.0;
-        let expected = [
-            0.0,
-            -250.0 + cubic_coordinate(low_parameter, 0.0, 1.0) * 1_600.0,
-            -250.0 + cubic_coordinate(high_parameter, 0.0, 1.0) * 1_600.0,
-            1_100.0,
-        ];
-        let observed = plan.tracks[0]
-            .keyframes
-            .iter()
-            .map(|keyframe| keyframe.time_ms)
-            .collect::<Vec<_>>();
-        assert_eq!(observed.len(), expected.len());
-        for (observed_time, expected_time) in observed.iter().zip(expected) {
-            assert!((observed_time - expected_time).abs() < 1.0e-9);
-        }
-        assert!(
-            plan.tracks[0].keyframes[..3]
-                .iter()
-                .all(|keyframe| matches!(
-                    keyframe.easing_to_next,
-                    Some(CompiledCssEasing::CubicBezier(_))
-                ))
-        );
+        let error = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
+            .expect_err("computed extrema are not canonical boundary events");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("the unrepresentable subcurve should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+        assert_eq!(context["reason"], "cubic-subcurve-unrepresentable");
+        assert_eq!(context["boundaryTimeMs"], 1_100.0);
     }
 
     #[test]
@@ -3114,7 +3007,7 @@ mod tests {
     }
 
     #[test]
-    fn splits_an_uncut_mixed_cubic_only_when_clamping_makes_a_piece_degenerate() {
+    fn rejects_uncut_mixed_and_opacity_only_clamped_overshoot_cubics() {
         let make_keyframe = |at, opacity, translate_x| AnimationKeyframe {
             at,
             opacity: Some(opacity),
@@ -3147,16 +3040,12 @@ mod tests {
                 warnings: Vec::new(),
             },
         ] {
-            let plan = compile_document_animation_plan(&source, playback, 0.0)
-                .expect("mixed cubic should split at the clamp root and required output extremum");
-            assert_eq!(
-                plan.tracks[0]
-                    .keyframes
-                    .iter()
-                    .map(|keyframe| keyframe.time_ms)
-                    .collect::<Vec<_>>(),
-                vec![0.0, 156.25, 500.0, 1_000.0]
-            );
+            let error = compile_document_animation_plan(&source, playback, 0.0)
+                .expect_err("mixed-channel clamp plateaus are not emitted");
+            let EngineError::StructuredContext { context, .. } = error else {
+                panic!("the mixed overshoot should produce timeline context");
+            };
+            assert_eq!(context["reason"], "clamped-overshoot-cubic");
         }
 
         let opacity_only = AnimationSpec {
@@ -3178,17 +3067,12 @@ mod tests {
             iterations: Some(AnimationIterations::Count(1.0)),
             fill: Some("both".to_string()),
         };
-        let opacity_plan =
-            compile_document_animation_plan(&timeline_ir(opacity_only), playback, 0.0)
-                .expect("a clamped opacity plateau should remain constant");
-        assert_eq!(
-            opacity_plan.tracks[0]
-                .keyframes
-                .iter()
-                .map(|keyframe| keyframe.time_ms)
-                .collect::<Vec<_>>(),
-            vec![0.0, 156.25, 1_000.0]
-        );
+        let error = compile_document_animation_plan(&timeline_ir(opacity_only), playback, 0.0)
+            .expect_err("opacity clamp plateaus are not emitted");
+        let EngineError::StructuredContext { context, .. } = error else {
+            panic!("the opacity overshoot should produce timeline context");
+        };
+        assert_eq!(context["reason"], "clamped-overshoot-cubic");
     }
 
     #[test]
@@ -3407,7 +3291,7 @@ mod tests {
     }
 
     #[test]
-    fn canonicalizes_opacity_clamp_root_endpoints_for_nodes_and_text_units() {
+    fn rejects_clamped_overshoot_cubic_for_nodes_and_text_units() {
         let keyframe = |at: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
             at,
             opacity: Some(opacity),
@@ -3418,83 +3302,55 @@ mod tests {
         };
         let playback = DocumentPlayback {
             duration_ms: 1_000.0,
-            iterations: DocumentIterationCount::Finite(0.3952),
+            iterations: DocumentIterationCount::Infinite,
         };
 
-        for with_transform in [false, true] {
-            let spec = AnimationSpec {
-                keyframes: vec![
-                    keyframe(0.0, 0.0, with_transform),
-                    keyframe(1.0, 1.0, with_transform),
-                ],
-                duration_ms: 1_000.0,
-                delay_ms: Some(0.0),
-                easing: Some(AnimationEasing::CubicBezier([0.3, 2.3, 0.7, -0.2])),
-                iterations: Some(AnimationIterations::Count(1.0)),
-                fill: Some("both".to_string()),
-            };
+        for (duration_ms, delay_ms, curve) in [
+            (1_000.0, 0.0, [0.3, 2.3, 0.7, -0.2]),
+            (1_000_000.0, 0.0, [0.0, -1.0e16, 1.0, 1.0e16]),
+        ] {
+            for with_transform in [false, true] {
+                let spec = AnimationSpec {
+                    keyframes: vec![
+                        keyframe(0.0, 0.0, with_transform),
+                        keyframe(1.0, 1.0, with_transform),
+                    ],
+                    duration_ms,
+                    delay_ms: Some(delay_ms),
+                    easing: Some(AnimationEasing::CubicBezier(curve)),
+                    iterations: Some(AnimationIterations::Count(1.0)),
+                    fill: Some("both".to_string()),
+                };
 
-            for source in [
-                timeline_ir(spec.clone()),
-                Ir {
-                    root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
-                    width: 100.0,
-                    height: 20.0,
-                    debug: None,
-                    warnings: Vec::new(),
-                },
-            ] {
-                let plan = compile_document_animation_plan(&source, playback, 0.0)
-                    .expect("a continuous opacity clamp root must remain representable");
-                let track = &plan.tracks[0];
-                let clamp_exit = track
-                    .keyframes
-                    .iter()
-                    .find(|keyframe| same_time(keyframe.time_ms, 395.2))
-                    .expect("the opacity clamp exit should remain a structural boundary");
-                assert_eq!(clamp_exit.value.opacity, Some(1.0));
-                assert!(
-                    track
-                        .discontinuities_ms
-                        .iter()
-                        .all(|boundary| !same_time(*boundary, 395.2))
-                );
-
-                let mut sources = Vec::new();
-                collect_track_sources(&source.root, &mut sources);
-                let track_source = &sources[0];
-                let resolved_easing = resolve_track_easing(track_source)
-                    .expect("the validated cubic easing should resolve");
-                let boundaries = collect_boundaries(track_source, playback, resolved_easing)
-                    .expect("clamp boundaries should collect");
-                let boundary_index = boundaries
-                    .iter()
-                    .position(|boundary| same_time(boundary.time_ms, 395.2))
-                    .expect("the clamp exit should carry boundary provenance");
-                assert_eq!(boundaries[boundary_index].opacity_clamp, Some(1.0));
-                let left_piece = function_piece(
-                    track_source,
-                    boundaries[boundary_index - 1],
-                    boundaries[boundary_index],
-                    resolved_easing,
-                )
-                .expect("the clamp plateau should compile");
-                let right_piece = function_piece(
-                    track_source,
-                    boundaries[boundary_index],
-                    boundaries[boundary_index + 1],
-                    resolved_easing,
-                )
-                .expect("the post-clamp cubic should compile");
-                assert_eq!(left_piece.end_value.opacity, Some(1.0));
-                assert_eq!(right_piece.start_value.opacity, Some(1.0));
+                for source in [
+                    timeline_ir(spec.clone()),
+                    Ir {
+                        root: animated_text_unit("text-owner", "unit-0", &spec),
+                        draw_order: Vec::new(),
+                        width: 100.0,
+                        height: 20.0,
+                        debug: None,
+                        warnings: Vec::new(),
+                    },
+                ] {
+                    let error = compile_document_animation_plan(&source, playback, 0.0)
+                        .expect_err("a clamped opacity overshoot must not be approximated");
+                    let EngineError::StructuredContext { code, context, .. } = error else {
+                        panic!("the overshoot should produce timeline context");
+                    };
+                    assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+                    assert_eq!(context["reason"], "clamped-overshoot-cubic");
+                    assert_eq!(
+                        context["migration"],
+                        "Use playback mode independent for this animation track."
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn rejects_collapsed_distinct_clamp_roots_before_plan_expansion() {
+    fn rejects_extreme_clamped_overshoot_before_plan_expansion() {
         let keyframe = |at: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
             at,
             opacity: Some(opacity),
@@ -3532,26 +3388,6 @@ mod tests {
                     warnings: Vec::new(),
                 },
             ] {
-                let mut track_sources = Vec::new();
-                collect_track_sources(&source.root, &mut track_sources);
-                let track_source = &track_sources[0];
-                let resolved_easing = resolve_track_easing(track_source)
-                    .expect("the validated cubic easing should resolve");
-                assert_eq!(
-                    analyzed_track_stop_count(track_source, playback, resolved_easing),
-                    4.0
-                );
-                let precision_boundaries =
-                    bounded_non_steps_precision_boundaries(track_source, playback, resolved_easing)
-                        .expect("precision boundaries should retain structural roots");
-                let mut collapsed_clamps = precision_boundaries
-                    .iter()
-                    .filter(|boundary| boundary.time_ms == 500_000.0)
-                    .filter_map(|boundary| boundary.opacity_clamp)
-                    .collect::<Vec<_>>();
-                collapsed_clamps.sort_by(f64::total_cmp);
-                assert_eq!(collapsed_clamps, vec![0.0, 1.0]);
-
                 let test_thread_id = std::thread::current().id();
                 COMPILE_TRACK_TRACE
                     .lock()
@@ -3561,14 +3397,12 @@ mod tests {
                     .clear();
 
                 let error = compile_document_animation_plan(&source, playback, 0.0)
-                    .expect_err("distinct clamp roots at one timeline offset must fail precision");
+                    .expect_err("the extreme raw overshoot must fail representability");
                 let EngineError::StructuredContext { code, context, .. } = error else {
-                    panic!("collapsed clamp roots should produce timeline context");
+                    panic!("the overshoot should produce timeline context");
                 };
-                assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
-                assert_eq!(context["kind"], "f32-order");
-                assert_eq!(context["leftTimeMs"], 500_000.0);
-                assert_eq!(context["rightTimeMs"], 500_000.0);
+                assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+                assert_eq!(context["reason"], "clamped-overshoot-cubic");
                 let trace = COMPILE_TRACK_TRACE
                     .lock()
                     .expect("compile track trace should not be poisoned");
@@ -3578,33 +3412,50 @@ mod tests {
     }
 
     #[test]
-    fn canonicalizes_document_zero_cut_clamp_roots_before_final_hold_classification() {
-        let keyframe = |at: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
+    fn canonical_boundary_program_count_matches_materialization_at_document_cuts() {
+        let keyframe = |at: f64, opacity: f64| AnimationKeyframe {
             at,
             opacity: Some(opacity),
-            transform: with_transform.then_some(AnimationTransform2D {
-                translate_x: Some(7.0),
-                ..AnimationTransform2D::default()
-            }),
+            transform: None,
         };
         let playback = DocumentPlayback {
             duration_ms: 1_000.0,
-            iterations: DocumentIterationCount::Finite(1.000_000_1),
+            iterations: DocumentIterationCount::Infinite,
         };
+        let specs = [
+            (
+                AnimationSpec {
+                    keyframes: vec![keyframe(0.0, 0.0), keyframe(1.0, 1.0)],
+                    duration_ms: 3.0,
+                    delay_ms: Some(-2.099_999_999_999_999_6),
+                    easing: Some(AnimationEasing::Steps(AnimationSteps {
+                        kind: "steps".to_string(),
+                        count: 10.0,
+                        position: Some("jump-end".to_string()),
+                    })),
+                    iterations: Some(AnimationIterations::Count(1.0)),
+                    fill: Some("both".to_string()),
+                },
+                6.0,
+            ),
+            (
+                AnimationSpec {
+                    keyframes: vec![keyframe(0.0, 0.0), keyframe(1.0, 1.0)],
+                    duration_ms: 1.0,
+                    delay_ms: Some(999.666_666_666_666_6),
+                    easing: Some(AnimationEasing::Steps(AnimationSteps {
+                        kind: "steps".to_string(),
+                        count: 3.0,
+                        position: Some("jump-end".to_string()),
+                    })),
+                    iterations: Some(AnimationIterations::Count(1.0)),
+                    fill: Some("both".to_string()),
+                },
+                4.0,
+            ),
+        ];
 
-        for with_transform in [false, true] {
-            let spec = AnimationSpec {
-                keyframes: vec![
-                    keyframe(0.0, 0.0, with_transform),
-                    keyframe(1.0, 1.0, with_transform),
-                ],
-                duration_ms: 1_000.0,
-                delay_ms: Some(-395.200_000_000_000_3),
-                easing: Some(AnimationEasing::CubicBezier([0.3, 2.3, 0.7, -0.2])),
-                iterations: Some(AnimationIterations::Count(1.0)),
-                fill: Some("both".to_string()),
-            };
-
+        for (spec, expected_event_count) in specs {
             for source in [
                 timeline_ir(spec.clone()),
                 Ir {
@@ -3616,12 +3467,35 @@ mod tests {
                     warnings: Vec::new(),
                 },
             ] {
-                let plan = compile_document_animation_plan(&source, playback, 0.0)
-                    .expect("the document zero cut is structurally continuous at the clamp root");
-                let track = &plan.tracks[0];
-                assert_eq!(track.keyframes[0].time_ms, 0.0);
-                assert_eq!(track.keyframes[0].value.opacity, Some(1.0));
-                assert!(!track.discontinuities_ms.contains(&0.0));
+                animation::validate_animations(&source).expect("the fixture should validate");
+                let mut track_sources = Vec::new();
+                collect_track_sources(&source.root, &mut track_sources);
+                let track_source = &track_sources[0];
+                let resolved_easing =
+                    resolve_track_easing(track_source).expect("the easing should resolve");
+                let program =
+                    build_canonical_boundary_program(track_source, playback, resolved_easing);
+                let boundaries = program.materialize();
+                assert_eq!(program.event_count, expected_event_count);
+                assert_eq!(program.event_count, boundaries.len() as f64);
+                assert_eq!(
+                    boundaries
+                        .first()
+                        .map(|event| program.time_ms(event.coordinate)),
+                    Some(0.0)
+                );
+                assert_eq!(
+                    boundaries
+                        .last()
+                        .map(|event| program.time_ms(event.coordinate)),
+                    Some(playback.duration_ms)
+                );
+                let error = precision_preflight_program(&program)
+                    .expect_err("the cut-adjacent event must fail separation");
+                let EngineError::StructuredContext { context, .. } = error else {
+                    panic!("the singularity should produce timeline context");
+                };
+                assert_eq!(context["kind"], "separation");
             }
         }
     }
@@ -3793,7 +3667,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_plain_linear_and_opacity_clamp_plateau_intervals() {
+    fn accepts_plain_linear_and_range_safe_overshoot_cubics() {
         let mut linear = opacity_spec(AnimationEasing::Named("linear".to_string()));
         linear.duration_ms = 200.0;
         linear.delay_ms = Some(0.0);
@@ -3808,18 +3682,70 @@ mod tests {
         ));
 
         let mut overshoot = opacity_spec(AnimationEasing::CubicBezier([0.3, 1.6, 0.7, 1.4]));
+        overshoot.keyframes[0].opacity = Some(0.4);
+        overshoot.keyframes[1].opacity = Some(0.6);
         overshoot.duration_ms = 200.0;
         overshoot.delay_ms = Some(0.0);
         overshoot.iterations = Some(AnimationIterations::Count(1.0));
         overshoot.fill = Some("both".to_string());
         let overshoot_plan =
             compile_document_animation_plan(&timeline_ir(overshoot), infinite_playback(), 0.0)
-                .expect("clamped overshoot should compile");
-        assert!(overshoot_plan.tracks[0].keyframes.windows(2).any(|pair| {
-            pair[0].value.opacity == Some(1.0)
-                && pair[1].value.opacity == Some(1.0)
-                && matches!(pair[0].easing_to_next, Some(CompiledCssEasing::StepEnd))
-        }));
+                .expect("an overshoot curve whose raw opacity stays in range should compile");
+        assert_eq!(overshoot_plan.tracks[0].keyframes.len(), 2);
+        assert!(matches!(
+            overshoot_plan.tracks[0].keyframes[0].easing_to_next,
+            Some(CompiledCssEasing::CubicBezier(_))
+        ));
+    }
+
+    #[test]
+    fn accepts_continuous_cubic_tracks_with_decimal_durations() {
+        for duration_ms in [1_234.567_8, 999.666, 3.3, 31_415.926_535] {
+            let spec = AnimationSpec {
+                keyframes: vec![
+                    AnimationKeyframe {
+                        at: 0.0,
+                        opacity: Some(0.0),
+                        transform: None,
+                    },
+                    AnimationKeyframe {
+                        at: 0.5,
+                        opacity: Some(0.5),
+                        transform: None,
+                    },
+                    AnimationKeyframe {
+                        at: 1.0,
+                        opacity: Some(0.0),
+                        transform: None,
+                    },
+                ],
+                duration_ms,
+                delay_ms: Some(0.0),
+                easing: Some(AnimationEasing::CubicBezier([0.3, 0.3, 0.7, 0.7])),
+                iterations: Some(AnimationIterations::Count(4.0)),
+                fill: Some("both".to_string()),
+            };
+            let playback = DocumentPlayback {
+                duration_ms: 4.0 * duration_ms,
+                iterations: DocumentIterationCount::Infinite,
+            };
+
+            let plan = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
+                .expect("a continuous cubic must not become an iteration jump");
+            assert_eq!(plan.keyframe_stop_count, 9);
+            assert_eq!(plan.tracks[0].keyframes.len(), 9);
+            assert!(plan.tracks[0].discontinuities_ms.is_empty());
+            assert!(
+                plan.tracks[0]
+                    .keyframes
+                    .iter()
+                    .take(8)
+                    .all(|keyframe| matches!(
+                        keyframe.easing_to_next,
+                        Some(CompiledCssEasing::CubicBezier(_))
+                    ))
+            );
+        }
     }
 
     #[test]
@@ -4429,6 +4355,26 @@ mod tests {
     }
 
     #[test]
+    fn routes_fractional_final_hold_failures_through_the_earliest_collector() {
+        let mut spec = opacity_spec(AnimationEasing::CubicBezier([0.3, 2.3, 0.7, -0.2]));
+        spec.delay_ms = Some(50.0);
+
+        for iterations in [4.0, 2.6] {
+            let playback = DocumentPlayback {
+                duration_ms: 200.0,
+                iterations: DocumentIterationCount::Finite(iterations),
+            };
+            let error = compile_document_animation_plan(&timeline_ir(spec.clone()), playback, 0.0)
+                .expect_err("the earliest clamped cubic must fail representability");
+            let EngineError::StructuredContext { context, .. } = error else {
+                panic!("representability should produce timeline context");
+            };
+            assert_eq!(context["reason"], "clamped-overshoot-cubic");
+            assert_eq!(context["boundaryTimeMs"], 50.0);
+        }
+    }
+
+    #[test]
     fn orders_piece_and_base_transition_failures_by_time_then_reason_priority() {
         let make_source = |iterations| {
             let transform_keyframe = |at, translate_x| AnimationKeyframe {
@@ -4525,25 +4471,22 @@ mod tests {
     }
 
     #[test]
-    fn does_not_merge_nearby_roots_with_distinct_opacity_clamp_provenance() {
-        let next_after_half = f64::from_bits(0.5_f64.to_bits() + 1);
-        assert!(same_time(0.5, next_after_half));
-        let mut boundaries = vec![
-            BoundaryOffset {
-                progress: 0.5,
-                opacity_clamp: Some(0.0),
-            },
-            BoundaryOffset {
-                progress: next_after_half,
-                opacity_clamp: Some(1.0),
-            },
-        ];
-
-        sort_and_merge_nearby_boundary_offsets(&mut boundaries);
-
-        assert_eq!(boundaries.len(), 2);
-        assert_eq!(boundaries[0].opacity_clamp, Some(0.0));
-        assert_eq!(boundaries[1].opacity_clamp, Some(1.0));
+    fn classifies_distinct_events_at_the_same_f64_time_as_separation() {
+        let playback = DocumentPlayback {
+            duration_ms: 1_000.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+        let mut state = PrecisionPreflightState::new(playback);
+        state.visit(500.0).expect("the first event should pass");
+        let error = state
+            .visit(500.0)
+            .expect_err("a distinct event at the same f64 time must fail");
+        let EngineError::StructuredContext { context, .. } = error else {
+            panic!("the collision should produce timeline context");
+        };
+        assert_eq!(context["kind"], "separation");
+        assert_eq!(context["leftTimeMs"], 500.0);
+        assert_eq!(context["rightTimeMs"], 500.0);
     }
 
     #[test]
@@ -4682,6 +4625,83 @@ mod tests {
     }
 
     #[test]
+    fn counts_canonical_program_events_exactly_at_the_aggregate_limit() {
+        let make_spec = |stop_count: usize| AnimationSpec {
+            keyframes: (0..stop_count)
+                .map(|index| {
+                    let at = index as f64 / (stop_count - 1) as f64;
+                    AnimationKeyframe {
+                        at,
+                        opacity: Some(at),
+                        transform: None,
+                    }
+                })
+                .collect(),
+            duration_ms: 1_000.0,
+            delay_ms: Some(0.0),
+            easing: Some(AnimationEasing::Named("linear".to_string())),
+            iterations: Some(AnimationIterations::Count(1.0)),
+            fill: Some("both".to_string()),
+        };
+        let grouped_ir = |specs: Vec<AnimationSpec>| Ir {
+            root: IrNode {
+                node_id: "root".to_string(),
+                bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
+                kind: IrNodeKind::Group {
+                    children: specs
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, spec)| animated_group(&format!("owner-{index}"), spec))
+                        .collect(),
+                    clip_path: None,
+                    clip_border_radius: None,
+                    opacity: None,
+                    box_shadow: None,
+                    meta: None,
+                    transform: None,
+                    animation: None,
+                    on: None,
+                },
+            },
+            draw_order: Vec::new(),
+            width: 100.0,
+            height: 50.0,
+            debug: None,
+            warnings: Vec::new(),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1_000.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        let at_limit =
+            compile_document_animation_plan(&grouped_ir(vec![make_spec(4); 4_096]), playback, 0.0)
+                .expect("4,096 four-event programs are exactly within the inclusive limit");
+        assert_eq!(at_limit.keyframe_stop_count, MAX_TIMELINE_KEYFRAME_STOPS);
+
+        let mut above_limit_specs = vec![make_spec(4); 4_095];
+        above_limit_specs.push(make_spec(5));
+        let test_thread_id = std::thread::current().id();
+        COMPILE_TRACK_TRACE
+            .lock()
+            .expect("compile track trace should not be poisoned")
+            .entry(test_thread_id)
+            .or_default()
+            .clear();
+        let error = compile_document_animation_plan(&grouped_ir(above_limit_specs), playback, 0.0)
+            .expect_err("the 16,385th program event must fail before materialization");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("the aggregate stop limit should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_LIMIT");
+        assert_eq!(context["actual"], 16_385.0);
+        let trace = COMPILE_TRACK_TRACE
+            .lock()
+            .expect("compile track trace should not be poisoned");
+        assert_eq!(trace.get(&test_thread_id), Some(&Vec::new()));
+    }
+
+    #[test]
     fn reports_the_exact_large_single_track_budget() {
         let mut spec = opacity_spec(AnimationEasing::Steps(AnimationSteps {
             kind: "steps".to_string(),
@@ -4706,7 +4726,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_repeated_linear_stops_with_bounded_preflight_visits() {
+    fn rejects_repeated_linear_rounding_bound_with_bounded_preflight_visits() {
         let spec = AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
@@ -4736,21 +4756,21 @@ mod tests {
             iterations: DocumentIterationCount::Infinite,
         };
         let test_thread_id = std::thread::current().id();
-        BOUNDARY_VISIT_TRACE
+        PREFLIGHT_WINDOW_TRACE
             .lock()
-            .expect("boundary visit trace should not be poisoned")
+            .expect("preflight window trace should not be poisoned")
             .insert(test_thread_id, 0);
 
         let error = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
-            .expect_err("the repeated linear track should exceed the semantic stop budget");
+            .expect_err("the repeated linear mapping must preserve the separation margin");
         let EngineError::StructuredContext { code, context, .. } = error else {
-            panic!("repeated linear budget should produce timeline context");
+            panic!("repeated linear precision should produce timeline context");
         };
-        assert_eq!(code, "ANIMATED_SVG_TIMELINE_LIMIT");
-        assert_eq!(context["actual"], 262_145.0);
-        let visits = BOUNDARY_VISIT_TRACE
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
+        assert_eq!(context["kind"], "separation");
+        let visits = PREFLIGHT_WINDOW_TRACE
             .lock()
-            .expect("boundary visit trace should not be poisoned")
+            .expect("preflight window trace should not be poisoned")
             .get(&test_thread_id)
             .copied()
             .unwrap_or_default();
@@ -4871,6 +4891,7 @@ mod tests {
         assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
         assert_eq!(context["kind"], "f32-order");
         assert_eq!(context["leftTimeMs"], 0.0);
+        assert_eq!(context["rightTimeMs"], 1.0e-308);
     }
 
     #[test]

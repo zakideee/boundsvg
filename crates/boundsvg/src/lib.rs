@@ -252,7 +252,23 @@ enum AnimatedSvgPlaybackInput {
 #[serde(untagged)]
 enum AnimatedSvgTimelineIterationsInput {
     Count(f64),
-    Infinite(String),
+    Infinite(#[serde(deserialize_with = "deserialize_animated_svg_infinite_keyword")] ()),
+}
+
+fn deserialize_animated_svg_infinite_keyword<'de, Deserializer>(
+    deserializer: Deserializer,
+) -> Result<(), Deserializer::Error>
+where
+    Deserializer: serde::Deserializer<'de>,
+{
+    let keyword = <String as serde::Deserialize>::deserialize(deserializer)?;
+    if keyword == "infinite" {
+        Ok(())
+    } else {
+        Err(<Deserializer::Error as serde::de::Error>::custom(
+            "expected the string infinite",
+        ))
+    }
 }
 
 /// Public declarative animated-SVG transport options.
@@ -322,8 +338,7 @@ impl From<AnimatedSvgOptionsInput> for RenderSvgOptionsInput {
                     AnimatedSvgTimelineIterationsInput::Count(count) => {
                         ir::animation_timeline::DocumentIterationCount::Finite(count)
                     }
-                    AnimatedSvgTimelineIterationsInput::Infinite(value) => {
-                        debug_assert_eq!(value, "infinite");
+                    AnimatedSvgTimelineIterationsInput::Infinite(()) => {
                         ir::animation_timeline::DocumentIterationCount::Infinite
                     }
                 },
@@ -502,7 +517,20 @@ fn validate_animated_timeline_wire_options(
     else {
         return Ok(());
     };
-    if playback.get("mode").and_then(serde_json::Value::as_str) != Some("timeline") {
+    let playback_mode = playback.get("mode").and_then(serde_json::Value::as_str);
+    if playback_mode == Some("independent") {
+        if playback.len() != 1 {
+            return Err(error::EngineError::Structured {
+                code: "UNSUPPORTED_RENDER_OPTION".to_string(),
+                message: "Animated SVG independent playback only accepts the mode property."
+                    .to_string(),
+                stage: Some("validate".to_string()),
+                node_id: None,
+            });
+        }
+        return Ok(());
+    }
+    if playback_mode != Some("timeline") {
         return Ok(());
     }
 
@@ -516,7 +544,7 @@ fn validate_animated_timeline_wire_options(
 
     let iterations = playback.get("iterations");
     let valid_iterations = iterations.is_some_and(|value| {
-        value.as_f64().is_some() || value.as_str().is_some_and(|text| text == "infinite")
+        serde_json::from_value::<AnimatedSvgTimelineIterationsInput>(value.clone()).is_ok()
     });
     if !valid_iterations {
         return Err(animated_timeline_wire_error(
@@ -3572,6 +3600,36 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn animated_svg_wire_validation_rejects_independent_playback_properties() {
+        validate_animated_timeline_wire_options(&serde_json::json!({
+            "playback": {
+                "mode": "independent"
+            }
+        }))
+        .expect("the exact independent playback shape should pass wire validation");
+
+        let error = validate_animated_timeline_wire_options(&serde_json::json!({
+            "playback": {
+                "mode": "independent",
+                "extra": 1
+            }
+        }))
+        .expect_err("independent playback must not accept extra properties");
+        let crate::error::EngineError::Structured {
+            code,
+            stage,
+            node_id,
+            ..
+        } = error
+        else {
+            panic!("independent wire validation should return a structured error");
+        };
+        assert_eq!(code, "UNSUPPORTED_RENDER_OPTION");
+        assert_eq!(stage.as_deref(), Some("validate"));
+        assert_eq!(node_id, None);
     }
 
     #[test]

@@ -515,6 +515,9 @@ Unsupported track functions, browser-offset precision loss, and stop/CSS
 budgets fail with structured timeline errors rather than approximation. See the
 [animation guide](/guides/animation#document-timeline-playback) for finite hold,
 discontinuity, and exact-checkpoint semantics.
+An opacity cubic that actually leaves `[0, 1]` before clamping fails with
+reason `clamped-overshoot-cubic`; select `playback: { mode: "independent" }`
+to preserve that authored easing.
 
 ### `engine.renderToPng(input, options?)`
 

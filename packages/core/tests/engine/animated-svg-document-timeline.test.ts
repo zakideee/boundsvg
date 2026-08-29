@@ -91,7 +91,7 @@ function exactEndpointScene(owner: EndpointOwner, channel: EndpointChannel, seam
   return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
-function clampRootScene(
+function overshootCubicScene(
   owner: EndpointOwner,
   withTransform: boolean,
   clampTiming: {
@@ -122,7 +122,7 @@ function clampRootScene(
   const animated =
     owner === "node"
       ? createElement("Box", {
-          id: "clamp-root-node",
+          id: "overshoot-cubic-node",
           width: 32,
           height: 20,
           animate: animation,
@@ -130,7 +130,7 @@ function clampRootScene(
       : createElement(
           "Text",
           {
-            id: "clamp-root-text",
+            id: "overshoot-cubic-text",
             width: 32,
             height: 20,
             font: "NotoSansJP",
@@ -141,6 +141,68 @@ function clampRootScene(
           "A",
         );
   return createElement("Canvas", { width: 96, height: 48 }, animated);
+}
+
+function boundaryProgramCutScene(
+  owner: EndpointOwner,
+  timing: { durationMs: number; delayMs: number; stepCount: number },
+) {
+  const animation: AnimationSpec = {
+    keyframes: [
+      { at: 0, opacity: 0 },
+      { at: 1, opacity: 1 },
+    ],
+    durationMs: timing.durationMs,
+    delayMs: timing.delayMs,
+    easing: { type: "steps", count: timing.stepCount, position: "jump-end" },
+    iterations: 1,
+    fill: "both",
+  };
+  const animated =
+    owner === "node"
+      ? createElement("Box", {
+          id: "boundary-program-node",
+          width: 32,
+          height: 20,
+          animate: animation,
+        })
+      : createElement(
+          "Text",
+          {
+            id: "boundary-program-text",
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return createElement("Canvas", { width: 96, height: 48 }, animated);
+}
+
+function continuousDecimalCubicScene(durationMs: number) {
+  return createElement(
+    "Canvas",
+    { width: 96, height: 48 },
+    createElement("Box", {
+      id: "continuous-decimal-cubic",
+      width: 32,
+      height: 20,
+      animate: {
+        keyframes: [
+          { at: 0, opacity: 0 },
+          { at: 0.5, opacity: 0.5 },
+          { at: 1, opacity: 0 },
+        ],
+        durationMs,
+        easing: [0.3, 0.3, 0.7, 0.7],
+        iterations: 4,
+        fill: "both",
+      },
+    }),
+  );
 }
 
 function captureFatal(run: () => unknown): FatalError {
@@ -175,7 +237,7 @@ describe("animated SVG document timeline", () => {
     expect(direct).toContain("animation-iteration-count: 1.25;");
   });
 
-  it("keeps document-cut cubic extrema identical across public render paths", () => {
+  it("rejects non-canonical document-cut extrema across public render paths", () => {
     const scene = createElement(
       "Canvas",
       { width: 160, height: 48 },
@@ -202,15 +264,19 @@ describe("animated SVG document timeline", () => {
       nodeIdMetadata: "omit",
     } as const satisfies RenderAnimatedSvgOptions;
     const compiled = engine.compile(scene);
-    const direct = engine.renderToAnimatedSvg(scene, options);
-
-    expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
-    expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
-    expect((direct.match(/^\s*\d+(?:\.\d+)?%\s*\{/gm) ?? []).length).toBe(4);
-    expect((direct.match(/animation-timing-function: cubic-bezier\(/g) ?? []).length).toBe(3);
+    for (const render of [
+      () => engine.renderToAnimatedSvg(scene, options),
+      () => engine.renderToAnimatedSvgAndIR(scene, options),
+      () => engine.renderCompiledToAnimatedSvg(compiled, options),
+    ]) {
+      expect(captureFatal(render)).toMatchObject({
+        code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+        context: { reason: "cubic-subcurve-unrepresentable", boundaryTimeMs: 1_100 },
+      });
+    }
   });
 
-  it("keeps mixed-channel clamp extrema identical across public render paths", () => {
+  it("rejects mixed-channel clamped overshoot across public render paths", () => {
     const scene = createElement(
       "Canvas",
       { width: 160, height: 48 },
@@ -236,13 +302,19 @@ describe("animated SVG document timeline", () => {
       nodeIdMetadata: "omit",
     } as const satisfies RenderAnimatedSvgOptions;
     const compiled = engine.compile(scene);
-    const direct = engine.renderToAnimatedSvg(scene, options);
-
-    expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
-    expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
-    expect((direct.match(/^\s*\d+(?:\.\d+)?%\s*\{/gm) ?? []).length).toBe(4);
-    expect(direct).toContain("15.625%");
-    expect(direct).toContain("50%");
+    for (const render of [
+      () => engine.renderToAnimatedSvg(scene, options),
+      () => engine.renderToAnimatedSvgAndIR(scene, options),
+      () => engine.renderCompiledToAnimatedSvg(compiled, options),
+    ]) {
+      expect(captureFatal(render)).toMatchObject({
+        code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+        context: {
+          reason: "clamped-overshoot-cubic",
+          migration: "Use playback mode independent for this animation track.",
+        },
+      });
+    }
   });
 
   it("preserves exact linear endpoints across owners, channels, and public render paths", () => {
@@ -274,31 +346,59 @@ describe("animated SVG document timeline", () => {
     }
   });
 
-  it("canonicalizes clamp-root endpoints across owners and public render paths", () => {
+  it.each([
+    1_234.567_8, 999.666, 3.3, 31_415.926_535,
+  ])("accepts a continuous cubic with decimal duration %d across public render paths", (durationMs) => {
+    const scene = continuousDecimalCubicScene(durationMs);
+    const options: RenderAnimatedSvgOptions = {
+      playback: {
+        mode: "timeline",
+        durationMs: 4 * durationMs,
+        iterations: "infinite",
+      },
+    };
+    const compiled = engine.compile(scene);
+    const direct = engine.renderToAnimatedSvg(scene, options);
+
+    expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+    expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+    expect((direct.match(/^\s*\d+(?:\.\d+)?%\s*\{/gm) ?? []).length).toBe(9);
+  });
+
+  it("rejects clamped overshoot cubics across owners and public render paths", () => {
     const options = {
       playback: { mode: "timeline", durationMs: 1_000, iterations: 0.3952 },
     } as const satisfies RenderAnimatedSvgOptions;
 
     for (const owner of ["node", "textUnit"] as const) {
       for (const withTransform of [false, true]) {
-        const scene = clampRootScene(owner, withTransform);
+        const scene = overshootCubicScene(owner, withTransform);
         const compiled = engine.compile(scene);
-        const direct = engine.renderToAnimatedSvg(scene, options);
-        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
-        expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
-        expect(direct).toMatch(/39\.52\d*% \{ opacity: 1/);
+        for (const render of [
+          () => engine.renderToAnimatedSvg(scene, options),
+          () => engine.renderToAnimatedSvgAndIR(scene, options),
+          () => engine.renderCompiledToAnimatedSvg(compiled, options),
+        ]) {
+          expect(captureFatal(render)).toMatchObject({
+            code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+            context: {
+              reason: "clamped-overshoot-cubic",
+              migration: "Use playback mode independent for this animation track.",
+            },
+          });
+        }
       }
     }
   });
 
-  it("rejects collapsed distinct clamp roots across owners and public render paths", () => {
+  it("rejects extreme clamped overshoot before precision across owners and paths", () => {
     const options = {
       playback: { mode: "timeline", durationMs: 1_000_000, iterations: "infinite" },
     } as const satisfies RenderAnimatedSvgOptions;
 
     for (const owner of ["node", "textUnit"] as const) {
       for (const withTransform of [false, true]) {
-        const scene = clampRootScene(owner, withTransform, {
+        const scene = overshootCubicScene(owner, withTransform, {
           durationMs: 1_000_000,
           easing: [0, -1e16, 1, 1e16],
         });
@@ -309,31 +409,44 @@ describe("animated SVG document timeline", () => {
           () => engine.renderCompiledToAnimatedSvg(compiled, options),
         ]) {
           expect(captureFatal(render)).toMatchObject({
-            code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
-            context: { kind: "f32-order", leftTimeMs: 500_000, rightTimeMs: 500_000 },
+            code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+            context: { reason: "clamped-overshoot-cubic" },
           });
         }
       }
     }
   });
 
-  it("canonicalizes document-zero clamp roots across owners and public render paths", () => {
+  it("rejects canonical program cut singularities across public render paths", () => {
     const options = {
-      playback: { mode: "timeline", durationMs: 1_000, iterations: 1.000_000_1 },
+      playback: { mode: "timeline", durationMs: 1_000, iterations: "infinite" },
     } as const satisfies RenderAnimatedSvgOptions;
 
     for (const owner of ["node", "textUnit"] as const) {
-      for (const withTransform of [false, true]) {
-        const scene = clampRootScene(owner, withTransform, {
-          durationMs: 1_000,
-          delayMs: -395.200_000_000_000_3,
-          easing: [0.3, 2.3, 0.7, -0.2],
-        });
+      for (const timing of [
+        {
+          durationMs: 3,
+          delayMs: -2.099_999_999_999_999_6,
+          stepCount: 10,
+        },
+        {
+          durationMs: 1,
+          delayMs: 999.666_666_666_666_6,
+          stepCount: 3,
+        },
+      ]) {
+        const scene = boundaryProgramCutScene(owner, timing);
         const compiled = engine.compile(scene);
-        const direct = engine.renderToAnimatedSvg(scene, options);
-        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
-        expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
-        expect(direct).toMatch(/0% \{ opacity: 1/);
+        for (const render of [
+          () => engine.renderToAnimatedSvg(scene, options),
+          () => engine.renderToAnimatedSvgAndIR(scene, options),
+          () => engine.renderCompiledToAnimatedSvg(compiled, options),
+        ]) {
+          expect(captureFatal(render)).toMatchObject({
+            code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+            context: { kind: "separation" },
+          });
+        }
       }
     }
   });

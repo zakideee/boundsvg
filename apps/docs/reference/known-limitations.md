@@ -156,6 +156,10 @@ supported props and error codes.
   does not control the wall-clock instant at which a viewer paints a frame. A
   viewer without CSS animation support shows the deterministic `timeMs`
   base-pose still image.
+- Document timeline mode does not emit synthetic opacity clamp plateaus. A
+  cubic whose raw opacity leaves `[0, 1]` fails with
+  `clamped-overshoot-cubic`; independent animated SVG and static sampling keep
+  the authored clamping behavior.
 - The `prefers-reduced-motion` opt-out is opt-in and coarse. Passing
   `reducedMotion: "pause"` appends one media block that stops every animation the render
   started; the default `"keep"` emits nothing, so output stays byte identical to
