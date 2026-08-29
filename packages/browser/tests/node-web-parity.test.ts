@@ -809,19 +809,21 @@ describe("nodejs/web WASM public parity", () => {
       timeMs: 0.5,
     };
 
-    for (const [delayMs, iterations, fill, keyframeOpacities, expectedOpacity] of [
-      [-1e308, 1, "both", [0, 1], 1],
-      [-1e308, 1, "none", [0, 1], 1],
-      [1e308, 1, "both", [0, 1], 0],
-      [1e308, 1, "none", [0, 1], 1],
-      [-1e308, "infinite", "none", [0, 0], 0],
+    for (const [durationMs, delayMs, iterations, fill, keyframeOpacities, expectedOpacity] of [
+      [1e-300, -1e308, 1, "both", [0, 1], 1],
+      [1e-300, -1e308, 1, "none", [0, 1], 1],
+      [1e-300, 1e308, 1, "both", [0, 1], 0],
+      [1e-300, 1e308, 1, "none", [0, 1], 1],
+      [1e-300, -1e308, "infinite", "none", [0, 0], 0],
+      [2 ** 53, -(2 ** 53), 1, "both", [0, 1], 1],
+      [2 ** 53, -(2 ** 53), 1, "none", [0, 1], 1],
     ] as const) {
       for (const owner of ["node", "textUnit"] as const) {
         const scene = buildLargeSourcePositionScene(
           owner,
           iterations,
           { keyframeOpacities, fill },
-          { durationMs: 1e-300, delayMs },
+          { durationMs, delayMs },
         );
         const expected = nodeEngine.renderToAnimatedSvg(scene, options);
         expect(expected).toContain(`0% { opacity: ${expectedOpacity}; }`);

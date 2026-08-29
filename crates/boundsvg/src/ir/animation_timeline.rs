@@ -1624,24 +1624,43 @@ fn build_canonical_boundary_program(
     let local_pattern = local_boundary_pattern(&source.spec, resolved_easing);
     let document_start_position = (0.0 - delay_ms) / source_duration_ms;
     let document_end_position = (playback.duration_ms - delay_ms) / source_duration_ms;
-    let document_start_right = document_boundary_side(
+    let finite_source_end = source_iterations(&source.spec);
+    let finite_source_ended_by_document_start = finite_source_end.is_some_and(|iteration_count| {
+        let active_time_at_document_start_ms = 0.0 - delay_ms;
+        let active_duration_ms = source_duration_ms * iteration_count;
+        active_time_at_document_start_ms >= active_duration_ms
+    });
+    let sampled_document_start_right = document_boundary_side(
         source,
         0.0,
         CanonicalBoundaryDirection::Right,
         resolved_easing,
     );
-    let document_end_left = document_boundary_side(
-        source,
-        playback.duration_ms,
-        CanonicalBoundaryDirection::Left,
-        resolved_easing,
-    );
-    let document_end_exact = document_boundary_side(
-        source,
-        playback.duration_ms,
-        CanonicalBoundaryDirection::Right,
-        resolved_easing,
-    );
+    let document_start_right = if finite_source_ended_by_document_start {
+        inactive_boundary_side(&sampled_document_start_right.value)
+    } else {
+        sampled_document_start_right
+    };
+    let document_end_left = if finite_source_ended_by_document_start {
+        document_start_right.clone()
+    } else {
+        document_boundary_side(
+            source,
+            playback.duration_ms,
+            CanonicalBoundaryDirection::Left,
+            resolved_easing,
+        )
+    };
+    let document_end_exact = if finite_source_ended_by_document_start {
+        document_start_right.clone()
+    } else {
+        document_boundary_side(
+            source,
+            playback.duration_ms,
+            CanonicalBoundaryDirection::Right,
+            resolved_easing,
+        )
+    };
     let mut leading_events = vec![CanonicalBoundaryEvent {
         coordinate: CanonicalBoundaryCoordinate::DocumentStart,
         source_position: document_start_position,
@@ -1659,7 +1678,6 @@ fn build_canonical_boundary_program(
             resolved_easing,
         ));
     }
-    let finite_source_end = source_iterations(&source.spec);
     if let Some(source_end) = finite_source_end {
         let source_end_time_ms = delay_ms + source_end * source_duration_ms;
         if source_end_time_ms > 0.0 && source_end_time_ms < playback.duration_ms {
@@ -1684,11 +1702,6 @@ fn build_canonical_boundary_program(
     let mut tail = None;
     let mut active_source_range = None;
     let mut construction_precision_failure = false;
-    let finite_source_ended_by_document_start = finite_source_end.is_some_and(|iteration_count| {
-        let active_time_at_document_start_ms = 0.0 - delay_ms;
-        let active_duration_ms = source_duration_ms * iteration_count;
-        active_time_at_document_start_ms >= active_duration_ms
-    });
     if !spec_values_are_constant(&source.spec) && !finite_source_ended_by_document_start {
         let source_start = ((0.0 - delay_ms) / source_duration_ms).max(0.0);
         let source_end = finite_source_end
@@ -5071,6 +5084,162 @@ mod tests {
                 }
                 .canonicalized()
                 .to_keyframe();
+                assert!(
+                    plan.tracks[0]
+                        .keyframes
+                        .iter()
+                        .all(|keyframe| keyframe.value == expected_value)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn normalizes_empty_exact_boundary_ranges_to_the_after_phase() {
+        let playback = DocumentPlayback {
+            duration_ms: 1.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+        let assert_static_after_program = |source: &Ir| {
+            let mut sources = Vec::new();
+            collect_track_sources(&source.root, &mut sources);
+            assert_eq!(sources.len(), 1);
+            let track_source = &sources[0];
+            let resolved_easing =
+                resolve_track_easing(track_source).expect("linear should resolve");
+            let program = build_canonical_boundary_program(track_source, playback, resolved_easing);
+            assert!(program.active_source_range.is_none());
+            for event in program
+                .leading_events
+                .iter()
+                .chain(program.trailing_events.iter())
+            {
+                assert_eq!(event.left.value, event.exact);
+                assert_eq!(event.exact, event.right.value);
+                assert!(event.left.piece_endpoint.is_none());
+                assert!(event.right.piece_endpoint.is_none());
+            }
+        };
+        let exact_boundary_spec = |keyframes: Vec<AnimationKeyframe>,
+                                   duration_ms: f64,
+                                   iterations: f64,
+                                   fill: &str| AnimationSpec {
+            keyframes,
+            duration_ms,
+            delay_ms: Some(-(2.0_f64).powi(53)),
+            easing: Some(AnimationEasing::Named("linear".to_string())),
+            iterations: Some(AnimationIterations::Count(iterations)),
+            fill: Some(fill.to_string()),
+        };
+
+        for (duration_ms, iterations, fill, authored_opacity) in [
+            ((2.0_f64).powi(53), 1.0, "both", Some(1.0)),
+            ((2.0_f64).powi(53), 1.0, "none", None),
+            ((2.0_f64).powi(54), 0.5, "both", Some(0.5)),
+            ((2.0_f64).powi(54), 0.5, "none", None),
+        ] {
+            let spec = exact_boundary_spec(
+                vec![
+                    AnimationKeyframe {
+                        at: 0.0,
+                        opacity: Some(0.0),
+                        transform: None,
+                    },
+                    AnimationKeyframe {
+                        at: 1.0,
+                        opacity: Some(1.0),
+                        transform: None,
+                    },
+                ],
+                duration_ms,
+                iterations,
+                fill,
+            );
+            for (source, base_opacity) in [
+                (timeline_ir(spec.clone()), 0.25),
+                (
+                    Ir {
+                        root: animated_text_unit("text-owner", "unit-0", &spec),
+                        draw_order: Vec::new(),
+                        width: 100.0,
+                        height: 20.0,
+                        debug: None,
+                        warnings: Vec::new(),
+                    },
+                    1.0,
+                ),
+            ] {
+                assert_static_after_program(&source);
+                let expected_value = TrackValue {
+                    opacity: Some(authored_opacity.unwrap_or(base_opacity)),
+                    transform: None,
+                }
+                .to_keyframe();
+                let plan = compile_document_animation_plan(&source, playback, 0.5)
+                    .expect("an empty exact-boundary opacity range should compile");
+                assert_eq!(plan.tracks[0].keyframes.len(), 2);
+                assert!(
+                    plan.tracks[0]
+                        .keyframes
+                        .iter()
+                        .all(|keyframe| keyframe.value == expected_value)
+                );
+            }
+        }
+
+        for (duration_ms, iterations, fill, authored_translate_x) in [
+            ((2.0_f64).powi(53), 1.0, "both", Some(9.0)),
+            ((2.0_f64).powi(53), 1.0, "none", None),
+            ((2.0_f64).powi(54), 0.5, "both", Some(8.0)),
+            ((2.0_f64).powi(54), 0.5, "none", None),
+        ] {
+            let spec = exact_boundary_spec(
+                vec![
+                    AnimationKeyframe {
+                        at: 0.0,
+                        opacity: None,
+                        transform: Some(AnimationTransform2D {
+                            translate_x: Some(7.0),
+                            ..AnimationTransform2D::default()
+                        }),
+                    },
+                    AnimationKeyframe {
+                        at: 1.0,
+                        opacity: None,
+                        transform: Some(AnimationTransform2D {
+                            translate_x: Some(9.0),
+                            ..AnimationTransform2D::default()
+                        }),
+                    },
+                ],
+                duration_ms,
+                iterations,
+                fill,
+            );
+            for source in [
+                timeline_ir(spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                assert_static_after_program(&source);
+                let expected_value = TrackValue {
+                    opacity: None,
+                    transform: Some(AnimationTransform2D {
+                        translate_x: authored_translate_x,
+                        ..AnimationTransform2D::default()
+                    }),
+                }
+                .canonicalized()
+                .to_keyframe();
+                let plan = compile_document_animation_plan(&source, playback, 0.5)
+                    .expect("an empty exact-boundary transform range should compile");
+                assert_eq!(plan.tracks[0].keyframes.len(), 2);
                 assert!(
                     plan.tracks[0]
                         .keyframes
