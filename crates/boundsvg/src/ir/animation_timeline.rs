@@ -1474,6 +1474,66 @@ fn source_boundary_side(
     active_boundary_side(&source.spec, progress, direction, resolved_easing)
 }
 
+fn document_boundary_side(
+    source: &TrackSource,
+    document_time_ms: f64,
+    direction: CanonicalBoundaryDirection,
+    resolved_easing: ResolvedEasing,
+) -> CanonicalBoundarySide {
+    let active_time_ms = document_time_ms - source.spec.delay_ms.unwrap_or(0.0);
+    let fill_both = source.spec.fill.as_deref() == Some("both");
+    if active_time_ms < 0.0
+        || (active_time_ms == 0.0 && direction == CanonicalBoundaryDirection::Left)
+    {
+        return if fill_both {
+            active_boundary_side(
+                &source.spec,
+                0.0,
+                CanonicalBoundaryDirection::Left,
+                resolved_easing,
+            )
+        } else {
+            inactive_boundary_side(&source.base_value)
+        };
+    }
+
+    if let Some(iteration_count) = source_iterations(&source.spec) {
+        let active_duration_ms = source.spec.duration_ms * iteration_count;
+        if active_time_ms > active_duration_ms
+            || (active_time_ms == active_duration_ms
+                && direction == CanonicalBoundaryDirection::Right)
+        {
+            return if fill_both {
+                let fraction = iteration_count.fract();
+                active_boundary_side(
+                    &source.spec,
+                    if fraction == 0.0 { 1.0 } else { fraction },
+                    CanonicalBoundaryDirection::Right,
+                    resolved_easing,
+                )
+            } else {
+                inactive_boundary_side(&source.base_value)
+            };
+        }
+        if active_time_ms == active_duration_ms {
+            let fraction = iteration_count.fract();
+            return active_boundary_side(
+                &source.spec,
+                if fraction == 0.0 { 1.0 } else { fraction },
+                CanonicalBoundaryDirection::Left,
+                resolved_easing,
+            );
+        }
+    }
+
+    let source_position = active_time_ms / source.spec.duration_ms;
+    let mut progress = source_position - source_position.floor();
+    if direction == CanonicalBoundaryDirection::Left && source_position > 0.0 && progress == 0.0 {
+        progress = 1.0;
+    }
+    active_boundary_side(&source.spec, progress, direction, resolved_easing)
+}
+
 fn source_boundary_event(
     source: &TrackSource,
     source_position: f64,
@@ -1564,21 +1624,21 @@ fn build_canonical_boundary_program(
     let local_pattern = local_boundary_pattern(&source.spec, resolved_easing);
     let document_start_position = (0.0 - delay_ms) / source_duration_ms;
     let document_end_position = (playback.duration_ms - delay_ms) / source_duration_ms;
-    let document_start_right = source_boundary_side(
+    let document_start_right = document_boundary_side(
         source,
-        document_start_position,
+        0.0,
         CanonicalBoundaryDirection::Right,
         resolved_easing,
     );
-    let document_end_left = source_boundary_side(
+    let document_end_left = document_boundary_side(
         source,
-        document_end_position,
+        playback.duration_ms,
         CanonicalBoundaryDirection::Left,
         resolved_easing,
     );
-    let document_end_exact = source_boundary_side(
+    let document_end_exact = document_boundary_side(
         source,
-        document_end_position,
+        playback.duration_ms,
         CanonicalBoundaryDirection::Right,
         resolved_easing,
     );
@@ -2279,17 +2339,22 @@ fn coordinate_mapping_error_bound_ms(
     program: &CanonicalBoundaryProgram,
     coordinate: CanonicalBoundaryCoordinate,
 ) -> f64 {
+    if let Some(explicit_event) = program
+        .leading_events
+        .iter()
+        .chain(&program.trailing_events)
+        .find(|event| event.coordinate == coordinate)
+    {
+        return if explicit_event.has_observable_boundary_difference() {
+            source_mapping_error_bound_ms(program, explicit_event.source_position)
+        } else {
+            0.0
+        };
+    }
+
     match coordinate {
         CanonicalBoundaryCoordinate::DocumentStart | CanonicalBoundaryCoordinate::DocumentEnd => {
-            program
-                .leading_events
-                .iter()
-                .chain(&program.trailing_events)
-                .find(|event| event.coordinate == coordinate)
-                .filter(|event| event.has_observable_boundary_difference())
-                .map_or(0.0, |event| {
-                    source_mapping_error_bound_ms(program, event.source_position)
-                })
+            0.0
         }
         CanonicalBoundaryCoordinate::SourcePosition(source_position) => {
             source_mapping_error_bound_ms(program, source_position)
@@ -2312,7 +2377,6 @@ fn precision_preflight_window(
     let candidates = program
         .local_pattern
         .precision_gap_candidates(lower_progress, window.upper_progress);
-    let minimum_separation_ms = 4.0 * program.playback.delta_ms().max(0.001);
     for pair in candidates.windows(2) {
         let [left_progress, right_progress] = pair else {
             continue;
@@ -2323,18 +2387,18 @@ fn precision_preflight_window(
         let right_coordinate = program.coordinate_for_source_position(right_position);
         let left_time_ms = program.time_ms(left_coordinate);
         let right_time_ms = program.time_ms(right_coordinate);
-        precision_check_pair(program.playback, left_time_ms, right_time_ms)?;
-
         let nominal_gap_ms = (right_position - left_position) * program.source_duration_ms;
         let rounding_error_bound_ms = coordinate_mapping_error_bound_ms(program, left_coordinate)
             + coordinate_mapping_error_bound_ms(program, right_coordinate);
-        if nominal_gap_ms - rounding_error_bound_ms < minimum_separation_ms {
-            return Err(timeline_precision_error(
-                "separation",
-                left_time_ms,
-                right_time_ms,
-            ));
-        }
+        precision_preflight_candidate_pair(
+            program,
+            PrecisionCandidatePair {
+                left_time: left_time_ms,
+                right_time: right_time_ms,
+                nominal_gap: nominal_gap_ms,
+                rounding_error_bound: rounding_error_bound_ms,
+            },
+        )?;
     }
     if let Some(progress) = program
         .local_pattern
@@ -2353,7 +2417,12 @@ fn precision_preflight_candidate_pair(
 ) -> Result<(), EngineError> {
     precision_check_pair(program.playback, candidate.left_time, candidate.right_time)?;
     let minimum_separation_ms = 4.0 * program.playback.delta_ms().max(0.001);
-    if candidate.nominal_gap - candidate.rounding_error_bound < minimum_separation_ms {
+    let proven_gap_ms = candidate.nominal_gap - candidate.rounding_error_bound;
+    if !candidate.nominal_gap.is_finite()
+        || !candidate.rounding_error_bound.is_finite()
+        || !proven_gap_ms.is_finite()
+        || proven_gap_ms < minimum_separation_ms
+    {
         return Err(timeline_precision_error(
             "separation",
             candidate.left_time,
@@ -2391,22 +2460,30 @@ fn precision_preflight_explicit_event_pairs(
         return Ok(());
     };
     for right_event in events {
-        precision_preflight_candidate_pair(
-            program,
-            PrecisionCandidatePair {
-                left_time: program.time_ms(left_event.coordinate),
-                right_time: program.time_ms(right_event.coordinate),
-                nominal_gap: (right_event.source_position - left_event.source_position)
-                    * program.source_duration_ms,
-                rounding_error_bound: coordinate_mapping_error_bound_ms(
-                    program,
-                    left_event.coordinate,
-                ) + coordinate_mapping_error_bound_ms(
-                    program,
-                    right_event.coordinate,
-                ),
-            },
-        )?;
+        let left_time = program.time_ms(left_event.coordinate);
+        let right_time = program.time_ms(right_event.coordinate);
+        if left_event.has_observable_boundary_difference()
+            || right_event.has_observable_boundary_difference()
+        {
+            precision_preflight_candidate_pair(
+                program,
+                PrecisionCandidatePair {
+                    left_time,
+                    right_time,
+                    nominal_gap: (right_event.source_position - left_event.source_position)
+                        * program.source_duration_ms,
+                    rounding_error_bound: coordinate_mapping_error_bound_ms(
+                        program,
+                        left_event.coordinate,
+                    ) + coordinate_mapping_error_bound_ms(
+                        program,
+                        right_event.coordinate,
+                    ),
+                },
+            )?;
+        } else {
+            precision_check_pair(program.playback, left_time, right_time)?;
+        }
         left_event = right_event;
     }
     Ok(())
@@ -3355,6 +3432,55 @@ mod tests {
                 .expect("semantic identity endpoints should be continuous");
             assert_eq!(plan.tracks.len(), 1);
             assert!(plan.tracks[0].discontinuities_ms.is_empty());
+            assert!(plan.tracks[0].keyframes.iter().all(|keyframe| {
+                keyframe.value.transform.as_ref() == Some(&identity_animation_transform())
+            }));
+        }
+    }
+
+    #[test]
+    fn accepts_semantic_identity_at_an_interior_extreme_source_end() {
+        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: None,
+                    transform: Some(AnimationTransform2D::default()),
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: None,
+                    transform: Some(AnimationTransform2D {
+                        translate_x: Some(0.0),
+                        ..AnimationTransform2D::default()
+                    }),
+                },
+            ],
+            duration_ms: 1.0,
+            delay_ms: Some(-source_start),
+            easing: Some(AnimationEasing::Named("linear".to_string())),
+            iterations: Some(AnimationIterations::Count(source_start + 1.0)),
+            fill: Some("none".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 2.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        for source in [
+            timeline_ir(spec.clone()),
+            Ir {
+                root: animated_text_unit("text-owner", "unit-0", &spec),
+                draw_order: Vec::new(),
+                width: 100.0,
+                height: 20.0,
+                debug: None,
+                warnings: Vec::new(),
+            },
+        ] {
+            let plan = compile_document_animation_plan(&source, playback, 0.75)
+                .expect("a semantic identity source-end transition should compile");
             assert!(plan.tracks[0].keyframes.iter().all(|keyframe| {
                 keyframe.value.transform.as_ref() == Some(&identity_animation_transform())
             }));
@@ -4456,6 +4582,42 @@ mod tests {
     }
 
     #[test]
+    fn rejects_non_finite_precision_candidate_arithmetic() {
+        let source = timeline_ir(representable_linear_spec());
+        let playback = infinite_playback();
+        let mut track_sources = Vec::new();
+        collect_track_sources(&source.root, &mut track_sources);
+        let track_source = &track_sources[0];
+        let resolved_easing = resolve_track_easing(track_source).expect("easing should resolve");
+        let program = build_canonical_boundary_program(track_source, playback, resolved_easing);
+
+        for (nominal_gap, rounding_error_bound) in [
+            (f64::NAN, 0.0),
+            (f64::INFINITY, 0.0),
+            (playback.duration_ms, f64::NAN),
+            (playback.duration_ms, f64::INFINITY),
+        ] {
+            let error = precision_preflight_candidate_pair(
+                &program,
+                PrecisionCandidatePair {
+                    left_time: 0.0,
+                    right_time: playback.duration_ms,
+                    nominal_gap,
+                    rounding_error_bound,
+                },
+            )
+            .expect_err("non-finite proof arithmetic must not bypass separation");
+            let EngineError::StructuredContext { code, context, .. } = error else {
+                panic!("non-finite proof arithmetic should produce timeline context");
+            };
+            assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
+            assert_eq!(context["kind"], "separation");
+            assert_eq!(context["leftTimeMs"], 0.0);
+            assert_eq!(context["rightTimeMs"], playback.duration_ms);
+        }
+    }
+
+    #[test]
     fn accepts_a_passing_pair_beyond_the_source_position_guard() {
         let source_start = MAX_TIMELINE_TIME_MS + 1.0;
         let spec = AnimationSpec {
@@ -4663,6 +4825,235 @@ mod tests {
         };
         compile_document_animation_plan(&matching_text_ir, playback, 0.75)
             .expect("a text-unit endpoint matching its base value should compile");
+    }
+
+    #[test]
+    fn accepts_nonobservable_explicit_events_at_extreme_source_positions() {
+        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+        let constant_spec = |delay_ms: f64, iterations: AnimationIterations| AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: 1.0,
+            delay_ms: Some(delay_ms),
+            easing: Some(AnimationEasing::Named("step-end".to_string())),
+            iterations: Some(iterations),
+            fill: Some("both".to_string()),
+        };
+
+        for (spec, playback) in [
+            (
+                constant_spec(
+                    -source_start,
+                    AnimationIterations::Count(source_start + 1.0),
+                ),
+                DocumentPlayback {
+                    duration_ms: 2.0,
+                    iterations: DocumentIterationCount::Infinite,
+                },
+            ),
+            (
+                constant_spec(
+                    -f64::MAX,
+                    AnimationIterations::Infinite("infinite".to_string()),
+                ),
+                DocumentPlayback {
+                    duration_ms: 1.0,
+                    iterations: DocumentIterationCount::Infinite,
+                },
+            ),
+        ] {
+            for source in [
+                timeline_ir(spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                compile_document_animation_plan(&source, playback, 0.75)
+                    .expect("a nonobservable explicit source event should compile");
+            }
+        }
+    }
+
+    #[test]
+    fn preserves_fill_values_when_document_source_positions_overflow() {
+        let playback = DocumentPlayback {
+            duration_ms: 1.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+        let overflow_spec = |keyframes: Vec<AnimationKeyframe>,
+                             delay_ms: f64,
+                             iterations: AnimationIterations,
+                             fill: &str| AnimationSpec {
+            keyframes,
+            duration_ms: 1.0e-300,
+            delay_ms: Some(delay_ms),
+            easing: Some(AnimationEasing::Named("step-end".to_string())),
+            iterations: Some(iterations),
+            fill: Some(fill.to_string()),
+        };
+
+        for (delay_ms, iterations, fill, uses_authored_value) in [
+            (-1.0e308, AnimationIterations::Count(1.0), "both", true),
+            (-1.0e308, AnimationIterations::Count(1.0), "none", false),
+            (1.0e308, AnimationIterations::Count(1.0), "both", true),
+            (1.0e308, AnimationIterations::Count(1.0), "none", false),
+            (
+                -1.0e308,
+                AnimationIterations::Infinite("infinite".to_string()),
+                "none",
+                true,
+            ),
+        ] {
+            let keyframes = vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+            ];
+            let spec = overflow_spec(keyframes, delay_ms, iterations, fill);
+            for (source, base_opacity) in [
+                (timeline_ir(spec.clone()), 0.25),
+                (
+                    Ir {
+                        root: animated_text_unit("text-owner", "unit-0", &spec),
+                        draw_order: Vec::new(),
+                        width: 100.0,
+                        height: 20.0,
+                        debug: None,
+                        warnings: Vec::new(),
+                    },
+                    1.0,
+                ),
+            ] {
+                let expected_opacity = if uses_authored_value {
+                    0.0
+                } else {
+                    base_opacity
+                };
+                let expected_value = TrackValue {
+                    opacity: Some(expected_opacity),
+                    transform: None,
+                }
+                .to_keyframe();
+                let plan = compile_document_animation_plan(&source, playback, 0.5)
+                    .expect("a constant opacity track should preserve its overflow phase");
+                assert!(
+                    plan.tracks[0]
+                        .keyframes
+                        .iter()
+                        .all(|keyframe| keyframe.value == expected_value)
+                );
+            }
+        }
+
+        for (delay_ms, iterations, fill, expected_transform) in [
+            (
+                -1.0e308,
+                AnimationIterations::Count(1.0),
+                "both",
+                AnimationTransform2D {
+                    translate_x: Some(7.0),
+                    ..AnimationTransform2D::default()
+                },
+            ),
+            (
+                -1.0e308,
+                AnimationIterations::Count(1.0),
+                "none",
+                AnimationTransform2D::default(),
+            ),
+            (
+                1.0e308,
+                AnimationIterations::Count(1.0),
+                "both",
+                AnimationTransform2D {
+                    translate_x: Some(7.0),
+                    ..AnimationTransform2D::default()
+                },
+            ),
+            (
+                1.0e308,
+                AnimationIterations::Count(1.0),
+                "none",
+                AnimationTransform2D::default(),
+            ),
+            (
+                -1.0e308,
+                AnimationIterations::Infinite("infinite".to_string()),
+                "none",
+                AnimationTransform2D {
+                    translate_x: Some(7.0),
+                    ..AnimationTransform2D::default()
+                },
+            ),
+        ] {
+            let keyframes = vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: None,
+                    transform: Some(AnimationTransform2D {
+                        translate_x: Some(7.0),
+                        ..AnimationTransform2D::default()
+                    }),
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: None,
+                    transform: Some(AnimationTransform2D {
+                        translate_x: Some(7.0),
+                        ..AnimationTransform2D::default()
+                    }),
+                },
+            ];
+            let spec = overflow_spec(keyframes, delay_ms, iterations, fill);
+            for source in [
+                timeline_ir(spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                let plan = compile_document_animation_plan(&source, playback, 0.5)
+                    .expect("a constant transform track should preserve its overflow phase");
+                let expected_value = TrackValue {
+                    opacity: None,
+                    transform: Some(expected_transform.clone()),
+                }
+                .canonicalized()
+                .to_keyframe();
+                assert!(
+                    plan.tracks[0]
+                        .keyframes
+                        .iter()
+                        .all(|keyframe| keyframe.value == expected_value)
+                );
+            }
+        }
     }
 
     #[test]

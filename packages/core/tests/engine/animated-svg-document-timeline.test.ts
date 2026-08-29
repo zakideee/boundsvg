@@ -91,7 +91,15 @@ function exactEndpointScene(owner: EndpointOwner, channel: EndpointChannel, seam
   return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
-function semanticIdentityScene(owner: EndpointOwner) {
+function semanticIdentityScene(
+  owner: EndpointOwner,
+  timing: {
+    durationMs: number;
+    delayMs?: number;
+    iterations: AnimationIterationCount;
+    fill: "none" | "both";
+  } = { durationMs: 1_000, iterations: 1, fill: "both" },
+) {
   const animation: AnimationSpec = {
     keyframes: [
       { at: 0, transform: {} },
@@ -100,10 +108,11 @@ function semanticIdentityScene(owner: EndpointOwner) {
         transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, rotateDeg: 0 },
       },
     ],
-    durationMs: 1_000,
+    durationMs: timing.durationMs,
+    ...(timing.delayMs === undefined ? {} : { delayMs: timing.delayMs }),
     easing: "linear",
-    iterations: 1,
-    fill: "both",
+    iterations: timing.iterations,
+    fill: timing.fill,
   };
   const animated =
     owner === "node"
@@ -194,6 +203,10 @@ function largeSourcePositionScene(
     keyframeOpacities: readonly [number, number];
     fill: "none" | "both";
   },
+  timing: { durationMs: number; delayMs: number } = {
+    durationMs: 1,
+    delayMs: -(2 ** 52 + 1),
+  },
 ) {
   const keyframeOpacities = endpoint?.keyframeOpacities ?? [0, 1];
   const animation: AnimationSpec = {
@@ -201,8 +214,8 @@ function largeSourcePositionScene(
       { at: 0, opacity: keyframeOpacities[0] },
       { at: 1, opacity: keyframeOpacities[1] },
     ],
-    durationMs: 1,
-    delayMs: -(2 ** 52 + 1),
+    durationMs: timing.durationMs,
+    delayMs: timing.delayMs,
     easing: { type: "steps", count: 1, position: "jump-end" },
     iterations,
     fill: endpoint?.fill ?? "both",
@@ -530,6 +543,83 @@ describe("animated SVG document timeline", () => {
       expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
       expect(direct).toContain("0% { opacity: 0; }");
       expect(direct).toContain("100% { opacity: 0; }");
+    }
+  });
+
+  it("accepts nonobservable finite, infinite, and sparse-identity source endpoints", () => {
+    const sourceStart = 2 ** 52 + 1;
+    const finiteInteriorOptions = {
+      playback: { mode: "timeline", durationMs: 2, iterations: "infinite" },
+      timeMs: 0.75,
+    } as const satisfies RenderAnimatedSvgOptions;
+    const infiniteOptions = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+      timeMs: 0.75,
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      for (const [scene, options] of [
+        [
+          largeSourcePositionScene(owner, sourceStart + 1, {
+            keyframeOpacities: [0, 0],
+            fill: "both",
+          }),
+          finiteInteriorOptions,
+        ],
+        [
+          largeSourcePositionScene(
+            owner,
+            "infinite",
+            { keyframeOpacities: [0, 0], fill: "both" },
+            { durationMs: 1, delayMs: -Number.MAX_VALUE },
+          ),
+          infiniteOptions,
+        ],
+        [
+          semanticIdentityScene(owner, {
+            durationMs: 1,
+            delayMs: -sourceStart,
+            iterations: sourceStart + 1,
+            fill: "none",
+          }),
+          finiteInteriorOptions,
+        ],
+      ] as const) {
+        const compiled = engine.compile(scene);
+        const direct = engine.renderToAnimatedSvg(scene, options);
+        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+        expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+      }
+    }
+  });
+
+  it("preserves fill values when normalized document positions overflow", () => {
+    const options = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+      timeMs: 0.5,
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const [delayMs, iterations, fill, expectedOpacity] of [
+      [-1e308, 1, "both", 0],
+      [-1e308, 1, "none", 1],
+      [1e308, 1, "both", 0],
+      [1e308, 1, "none", 1],
+      [-1e308, "infinite", "none", 0],
+    ] as const) {
+      for (const owner of ["node", "textUnit"] as const) {
+        const scene = largeSourcePositionScene(
+          owner,
+          iterations,
+          { keyframeOpacities: [0, 0], fill },
+          { durationMs: 1e-300, delayMs },
+        );
+        const compiled = engine.compile(scene);
+        const direct = engine.renderToAnimatedSvg(scene, options);
+        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+        expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+        expect(direct).toContain(`0% { opacity: ${expectedOpacity}; }`);
+        expect(direct).toContain(`100% { opacity: ${expectedOpacity}; }`);
+      }
     }
   });
 
