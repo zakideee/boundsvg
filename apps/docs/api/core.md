@@ -511,6 +511,14 @@ Timeline `durationMs` must be finite in `1..2^32`. `iterations` is
 `"infinite"` or a positive finite number at most `2^20`; fractional counts are
 valid. Timeline `timeMs` is document elapsed time and must be finite in
 `0..2^52`, with an additional `timeMs / durationMs <= 2^31` precision bound.
+In timeline mode, each authored track must also use `durationMs` in
+`[1, 2^32]`, `delayMs` in `[-2^32, 2^32]`, and finite local `iterations` in
+`[2^-32, 2^20]` (or `"infinite"`). These authored-track limits do not narrow
+independent playback. Each `animateUnits` effective delay after `delayStepMs`
+must remain in the same `delayMs` range. An out-of-domain track fails before output with
+`ANIMATED_SVG_TIMELINE_UNREPRESENTABLE`, reason
+`authored-value-out-of-domain`, and a context containing `field`, `received`,
+and `migration` but no `boundaryTimeMs`.
 Unsupported track functions, browser-offset precision loss, and stop/CSS
 budgets fail with structured timeline errors rather than approximation. See the
 [animation guide](/guides/animation#document-timeline-playback) for finite hold,

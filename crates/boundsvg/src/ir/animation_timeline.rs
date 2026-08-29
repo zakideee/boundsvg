@@ -29,6 +29,12 @@ pub const MAX_TIMELINE_TIME_RATIO: f64 = 2_147_483_648.0;
 pub const MAX_TIMELINE_KEYFRAME_STOPS: usize = 16_384;
 pub const MAX_TIMELINE_CSS_BYTES: usize = 16_777_216;
 
+const MIN_AUTHORED_TIMELINE_DURATION_MS: f64 = 1.0;
+const MAX_AUTHORED_TIMELINE_DELAY_MS: f64 = MAX_TIMELINE_DURATION_MS;
+const MIN_AUTHORED_TIMELINE_ITERATIONS: f64 = 1.0 / 4_294_967_296.0;
+const AUTHORED_TIMELINE_DOMAIN_MIGRATION: &str =
+    "Use playback mode independent or change the authored value to the supported timeline range.";
+
 const CARVE_OUT_SCALE: f64 = 1_048_576.0;
 
 #[cfg(test)]
@@ -319,6 +325,23 @@ struct TrackSource {
     base_value: TrackValue,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TrackIdentity<'a> {
+    owner_kind: TimelineOwnerKind,
+    owner_id: &'a str,
+    unit_id: Option<&'a str>,
+}
+
+impl TrackSource {
+    fn identity(&self) -> TrackIdentity<'_> {
+        TrackIdentity {
+            owner_kind: self.owner_kind,
+            owner_id: &self.owner_id,
+            unit_id: self.unit_id.as_deref(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum PieceEasing {
     Constant,
@@ -370,6 +393,80 @@ fn timeline_unrepresentable(
         node_id: Some(source.owner_id.clone()),
         context: Box::new(context),
     }
+}
+
+fn authored_timeline_value_out_of_domain(
+    identity: TrackIdentity<'_>,
+    field: &str,
+    received: f64,
+) -> EngineError {
+    let mut context = json!({
+        "ownerKind": identity.owner_kind.as_str(),
+        "ownerId": identity.owner_id,
+        "reason": "authored-value-out-of-domain",
+        "field": field,
+        "received": format_js_number(received),
+        "migration": AUTHORED_TIMELINE_DOMAIN_MIGRATION,
+    });
+    if let Some(unit_id) = identity.unit_id {
+        context["unitId"] = json!(unit_id);
+    }
+    EngineError::StructuredContext {
+        code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE".to_string(),
+        message: format!(
+            "Animated SVG timeline cannot represent {} track {:?}: authored {field} is outside the supported timeline range",
+            identity.owner_kind.as_str(),
+            identity.owner_id
+        ),
+        stage: Some("emit".to_string()),
+        node_id: Some(identity.owner_id.to_string()),
+        context: Box::new(context),
+    }
+}
+
+fn validate_authored_timeline_delay_domain(
+    identity: TrackIdentity<'_>,
+    delay_ms: f64,
+) -> Result<(), EngineError> {
+    if !delay_ms.is_finite()
+        || !(-MAX_AUTHORED_TIMELINE_DELAY_MS..=MAX_AUTHORED_TIMELINE_DELAY_MS).contains(&delay_ms)
+    {
+        return Err(authored_timeline_value_out_of_domain(
+            identity, "delayMs", delay_ms,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_authored_timeline_spec_domain(
+    identity: TrackIdentity<'_>,
+    spec: &AnimationSpec,
+) -> Result<(), EngineError> {
+    let duration_ms = spec.duration_ms;
+    if !duration_ms.is_finite()
+        || !(MIN_AUTHORED_TIMELINE_DURATION_MS..=MAX_TIMELINE_DURATION_MS).contains(&duration_ms)
+    {
+        return Err(authored_timeline_value_out_of_domain(
+            identity,
+            "durationMs",
+            duration_ms,
+        ));
+    }
+
+    validate_authored_timeline_delay_domain(identity, spec.delay_ms.unwrap_or(0.0))?;
+
+    if let Some(AnimationIterations::Count(iterations)) = spec.iterations.as_ref()
+        && (!iterations.is_finite()
+            || !(MIN_AUTHORED_TIMELINE_ITERATIONS..=MAX_TIMELINE_ITERATIONS).contains(iterations))
+    {
+        return Err(authored_timeline_value_out_of_domain(
+            identity,
+            "iterations",
+            *iterations,
+        ));
+    }
+
+    Ok(())
 }
 
 fn timeline_precision_error(kind: &str, left_time_ms: f64, right_time_ms: f64) -> EngineError {
@@ -452,34 +549,28 @@ fn base_transform_value(transform: Option<&Transform2D>, bbox: BBox) -> Animatio
     }
 }
 
-fn collect_track_sources(node: &IrNode, sources: &mut Vec<TrackSource>) {
+fn collect_track_sources_at_node(node: &IrNode, sources: &mut Vec<TrackSource>) {
     match &node.kind {
         IrNodeKind::Group {
-            children,
             opacity,
             transform,
-            animation,
+            animation: Some(spec),
             ..
         } => {
-            if let Some(spec) = animation {
-                let (animates_opacity, animates_transform) = animation_channels(spec);
-                sources.push(TrackSource {
-                    owner_kind: TimelineOwnerKind::Node,
-                    owner_id: node.node_id.clone(),
-                    unit_id: None,
-                    animation_name_owner: node.node_id.clone(),
-                    bbox: node.bbox,
-                    spec: spec.clone(),
-                    base_value: TrackValue {
-                        opacity: animates_opacity.then_some(opacity.unwrap_or(1.0)),
-                        transform: animates_transform
-                            .then(|| base_transform_value(transform.as_ref(), node.bbox)),
-                    },
-                });
-            }
-            for child in children {
-                collect_track_sources(child, sources);
-            }
+            let (animates_opacity, animates_transform) = animation_channels(spec);
+            sources.push(TrackSource {
+                owner_kind: TimelineOwnerKind::Node,
+                owner_id: node.node_id.clone(),
+                unit_id: None,
+                animation_name_owner: node.node_id.clone(),
+                bbox: node.bbox,
+                spec: spec.clone(),
+                base_value: TrackValue {
+                    opacity: animates_opacity.then_some(opacity.unwrap_or(1.0)),
+                    transform: animates_transform
+                        .then(|| base_transform_value(transform.as_ref(), node.bbox)),
+                },
+            });
         }
         IrNodeKind::Text {
             unit_map: Some(unit_map),
@@ -536,6 +627,61 @@ fn collect_track_sources(node: &IrNode, sources: &mut Vec<TrackSource>) {
         }
         _ => {}
     }
+}
+
+#[cfg(test)]
+fn collect_track_sources(node: &IrNode, sources: &mut Vec<TrackSource>) {
+    collect_track_sources_at_node(node, sources);
+    if let IrNodeKind::Group { children, .. } = &node.kind {
+        for child in children {
+            collect_track_sources(child, sources);
+        }
+    }
+}
+
+fn validate_authored_timeline_node(node: &IrNode) -> Result<(), EngineError> {
+    let (owner_kind, spec) = match &node.kind {
+        IrNodeKind::Group {
+            animation: Some(spec),
+            ..
+        } => (TimelineOwnerKind::Node, spec),
+        IrNodeKind::Text {
+            unit_animation: Some(unit_animation),
+            ..
+        } => (TimelineOwnerKind::TextUnit, &unit_animation.animation),
+        _ => return Ok(()),
+    };
+    validate_authored_timeline_spec_domain(
+        TrackIdentity {
+            owner_kind,
+            owner_id: &node.node_id,
+            unit_id: None,
+        },
+        spec,
+    )
+}
+
+fn collect_validated_timeline_node_sources(
+    node: &IrNode,
+    sources: &mut Vec<TrackSource>,
+) -> Result<(), EngineError> {
+    let first_source_index = sources.len();
+    collect_track_sources_at_node(node, sources);
+    let IrNodeKind::Text {
+        unit_animation: Some(unit_animation),
+        ..
+    } = &node.kind
+    else {
+        return Ok(());
+    };
+    let base_delay_ms = unit_animation.animation.delay_ms.unwrap_or(0.0);
+    for source in &sources[first_source_index..] {
+        let effective_delay_ms = source.spec.delay_ms.unwrap_or(0.0);
+        if effective_delay_ms != base_delay_ms {
+            validate_authored_timeline_delay_domain(source.identity(), effective_delay_ms)?;
+        }
+    }
+    Ok(())
 }
 
 fn source_iterations(spec: &AnimationSpec) -> Option<f64> {
@@ -2646,10 +2792,13 @@ pub fn compile_document_animation_plan_with_prefix(
     include_reduced_motion: bool,
 ) -> Result<DocumentAnimationPlan, EngineError> {
     validate_document_playback(playback, time_ms)?;
-    animation::validate_animations(ir)?;
-    let timing = playback.css_timing(time_ms);
     let mut sources = Vec::new();
-    collect_track_sources(&ir.root, &mut sources);
+    animation::validate_animations_with_node_hooks(
+        ir,
+        &mut validate_authored_timeline_node,
+        &mut |node| collect_validated_timeline_node_sources(node, &mut sources),
+    )?;
+    let timing = playback.css_timing(time_ms);
     let (analyses, preflight_stop_count) = preflight_document_tracks(&sources, playback)?;
     let mut tracks = Vec::with_capacity(sources.len());
     for (source, analysis) in sources.iter().zip(&analyses) {
@@ -2818,6 +2967,80 @@ mod tests {
         }
     }
 
+    fn next_up(value: f64) -> f64 {
+        if value.is_nan() || value == f64::INFINITY {
+            return value;
+        }
+        if value == 0.0 {
+            return f64::from_bits(1);
+        }
+        if value > 0.0 {
+            f64::from_bits(value.to_bits() + 1)
+        } else {
+            f64::from_bits(value.to_bits() - 1)
+        }
+    }
+
+    fn next_down(value: f64) -> f64 {
+        if value.is_nan() || value == f64::NEG_INFINITY {
+            return value;
+        }
+        if value == 0.0 {
+            return -f64::from_bits(1);
+        }
+        if value > 0.0 {
+            f64::from_bits(value.to_bits() - 1)
+        } else {
+            f64::from_bits(value.to_bits() + 1)
+        }
+    }
+
+    fn domain_source(spec: AnimationSpec) -> TrackSource {
+        let ir = timeline_ir(spec);
+        let mut sources = Vec::new();
+        collect_track_sources(&ir.root, &mut sources);
+        assert_eq!(sources.len(), 1);
+        sources.remove(0)
+    }
+
+    fn assert_domain_field(
+        field: &str,
+        value: f64,
+        expected_in_domain: bool,
+    ) -> Option<EngineError> {
+        let mut spec = representable_linear_spec();
+        match field {
+            "durationMs" => spec.duration_ms = value,
+            "delayMs" => spec.delay_ms = Some(value),
+            "iterations" => {
+                spec.iterations = Some(AnimationIterations::Count(value));
+            }
+            _ => panic!("unknown authored timeline field: {field}"),
+        }
+        let source = domain_source(spec);
+        let result = validate_authored_timeline_spec_domain(source.identity(), &source.spec);
+        if expected_in_domain {
+            result.unwrap_or_else(|error| {
+                panic!(
+                    "{field}={} should be in the authored timeline domain: {error}",
+                    format_js_number(value)
+                )
+            });
+            None
+        } else {
+            let error = result.expect_err("value outside the authored timeline domain should fail");
+            let EngineError::StructuredContext { code, context, .. } = &error else {
+                panic!("authored timeline domain failures should carry structured context");
+            };
+            assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+            assert_eq!(context["reason"], "authored-value-out-of-domain");
+            assert_eq!(context["field"], field);
+            assert_eq!(context["received"], format_js_number(value));
+            assert!(context.get("boundaryTimeMs").is_none());
+            Some(error)
+        }
+    }
+
     #[test]
     fn maps_the_full_document_time_domain_to_the_authored_sampler() {
         let finite = finite_playback(2.5);
@@ -2974,6 +3197,168 @@ mod tests {
                 "received": "0",
             })
         );
+    }
+
+    #[test]
+    fn enforces_every_authored_timeline_field_boundary_at_adjacent_f64_values() {
+        for (field, lower, upper) in [
+            (
+                "durationMs",
+                MIN_AUTHORED_TIMELINE_DURATION_MS,
+                MAX_TIMELINE_DURATION_MS,
+            ),
+            (
+                "delayMs",
+                -MAX_AUTHORED_TIMELINE_DELAY_MS,
+                MAX_AUTHORED_TIMELINE_DELAY_MS,
+            ),
+            (
+                "iterations",
+                MIN_AUTHORED_TIMELINE_ITERATIONS,
+                MAX_TIMELINE_ITERATIONS,
+            ),
+        ] {
+            for (value, expected_in_domain) in [
+                (next_down(lower), false),
+                (lower, true),
+                (next_up(lower), true),
+                (next_down(upper), true),
+                (upper, true),
+                (next_up(upper), false),
+            ] {
+                assert_domain_field(field, value, expected_in_domain);
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_authored_values_and_handles_negative_zero_explicitly() {
+        for field in ["durationMs", "delayMs", "iterations"] {
+            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                assert_domain_field(field, value, false);
+            }
+        }
+
+        let duration_error = assert_domain_field("durationMs", -0.0, false)
+            .expect("negative-zero duration should fail");
+        let EngineError::StructuredContext {
+            context: duration_context,
+            ..
+        } = duration_error
+        else {
+            panic!("negative-zero duration should carry context");
+        };
+        assert_eq!(duration_context["received"], "0");
+        assert_domain_field("delayMs", -0.0, true);
+        assert_domain_field("iterations", -0.0, false);
+    }
+
+    #[test]
+    fn authored_domain_failure_uses_the_reason_specific_node_and_text_unit_shapes() {
+        let mut spec = representable_linear_spec();
+        spec.duration_ms = next_down(MIN_AUTHORED_TIMELINE_DURATION_MS);
+
+        let node_error =
+            compile_document_animation_plan(&timeline_ir(spec.clone()), infinite_playback(), 0.0)
+                .expect_err("the node track should fail at the timeline domain gate");
+        let EngineError::StructuredContext {
+            code,
+            stage,
+            node_id,
+            context,
+            ..
+        } = node_error
+        else {
+            panic!("node domain failure should carry structured context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+        assert_eq!(stage.as_deref(), Some("emit"));
+        assert_eq!(node_id.as_deref(), Some("animated-node"));
+        assert_eq!(
+            *context,
+            json!({
+                "ownerKind": "node",
+                "ownerId": "animated-node",
+                "reason": "authored-value-out-of-domain",
+                "field": "durationMs",
+                "received": format_js_number(spec.duration_ms),
+                "migration": AUTHORED_TIMELINE_DOMAIN_MIGRATION,
+            })
+        );
+
+        let text_ir = Ir {
+            root: animated_text_unit("text-owner", "unit-0", &spec),
+            draw_order: Vec::new(),
+            width: 100.0,
+            height: 20.0,
+            debug: None,
+            warnings: Vec::new(),
+        };
+        let text_error = compile_document_animation_plan(&text_ir, infinite_playback(), 0.0)
+            .expect_err("the text-unit track should fail at the timeline domain gate");
+        let EngineError::StructuredContext { context, .. } = text_error else {
+            panic!("text-unit domain failure should carry structured context");
+        };
+        assert_eq!(
+            *context,
+            json!({
+                "ownerKind": "textUnit",
+                "ownerId": "text-owner",
+                "reason": "authored-value-out-of-domain",
+                "field": "durationMs",
+                "received": format_js_number(spec.duration_ms),
+                "migration": AUTHORED_TIMELINE_DOMAIN_MIGRATION,
+            })
+        );
+    }
+
+    #[test]
+    fn matches_authored_sampler_semantics_at_the_cross_field_domain_corner() {
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(1.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: MAX_TIMELINE_DURATION_MS,
+            delay_ms: Some(-MAX_AUTHORED_TIMELINE_DELAY_MS),
+            easing: Some(AnimationEasing::Named("linear".to_string())),
+            iterations: Some(AnimationIterations::Count(1.0)),
+            fill: Some("both".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        for source in [
+            timeline_ir(spec.clone()),
+            Ir {
+                root: animated_text_unit("text-owner", "unit-0", &spec),
+                draw_order: Vec::new(),
+                width: 100.0,
+                height: 20.0,
+                debug: None,
+                warnings: Vec::new(),
+            },
+        ] {
+            let plan = compile_document_animation_plan(&source, playback, 0.0)
+                .expect("the exact cross-field corner should compile");
+            assert_eq!(plan.tracks.len(), 1);
+            assert!(
+                plan.tracks[0]
+                    .keyframes
+                    .iter()
+                    .all(|keyframe| keyframe.value.opacity == Some(1.0))
+            );
+        }
     }
 
     #[test]
@@ -3464,8 +3849,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_semantic_identity_at_an_interior_extreme_source_end() {
-        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+    fn accepts_semantic_identity_at_the_exact_authored_source_end_boundary() {
         let spec = AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
@@ -3482,10 +3866,10 @@ mod tests {
                     }),
                 },
             ],
-            duration_ms: 1.0,
-            delay_ms: Some(-source_start),
+            duration_ms: 4_096.0,
+            delay_ms: Some(-MAX_AUTHORED_TIMELINE_DELAY_MS),
             easing: Some(AnimationEasing::Named("linear".to_string())),
-            iterations: Some(AnimationIterations::Count(source_start + 1.0)),
+            iterations: Some(AnimationIterations::Count(MAX_TIMELINE_ITERATIONS)),
             fill: Some("none".to_string()),
         };
         let playback = DocumentPlayback {
@@ -3505,7 +3889,7 @@ mod tests {
             },
         ] {
             let plan = compile_document_animation_plan(&source, playback, 0.75)
-                .expect("a semantic identity source-end transition should compile");
+                .expect("an exact in-domain semantic identity source end should compile");
             assert!(plan.tracks[0].keyframes.iter().all(|keyframe| {
                 keyframe.value.transform.as_ref() == Some(&identity_animation_transform())
             }));
@@ -4443,6 +4827,97 @@ mod tests {
                 .iter()
                 .any(|keyframe| same_time(keyframe.time_ms, 20.0))
         );
+
+        let mut out_of_domain_source = source.clone();
+        let IrNodeKind::Text {
+            unit_animation: Some(unit_animation),
+            ..
+        } = &mut out_of_domain_source.root.kind
+        else {
+            panic!("text-unit fixture expected");
+        };
+        unit_animation.delay_step_ms = Some(next_up(MAX_AUTHORED_TIMELINE_DELAY_MS));
+        let error =
+            compile_document_animation_plan(&out_of_domain_source, infinite_playback(), 0.0)
+                .expect_err("an expanded text-unit delay outside the domain should fail");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("effective text-unit delay should carry timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+        assert_eq!(context["ownerKind"], "textUnit");
+        assert_eq!(context["ownerId"], "copy");
+        assert_eq!(context["unitId"], "unit-a");
+        assert_eq!(context["reason"], "authored-value-out-of-domain");
+        assert_eq!(context["field"], "delayMs");
+        assert_eq!(
+            context["received"],
+            format_js_number(next_up(MAX_AUTHORED_TIMELINE_DELAY_MS))
+        );
+        assert!(context.get("boundaryTimeMs").is_none());
+    }
+
+    #[test]
+    fn preserves_owner_ir_order_between_existing_validation_and_the_domain_gate() {
+        let mut malformed_spec = representable_linear_spec();
+        malformed_spec.keyframes.pop();
+        let mut out_of_domain_spec = representable_linear_spec();
+        out_of_domain_spec.duration_ms = next_down(MIN_AUTHORED_TIMELINE_DURATION_MS);
+        let grouped_ir = |first: (&str, AnimationSpec), second: (&str, AnimationSpec)| Ir {
+            root: IrNode {
+                node_id: "root".to_string(),
+                bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
+                kind: IrNodeKind::Group {
+                    children: vec![
+                        animated_group(first.0, first.1),
+                        animated_group(second.0, second.1),
+                    ],
+                    clip_path: None,
+                    clip_border_radius: None,
+                    opacity: None,
+                    box_shadow: None,
+                    meta: None,
+                    transform: None,
+                    animation: None,
+                    on: None,
+                },
+            },
+            draw_order: Vec::new(),
+            width: 100.0,
+            height: 50.0,
+            debug: None,
+            warnings: Vec::new(),
+        };
+
+        let malformed_first = grouped_ir(
+            ("malformed-first", malformed_spec.clone()),
+            ("domain-second", out_of_domain_spec.clone()),
+        );
+        let error = compile_document_animation_plan(&malformed_first, infinite_playback(), 0.0)
+            .expect_err("the first owner's existing validation error should win");
+        let EngineError::Structured { code, node_id, .. } = error else {
+            panic!("the first malformed owner should retain its existing error shape");
+        };
+        assert_eq!(code, "ANIMATION_INVALID_SPEC");
+        assert_eq!(node_id.as_deref(), Some("malformed-first"));
+
+        let domain_first = grouped_ir(
+            ("domain-first", out_of_domain_spec),
+            ("malformed-second", malformed_spec),
+        );
+        let error = compile_document_animation_plan(&domain_first, infinite_playback(), 0.0)
+            .expect_err("the first owner's domain error should win");
+        let EngineError::StructuredContext {
+            code,
+            node_id,
+            context,
+            ..
+        } = error
+        else {
+            panic!("the first domain owner should carry timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+        assert_eq!(node_id.as_deref(), Some("domain-first"));
+        assert_eq!(context["reason"], "authored-value-out-of-domain");
     }
 
     #[test]
@@ -4567,7 +5042,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_the_first_concrete_pair_before_the_construction_guard() {
+    fn rejects_a_duration_just_below_the_authored_domain_before_precision_preflight() {
         let spec = AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
@@ -4586,7 +5061,7 @@ mod tests {
                     transform: None,
                 },
             ],
-            duration_ms: 2.0e-300,
+            duration_ms: next_down(MIN_AUTHORED_TIMELINE_DURATION_MS),
             delay_ms: Some(0.0),
             easing: Some(AnimationEasing::Named("linear".to_string())),
             iterations: Some(AnimationIterations::Infinite("infinite".to_string())),
@@ -4598,14 +5073,18 @@ mod tests {
         };
 
         let error = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
-            .expect_err("the first binary32-colliding pair should fail");
+            .expect_err("an out-of-domain duration should fail at the compile front-end");
         let EngineError::StructuredContext { code, context, .. } = error else {
-            panic!("precision should produce timeline context");
+            panic!("the authored domain gate should produce timeline context");
         };
-        assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
-        assert_eq!(context["kind"], "f32-order");
-        assert_eq!(context["leftTimeMs"], 0.0);
-        assert_eq!(context["rightTimeMs"], 1.0e-300);
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+        assert_eq!(context["reason"], "authored-value-out-of-domain");
+        assert_eq!(context["field"], "durationMs");
+        assert_eq!(
+            context["received"],
+            format_js_number(next_down(MIN_AUTHORED_TIMELINE_DURATION_MS))
+        );
+        assert!(context.get("boundaryTimeMs").is_none());
     }
 
     #[test]
@@ -4645,8 +5124,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_passing_pair_beyond_the_source_position_guard() {
-        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+    fn accepts_a_passing_pair_at_the_authored_delay_boundary() {
         let spec = AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
@@ -4661,7 +5139,7 @@ mod tests {
                 },
             ],
             duration_ms: 1.0,
-            delay_ms: Some(-source_start),
+            delay_ms: Some(-MAX_AUTHORED_TIMELINE_DELAY_MS),
             easing: Some(AnimationEasing::Named("step-end".to_string())),
             iterations: Some(AnimationIterations::Infinite("infinite".to_string())),
             fill: Some("both".to_string()),
@@ -4672,7 +5150,7 @@ mod tests {
         };
 
         let plan = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
-            .expect("a concrete pair that passes every precision proof should compile");
+            .expect("an exact in-domain delay boundary should compile");
         assert_eq!(plan.tracks[0].keyframes.len(), 2);
         assert_eq!(plan.tracks[0].keyframes[0].time_ms, 0.0);
         assert_eq!(plan.tracks[0].keyframes[1].time_ms, 1.0);
@@ -4685,9 +5163,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_finite_source_end_that_loses_mapping_precision() {
-        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
-        let spec = AnimationSpec {
+    fn enforces_the_authored_delay_lower_boundary_for_observable_tracks() {
+        let make_spec = |delay_ms| AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
                     at: 0.0,
@@ -4701,9 +5178,9 @@ mod tests {
                 },
             ],
             duration_ms: 1.0,
-            delay_ms: Some(-source_start),
+            delay_ms: Some(delay_ms),
             easing: Some(AnimationEasing::Named("step-end".to_string())),
-            iterations: Some(AnimationIterations::Count(source_start + 1.0)),
+            iterations: Some(AnimationIterations::Infinite("infinite".to_string())),
             fill: Some("both".to_string()),
         };
         let playback = DocumentPlayback {
@@ -4711,33 +5188,42 @@ mod tests {
             iterations: DocumentIterationCount::Infinite,
         };
 
-        for source in [
-            timeline_ir(spec.clone()),
-            Ir {
-                root: animated_text_unit("text-owner", "unit-0", &spec),
-                draw_order: Vec::new(),
-                width: 100.0,
-                height: 20.0,
-                debug: None,
-                warnings: Vec::new(),
-            },
+        for delay_ms in [
+            -MAX_AUTHORED_TIMELINE_DELAY_MS,
+            next_down(-MAX_AUTHORED_TIMELINE_DELAY_MS),
         ] {
-            let error = compile_document_animation_plan(&source, playback, 0.75)
-                .expect_err("an observable finite source end must retain its mapping proof");
-            let EngineError::StructuredContext { code, context, .. } = error else {
-                panic!("source-end precision should produce timeline context");
-            };
-            assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
-            assert_eq!(context["kind"], "separation");
-            assert_eq!(context["leftTimeMs"], 0.0);
-            assert_eq!(context["rightTimeMs"], 1.0);
+            let spec = make_spec(delay_ms);
+            for source in [
+                timeline_ir(spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                let result = compile_document_animation_plan(&source, playback, 0.75);
+                if delay_ms == -MAX_AUTHORED_TIMELINE_DELAY_MS {
+                    result.expect("the exact authored delay lower boundary should compile");
+                } else {
+                    let error = result.expect_err("nextDown(delay lower bound) should fail");
+                    let EngineError::StructuredContext { code, context, .. } = error else {
+                        panic!("delay domain failure should produce timeline context");
+                    };
+                    assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+                    assert_eq!(context["reason"], "authored-value-out-of-domain");
+                    assert_eq!(context["field"], "delayMs");
+                    assert!(context.get("boundaryTimeMs").is_none());
+                }
+            }
         }
     }
 
     #[test]
-    fn rejects_a_constant_finite_source_end_that_loses_mapping_precision() {
-        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
-        let spec = AnimationSpec {
+    fn enforces_the_authored_iterations_upper_boundary_for_constant_tracks() {
+        let make_spec = |iterations| AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
                     at: 0.0,
@@ -4751,9 +5237,9 @@ mod tests {
                 },
             ],
             duration_ms: 1.0,
-            delay_ms: Some(-source_start),
+            delay_ms: Some(0.0),
             easing: Some(AnimationEasing::Named("step-end".to_string())),
-            iterations: Some(AnimationIterations::Count(source_start + 1.0)),
+            iterations: Some(AnimationIterations::Count(iterations)),
             fill: Some("none".to_string()),
         };
         let playback = DocumentPlayback {
@@ -4761,32 +5247,38 @@ mod tests {
             iterations: DocumentIterationCount::Infinite,
         };
 
-        for source in [
-            timeline_ir(spec.clone()),
-            Ir {
-                root: animated_text_unit("text-owner", "unit-0", &spec),
-                draw_order: Vec::new(),
-                width: 100.0,
-                height: 20.0,
-                debug: None,
-                warnings: Vec::new(),
-            },
-        ] {
-            let error = compile_document_animation_plan(&source, playback, 0.75)
-                .expect_err("a constant finite source end must retain its mapping proof");
-            let EngineError::StructuredContext { code, context, .. } = error else {
-                panic!("constant source-end precision should produce timeline context");
-            };
-            assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
-            assert_eq!(context["kind"], "separation");
-            assert_eq!(context["leftTimeMs"], 0.0);
-            assert_eq!(context["rightTimeMs"], 1.0);
+        for iterations in [MAX_TIMELINE_ITERATIONS, next_up(MAX_TIMELINE_ITERATIONS)] {
+            let spec = make_spec(iterations);
+            for source in [
+                timeline_ir(spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                let result = compile_document_animation_plan(&source, playback, 0.75);
+                if iterations == MAX_TIMELINE_ITERATIONS {
+                    result.expect("the exact authored iterations upper boundary should compile");
+                } else {
+                    let error = result.expect_err("nextUp(iterations upper bound) should fail");
+                    let EngineError::StructuredContext { code, context, .. } = error else {
+                        panic!("iterations domain failure should produce timeline context");
+                    };
+                    assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+                    assert_eq!(context["reason"], "authored-value-out-of-domain");
+                    assert_eq!(context["field"], "iterations");
+                    assert!(context.get("boundaryTimeMs").is_none());
+                }
+            }
         }
     }
 
     #[test]
-    fn accepts_safe_constant_tracks_beyond_the_source_position_guard() {
-        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+    fn accepts_safe_constant_tracks_at_authored_domain_boundaries() {
         let playback = DocumentPlayback {
             duration_ms: 1.0,
             iterations: DocumentIterationCount::Infinite,
@@ -4806,7 +5298,7 @@ mod tests {
                     },
                 ],
                 duration_ms: 1.0,
-                delay_ms: Some(-source_start),
+                delay_ms: Some(-MAX_AUTHORED_TIMELINE_DELAY_MS),
                 easing: Some(AnimationEasing::Named("step-end".to_string())),
                 iterations: Some(iterations),
                 fill: Some(fill.to_string()),
@@ -4818,7 +5310,11 @@ mod tests {
                 AnimationIterations::Infinite("infinite".to_string()),
                 "none",
             ),
-            constant_spec(0.0, AnimationIterations::Count(source_start + 1.0), "both"),
+            constant_spec(
+                0.0,
+                AnimationIterations::Count(MAX_TIMELINE_ITERATIONS),
+                "both",
+            ),
         ] {
             for source in [
                 timeline_ir(spec.clone()),
@@ -4832,16 +5328,22 @@ mod tests {
                 },
             ] {
                 compile_document_animation_plan(&source, playback, 0.75)
-                    .expect("an unobservable large-source endpoint should compile");
+                    .expect("an unobservable in-domain endpoint should compile");
             }
         }
 
-        let matching_node_spec =
-            constant_spec(0.25, AnimationIterations::Count(source_start + 1.0), "none");
+        let matching_node_spec = constant_spec(
+            0.25,
+            AnimationIterations::Count(MAX_TIMELINE_ITERATIONS),
+            "none",
+        );
         compile_document_animation_plan(&timeline_ir(matching_node_spec), playback, 0.75)
             .expect("a node endpoint matching its base value should compile");
-        let matching_text_spec =
-            constant_spec(1.0, AnimationIterations::Count(source_start + 1.0), "none");
+        let matching_text_spec = constant_spec(
+            1.0,
+            AnimationIterations::Count(MAX_TIMELINE_ITERATIONS),
+            "none",
+        );
         let matching_text_ir = Ir {
             root: animated_text_unit("text-owner", "unit-0", &matching_text_spec),
             draw_order: Vec::new(),
@@ -4855,8 +5357,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_nonobservable_explicit_events_at_extreme_source_positions() {
-        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+    fn rejects_nonobservable_events_beyond_the_authored_delay_boundary() {
         let constant_spec = |delay_ms: f64, iterations: AnimationIterations| AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
@@ -4877,28 +5378,18 @@ mod tests {
             fill: Some("both".to_string()),
         };
 
-        for (spec, playback) in [
-            (
-                constant_spec(
-                    -source_start,
-                    AnimationIterations::Count(source_start + 1.0),
-                ),
-                DocumentPlayback {
-                    duration_ms: 2.0,
-                    iterations: DocumentIterationCount::Infinite,
-                },
-            ),
-            (
-                constant_spec(
-                    -f64::MAX,
-                    AnimationIterations::Infinite("infinite".to_string()),
-                ),
-                DocumentPlayback {
-                    duration_ms: 1.0,
-                    iterations: DocumentIterationCount::Infinite,
-                },
-            ),
+        let playback = DocumentPlayback {
+            duration_ms: 1.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+        for delay_ms in [
+            -MAX_AUTHORED_TIMELINE_DELAY_MS,
+            next_down(-MAX_AUTHORED_TIMELINE_DELAY_MS),
         ] {
+            let spec = constant_spec(
+                delay_ms,
+                AnimationIterations::Infinite("infinite".to_string()),
+            );
             for source in [
                 timeline_ir(spec.clone()),
                 Ir {
@@ -4910,24 +5401,35 @@ mod tests {
                     warnings: Vec::new(),
                 },
             ] {
-                compile_document_animation_plan(&source, playback, 0.75)
-                    .expect("a nonobservable explicit source event should compile");
+                let result = compile_document_animation_plan(&source, playback, 0.75);
+                if delay_ms == -MAX_AUTHORED_TIMELINE_DELAY_MS {
+                    result.expect("the exact delay boundary should remain representable");
+                } else {
+                    let error =
+                        result.expect_err("an unobservable event must not bypass the domain gate");
+                    let EngineError::StructuredContext { code, context, .. } = error else {
+                        panic!("delay domain failure should produce timeline context");
+                    };
+                    assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+                    assert_eq!(context["reason"], "authored-value-out-of-domain");
+                    assert_eq!(context["field"], "delayMs");
+                }
             }
         }
     }
 
     #[test]
-    fn preserves_fill_values_when_document_source_positions_overflow() {
+    fn preserves_fill_values_at_the_authored_delay_boundaries() {
         let playback = DocumentPlayback {
             duration_ms: 1.0,
             iterations: DocumentIterationCount::Infinite,
         };
-        let overflow_spec = |keyframes: Vec<AnimationKeyframe>,
+        let boundary_spec = |keyframes: Vec<AnimationKeyframe>,
                              delay_ms: f64,
                              iterations: AnimationIterations,
                              fill: &str| AnimationSpec {
             keyframes,
-            duration_ms: 1.0e-300,
+            duration_ms: MIN_AUTHORED_TIMELINE_DURATION_MS,
             delay_ms: Some(delay_ms),
             easing: Some(AnimationEasing::Named("step-end".to_string())),
             iterations: Some(iterations),
@@ -4936,35 +5438,35 @@ mod tests {
 
         for (delay_ms, iterations, fill, keyframe_opacities, authored_opacity) in [
             (
-                -1.0e308,
+                -MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Count(1.0),
                 "both",
                 [0.0, 1.0],
                 Some(1.0),
             ),
             (
-                -1.0e308,
+                -MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Count(1.0),
                 "none",
                 [0.0, 1.0],
                 None,
             ),
             (
-                1.0e308,
+                MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Count(1.0),
                 "both",
                 [0.0, 1.0],
                 Some(0.0),
             ),
             (
-                1.0e308,
+                MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Count(1.0),
                 "none",
                 [0.0, 1.0],
                 None,
             ),
             (
-                -1.0e308,
+                -MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Infinite("infinite".to_string()),
                 "none",
                 [0.0, 0.0],
@@ -4983,7 +5485,7 @@ mod tests {
                     transform: None,
                 },
             ];
-            let spec = overflow_spec(keyframes, delay_ms, iterations, fill);
+            let spec = boundary_spec(keyframes, delay_ms, iterations, fill);
             for (source, base_opacity) in [
                 (timeline_ir(spec.clone()), 0.25),
                 (
@@ -5005,7 +5507,7 @@ mod tests {
                 }
                 .to_keyframe();
                 let plan = compile_document_animation_plan(&source, playback, 0.5)
-                    .expect("an opacity track should preserve its overflow phase");
+                    .expect("an opacity track should preserve its boundary phase");
                 assert!(
                     plan.tracks[0]
                         .keyframes
@@ -5017,35 +5519,35 @@ mod tests {
 
         for (delay_ms, iterations, fill, keyframe_translate_x, expected_translate_x) in [
             (
-                -1.0e308,
+                -MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Count(1.0),
                 "both",
                 [7.0, 9.0],
                 Some(9.0),
             ),
             (
-                -1.0e308,
+                -MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Count(1.0),
                 "none",
                 [7.0, 9.0],
                 None,
             ),
             (
-                1.0e308,
+                MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Count(1.0),
                 "both",
                 [7.0, 9.0],
                 Some(7.0),
             ),
             (
-                1.0e308,
+                MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Count(1.0),
                 "none",
                 [7.0, 9.0],
                 None,
             ),
             (
-                -1.0e308,
+                -MAX_AUTHORED_TIMELINE_DELAY_MS,
                 AnimationIterations::Infinite("infinite".to_string()),
                 "none",
                 [7.0, 7.0],
@@ -5070,7 +5572,7 @@ mod tests {
                     }),
                 },
             ];
-            let spec = overflow_spec(keyframes, delay_ms, iterations, fill);
+            let spec = boundary_spec(keyframes, delay_ms, iterations, fill);
             for source in [
                 timeline_ir(spec.clone()),
                 Ir {
@@ -5083,7 +5585,7 @@ mod tests {
                 },
             ] {
                 let plan = compile_document_animation_plan(&source, playback, 0.5)
-                    .expect("a transform track should preserve its overflow phase");
+                    .expect("a transform track should preserve its boundary phase");
                 let expected_value = TrackValue {
                     opacity: None,
                     transform: Some(AnimationTransform2D {
@@ -5104,7 +5606,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_empty_exact_boundary_ranges_to_the_after_phase() {
+    fn normalizes_empty_exact_domain_boundary_ranges_to_the_after_phase() {
         let playback = DocumentPlayback {
             duration_ms: 1.0,
             iterations: DocumentIterationCount::Infinite,
@@ -5135,17 +5637,17 @@ mod tests {
                                    fill: &str| AnimationSpec {
             keyframes,
             duration_ms,
-            delay_ms: Some(-(2.0_f64).powi(53)),
+            delay_ms: Some(-(duration_ms * iterations)),
             easing: Some(AnimationEasing::Named("linear".to_string())),
             iterations: Some(AnimationIterations::Count(iterations)),
             fill: Some(fill.to_string()),
         };
 
         for (duration_ms, iterations, fill, authored_opacity) in [
-            ((2.0_f64).powi(53), 1.0, "both", Some(1.0)),
-            ((2.0_f64).powi(53), 1.0, "none", None),
-            ((2.0_f64).powi(54), 0.5, "both", Some(0.5)),
-            ((2.0_f64).powi(54), 0.5, "none", None),
+            (MAX_TIMELINE_DURATION_MS, 1.0, "both", Some(1.0)),
+            (MAX_TIMELINE_DURATION_MS, 1.0, "none", None),
+            (MAX_TIMELINE_DURATION_MS, 0.5, "both", Some(0.5)),
+            (MAX_TIMELINE_DURATION_MS, 0.5, "none", None),
         ] {
             let spec = exact_boundary_spec(
                 vec![
@@ -5197,10 +5699,10 @@ mod tests {
         }
 
         for (duration_ms, iterations, fill, authored_translate_x) in [
-            ((2.0_f64).powi(53), 1.0, "both", Some(9.0)),
-            ((2.0_f64).powi(53), 1.0, "none", None),
-            ((2.0_f64).powi(54), 0.5, "both", Some(8.0)),
-            ((2.0_f64).powi(54), 0.5, "none", None),
+            (MAX_TIMELINE_DURATION_MS, 1.0, "both", Some(9.0)),
+            (MAX_TIMELINE_DURATION_MS, 1.0, "none", None),
+            (MAX_TIMELINE_DURATION_MS, 0.5, "both", Some(8.0)),
+            (MAX_TIMELINE_DURATION_MS, 0.5, "none", None),
         ] {
             let spec = exact_boundary_spec(
                 vec![

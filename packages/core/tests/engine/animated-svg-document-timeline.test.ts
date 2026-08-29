@@ -152,7 +152,7 @@ function tinyTriangleScene() {
           { at: 0.5, opacity: 1 },
           { at: 1, opacity: 0 },
         ],
-        durationMs: 2e-300,
+        durationMs: 1 - 2 ** -53,
         easing: "linear",
         iterations: "infinite",
         fill: "both",
@@ -205,7 +205,7 @@ function largeSourcePositionScene(
   },
   timing: { durationMs: number; delayMs: number } = {
     durationMs: 1,
-    delayMs: -(2 ** 52 + 1),
+    delayMs: -(2 ** 32),
   },
 ) {
   const keyframeOpacities = endpoint?.keyframeOpacities ?? [0, 1];
@@ -530,7 +530,7 @@ describe("animated SVG document timeline", () => {
     }
   });
 
-  it("accepts a passing compressed pair beyond the source-position guard", () => {
+  it("accepts a passing compressed pair at the authored delay boundary", () => {
     const options = {
       playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
     } as const satisfies RenderAnimatedSvgOptions;
@@ -546,8 +546,8 @@ describe("animated SVG document timeline", () => {
     }
   });
 
-  it("accepts nonobservable finite, infinite, and sparse-identity source endpoints", () => {
-    const sourceStart = 2 ** 52 + 1;
+  it("accepts nonobservable finite, infinite, and sparse-identity endpoints inside the authored domain", () => {
+    const sourceStart = 2 ** 32;
     const finiteInteriorOptions = {
       playback: { mode: "timeline", durationMs: 2, iterations: "infinite" },
       timeMs: 0.75,
@@ -560,10 +560,12 @@ describe("animated SVG document timeline", () => {
     for (const owner of ["node", "textUnit"] as const) {
       for (const [scene, options] of [
         [
-          largeSourcePositionScene(owner, sourceStart + 1, {
-            keyframeOpacities: [0, 0],
-            fill: "both",
-          }),
+          largeSourcePositionScene(
+            owner,
+            2 ** 20,
+            { keyframeOpacities: [0, 0], fill: "both" },
+            { durationMs: 2 ** 12, delayMs: -sourceStart },
+          ),
           finiteInteriorOptions,
         ],
         [
@@ -571,15 +573,15 @@ describe("animated SVG document timeline", () => {
             owner,
             "infinite",
             { keyframeOpacities: [0, 0], fill: "both" },
-            { durationMs: 1, delayMs: -Number.MAX_VALUE },
+            { durationMs: 1, delayMs: -sourceStart },
           ),
           infiniteOptions,
         ],
         [
           semanticIdentityScene(owner, {
-            durationMs: 1,
+            durationMs: 2 ** 12,
             delayMs: -sourceStart,
-            iterations: sourceStart + 1,
+            iterations: 2 ** 20,
             fill: "none",
           }),
           finiteInteriorOptions,
@@ -593,20 +595,20 @@ describe("animated SVG document timeline", () => {
     }
   });
 
-  it("preserves fill values when normalized document positions overflow", () => {
+  it("preserves fill values at the authored duration and delay boundaries", () => {
     const options = {
       playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
       timeMs: 0.5,
     } as const satisfies RenderAnimatedSvgOptions;
 
     for (const [durationMs, delayMs, iterations, fill, keyframeOpacities, expectedOpacity] of [
-      [1e-300, -1e308, 1, "both", [0, 1], 1],
-      [1e-300, -1e308, 1, "none", [0, 1], 1],
-      [1e-300, 1e308, 1, "both", [0, 1], 0],
-      [1e-300, 1e308, 1, "none", [0, 1], 1],
-      [1e-300, -1e308, "infinite", "none", [0, 0], 0],
-      [2 ** 53, -(2 ** 53), 1, "both", [0, 1], 1],
-      [2 ** 53, -(2 ** 53), 1, "none", [0, 1], 1],
+      [1, -(2 ** 32), 1, "both", [0, 1], 1],
+      [1, -(2 ** 32), 1, "none", [0, 1], 1],
+      [1, 2 ** 32, 1, "both", [0, 1], 0],
+      [1, 2 ** 32, 1, "none", [0, 1], 1],
+      [1, -(2 ** 32), "infinite", "none", [0, 0], 0],
+      [2 ** 32, -(2 ** 32), 1, "both", [0, 1], 1],
+      [2 ** 32, -(2 ** 32), 1, "none", [0, 1], 1],
     ] as const) {
       for (const owner of ["node", "textUnit"] as const) {
         const scene = largeSourcePositionScene(
@@ -625,44 +627,17 @@ describe("animated SVG document timeline", () => {
     }
   });
 
-  it("rejects a finite source end whose merged D-cut loses mapping precision", () => {
-    const sourceStart = 2 ** 52 + 1;
+  it("rejects observable tracks just below the authored delay lower boundary", () => {
+    const belowDelayLowerBound = -(2 ** 32 + 2 ** -20);
     const options = {
       playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
       timeMs: 0.75,
     } as const satisfies RenderAnimatedSvgOptions;
 
     for (const owner of ["node", "textUnit"] as const) {
-      const scene = largeSourcePositionScene(owner, sourceStart + 1);
-      const compiled = engine.compile(scene);
-      for (const render of [
-        () => engine.renderToAnimatedSvg(scene, options),
-        () => engine.renderToAnimatedSvgAndIR(scene, options),
-        () => engine.renderCompiledToAnimatedSvg(compiled, options),
-      ]) {
-        expect(captureFatal(render)).toMatchObject({
-          code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
-          context: {
-            kind: "separation",
-            leftTimeMs: 0,
-            rightTimeMs: 1,
-          },
-        });
-      }
-    }
-  });
-
-  it("rejects a constant finite source end whose explicit pair loses mapping precision", () => {
-    const sourceStart = 2 ** 52 + 1;
-    const options = {
-      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
-      timeMs: 0.75,
-    } as const satisfies RenderAnimatedSvgOptions;
-
-    for (const owner of ["node", "textUnit"] as const) {
-      const scene = largeSourcePositionScene(owner, sourceStart + 1, {
-        keyframeOpacities: [0, 0],
-        fill: "none",
+      const scene = largeSourcePositionScene(owner, "infinite", undefined, {
+        durationMs: 1,
+        delayMs: belowDelayLowerBound,
       });
       const compiled = engine.compile(scene);
       for (const render of [
@@ -670,20 +645,55 @@ describe("animated SVG document timeline", () => {
         () => engine.renderToAnimatedSvgAndIR(scene, options),
         () => engine.renderCompiledToAnimatedSvg(compiled, options),
       ]) {
-        expect(captureFatal(render)).toMatchObject({
-          code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+        const fatal = captureFatal(render);
+        expect(fatal).toMatchObject({
+          code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
           context: {
-            kind: "separation",
-            leftTimeMs: 0,
-            rightTimeMs: 1,
+            reason: "authored-value-out-of-domain",
+            field: "delayMs",
+            received: String(belowDelayLowerBound),
           },
         });
+        expect(fatal.context).not.toHaveProperty("boundaryTimeMs");
       }
     }
   });
 
-  it("accepts safe constant tracks beyond the source-position guard", () => {
-    const sourceStart = 2 ** 52 + 1;
+  it("rejects constant tracks just above the authored iterations upper boundary", () => {
+    const aboveIterationsUpperBound = 2 ** 20 + 2 ** -32;
+    const options = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+      timeMs: 0.75,
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = largeSourcePositionScene(
+        owner,
+        aboveIterationsUpperBound,
+        { keyframeOpacities: [0, 0], fill: "none" },
+        { durationMs: 1, delayMs: 0 },
+      );
+      const compiled = engine.compile(scene);
+      for (const render of [
+        () => engine.renderToAnimatedSvg(scene, options),
+        () => engine.renderToAnimatedSvgAndIR(scene, options),
+        () => engine.renderCompiledToAnimatedSvg(compiled, options),
+      ]) {
+        const fatal = captureFatal(render);
+        expect(fatal).toMatchObject({
+          code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+          context: {
+            reason: "authored-value-out-of-domain",
+            field: "iterations",
+            received: String(aboveIterationsUpperBound),
+          },
+        });
+        expect(fatal.context).not.toHaveProperty("boundaryTimeMs");
+      }
+    }
+  });
+
+  it("accepts safe constant tracks at authored domain boundaries", () => {
     const options = {
       playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
       timeMs: 0.75,
@@ -691,8 +701,8 @@ describe("animated SVG document timeline", () => {
 
     for (const [iterations, keyframeOpacity, fill] of [
       ["infinite", 0, "none"],
-      [sourceStart + 1, 0, "both"],
-      [sourceStart + 1, 1, "none"],
+      [2 ** 20, 0, "both"],
+      [2 ** 20, 1, "none"],
     ] as const) {
       for (const owner of ["node", "textUnit"] as const) {
         const scene = largeSourcePositionScene(owner, iterations, {
@@ -707,7 +717,29 @@ describe("animated SVG document timeline", () => {
     }
   });
 
-  it("reports the first concrete pair before the construction precision guard", () => {
+  it("keeps out-of-timeline-domain authored values available in independent mode", () => {
+    const options = {
+      playback: { mode: "independent" },
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = largeSourcePositionScene(
+        owner,
+        2 ** 20 + 1,
+        { keyframeOpacities: [0, 0], fill: "both" },
+        { durationMs: 0.5, delayMs: 2 ** 32 + 1 },
+      );
+      const compiled = engine.compile(scene);
+      const direct = engine.renderToAnimatedSvg(scene, options);
+      expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+      expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+      expect(direct).toContain("animation-duration: 0.5ms;");
+      expect(direct).toContain("animation-delay: 4294967297ms;");
+      expect(direct).toContain("animation-iteration-count: 1048577;");
+    }
+  });
+
+  it("returns the reason-specific wire shape below the authored duration lower boundary", () => {
     const scene = tinyTriangleScene();
     const options = {
       playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
@@ -719,13 +751,18 @@ describe("animated SVG document timeline", () => {
       () => engine.renderToAnimatedSvgAndIR(scene, options),
       () => engine.renderCompiledToAnimatedSvg(compiled, options),
     ]) {
-      expect(captureFatal(render)).toMatchObject({
-        code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
-        context: {
-          kind: "f32-order",
-          leftTimeMs: 0,
-          rightTimeMs: 1e-300,
-        },
+      const fatal = captureFatal(render);
+      expect(fatal.code).toBe("ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+      expect(fatal.context).toEqual({
+        ownerKind: "node",
+        ownerId: "tiny-triangle-node",
+        reason: "authored-value-out-of-domain",
+        field: "durationMs",
+        received: String(1 - 2 ** -53),
+        migration:
+          "Use playback mode independent or change the authored value to the supported timeline range.",
+        stage: "emit",
+        nodeId: "tiny-triangle-node",
       });
     }
   });

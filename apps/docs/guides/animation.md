@@ -429,6 +429,24 @@ of one document cycle. Every emitted track uses that same CSS duration. A local
 each track's authored duration, delay, fill, easing, and local iterations still
 define its value inside `[0, D]`.
 
+Timeline mode has a strict numeric domain for each authored track:
+
+| Authored track field | Timeline range                   |
+| -------------------- | -------------------------------- |
+| `durationMs`         | finite `[1, 2^32]` ms            |
+| `delayMs`            | finite `[-2^32, 2^32]` ms        |
+| finite `iterations`  | `[2^-32, 2^20]`, or `"infinite"` |
+
+These limits apply only to `playback: { mode: "timeline" }`; independent mode
+keeps the authored-track acceptance rules above. A value outside the timeline
+domain fails before rendering with `ANIMATED_SVG_TIMELINE_UNREPRESENTABLE` and
+reason `authored-value-out-of-domain`. Its context identifies `field` and the
+JSON-safe string `received`; unlike boundary-specific representability errors,
+this reason has no `boundaryTimeMs`. Select independent playback or change the
+authored value to the documented range. For `animateUnits`, every unit's
+effective delay after applying `delayStepMs` must also remain in the `delayMs`
+range; a failure identifies the affected `unitId`.
+
 `iterations` accepts a positive number, including a fraction, or `"infinite"`.
 `timeMs` is the document elapsed time at load, not a wall-clock timestamp. During
 active playback it selects `timeMs mod D`; after a finite timeline has completed,
@@ -479,6 +497,8 @@ animated entry point. Then migrate mechanically:
 - If migration to `timeline` reports `clamped-overshoot-cubic`, keep that call
   in `independent` mode or author an opacity cubic whose raw values remain
   within `[0, 1]`; timeline compilation never approximates the clamp.
+- If it reports `authored-value-out-of-domain`, keep the call in `independent`
+  mode or move the reported authored field into the timeline numeric domain.
 - Update exhaustive `AnimatedSvgPlayback` switches with a `"timeline"` case;
   timeline fields belong on the playback variant, not on the animation spec.
 

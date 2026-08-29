@@ -847,7 +847,12 @@ fn sample_node(node: &mut IrNode, time_ms: f64) -> Result<(), EngineError> {
     Ok(())
 }
 
-fn validate_node(node: &IrNode) -> Result<(), EngineError> {
+fn validate_node_with_hooks(
+    node: &IrNode,
+    before_node: &mut impl FnMut(&IrNode) -> Result<(), EngineError>,
+    after_node: &mut impl FnMut(&IrNode) -> Result<(), EngineError>,
+) -> Result<(), EngineError> {
+    before_node(node)?;
     match &node.kind {
         IrNodeKind::Group {
             children,
@@ -857,14 +862,27 @@ fn validate_node(node: &IrNode) -> Result<(), EngineError> {
             if let Some(spec) = animation {
                 validate_animation_spec(spec, &node.node_id)?;
             }
+            after_node(node)?;
             for child in children {
-                validate_node(child)?;
+                validate_node_with_hooks(child, before_node, after_node)?;
             }
         }
-        IrNodeKind::Text { .. } => validate_text_unit_animation(node)?,
-        _ => {}
+        IrNodeKind::Text { .. } => {
+            validate_text_unit_animation(node)?;
+            after_node(node)?;
+        }
+        _ => after_node(node)?,
     }
     Ok(())
+}
+
+pub(super) fn validate_animations_with_node_hooks(
+    ir: &Ir,
+    before_node: &mut impl FnMut(&IrNode) -> Result<(), EngineError>,
+    after_node: &mut impl FnMut(&IrNode) -> Result<(), EngineError>,
+) -> Result<(), EngineError> {
+    validate_text_animation_budgets(&ir.root)?;
+    validate_node_with_hooks(&ir.root, before_node, after_node)
 }
 
 /// Validate every semantic animation track without sampling the IR.
@@ -874,8 +892,7 @@ fn validate_node(node: &IrNode) -> Result<(), EngineError> {
 /// Returns a structured error for malformed animation data supplied through
 /// a raw WASM transport or hand-authored IR.
 pub fn validate_animations(ir: &Ir) -> Result<(), EngineError> {
-    validate_text_animation_budgets(&ir.root)?;
-    validate_node(&ir.root)
+    validate_animations_with_node_hooks(ir, &mut |_| Ok(()), &mut |_| Ok(()))
 }
 
 /// Return whether the IR contains any authored node or text-unit animation.

@@ -293,7 +293,7 @@ function buildTinyTriangleScene(): VNode {
           { at: 0.5, opacity: 1 },
           { at: 1, opacity: 0 },
         ],
-        durationMs: 2e-300,
+        durationMs: 1 - 2 ** -53,
         easing: "linear",
         iterations: "infinite",
         fill: "both",
@@ -346,7 +346,7 @@ function buildLargeSourcePositionScene(
   },
   timing: { durationMs: number; delayMs: number } = {
     durationMs: 1,
-    delayMs: -(2 ** 52 + 1),
+    delayMs: -(2 ** 32),
   },
 ): VNode {
   const keyframeOpacities = endpoint?.keyframeOpacities ?? [0, 1];
@@ -506,6 +506,19 @@ function captureThrown(run: () => unknown): unknown {
     return error;
   }
   throw new Error("Expected render to throw");
+}
+
+function expectNoBoundaryTime(error: unknown): void {
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    !("context" in error) ||
+    typeof error.context !== "object" ||
+    error.context === null
+  ) {
+    throw new Error("Expected an error with structured context");
+  }
+  expect(Object.hasOwn(error.context, "boundaryTimeMs")).toBe(false);
 }
 
 function buildSpringAnimatedScene(): VNode {
@@ -736,7 +749,7 @@ describe("nodejs/web WASM public parity", () => {
     }
   });
 
-  it("accepts a passing compressed pair beyond the source-position guard in every WASM artifact", () => {
+  it("accepts a passing compressed pair at the authored delay boundary in every WASM artifact", () => {
     const options = {
       playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
     };
@@ -754,8 +767,8 @@ describe("nodejs/web WASM public parity", () => {
     }
   });
 
-  it("accepts nonobservable finite, infinite, and sparse-identity endpoints in every WASM artifact", () => {
-    const sourceStart = 2 ** 52 + 1;
+  it("accepts nonobservable finite, infinite, and sparse-identity endpoints inside the authored domain in every WASM artifact", () => {
+    const sourceStart = 2 ** 32;
     const finiteInteriorOptions = {
       playback: { mode: "timeline" as const, durationMs: 2, iterations: "infinite" as const },
       timeMs: 0.75,
@@ -768,10 +781,12 @@ describe("nodejs/web WASM public parity", () => {
     for (const owner of ["node", "textUnit"] as const) {
       for (const [scene, options] of [
         [
-          buildLargeSourcePositionScene(owner, sourceStart + 1, {
-            keyframeOpacities: [0, 0],
-            fill: "both",
-          }),
+          buildLargeSourcePositionScene(
+            owner,
+            2 ** 20,
+            { keyframeOpacities: [0, 0], fill: "both" },
+            { durationMs: 2 ** 12, delayMs: -sourceStart },
+          ),
           finiteInteriorOptions,
         ],
         [
@@ -779,15 +794,15 @@ describe("nodejs/web WASM public parity", () => {
             owner,
             "infinite",
             { keyframeOpacities: [0, 0], fill: "both" },
-            { durationMs: 1, delayMs: -Number.MAX_VALUE },
+            { durationMs: 1, delayMs: -sourceStart },
           ),
           infiniteOptions,
         ],
         [
           buildSemanticIdentityScene(owner, {
-            durationMs: 1,
+            durationMs: 2 ** 12,
             delayMs: -sourceStart,
-            iterations: sourceStart + 1,
+            iterations: 2 ** 20,
             fill: "none",
           }),
           finiteInteriorOptions,
@@ -803,20 +818,20 @@ describe("nodejs/web WASM public parity", () => {
     }
   });
 
-  it("preserves overflowed document-position fill values in every WASM artifact", () => {
+  it("preserves fill values at authored duration and delay boundaries in every WASM artifact", () => {
     const options = {
       playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
       timeMs: 0.5,
     };
 
     for (const [durationMs, delayMs, iterations, fill, keyframeOpacities, expectedOpacity] of [
-      [1e-300, -1e308, 1, "both", [0, 1], 1],
-      [1e-300, -1e308, 1, "none", [0, 1], 1],
-      [1e-300, 1e308, 1, "both", [0, 1], 0],
-      [1e-300, 1e308, 1, "none", [0, 1], 1],
-      [1e-300, -1e308, "infinite", "none", [0, 0], 0],
-      [2 ** 53, -(2 ** 53), 1, "both", [0, 1], 1],
-      [2 ** 53, -(2 ** 53), 1, "none", [0, 1], 1],
+      [1, -(2 ** 32), 1, "both", [0, 1], 1],
+      [1, -(2 ** 32), 1, "none", [0, 1], 1],
+      [1, 2 ** 32, 1, "both", [0, 1], 0],
+      [1, 2 ** 32, 1, "none", [0, 1], 1],
+      [1, -(2 ** 32), "infinite", "none", [0, 0], 0],
+      [2 ** 32, -(2 ** 32), 1, "both", [0, 1], 1],
+      [2 ** 32, -(2 ** 32), 1, "none", [0, 1], 1],
     ] as const) {
       for (const owner of ["node", "textUnit"] as const) {
         const scene = buildLargeSourcePositionScene(
@@ -837,46 +852,17 @@ describe("nodejs/web WASM public parity", () => {
     }
   });
 
-  it("rejects finite source-end D-cuts that lose mapping precision in every WASM artifact", () => {
-    const sourceStart = 2 ** 52 + 1;
+  it("rejects observable tracks just below the authored delay lower boundary in every WASM artifact", () => {
+    const belowDelayLowerBound = -(2 ** 32 + 2 ** -20);
     const options = {
       playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
       timeMs: 0.75,
     };
 
     for (const owner of ["node", "textUnit"] as const) {
-      const scene = buildLargeSourcePositionScene(owner, sourceStart + 1);
-      for (const engine of timelineEngines) {
-        const compiled = engine.compile(scene);
-        for (const render of [
-          () => engine.renderToAnimatedSvg(scene, options),
-          () => engine.renderToAnimatedSvgAndIR(scene, options),
-          () => engine.renderCompiledToAnimatedSvg(compiled, options),
-        ]) {
-          expect(captureThrown(render)).toMatchObject({
-            code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
-            context: {
-              kind: "separation",
-              leftTimeMs: 0,
-              rightTimeMs: 1,
-            },
-          });
-        }
-      }
-    }
-  });
-
-  it("rejects constant finite source-end pairs that lose mapping precision in every WASM artifact", () => {
-    const sourceStart = 2 ** 52 + 1;
-    const options = {
-      playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
-      timeMs: 0.75,
-    };
-
-    for (const owner of ["node", "textUnit"] as const) {
-      const scene = buildLargeSourcePositionScene(owner, sourceStart + 1, {
-        keyframeOpacities: [0, 0],
-        fill: "none",
+      const scene = buildLargeSourcePositionScene(owner, "infinite", undefined, {
+        durationMs: 1,
+        delayMs: belowDelayLowerBound,
       });
       for (const engine of timelineEngines) {
         const compiled = engine.compile(scene);
@@ -885,21 +871,58 @@ describe("nodejs/web WASM public parity", () => {
           () => engine.renderToAnimatedSvgAndIR(scene, options),
           () => engine.renderCompiledToAnimatedSvg(compiled, options),
         ]) {
-          expect(captureThrown(render)).toMatchObject({
-            code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+          const thrown = captureThrown(render);
+          expect(thrown).toMatchObject({
+            code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
             context: {
-              kind: "separation",
-              leftTimeMs: 0,
-              rightTimeMs: 1,
+              reason: "authored-value-out-of-domain",
+              field: "delayMs",
+              received: String(belowDelayLowerBound),
             },
           });
+          expectNoBoundaryTime(thrown);
         }
       }
     }
   });
 
-  it("accepts safe constant large-source pairs in every WASM artifact", () => {
-    const sourceStart = 2 ** 52 + 1;
+  it("rejects constant tracks just above the authored iterations upper boundary in every WASM artifact", () => {
+    const aboveIterationsUpperBound = 2 ** 20 + 2 ** -32;
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
+      timeMs: 0.75,
+    };
+
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = buildLargeSourcePositionScene(
+        owner,
+        aboveIterationsUpperBound,
+        { keyframeOpacities: [0, 0], fill: "none" },
+        { durationMs: 1, delayMs: 0 },
+      );
+      for (const engine of timelineEngines) {
+        const compiled = engine.compile(scene);
+        for (const render of [
+          () => engine.renderToAnimatedSvg(scene, options),
+          () => engine.renderToAnimatedSvgAndIR(scene, options),
+          () => engine.renderCompiledToAnimatedSvg(compiled, options),
+        ]) {
+          const thrown = captureThrown(render);
+          expect(thrown).toMatchObject({
+            code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+            context: {
+              reason: "authored-value-out-of-domain",
+              field: "iterations",
+              received: String(aboveIterationsUpperBound),
+            },
+          });
+          expectNoBoundaryTime(thrown);
+        }
+      }
+    }
+  });
+
+  it("accepts safe constant tracks at authored domain boundaries in every WASM artifact", () => {
     const options = {
       playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
       timeMs: 0.75,
@@ -907,8 +930,8 @@ describe("nodejs/web WASM public parity", () => {
 
     for (const [iterations, keyframeOpacity, fill] of [
       ["infinite", 0, "none"],
-      [sourceStart + 1, 0, "both"],
-      [sourceStart + 1, 1, "none"],
+      [2 ** 20, 0, "both"],
+      [2 ** 20, 1, "none"],
     ] as const) {
       for (const owner of ["node", "textUnit"] as const) {
         const scene = buildLargeSourcePositionScene(owner, iterations, {
@@ -925,7 +948,29 @@ describe("nodejs/web WASM public parity", () => {
     }
   });
 
-  it("reports the first construction-guard pair in every WASM artifact", () => {
+  it("keeps out-of-timeline-domain authored values available in independent mode in every WASM artifact", () => {
+    const options = { playback: { mode: "independent" as const } };
+
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = buildLargeSourcePositionScene(
+        owner,
+        2 ** 20 + 1,
+        { keyframeOpacities: [0, 0], fill: "both" },
+        { durationMs: 0.5, delayMs: 2 ** 32 + 1 },
+      );
+      const expected = nodeEngine.renderToAnimatedSvg(scene, options);
+      expect(expected).toContain("animation-duration: 0.5ms;");
+      expect(expected).toContain("animation-delay: 4294967297ms;");
+      expect(expected).toContain("animation-iteration-count: 1048577;");
+      for (const engine of timelineEngines) {
+        expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
+        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
+        expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
+      }
+    }
+  });
+
+  it("returns the reason-specific domain wire shape in every WASM artifact", () => {
     const scene = buildTinyTriangleScene();
     const options = {
       playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
@@ -938,14 +983,20 @@ describe("nodejs/web WASM public parity", () => {
         () => engine.renderToAnimatedSvgAndIR(scene, options),
         () => engine.renderCompiledToAnimatedSvg(compiled, options),
       ]) {
-        expect(captureThrown(render)).toMatchObject({
-          code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+        const thrown = captureThrown(render);
+        expect(thrown).toMatchObject({
+          code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
           context: {
-            kind: "f32-order",
-            leftTimeMs: 0,
-            rightTimeMs: 1e-300,
+            ownerKind: "node",
+            ownerId: "tiny-triangle-node",
+            reason: "authored-value-out-of-domain",
+            field: "durationMs",
+            received: String(1 - 2 ** -53),
+            migration:
+              "Use playback mode independent or change the authored value to the supported timeline range.",
           },
         });
+        expectNoBoundaryTime(thrown);
       }
     }
   });
