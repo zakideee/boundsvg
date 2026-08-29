@@ -267,8 +267,8 @@ function linearJumpScene(): VNode {
   );
 }
 
-function cubicCutScene(): VNode {
-  const animation = (easing: readonly [number, number, number, number]): AnimationSpec => ({
+function cubicCutScene(nodeId: string, easing: readonly [number, number, number, number]): VNode {
+  const animation: AnimationSpec = {
     keyframes: [
       { at: 0, opacity: 0, transform: { translateX: 0 } },
       { at: 1, opacity: 1, transform: { translateX: 100 } },
@@ -278,25 +278,17 @@ function cubicCutScene(): VNode {
     easing,
     iterations: 1,
     fill: "both",
-  });
+  };
   return createElement(
     "Canvas",
     { width: 160, height: 48 },
     createElement("Box", {
-      id: "cubic-overshoot",
+      id: nodeId,
       position: "absolute",
       width: 20,
       height: 20,
       background: "#dc2626",
-      animate: animation([0.3, 1.6, 0.7, 1.4]),
-    }),
-    createElement("Box", {
-      id: "cubic-monotone",
-      position: "absolute",
-      width: 20,
-      height: 20,
-      background: "#0891b2",
-      animate: animation([0.42, 0, 0.58, 1]),
+      animate: animation,
     }),
   );
 }
@@ -341,7 +333,7 @@ test("classifies discontinuities with off-instant and two-valued probes", async 
   }
 });
 
-test("preserves output-scaled linear jumps and cubic subcurves", async ({ page }) => {
+test("preserves output-scaled linear jumps and monotone cubic subcurves", async ({ page }) => {
   const jumpScene = linearJumpScene();
   for (const [timeMs, expected] of [
     [150 - PROBE_DISTANCE_MS, 0.9 - (0.8 * PROBE_DISTANCE_MS) / 150],
@@ -361,21 +353,26 @@ test("preserves output-scaled linear jumps and cubic subcurves", async ({ page }
   );
   expectNearEither(exactJump.opacity, [0.9, 0.5], OPACITY_TOLERANCE);
 
-  const cubicScene = cubicCutScene();
-  const cubicFixtures = [
-    { nodeId: "cubic-overshoot", curve: [0.3, 1.6, 0.7, 1.4] },
-    { nodeId: "cubic-monotone", curve: [0.42, 0, 0.58, 1] },
-  ] as const;
+  expect(() =>
+    engine.renderToAnimatedSvg(
+      cubicCutScene("cubic-overshoot", [0.3, 1.6, 0.7, 1.4]),
+      timelineOptions(130),
+    ),
+  ).toThrow(/clamped-overshoot-cubic/);
+
+  const cubicCurve = [0.42, 0, 0.58, 1] as const;
+  const cubicScene = cubicCutScene("cubic-monotone", cubicCurve);
   for (const timeMs of [130, 160, 199.999]) {
     const animatedSvg = engine.renderToAnimatedSvg(cubicScene, timelineOptions(timeMs));
     const progress = (timeMs - 120) / 200;
-    for (const fixture of cubicFixtures) {
-      const selector = `[data-boundsvg-node-id="${fixture.nodeId}"]`;
-      const animated = await readVisualState(page, animatedSvg, selector);
-      const eased = cubicEasing(progress, fixture.curve);
-      expectNear(animated.opacity, Math.min(1, Math.max(0, eased)), OPACITY_TOLERANCE);
-      expectNear(animated.matrix[4], eased * 100, MATRIX_TOLERANCE);
-    }
+    const animated = await readVisualState(
+      page,
+      animatedSvg,
+      '[data-boundsvg-node-id="cubic-monotone"]',
+    );
+    const eased = cubicEasing(progress, cubicCurve);
+    expectNear(animated.opacity, eased, OPACITY_TOLERANCE);
+    expectNear(animated.matrix[4], eased * 100, MATRIX_TOLERANCE);
   }
 });
 
