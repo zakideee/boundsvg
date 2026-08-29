@@ -1213,51 +1213,51 @@ fn cubic_subcurve(curve: [f64; 4], input_start: f64, input_end: f64) -> Option<[
 }
 
 fn interpolate_transform(
-    from: &AnimationTransform2D,
-    to: &AnimationTransform2D,
+    start: &AnimationTransform2D,
+    end: &AnimationTransform2D,
     progress: f64,
 ) -> AnimationTransform2D {
-    let interpolate = |from: Option<f64>, to: Option<f64>, identity: f64| {
-        let from_value = from.unwrap_or(identity);
-        let to_value = to.unwrap_or(identity);
-        Some(from_value + (to_value - from_value) * progress)
+    let interpolate = |start: Option<f64>, end: Option<f64>, identity: f64| {
+        let start_value = start.unwrap_or(identity);
+        let end_value = end.unwrap_or(identity);
+        Some(start_value + (end_value - start_value) * progress)
     };
     AnimationTransform2D {
-        translate_x: interpolate(from.translate_x, to.translate_x, 0.0),
-        translate_y: interpolate(from.translate_y, to.translate_y, 0.0),
-        scale_x: interpolate(from.scale_x, to.scale_x, 1.0),
-        scale_y: interpolate(from.scale_y, to.scale_y, 1.0),
-        rotate_deg: interpolate(from.rotate_deg, to.rotate_deg, 0.0),
+        translate_x: interpolate(start.translate_x, end.translate_x, 0.0),
+        translate_y: interpolate(start.translate_y, end.translate_y, 0.0),
+        scale_x: interpolate(start.scale_x, end.scale_x, 1.0),
+        scale_y: interpolate(start.scale_y, end.scale_y, 1.0),
+        rotate_deg: interpolate(start.rotate_deg, end.rotate_deg, 0.0),
     }
 }
 
 fn interpolate_keyframes(
-    from: &AnimationKeyframe,
-    to: &AnimationKeyframe,
+    start: &AnimationKeyframe,
+    end: &AnimationKeyframe,
     progress: f64,
 ) -> TrackValue {
     interpolate_track_values(
-        &TrackValue::from_keyframe(from),
-        &TrackValue::from_keyframe(to),
+        &TrackValue::from_keyframe(start),
+        &TrackValue::from_keyframe(end),
         progress,
     )
 }
 
-fn interpolate_track_values(from: &TrackValue, to: &TrackValue, progress: f64) -> TrackValue {
+fn interpolate_track_values(start: &TrackValue, end: &TrackValue, progress: f64) -> TrackValue {
     if progress == 0.0 {
-        return from.clone();
+        return start.clone();
     }
     if progress == 1.0 {
-        return to.clone();
+        return end.clone();
     }
     TrackValue {
-        opacity: match (from.opacity, to.opacity) {
+        opacity: match (start.opacity, end.opacity) {
             (Some(from_opacity), Some(to_opacity)) => {
                 Some((from_opacity + (to_opacity - from_opacity) * progress).clamp(0.0, 1.0))
             }
             _ => None,
         },
-        transform: match (from.transform.as_ref(), to.transform.as_ref()) {
+        transform: match (start.transform.as_ref(), end.transform.as_ref()) {
             (Some(from_transform), Some(to_transform)) => Some(interpolate_transform(
                 from_transform,
                 to_transform,
@@ -1269,21 +1269,24 @@ fn interpolate_track_values(from: &TrackValue, to: &TrackValue, progress: f64) -
 }
 
 fn transform_interpolation_is_constant(
-    from: &AnimationTransform2D,
-    to: &AnimationTransform2D,
+    start: &AnimationTransform2D,
+    end: &AnimationTransform2D,
 ) -> bool {
-    from.translate_x.unwrap_or(0.0) == to.translate_x.unwrap_or(0.0)
-        && from.translate_y.unwrap_or(0.0) == to.translate_y.unwrap_or(0.0)
-        && from.scale_x.unwrap_or(1.0) == to.scale_x.unwrap_or(1.0)
-        && from.scale_y.unwrap_or(1.0) == to.scale_y.unwrap_or(1.0)
-        && from.rotate_deg.unwrap_or(0.0) == to.rotate_deg.unwrap_or(0.0)
+    start.translate_x.unwrap_or(0.0) == end.translate_x.unwrap_or(0.0)
+        && start.translate_y.unwrap_or(0.0) == end.translate_y.unwrap_or(0.0)
+        && start.scale_x.unwrap_or(1.0) == end.scale_x.unwrap_or(1.0)
+        && start.scale_y.unwrap_or(1.0) == end.scale_y.unwrap_or(1.0)
+        && start.rotate_deg.unwrap_or(0.0) == end.rotate_deg.unwrap_or(0.0)
 }
 
 fn segment_interpolation_is_constant(spec: &AnimationSpec, segment_index: usize) -> bool {
-    let from = &spec.keyframes[segment_index];
-    let to = &spec.keyframes[segment_index + 1];
-    from.opacity == to.opacity
-        && match (from.transform.as_ref(), to.transform.as_ref()) {
+    let start_keyframe = &spec.keyframes[segment_index];
+    let end_keyframe = &spec.keyframes[segment_index + 1];
+    start_keyframe.opacity == end_keyframe.opacity
+        && match (
+            start_keyframe.transform.as_ref(),
+            end_keyframe.transform.as_ref(),
+        ) {
             (Some(from_transform), Some(to_transform)) => {
                 transform_interpolation_is_constant(from_transform, to_transform)
             }
@@ -1302,9 +1305,10 @@ fn cubic_raw_opacity_leaves_clamp_range(
     if (0.0..=1.0).contains(&curve[1]) && (0.0..=1.0).contains(&curve[3]) {
         return false;
     }
-    let from = &spec.keyframes[segment_index];
-    let to = &spec.keyframes[segment_index + 1];
-    let (Some(from_opacity), Some(to_opacity)) = (from.opacity, to.opacity) else {
+    let start_keyframe = &spec.keyframes[segment_index];
+    let end_keyframe = &spec.keyframes[segment_index + 1];
+    let (Some(from_opacity), Some(to_opacity)) = (start_keyframe.opacity, end_keyframe.opacity)
+    else {
         return false;
     };
     if from_opacity == to_opacity {
@@ -1333,16 +1337,16 @@ fn evaluate_segment(
     resolved_easing: ResolvedEasing,
     before: bool,
 ) -> TrackValue {
-    let from = &spec.keyframes[segment_index];
-    let to = &spec.keyframes[segment_index + 1];
-    let segment_duration_ms = spec.duration_ms * (to.at - from.at);
+    let start_keyframe = &spec.keyframes[segment_index];
+    let end_keyframe = &spec.keyframes[segment_index + 1];
+    let segment_duration_ms = spec.duration_ms * (end_keyframe.at - start_keyframe.at);
     let eased_progress = animation::apply_easing(
         input_progress.clamp(0.0, 1.0),
         resolved_easing,
         before,
         segment_duration_ms,
     );
-    interpolate_keyframes(from, to, eased_progress)
+    interpolate_keyframes(start_keyframe, end_keyframe, eased_progress)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1376,14 +1380,14 @@ fn active_piece_endpoint(
                 .position(|pair| progress >= pair[0].at && progress < pair[1].at)?
         }
     };
-    let from = &spec.keyframes[segment_index];
-    let to = &spec.keyframes[segment_index + 1];
-    let input_progress = if progress == from.at {
+    let start_keyframe = &spec.keyframes[segment_index];
+    let end_keyframe = &spec.keyframes[segment_index + 1];
+    let input_progress = if progress == start_keyframe.at {
         0.0
-    } else if progress == to.at {
+    } else if progress == end_keyframe.at {
         1.0
     } else {
-        (progress - from.at) / (to.at - from.at)
+        (progress - start_keyframe.at) / (end_keyframe.at - start_keyframe.at)
     };
     Some(CanonicalPieceEndpoint {
         segment_index,
@@ -3058,8 +3062,8 @@ mod tests {
 
     #[test]
     fn cuts_a_cubic_curve_at_the_document_end() {
-        let keyframe = |at, translate_x| AnimationKeyframe {
-            at,
+        let keyframe = |keyframe_offset, translate_x| AnimationKeyframe {
+            at: keyframe_offset,
             opacity: None,
             transform: Some(AnimationTransform2D {
                 translate_x: Some(translate_x),
@@ -3204,8 +3208,8 @@ mod tests {
 
     #[test]
     fn rejects_uncut_mixed_and_opacity_only_clamped_overshoot_cubics() {
-        let make_keyframe = |at, opacity, translate_x| AnimationKeyframe {
-            at,
+        let make_keyframe = |keyframe_offset, opacity, translate_x| AnimationKeyframe {
+            at: keyframe_offset,
             opacity: Some(opacity),
             transform: Some(AnimationTransform2D {
                 translate_x: Some(translate_x),
@@ -3362,8 +3366,8 @@ mod tests {
             iterations: Some(AnimationIterations::Count(1.0)),
             fill: Some("both".to_string()),
         };
-        let transform_keyframe = |at, translate_x| AnimationKeyframe {
-            at,
+        let transform_keyframe = |keyframe_offset, translate_x| AnimationKeyframe {
+            at: keyframe_offset,
             opacity: None,
             transform: Some(AnimationTransform2D {
                 translate_x: Some(translate_x),
@@ -3564,8 +3568,8 @@ mod tests {
     fn preserves_exact_linear_endpoints_for_final_hold_classification() {
         let value_a = 0.5_f64;
         let value_b = f64::from_bits(value_a.to_bits() + 1);
-        let keyframe = |at: f64, value: f64, transform: bool| AnimationKeyframe {
-            at,
+        let keyframe = |keyframe_offset: f64, value: f64, transform: bool| AnimationKeyframe {
+            at: keyframe_offset,
             opacity: (!transform).then_some(value),
             transform: transform.then_some(AnimationTransform2D {
                 translate_x: Some(value),
@@ -3642,14 +3646,15 @@ mod tests {
 
     #[test]
     fn rejects_clamped_overshoot_cubic_for_nodes_and_text_units() {
-        let keyframe = |at: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
-            at,
-            opacity: Some(opacity),
-            transform: with_transform.then_some(AnimationTransform2D {
-                translate_x: Some(7.0),
-                ..AnimationTransform2D::default()
-            }),
-        };
+        let keyframe =
+            |keyframe_offset: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
+                at: keyframe_offset,
+                opacity: Some(opacity),
+                transform: with_transform.then_some(AnimationTransform2D {
+                    translate_x: Some(7.0),
+                    ..AnimationTransform2D::default()
+                }),
+            };
         let playback = DocumentPlayback {
             duration_ms: 1_000.0,
             iterations: DocumentIterationCount::Infinite,
@@ -3701,14 +3706,15 @@ mod tests {
 
     #[test]
     fn rejects_extreme_clamped_overshoot_before_plan_expansion() {
-        let keyframe = |at: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
-            at,
-            opacity: Some(opacity),
-            transform: with_transform.then_some(AnimationTransform2D {
-                translate_x: Some(7.0),
-                ..AnimationTransform2D::default()
-            }),
-        };
+        let keyframe =
+            |keyframe_offset: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
+                at: keyframe_offset,
+                opacity: Some(opacity),
+                transform: with_transform.then_some(AnimationTransform2D {
+                    translate_x: Some(7.0),
+                    ..AnimationTransform2D::default()
+                }),
+            };
         let playback = DocumentPlayback {
             duration_ms: 1_000_000.0,
             iterations: DocumentIterationCount::Infinite,
@@ -3763,8 +3769,8 @@ mod tests {
 
     #[test]
     fn canonical_boundary_program_count_matches_materialization_at_document_cuts() {
-        let keyframe = |at: f64, opacity: f64| AnimationKeyframe {
-            at,
+        let keyframe = |keyframe_offset: f64, opacity: f64| AnimationKeyframe {
+            at: keyframe_offset,
             opacity: Some(opacity),
             transform: None,
         };
@@ -5420,8 +5426,8 @@ mod tests {
     #[test]
     fn orders_piece_and_base_transition_failures_by_time_then_reason_priority() {
         let make_source = |iterations| {
-            let transform_keyframe = |at, translate_x| AnimationKeyframe {
-                at,
+            let transform_keyframe = |keyframe_offset, translate_x| AnimationKeyframe {
+                at: keyframe_offset,
                 opacity: None,
                 transform: Some(AnimationTransform2D {
                     translate_x: Some(translate_x),
@@ -5672,10 +5678,10 @@ mod tests {
         let make_spec = |stop_count: usize| AnimationSpec {
             keyframes: (0..stop_count)
                 .map(|index| {
-                    let at = index as f64 / (stop_count - 1) as f64;
+                    let keyframe_offset = index as f64 / (stop_count - 1) as f64;
                     AnimationKeyframe {
-                        at,
-                        opacity: Some(at),
+                        at: keyframe_offset,
+                        opacity: Some(keyframe_offset),
                         transform: None,
                     }
                 })
