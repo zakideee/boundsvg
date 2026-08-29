@@ -91,6 +91,49 @@ function exactEndpointScene(owner: EndpointOwner, channel: EndpointChannel, seam
   return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
+function clampRootScene(owner: EndpointOwner, withTransform: boolean) {
+  const animation: AnimationSpec = {
+    keyframes: [
+      {
+        at: 0,
+        opacity: 0,
+        ...(withTransform ? { transform: { translateX: 7 } } : {}),
+      },
+      {
+        at: 1,
+        opacity: 1,
+        ...(withTransform ? { transform: { translateX: 7 } } : {}),
+      },
+    ],
+    durationMs: 1_000,
+    easing: [0.3, 2.3, 0.7, -0.2],
+    iterations: 1,
+    fill: "both",
+  };
+  const animated =
+    owner === "node"
+      ? createElement("Box", {
+          id: "clamp-root-node",
+          width: 32,
+          height: 20,
+          animate: animation,
+        })
+      : createElement(
+          "Text",
+          {
+            id: "clamp-root-text",
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return createElement("Canvas", { width: 96, height: 48 }, animated);
+}
+
 function captureFatal(run: () => unknown): FatalError {
   try {
     run();
@@ -218,6 +261,23 @@ describe("animated SVG document timeline", () => {
         const direct = engine.renderToAnimatedSvg(continuousScene, options);
         expect(engine.renderToAnimatedSvgAndIR(continuousScene, options).svg).toBe(direct);
         expect(engine.renderCompiledToAnimatedSvg(continuousCompiled, options)).toBe(direct);
+      }
+    }
+  });
+
+  it("canonicalizes clamp-root endpoints across owners and public render paths", () => {
+    const options = {
+      playback: { mode: "timeline", durationMs: 1_000, iterations: 0.3952 },
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      for (const withTransform of [false, true]) {
+        const scene = clampRootScene(owner, withTransform);
+        const compiled = engine.compile(scene);
+        const direct = engine.renderToAnimatedSvg(scene, options);
+        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+        expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+        expect(direct).toMatch(/39\.52\d*% \{ opacity: 1/);
       }
     }
   });

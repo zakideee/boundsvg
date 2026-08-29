@@ -578,9 +578,89 @@ fn push_boundary(boundaries: &mut Vec<f64>, time_ms: f64, duration_ms: f64) {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BoundaryOffset {
+    progress: f64,
+    opacity_clamp: Option<f64>,
+}
+
+impl BoundaryOffset {
+    fn plain(progress: f64) -> Self {
+        Self {
+            progress,
+            opacity_clamp: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TimelineBoundary {
+    time_ms: f64,
+    opacity_clamp: Option<f64>,
+}
+
+impl TimelineBoundary {
+    fn plain(time_ms: f64) -> Self {
+        Self {
+            time_ms,
+            opacity_clamp: None,
+        }
+    }
+}
+
+fn sort_and_merge_boundary_offsets_by(boundaries: &mut Vec<BoundaryOffset>, merge_nearby: bool) {
+    boundaries.sort_by(|left, right| left.progress.total_cmp(&right.progress));
+    let mut merged: Vec<BoundaryOffset> = Vec::with_capacity(boundaries.len());
+    for boundary in boundaries.drain(..) {
+        if let Some(previous) = merged.last_mut()
+            && if merge_nearby {
+                same_time(previous.progress, boundary.progress)
+            } else {
+                previous.progress == boundary.progress
+            }
+            && match (previous.opacity_clamp, boundary.opacity_clamp) {
+                (Some(previous_clamp), Some(boundary_clamp)) => previous_clamp == boundary_clamp,
+                _ => true,
+            }
+        {
+            if previous.opacity_clamp.is_none() {
+                previous.opacity_clamp = boundary.opacity_clamp;
+            }
+            continue;
+        }
+        merged.push(boundary);
+    }
+    *boundaries = merged;
+}
+
+fn sort_and_merge_boundary_offsets(boundaries: &mut Vec<BoundaryOffset>) {
+    sort_and_merge_boundary_offsets_by(boundaries, false);
+}
+
+fn sort_and_merge_nearby_boundary_offsets(boundaries: &mut Vec<BoundaryOffset>) {
+    sort_and_merge_boundary_offsets_by(boundaries, true);
+}
+
+fn sort_and_merge_timeline_boundaries(boundaries: &mut Vec<TimelineBoundary>) {
+    boundaries.sort_by(|left, right| left.time_ms.total_cmp(&right.time_ms));
+    let mut merged: Vec<TimelineBoundary> = Vec::with_capacity(boundaries.len());
+    for boundary in boundaries.drain(..) {
+        if let Some(previous) = merged.last_mut()
+            && previous.time_ms == boundary.time_ms
+        {
+            if previous.opacity_clamp.is_none() {
+                previous.opacity_clamp = boundary.opacity_clamp;
+            }
+            continue;
+        }
+        merged.push(boundary);
+    }
+    *boundaries = merged;
+}
+
 #[derive(Debug, Clone)]
 struct LocalBoundaryPattern {
-    fixed_offsets: Vec<f64>,
+    fixed_offsets: Vec<BoundaryOffset>,
     step_segments: Vec<(f64, f64, f64)>,
 }
 
@@ -589,7 +669,7 @@ impl LocalBoundaryPattern {
         let fixed_count = self
             .fixed_offsets
             .iter()
-            .filter(|offset| **offset > lower && **offset < upper)
+            .filter(|offset| offset.progress > lower && offset.progress < upper)
             .count() as f64;
         self.step_segments
             .iter()
@@ -642,7 +722,7 @@ impl LocalBoundaryPattern {
         }
         self.fixed_offsets
             .iter()
-            .copied()
+            .map(|offset| offset.progress)
             .chain(std::iter::once(1.0))
             .try_fold((None, f64::INFINITY), |(previous, minimum), offset| {
                 let next_minimum = previous.map_or(minimum, |previous_offset| {
@@ -958,11 +1038,28 @@ fn exact_track_value(source: &TrackSource, time_ms: f64) -> Result<TrackValue, E
     })
 }
 
+fn canonicalize_boundary_value(mut value: TrackValue, boundary: TimelineBoundary) -> TrackValue {
+    if value.opacity.is_some()
+        && let Some(opacity_clamp) = boundary.opacity_clamp
+    {
+        value.opacity = Some(opacity_clamp);
+    }
+    value
+}
+
+fn exact_track_value_at_boundary(
+    source: &TrackSource,
+    boundary: TimelineBoundary,
+) -> Result<TrackValue, EngineError> {
+    exact_track_value(source, boundary.time_ms)
+        .map(|value| canonicalize_boundary_value(value, boundary))
+}
+
 fn cubic_segment_boundary_progresses(
     spec: &AnimationSpec,
     segment_index: usize,
     curve: [f64; 4],
-) -> Vec<f64> {
+) -> Vec<BoundaryOffset> {
     let from = &spec.keyframes[segment_index];
     let to = &spec.keyframes[segment_index + 1];
     let segment_span = to.at - from.at;
@@ -972,15 +1069,24 @@ fn cubic_segment_boundary_progresses(
     {
         for threshold in [0.0, 1.0] {
             let target = (threshold - from_opacity) / (to_opacity - from_opacity);
-            parameters.extend(cubic_roots_for_value(curve[1], curve[3], target));
+            parameters.extend(
+                cubic_roots_for_value(curve[1], curve[3], target)
+                    .into_iter()
+                    .map(|parameter| (parameter, threshold)),
+            );
         }
     }
-    parameters.sort_by(f64::total_cmp);
-    parameters.dedup_by(|left, right| same_time(*left, *right));
-    parameters
+    parameters.sort_by(|left, right| left.0.total_cmp(&right.0));
+    parameters.dedup_by(|left, right| left.1 == right.1 && same_time(left.0, right.0));
+    let mut boundaries = parameters
         .into_iter()
-        .map(|parameter| from.at + cubic_coordinate(parameter, curve[0], curve[2]) * segment_span)
-        .collect()
+        .map(|(parameter, threshold)| BoundaryOffset {
+            progress: from.at + cubic_coordinate(parameter, curve[0], curve[2]) * segment_span,
+            opacity_clamp: Some(threshold),
+        })
+        .collect();
+    sort_and_merge_nearby_boundary_offsets(&mut boundaries);
+    boundaries
 }
 
 fn required_cubic_extrema_progresses(
@@ -989,16 +1095,16 @@ fn required_cubic_extrema_progresses(
     curve: [f64; 4],
     visible_start: f64,
     visible_end: f64,
-    existing_progresses: &[f64],
-) -> Vec<f64> {
+    existing_progresses: &[BoundaryOffset],
+) -> Vec<BoundaryOffset> {
     let from = &spec.keyframes[segment_index];
     let to = &spec.keyframes[segment_index + 1];
     let segment_span = to.at - from.at;
     let input_start = ((visible_start - from.at) / segment_span).clamp(0.0, 1.0);
     let input_end = ((visible_end - from.at) / segment_span).clamp(0.0, 1.0);
     let mut input_boundaries = vec![input_start];
-    input_boundaries.extend(existing_progresses.iter().filter_map(|progress| {
-        let input = (*progress - from.at) / segment_span;
+    input_boundaries.extend(existing_progresses.iter().filter_map(|boundary| {
+        let input = (boundary.progress - from.at) / segment_span;
         (input > input_start && input < input_end).then_some(input)
     }));
     input_boundaries.push(input_end);
@@ -1034,12 +1140,11 @@ fn required_cubic_extrema_progresses(
             progresses.extend(
                 extrema
                     .into_iter()
-                    .map(|(input, _)| from.at + input * segment_span),
+                    .map(|(input, _)| BoundaryOffset::plain(from.at + input * segment_span)),
             );
         }
     }
-    progresses.sort_by(f64::total_cmp);
-    progresses.dedup_by(|left, right| same_time(*left, *right));
+    sort_and_merge_nearby_boundary_offsets(&mut progresses);
     progresses
 }
 
@@ -1047,15 +1152,14 @@ fn full_cubic_segment_boundary_progresses(
     spec: &AnimationSpec,
     segment_index: usize,
     curve: [f64; 4],
-) -> Vec<f64> {
+) -> Vec<BoundaryOffset> {
     let from = &spec.keyframes[segment_index];
     let to = &spec.keyframes[segment_index + 1];
     let mut progresses = cubic_segment_boundary_progresses(spec, segment_index, curve);
     let extrema =
         required_cubic_extrema_progresses(spec, segment_index, curve, from.at, to.at, &progresses);
     progresses.extend(extrema);
-    progresses.sort_by(f64::total_cmp);
-    progresses.dedup_by(|left, right| same_time(*left, *right));
+    sort_and_merge_nearby_boundary_offsets(&mut progresses);
     progresses
 }
 
@@ -1063,12 +1167,12 @@ fn local_boundary_pattern(
     spec: &AnimationSpec,
     resolved_easing: ResolvedEasing,
 ) -> LocalBoundaryPattern {
-    let mut fixed_offsets = vec![0.0];
+    let mut fixed_offsets = vec![BoundaryOffset::plain(0.0)];
     fixed_offsets.extend(
         spec.keyframes
             .iter()
-            .map(|keyframe| keyframe.at)
-            .filter(|offset| *offset > 0.0 && *offset < 1.0),
+            .map(|keyframe| BoundaryOffset::plain(keyframe.at))
+            .filter(|offset| offset.progress > 0.0 && offset.progress < 1.0),
     );
     let mut step_segments = Vec::new();
     match resolved_easing {
@@ -1090,8 +1194,7 @@ fn local_boundary_pattern(
         }
         ResolvedEasing::Spring { .. } => {}
     }
-    fixed_offsets.sort_by(f64::total_cmp);
-    fixed_offsets.dedup_by(|left, right| *left == *right);
+    sort_and_merge_boundary_offsets(&mut fixed_offsets);
     LocalBoundaryPattern {
         fixed_offsets,
         step_segments,
@@ -1157,7 +1260,7 @@ fn visit_iteration_boundaries<F>(
     visitor: &mut F,
 ) -> Result<(), EngineError>
 where
-    F: FnMut(f64) -> Result<(), EngineError>,
+    F: FnMut(TimelineBoundary) -> Result<(), EngineError>,
 {
     let visible_start_ms = iteration_start_ms.max(0.0);
     let visible_end_ms = (iteration_start_ms + iteration_progress_limit * source.spec.duration_ms)
@@ -1183,7 +1286,9 @@ where
         }
         let boundary_time_ms =
             |progress: f64| iteration_start_ms + progress * source.spec.duration_ms;
-        visitor(boundary_time_ms(segment_visible_start))?;
+        visitor(TimelineBoundary::plain(boundary_time_ms(
+            segment_visible_start,
+        )))?;
 
         match resolved_easing {
             ResolvedEasing::Steps { count, .. } => {
@@ -1200,7 +1305,7 @@ where
                     let step_progress = step_index / count;
                     let iteration_progress = segment_start + step_progress * segment_span;
                     let step_time_ms = boundary_time_ms(iteration_progress);
-                    visitor(step_time_ms)?;
+                    visitor(TimelineBoundary::plain(step_time_ms))?;
                     let next_step_index = step_index + 1.0;
                     if next_step_index == step_index && next_step_index < step_end {
                         return Err(timeline_precision_error(
@@ -1224,13 +1329,15 @@ where
                     &progresses,
                 );
                 progresses.extend(extrema);
-                progresses.sort_by(f64::total_cmp);
-                progresses.dedup_by(|left, right| same_time(*left, *right));
-                for iteration_progress in progresses {
-                    if iteration_progress > segment_visible_start
-                        && iteration_progress < segment_visible_end
+                sort_and_merge_nearby_boundary_offsets(&mut progresses);
+                for boundary in progresses {
+                    if boundary.progress > segment_visible_start
+                        && boundary.progress < segment_visible_end
                     {
-                        visitor(boundary_time_ms(iteration_progress))?;
+                        visitor(TimelineBoundary {
+                            time_ms: boundary_time_ms(boundary.progress),
+                            opacity_clamp: boundary.opacity_clamp,
+                        })?;
                     }
                 }
             }
@@ -1243,7 +1350,9 @@ where
                 ));
             }
         }
-        visitor(boundary_time_ms(segment_visible_end))?;
+        visitor(TimelineBoundary::plain(boundary_time_ms(
+            segment_visible_end,
+        )))?;
         if segment_end >= visible_progress_end {
             break;
         }
@@ -1253,13 +1362,14 @@ where
 
 fn visit_distinct_boundary<F>(
     previous_boundary: &mut Option<f64>,
-    time_ms: f64,
+    boundary: TimelineBoundary,
     playback: DocumentPlayback,
     visitor: &mut F,
 ) -> Result<(), EngineError>
 where
-    F: FnMut(f64) -> Result<(), EngineError>,
+    F: FnMut(TimelineBoundary) -> Result<(), EngineError>,
 {
+    let time_ms = boundary.time_ms;
     if !time_ms.is_finite() || time_ms < 0.0 || time_ms > playback.duration_ms {
         return Ok(());
     }
@@ -1274,7 +1384,10 @@ where
     if previous_boundary.is_some_and(|previous| previous == clamped_time_ms) {
         return Ok(());
     }
-    visitor(clamped_time_ms)?;
+    visitor(TimelineBoundary {
+        time_ms: clamped_time_ms,
+        opacity_clamp: boundary.opacity_clamp,
+    })?;
     *previous_boundary = Some(clamped_time_ms);
     Ok(())
 }
@@ -1286,12 +1399,17 @@ fn visit_track_boundaries_with<F>(
     visitor: &mut F,
 ) -> Result<(), EngineError>
 where
-    F: FnMut(f64) -> Result<(), EngineError>,
+    F: FnMut(TimelineBoundary) -> Result<(), EngineError>,
 {
     // The visitor keeps precision and count passes at O(1) output memory. A
     // full boundary vector is materialized only by the post-budget plan sink.
     let mut previous_boundary = None;
-    visit_distinct_boundary(&mut previous_boundary, 0.0, playback, visitor)?;
+    visit_distinct_boundary(
+        &mut previous_boundary,
+        TimelineBoundary::plain(0.0),
+        playback,
+        visitor,
+    )?;
     let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
     let source_iteration_count = source_iterations(&source.spec);
 
@@ -1308,11 +1426,16 @@ where
         boundaries.sort_by(f64::total_cmp);
         boundaries.dedup_by(|left, right| *left == *right);
         for boundary in boundaries {
-            visit_distinct_boundary(&mut previous_boundary, boundary, playback, visitor)?;
+            visit_distinct_boundary(
+                &mut previous_boundary,
+                TimelineBoundary::plain(boundary),
+                playback,
+                visitor,
+            )?;
         }
         visit_distinct_boundary(
             &mut previous_boundary,
-            playback.duration_ms,
+            TimelineBoundary::plain(playback.duration_ms),
             playback,
             visitor,
         )?;
@@ -1366,7 +1489,7 @@ where
     }
     visit_distinct_boundary(
         &mut previous_boundary,
-        playback.duration_ms,
+        TimelineBoundary::plain(playback.duration_ms),
         playback,
         visitor,
     )
@@ -1376,7 +1499,7 @@ fn collect_boundaries(
     source: &TrackSource,
     playback: DocumentPlayback,
     resolved_easing: ResolvedEasing,
-) -> Result<Vec<f64>, EngineError> {
+) -> Result<Vec<TimelineBoundary>, EngineError> {
     let mut boundaries = Vec::new();
     visit_track_boundaries_with(source, playback, resolved_easing, &mut |boundary| {
         boundaries.push(boundary);
@@ -1387,10 +1510,12 @@ fn collect_boundaries(
 
 fn function_piece(
     source: &TrackSource,
-    start_ms: f64,
-    end_ms: f64,
+    start_boundary: TimelineBoundary,
+    end_boundary: TimelineBoundary,
     resolved_easing: ResolvedEasing,
 ) -> Result<FunctionPiece, EngineError> {
+    let start_ms = start_boundary.time_ms;
+    let end_ms = end_boundary.time_ms;
     let midpoint_ms = f64::midpoint(start_ms, end_ms);
     let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
     let active_time_ms = midpoint_ms - delay_ms;
@@ -1447,10 +1572,14 @@ fn function_piece(
             })
         }
         ResolvedEasing::Cubic(curve) => {
-            let start_value =
-                evaluate_segment(&source.spec, segment_index, input_start, resolved_easing);
-            let end_value =
-                evaluate_segment(&source.spec, segment_index, input_end, resolved_easing);
+            let start_value = canonicalize_boundary_value(
+                evaluate_segment(&source.spec, segment_index, input_start, resolved_easing),
+                start_boundary,
+            );
+            let end_value = canonicalize_boundary_value(
+                evaluate_segment(&source.spec, segment_index, input_end, resolved_easing),
+                end_boundary,
+            );
             if let Some(constant_value) = cubic_piece_constant_value(
                 &source.spec,
                 segment_index,
@@ -1786,7 +1915,7 @@ fn document_cut_extra_boundary_times(
             }
             let full_progresses =
                 full_cubic_segment_boundary_progresses(&source.spec, segment_index, curve);
-            for progress in required_cubic_extrema_progresses(
+            for boundary in required_cubic_extrema_progresses(
                 &source.spec,
                 segment_index,
                 curve,
@@ -1794,7 +1923,7 @@ fn document_cut_extra_boundary_times(
                 segment_visible_end,
                 &full_progresses,
             ) {
-                let boundary_ms = iteration_start_ms + progress * source.spec.duration_ms;
+                let boundary_ms = iteration_start_ms + boundary.progress * source.spec.duration_ms;
                 if boundary_ms > 0.0 && boundary_ms < playback.duration_ms {
                     extra_boundaries.push(boundary_ms);
                 }
@@ -1846,35 +1975,35 @@ fn representability_preflight(
                     Ok(())
                 },
             )?;
-            boundaries.sort_by(f64::total_cmp);
-            boundaries.dedup_by(|left, right| *left == *right);
+            sort_and_merge_timeline_boundaries(&mut boundaries);
             for pair in boundaries.windows(2) {
-                let [start_ms, end_ms] = pair else {
+                let [start_boundary, end_boundary] = pair else {
                     continue;
                 };
-                if end_ms <= start_ms {
+                if end_boundary.time_ms <= start_boundary.time_ms {
                     continue;
                 }
-                let piece = match function_piece(source, *start_ms, *end_ms, resolved_easing) {
-                    Ok(piece) => piece,
-                    Err(error) => {
-                        retain_earliest_representability_failure(
-                            &mut earliest,
-                            RepresentabilityFailure {
-                                boundary_time_ms: *end_ms,
-                                tie_priority: 2,
-                                error,
-                            },
-                        );
-                        continue;
-                    }
-                };
-                let right_value = exact_track_value(source, *end_ms)?;
+                let piece =
+                    match function_piece(source, *start_boundary, *end_boundary, resolved_easing) {
+                        Ok(piece) => piece,
+                        Err(error) => {
+                            retain_earliest_representability_failure(
+                                &mut earliest,
+                                RepresentabilityFailure {
+                                    boundary_time_ms: end_boundary.time_ms,
+                                    tie_priority: 2,
+                                    error,
+                                },
+                            );
+                            continue;
+                        }
+                    };
+                let right_value = exact_track_value_at_boundary(source, *end_boundary)?;
                 if let Err(error) = compile_piece_easing(source, &piece, &right_value) {
                     retain_earliest_representability_failure(
                         &mut earliest,
                         RepresentabilityFailure {
-                            boundary_time_ms: *end_ms,
+                            boundary_time_ms: end_boundary.time_ms,
                             tie_priority: 2,
                             error,
                         },
@@ -1903,7 +2032,7 @@ fn representability_preflight(
 }
 
 fn push_nearby_step_boundaries(
-    candidates: &mut Vec<f64>,
+    candidates: &mut Vec<TimelineBoundary>,
     source: &TrackSource,
     iteration_index: f64,
     iteration_progress_limit: f64,
@@ -1934,7 +2063,9 @@ fn push_nearby_step_boundaries(
             }
             let progress = segment_start + (step_index / count) * segment_span;
             if progress < visible_segment_end {
-                candidates.push(iteration_start_ms + progress * source.spec.duration_ms);
+                candidates.push(TimelineBoundary::plain(
+                    iteration_start_ms + progress * source.spec.duration_ms,
+                ));
             }
         }
     }
@@ -1961,9 +2092,15 @@ fn final_hold_discontinuity(
     }
 
     let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    let mut candidates = vec![0.0, playback.duration_ms, delay_ms];
+    let mut candidates = vec![
+        TimelineBoundary::plain(0.0),
+        TimelineBoundary::plain(playback.duration_ms),
+        TimelineBoundary::plain(delay_ms),
+    ];
     if let Some(count) = source_iterations(&source.spec) {
-        candidates.push(delay_ms + count * source.spec.duration_ms);
+        candidates.push(TimelineBoundary::plain(
+            delay_ms + count * source.spec.duration_ms,
+        ));
     }
     if !spec_values_are_constant(&source.spec) {
         let target_position = (hold_time_ms - delay_ms) / source.spec.duration_ms;
@@ -1985,14 +2122,20 @@ fn final_hold_discontinuity(
                 continue;
             }
             let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
-            for progress in pattern
-                .fixed_offsets
-                .iter()
-                .copied()
-                .chain(std::iter::once(iteration_progress_limit))
+            for boundary in
+                pattern
+                    .fixed_offsets
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(BoundaryOffset::plain(
+                        iteration_progress_limit,
+                    )))
             {
-                if progress <= iteration_progress_limit {
-                    candidates.push(iteration_start_ms + progress * source.spec.duration_ms);
+                if boundary.progress <= iteration_progress_limit {
+                    candidates.push(TimelineBoundary {
+                        time_ms: iteration_start_ms + boundary.progress * source.spec.duration_ms,
+                        opacity_clamp: boundary.opacity_clamp,
+                    });
                 }
             }
             if let ResolvedEasing::Steps { count, .. } = resolved_easing {
@@ -2009,27 +2152,28 @@ fn final_hold_discontinuity(
     }
 
     candidates.retain(|candidate| {
-        candidate.is_finite() && *candidate >= 0.0 && *candidate <= playback.duration_ms
+        candidate.time_ms.is_finite()
+            && candidate.time_ms >= 0.0
+            && candidate.time_ms <= playback.duration_ms
     });
-    candidates.sort_by(f64::total_cmp);
-    candidates.dedup_by(|left, right| *left == *right);
+    sort_and_merge_timeline_boundaries(&mut candidates);
     let mut discontinuities = Vec::new();
     for pair in candidates.windows(2) {
-        let [piece_start_ms, candidate] = pair else {
+        let [piece_start, candidate] = pair else {
             continue;
         };
-        if *candidate == 0.0 || candidate <= piece_start_ms {
+        if candidate.time_ms == 0.0 || candidate.time_ms <= piece_start.time_ms {
             continue;
         }
-        let left_piece = function_piece(source, *piece_start_ms, *candidate, resolved_easing)?;
-        let right_value = exact_track_value(source, *candidate)?;
+        let left_piece = function_piece(source, *piece_start, *candidate, resolved_easing)?;
+        let right_value = exact_track_value_at_boundary(source, *candidate)?;
         if left_piece.end_value == right_value {
             continue;
         }
-        discontinuities.push(if *candidate == playback.duration_ms {
+        discontinuities.push(if candidate.time_ms == playback.duration_ms {
             0.0
         } else {
-            *candidate
+            candidate.time_ms
         });
     }
     discontinuities.sort_by(f64::total_cmp);
@@ -2055,11 +2199,16 @@ fn compile_track(
     let boundaries = collect_boundaries(source, playback, resolved_easing)?;
     let mut pieces = Vec::with_capacity(boundaries.len().saturating_sub(1));
     for pair in boundaries.windows(2) {
-        let [start_ms, end_ms] = pair else {
+        let [start_boundary, end_boundary] = pair else {
             continue;
         };
-        if end_ms > start_ms {
-            pieces.push(function_piece(source, *start_ms, *end_ms, resolved_easing)?);
+        if end_boundary.time_ms > start_boundary.time_ms {
+            pieces.push(function_piece(
+                source,
+                *start_boundary,
+                *end_boundary,
+                resolved_easing,
+            )?);
         }
     }
     if pieces.is_empty() {
@@ -2069,8 +2218,9 @@ fn compile_track(
             playback.duration_ms,
         ));
     }
-    let exact_start = exact_track_value(source, 0.0)?;
-    let exact_end = exact_track_value(source, playback.duration_ms)?;
+    let exact_start = exact_track_value_at_boundary(source, boundaries[0])?;
+    let exact_end =
+        exact_track_value_at_boundary(source, boundaries[boundaries.len().saturating_sub(1)])?;
     let mut keyframes = vec![DocumentKeyframe {
         time_ms: 0.0,
         value: exact_start.to_keyframe(),
@@ -2202,7 +2352,7 @@ fn bounded_non_steps_precision_boundaries(
                 playback,
                 resolved_easing,
                 &mut |boundary| {
-                    boundaries.push(boundary);
+                    boundaries.push(boundary.time_ms);
                     Ok(())
                 },
             )?;
@@ -2232,7 +2382,7 @@ fn precision_preflight_track(
         return Ok(());
     }
     visit_track_boundaries_with(source, playback, resolved_easing, &mut |boundary| {
-        state.visit(boundary)
+        state.visit(boundary.time_ms)
     })
 }
 
@@ -3163,6 +3313,93 @@ mod tests {
     }
 
     #[test]
+    fn canonicalizes_opacity_clamp_root_endpoints_for_nodes_and_text_units() {
+        let keyframe = |at: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
+            at,
+            opacity: Some(opacity),
+            transform: with_transform.then_some(AnimationTransform2D {
+                translate_x: Some(7.0),
+                ..AnimationTransform2D::default()
+            }),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1_000.0,
+            iterations: DocumentIterationCount::Finite(0.3952),
+        };
+
+        for with_transform in [false, true] {
+            let spec = AnimationSpec {
+                keyframes: vec![
+                    keyframe(0.0, 0.0, with_transform),
+                    keyframe(1.0, 1.0, with_transform),
+                ],
+                duration_ms: 1_000.0,
+                delay_ms: Some(0.0),
+                easing: Some(AnimationEasing::CubicBezier([0.3, 2.3, 0.7, -0.2])),
+                iterations: Some(AnimationIterations::Count(1.0)),
+                fill: Some("both".to_string()),
+            };
+
+            for source in [
+                timeline_ir(spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                let plan = compile_document_animation_plan(&source, playback, 0.0)
+                    .expect("a continuous opacity clamp root must remain representable");
+                let track = &plan.tracks[0];
+                let clamp_exit = track
+                    .keyframes
+                    .iter()
+                    .find(|keyframe| same_time(keyframe.time_ms, 395.2))
+                    .expect("the opacity clamp exit should remain a structural boundary");
+                assert_eq!(clamp_exit.value.opacity, Some(1.0));
+                assert!(
+                    track
+                        .discontinuities_ms
+                        .iter()
+                        .all(|boundary| !same_time(*boundary, 395.2))
+                );
+
+                let mut sources = Vec::new();
+                collect_track_sources(&source.root, &mut sources);
+                let track_source = &sources[0];
+                let resolved_easing = resolve_track_easing(track_source)
+                    .expect("the validated cubic easing should resolve");
+                let boundaries = collect_boundaries(track_source, playback, resolved_easing)
+                    .expect("clamp boundaries should collect");
+                let boundary_index = boundaries
+                    .iter()
+                    .position(|boundary| same_time(boundary.time_ms, 395.2))
+                    .expect("the clamp exit should carry boundary provenance");
+                assert_eq!(boundaries[boundary_index].opacity_clamp, Some(1.0));
+                let left_piece = function_piece(
+                    track_source,
+                    boundaries[boundary_index - 1],
+                    boundaries[boundary_index],
+                    resolved_easing,
+                )
+                .expect("the clamp plateau should compile");
+                let right_piece = function_piece(
+                    track_source,
+                    boundaries[boundary_index],
+                    boundaries[boundary_index + 1],
+                    resolved_easing,
+                )
+                .expect("the post-clamp cubic should compile");
+                assert_eq!(left_piece.end_value.opacity, Some(1.0));
+                assert_eq!(right_piece.start_value.opacity, Some(1.0));
+            }
+        }
+    }
+
+    #[test]
     fn does_not_classify_continuous_keyframe_boundaries_as_final_hold_jumps() {
         for easing in [
             AnimationEasing::Named("linear".to_string()),
@@ -4058,6 +4295,28 @@ mod tests {
             panic!("precision should produce timeline context");
         };
         assert_eq!(context["kind"], "f32-order");
+    }
+
+    #[test]
+    fn does_not_merge_nearby_roots_with_distinct_opacity_clamp_provenance() {
+        let next_after_half = f64::from_bits(0.5_f64.to_bits() + 1);
+        assert!(same_time(0.5, next_after_half));
+        let mut boundaries = vec![
+            BoundaryOffset {
+                progress: 0.5,
+                opacity_clamp: Some(0.0),
+            },
+            BoundaryOffset {
+                progress: next_after_half,
+                opacity_clamp: Some(1.0),
+            },
+        ];
+
+        sort_and_merge_nearby_boundary_offsets(&mut boundaries);
+
+        assert_eq!(boundaries.len(), 2);
+        assert_eq!(boundaries[0].opacity_clamp, Some(0.0));
+        assert_eq!(boundaries[1].opacity_clamp, Some(1.0));
     }
 
     #[test]
