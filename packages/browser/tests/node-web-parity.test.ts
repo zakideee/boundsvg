@@ -232,6 +232,67 @@ function buildExactEndpointScene(
   return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
+function buildSemanticIdentityScene(owner: EndpointOwner): VNode {
+  const animation: AnimationSpec = {
+    keyframes: [
+      { at: 0, transform: {} },
+      {
+        at: 1,
+        transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, rotateDeg: 0 },
+      },
+    ],
+    durationMs: 1_000,
+    easing: "linear",
+    iterations: 1,
+    fill: "both",
+  };
+  const animated =
+    owner === "node"
+      ? createElement("Box", {
+          id: "identity-transform-node",
+          width: 32,
+          height: 20,
+          animate: animation,
+        })
+      : createElement(
+          "Text",
+          {
+            id: "identity-transform-text",
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return createElement("Canvas", { width: 96, height: 48 }, animated);
+}
+
+function buildTinyTriangleScene(): VNode {
+  return createElement(
+    "Canvas",
+    { width: 96, height: 48 },
+    createElement("Box", {
+      id: "tiny-triangle-node",
+      width: 32,
+      height: 20,
+      animate: {
+        keyframes: [
+          { at: 0, opacity: 0 },
+          { at: 0.5, opacity: 1 },
+          { at: 1, opacity: 0 },
+        ],
+        durationMs: 2e-300,
+        easing: "linear",
+        iterations: "infinite",
+        fill: "both",
+      },
+    }),
+  );
+}
+
 function buildOvershootCubicScene(
   owner: EndpointOwner,
   withTransform: boolean,
@@ -544,6 +605,47 @@ describe("nodejs/web WASM public parity", () => {
             expected,
           );
         }
+      }
+    }
+  });
+
+  it("treats sparse and explicit identity transforms as continuous in every WASM artifact", () => {
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1_000, iterations: 2 ** -21 },
+    };
+
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = buildSemanticIdentityScene(owner);
+      const expected = nodeEngine.renderToAnimatedSvg(scene, options);
+      for (const engine of timelineEngines) {
+        expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
+        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
+        expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
+      }
+    }
+  });
+
+  it("reports the first construction-guard pair in every WASM artifact", () => {
+    const scene = buildTinyTriangleScene();
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
+    };
+
+    for (const engine of timelineEngines) {
+      const compiled = engine.compile(scene);
+      for (const render of [
+        () => engine.renderToAnimatedSvg(scene, options),
+        () => engine.renderToAnimatedSvgAndIR(scene, options),
+        () => engine.renderCompiledToAnimatedSvg(compiled, options),
+      ]) {
+        expect(captureThrown(render)).toMatchObject({
+          code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+          context: {
+            kind: "f32-order",
+            leftTimeMs: 0,
+            rightTimeMs: 1e-300,
+          },
+        });
       }
     }
   });

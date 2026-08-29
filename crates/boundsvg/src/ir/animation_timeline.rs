@@ -258,6 +258,30 @@ struct TrackValue {
 }
 
 impl TrackValue {
+    fn from_keyframe(keyframe: &AnimationKeyframe) -> Self {
+        Self {
+            opacity: keyframe.opacity,
+            transform: keyframe.transform.clone(),
+        }
+        .canonicalized()
+    }
+
+    fn canonicalized(&self) -> Self {
+        Self {
+            opacity: self.opacity,
+            transform: self
+                .transform
+                .as_ref()
+                .map(|transform| AnimationTransform2D {
+                    translate_x: Some(transform.translate_x.unwrap_or(0.0)),
+                    translate_y: Some(transform.translate_y.unwrap_or(0.0)),
+                    scale_x: Some(transform.scale_x.unwrap_or(1.0)),
+                    scale_y: Some(transform.scale_y.unwrap_or(1.0)),
+                    rotate_deg: Some(transform.rotate_deg.unwrap_or(0.0)),
+                }),
+        }
+    }
+
     fn to_keyframe(&self) -> AnimationKeyframe {
         AnimationKeyframe {
             at: 0.0,
@@ -544,9 +568,10 @@ fn spec_values_are_constant(spec: &AnimationSpec) -> bool {
     let Some(first) = spec.keyframes.first() else {
         return true;
     };
+    let first_value = TrackValue::from_keyframe(first);
     spec.keyframes
         .iter()
-        .all(|keyframe| keyframe.opacity == first.opacity && keyframe.transform == first.transform)
+        .all(|keyframe| TrackValue::from_keyframe(keyframe) == first_value)
 }
 
 fn same_time(left: f64, right: f64) -> bool {
@@ -573,6 +598,15 @@ struct CanonicalPieceEndpoint {
 struct CanonicalBoundarySide {
     value: TrackValue,
     piece_endpoint: Option<CanonicalPieceEndpoint>,
+}
+
+impl CanonicalBoundarySide {
+    fn new(value: &TrackValue, piece_endpoint: Option<CanonicalPieceEndpoint>) -> Self {
+        Self {
+            value: value.canonicalized(),
+            piece_endpoint,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -610,14 +644,14 @@ impl LocalStepSegment {
         });
         LocalBoundaryEvent {
             progress,
-            left: CanonicalBoundarySide {
-                value: interpolate_track_values(&self.from_value, &self.to_value, left_progress),
+            left: CanonicalBoundarySide::new(
+                &interpolate_track_values(&self.from_value, &self.to_value, left_progress),
                 piece_endpoint,
-            },
-            right: CanonicalBoundarySide {
-                value: interpolate_track_values(&self.from_value, &self.to_value, right_progress),
+            ),
+            right: CanonicalBoundarySide::new(
+                &interpolate_track_values(&self.from_value, &self.to_value, right_progress),
                 piece_endpoint,
-            },
+            ),
         }
     }
 }
@@ -785,6 +819,14 @@ struct BoundaryProgramWindow {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+struct PrecisionCandidatePair {
+    left_time: f64,
+    right_time: f64,
+    nominal_gap: f64,
+    rounding_error_bound: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct RepeatedBoundaryProgram {
     first_iteration: f64,
     repetitions: f64,
@@ -808,7 +850,7 @@ struct CanonicalBoundaryProgram {
     tail: Option<BoundaryProgramWindow>,
     trailing_events: Vec<CanonicalBoundaryEvent>,
     active_source_range: Option<(f64, f64)>,
-    construction_precision_failure: bool,
+    construction_precision_candidate: Option<PrecisionCandidatePair>,
     event_count: f64,
 }
 
@@ -858,6 +900,75 @@ impl CanonicalBoundaryProgram {
             CanonicalBoundaryCoordinate::SourcePosition(source_position) => (self.delay_ms
                 + source_position * self.source_duration_ms)
                 .clamp(0.0, self.playback.duration_ms),
+        }
+    }
+
+    fn first_construction_precision_candidate(
+        &self,
+        source_start: f64,
+        source_end: f64,
+    ) -> PrecisionCandidatePair {
+        let active_start_time_ms = self
+            .leading_events
+            .last()
+            .map_or(0.0, |event| self.time_ms(event.coordinate));
+        if !source_start.is_finite() || !source_end.is_finite() {
+            return PrecisionCandidatePair {
+                left_time: active_start_time_ms,
+                right_time: active_start_time_ms,
+                nominal_gap: 0.0,
+                rounding_error_bound: f64::INFINITY,
+            };
+        }
+
+        let iteration_index = source_start.floor();
+        let lower_progress = source_start - iteration_index;
+        let end_iteration = source_end.floor();
+        let upper_progress = if end_iteration == iteration_index {
+            source_end - end_iteration
+        } else {
+            1.0
+        };
+        let candidates = self
+            .local_pattern
+            .precision_gap_candidates(lower_progress, upper_progress);
+        let Some([left_progress, right_progress]) = candidates.first_chunk::<2>() else {
+            return PrecisionCandidatePair {
+                left_time: active_start_time_ms,
+                right_time: active_start_time_ms,
+                nominal_gap: 0.0,
+                rounding_error_bound: f64::INFINITY,
+            };
+        };
+        let left_position = iteration_index + left_progress;
+        let right_position = iteration_index + right_progress;
+        let coordinate_for_position = |source_position| {
+            if source_position == source_start {
+                return self
+                    .leading_events
+                    .last()
+                    .map_or(CanonicalBoundaryCoordinate::DocumentStart, |event| {
+                        event.coordinate
+                    });
+            }
+            if source_position == source_end {
+                return self
+                    .trailing_events
+                    .first()
+                    .map_or(CanonicalBoundaryCoordinate::DocumentEnd, |event| {
+                        event.coordinate
+                    });
+            }
+            CanonicalBoundaryCoordinate::SourcePosition(source_position)
+        };
+        let left_coordinate = coordinate_for_position(left_position);
+        let right_coordinate = coordinate_for_position(right_position);
+        PrecisionCandidatePair {
+            left_time: self.time_ms(left_coordinate),
+            right_time: self.time_ms(right_coordinate),
+            nominal_gap: (right_position - left_position) * self.source_duration_ms,
+            rounding_error_bound: coordinate_mapping_error_bound_ms(self, left_coordinate)
+                + coordinate_mapping_error_bound_ms(self, right_coordinate),
         }
     }
 
@@ -1177,14 +1288,8 @@ fn interpolate_keyframes(
     progress: f64,
 ) -> TrackValue {
     interpolate_track_values(
-        &TrackValue {
-            opacity: from.opacity,
-            transform: from.transform.clone(),
-        },
-        &TrackValue {
-            opacity: to.opacity,
-            transform: to.transform.clone(),
-        },
+        &TrackValue::from_keyframe(from),
+        &TrackValue::from_keyframe(to),
         progress,
     )
 }
@@ -1351,10 +1456,7 @@ fn active_boundary_side(
             } else {
                 &spec.keyframes[spec.keyframes.len() - 1]
             };
-            TrackValue {
-                opacity: keyframe.opacity,
-                transform: keyframe.transform.clone(),
-            }
+            TrackValue::from_keyframe(keyframe)
         },
         |endpoint| {
             evaluate_segment(
@@ -1366,17 +1468,11 @@ fn active_boundary_side(
             )
         },
     );
-    CanonicalBoundarySide {
-        value,
-        piece_endpoint,
-    }
+    CanonicalBoundarySide::new(&value, piece_endpoint)
 }
 
-fn inactive_boundary_side(value: TrackValue) -> CanonicalBoundarySide {
-    CanonicalBoundarySide {
-        value,
-        piece_endpoint: None,
-    }
+fn inactive_boundary_side(value: &TrackValue) -> CanonicalBoundarySide {
+    CanonicalBoundarySide::new(value, None)
 }
 
 fn source_boundary_side(
@@ -1386,7 +1482,7 @@ fn source_boundary_side(
     resolved_easing: ResolvedEasing,
 ) -> CanonicalBoundarySide {
     if !source_position.is_finite() {
-        return inactive_boundary_side(source.base_value.clone());
+        return inactive_boundary_side(&source.base_value);
     }
     let fill_both = source.spec.fill.as_deref() == Some("both");
     if source_position < 0.0
@@ -1400,7 +1496,7 @@ fn source_boundary_side(
                 resolved_easing,
             )
         } else {
-            inactive_boundary_side(source.base_value.clone())
+            inactive_boundary_side(&source.base_value)
         };
     }
 
@@ -1418,7 +1514,7 @@ fn source_boundary_side(
                 resolved_easing,
             )
         } else {
-            inactive_boundary_side(source.base_value.clone())
+            inactive_boundary_side(&source.base_value)
         };
     }
 
@@ -1494,14 +1590,8 @@ fn local_boundary_pattern(
                 end_progress: pair[1].at,
                 step_count: count,
                 step_position: position,
-                from_value: TrackValue {
-                    opacity: pair[0].opacity,
-                    transform: pair[0].transform.clone(),
-                },
-                to_value: TrackValue {
-                    opacity: pair[1].opacity,
-                    transform: pair[1].transform.clone(),
-                },
+                from_value: TrackValue::from_keyframe(&pair[0]),
+                to_value: TrackValue::from_keyframe(&pair[1]),
             })
             .collect(),
         _ => Vec::new(),
@@ -1571,7 +1661,7 @@ fn build_canonical_boundary_program(
     let mut pattern = None;
     let mut tail = None;
     let mut active_source_range = None;
-    let mut construction_precision_failure = false;
+    let mut construction_precision_range = None;
     if !spec_values_are_constant(&source.spec) {
         let source_start = ((0.0 - delay_ms) / source_duration_ms).max(0.0);
         let source_end = finite_source_end
@@ -1584,7 +1674,7 @@ fn build_canonical_boundary_program(
             || source_start > MAX_TIMELINE_TIME_MS
             || source_end > MAX_TIMELINE_TIME_MS
         {
-            construction_precision_failure = true;
+            construction_precision_range = Some((source_start, source_end));
         } else if source_end > source_start {
             active_source_range = Some((source_start, source_end));
             let start_iteration = source_start.floor();
@@ -1635,7 +1725,7 @@ fn build_canonical_boundary_program(
         .into_iter()
         .fold(0.0, saturating_finite_stop_count);
 
-    CanonicalBoundaryProgram {
+    let mut program = CanonicalBoundaryProgram {
         playback,
         delay_ms,
         source_duration_ms,
@@ -1646,9 +1736,14 @@ fn build_canonical_boundary_program(
         tail,
         trailing_events,
         active_source_range,
-        construction_precision_failure,
+        construction_precision_candidate: None,
         event_count,
-    }
+    };
+    program.construction_precision_candidate =
+        construction_precision_range.map(|(source_start, source_end)| {
+            program.first_construction_precision_candidate(source_start, source_end)
+        });
+    program
 }
 fn function_piece(
     source: &TrackSource,
@@ -2288,6 +2383,22 @@ fn precision_preflight_window(
     Ok(())
 }
 
+fn precision_preflight_candidate_pair(
+    program: &CanonicalBoundaryProgram,
+    candidate: PrecisionCandidatePair,
+) -> Result<(), EngineError> {
+    precision_check_pair(program.playback, candidate.left_time, candidate.right_time)?;
+    let minimum_separation_ms = 4.0 * program.playback.delta_ms().max(0.001);
+    if candidate.nominal_gap - candidate.rounding_error_bound < minimum_separation_ms {
+        return Err(timeline_precision_error(
+            "separation",
+            candidate.left_time,
+            candidate.right_time,
+        ));
+    }
+    Ok(())
+}
+
 fn precision_preflight_events<'a>(
     program: &CanonicalBoundaryProgram,
     events: impl IntoIterator<Item = &'a CanonicalBoundaryEvent>,
@@ -2354,11 +2465,16 @@ fn precision_preflight_repeated_pattern(
 }
 
 fn precision_preflight_program(program: &CanonicalBoundaryProgram) -> Result<(), EngineError> {
-    if program.construction_precision_failure {
+    if let Some(candidate) = program.construction_precision_candidate {
+        precision_preflight_events(program, &program.leading_events)?;
+        precision_preflight_candidate_pair(program, candidate)?;
+        // Crossing the source-position construction bound is itself a
+        // separation-proof failure. Keep its context on the concrete adjacent
+        // pair selected above if the cheaper pair checks did not reject first.
         return Err(timeline_precision_error(
-            "f32-order",
-            0.0,
-            program.playback.duration_ms,
+            "separation",
+            candidate.left_time,
+            candidate.right_time,
         ));
     }
 
@@ -2905,7 +3021,10 @@ mod tests {
                     opacity: None,
                     transform: Some(AnimationTransform2D {
                         translate_x: Some(0.0),
-                        ..AnimationTransform2D::default()
+                        translate_y: Some(0.0),
+                        scale_x: Some(1.0),
+                        scale_y: Some(1.0),
+                        rotate_deg: Some(0.0),
                     }),
                 },
                 AnimationKeyframe {
@@ -3207,6 +3326,56 @@ mod tests {
                 assert_eq!(context["reason"], "final-hold-on-discontinuity");
                 assert_eq!(context["boundaryTimeMs"], 100.0);
             }
+        }
+    }
+
+    #[test]
+    fn treats_sparse_and_explicit_identity_transforms_as_continuous() {
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: None,
+                    transform: Some(AnimationTransform2D::default()),
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: None,
+                    transform: Some(AnimationTransform2D {
+                        translate_x: Some(0.0),
+                        ..AnimationTransform2D::default()
+                    }),
+                },
+            ],
+            duration_ms: 1_000.0,
+            delay_ms: Some(0.0),
+            easing: Some(AnimationEasing::Named("linear".to_string())),
+            iterations: Some(AnimationIterations::Count(1.0)),
+            fill: Some("both".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1_000.0,
+            iterations: DocumentIterationCount::Finite(2.0_f64.powi(-21)),
+        };
+
+        for source in [
+            timeline_ir(spec.clone()),
+            Ir {
+                root: animated_text_unit("text-owner", "unit-0", &spec),
+                draw_order: Vec::new(),
+                width: 100.0,
+                height: 20.0,
+                debug: None,
+                warnings: Vec::new(),
+            },
+        ] {
+            let plan = compile_document_animation_plan(&source, playback, 0.0)
+                .expect("semantic identity endpoints should be continuous");
+            assert_eq!(plan.tracks.len(), 1);
+            assert!(plan.tracks[0].discontinuities_ms.is_empty());
+            assert!(plan.tracks[0].keyframes.iter().all(|keyframe| {
+                keyframe.value.transform.as_ref() == Some(&identity_animation_transform())
+            }));
         }
     }
 
@@ -4205,6 +4374,48 @@ mod tests {
             panic!("precision should produce timeline context");
         };
         assert_eq!(context["kind"], "f32-order");
+    }
+
+    #[test]
+    fn reports_the_first_concrete_pair_before_the_construction_guard() {
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 0.5,
+                    opacity: Some(1.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: 2.0e-300,
+            delay_ms: Some(0.0),
+            easing: Some(AnimationEasing::Named("linear".to_string())),
+            iterations: Some(AnimationIterations::Infinite("infinite".to_string())),
+            fill: Some("both".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        let error = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
+            .expect_err("the first binary32-colliding pair should fail");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("precision should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
+        assert_eq!(context["kind"], "f32-order");
+        assert_eq!(context["leftTimeMs"], 0.0);
+        assert_eq!(context["rightTimeMs"], 1.0e-300);
     }
 
     #[test]

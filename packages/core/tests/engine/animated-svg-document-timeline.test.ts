@@ -91,6 +91,67 @@ function exactEndpointScene(owner: EndpointOwner, channel: EndpointChannel, seam
   return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
+function semanticIdentityScene(owner: EndpointOwner) {
+  const animation: AnimationSpec = {
+    keyframes: [
+      { at: 0, transform: {} },
+      {
+        at: 1,
+        transform: { translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, rotateDeg: 0 },
+      },
+    ],
+    durationMs: 1_000,
+    easing: "linear",
+    iterations: 1,
+    fill: "both",
+  };
+  const animated =
+    owner === "node"
+      ? createElement("Box", {
+          id: "identity-transform-node",
+          width: 32,
+          height: 20,
+          animate: animation,
+        })
+      : createElement(
+          "Text",
+          {
+            id: "identity-transform-text",
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return createElement("Canvas", { width: 96, height: 48 }, animated);
+}
+
+function tinyTriangleScene() {
+  return createElement(
+    "Canvas",
+    { width: 96, height: 48 },
+    createElement("Box", {
+      id: "tiny-triangle-node",
+      width: 32,
+      height: 20,
+      animate: {
+        keyframes: [
+          { at: 0, opacity: 0 },
+          { at: 0.5, opacity: 1 },
+          { at: 1, opacity: 0 },
+        ],
+        durationMs: 2e-300,
+        easing: "linear",
+        iterations: "infinite",
+        fill: "both",
+      },
+    }),
+  );
+}
+
 function overshootCubicScene(
   owner: EndpointOwner,
   withTransform: boolean,
@@ -343,6 +404,43 @@ describe("animated SVG document timeline", () => {
         expect(engine.renderToAnimatedSvgAndIR(continuousScene, options).svg).toBe(direct);
         expect(engine.renderCompiledToAnimatedSvg(continuousCompiled, options)).toBe(direct);
       }
+    }
+  });
+
+  it("treats sparse and explicit identity transforms as continuous across public render paths", () => {
+    const options = {
+      playback: { mode: "timeline", durationMs: 1_000, iterations: 2 ** -21 },
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = semanticIdentityScene(owner);
+      const compiled = engine.compile(scene);
+      const direct = engine.renderToAnimatedSvg(scene, options);
+      expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+      expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+    }
+  });
+
+  it("reports the first concrete pair before the construction precision guard", () => {
+    const scene = tinyTriangleScene();
+    const options = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+    } as const satisfies RenderAnimatedSvgOptions;
+    const compiled = engine.compile(scene);
+
+    for (const render of [
+      () => engine.renderToAnimatedSvg(scene, options),
+      () => engine.renderToAnimatedSvgAndIR(scene, options),
+      () => engine.renderCompiledToAnimatedSvg(compiled, options),
+    ]) {
+      expect(captureFatal(render)).toMatchObject({
+        code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+        context: {
+          kind: "f32-order",
+          leftTimeMs: 0,
+          rightTimeMs: 1e-300,
+        },
+      });
     }
   });
 
