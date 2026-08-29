@@ -232,7 +232,15 @@ function buildExactEndpointScene(
   return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
-function buildClampRootScene(owner: EndpointOwner, withTransform: boolean): VNode {
+function buildClampRootScene(
+  owner: EndpointOwner,
+  withTransform: boolean,
+  clampTiming: {
+    durationMs: number;
+    delayMs?: number;
+    easing: [number, number, number, number];
+  } = { durationMs: 1_000, easing: [0.3, 2.3, 0.7, -0.2] },
+): VNode {
   const animation: AnimationSpec = {
     keyframes: [
       {
@@ -246,8 +254,9 @@ function buildClampRootScene(owner: EndpointOwner, withTransform: boolean): VNod
         ...(withTransform ? { transform: { translateX: 7 } } : {}),
       },
     ],
-    durationMs: 1_000,
-    easing: [0.3, 2.3, 0.7, -0.2],
+    durationMs: clampTiming.durationMs,
+    ...(clampTiming.delayMs === undefined ? {} : { delayMs: clampTiming.delayMs }),
+    easing: clampTiming.easing,
     iterations: 1,
     fill: "both",
   };
@@ -472,6 +481,61 @@ describe("nodejs/web WASM public parity", () => {
         const scene = buildClampRootScene(owner, withTransform);
         const expected = nodeEngine.renderToAnimatedSvg(scene, options);
         expect(expected).toMatch(/39\.52\d*% \{ opacity: 1/);
+        for (const engine of timelineEngines) {
+          expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
+          expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
+          expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
+        }
+      }
+    }
+  });
+
+  it("rejects collapsed distinct clamp roots in every owner, path, and WASM artifact", () => {
+    const options = {
+      playback: {
+        mode: "timeline" as const,
+        durationMs: 1_000_000,
+        iterations: "infinite" as const,
+      },
+    };
+
+    for (const owner of ["node", "textUnit"] as const) {
+      for (const withTransform of [false, true]) {
+        const scene = buildClampRootScene(owner, withTransform, {
+          durationMs: 1_000_000,
+          easing: [0, -1e16, 1, 1e16],
+        });
+        for (const engine of timelineEngines) {
+          const compiled = engine.compile(scene);
+          for (const render of [
+            () => engine.renderToAnimatedSvg(scene, options),
+            () => engine.renderToAnimatedSvgAndIR(scene, options),
+            () => engine.renderCompiledToAnimatedSvg(compiled, options),
+          ]) {
+            expect(captureThrown(render)).toMatchObject({
+              code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+              context: { kind: "f32-order", leftTimeMs: 500_000, rightTimeMs: 500_000 },
+            });
+          }
+        }
+      }
+    }
+  });
+
+  it("canonicalizes document-zero clamp roots in every owner, path, and WASM artifact", () => {
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1_000, iterations: 1.000_000_1 },
+    };
+
+    for (const owner of ["node", "textUnit"] as const) {
+      for (const withTransform of [false, true]) {
+        const scene = buildClampRootScene(owner, withTransform, {
+          durationMs: 1_000,
+          delayMs: -395.200_000_000_000_3,
+          easing: [0.3, 2.3, 0.7, -0.2],
+        });
+        const expected = nodeEngine.renderToAnimatedSvg(scene, options);
+        expect(expected).toMatch(/0% \{ opacity: 1/);
         for (const engine of timelineEngines) {
           expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
           expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);

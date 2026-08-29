@@ -641,16 +641,33 @@ fn sort_and_merge_nearby_boundary_offsets(boundaries: &mut Vec<BoundaryOffset>) 
     sort_and_merge_boundary_offsets_by(boundaries, true);
 }
 
+fn merge_timeline_boundary(
+    retained_boundary: &mut TimelineBoundary,
+    candidate_boundary: TimelineBoundary,
+) -> bool {
+    if retained_boundary.time_ms != candidate_boundary.time_ms {
+        return false;
+    }
+    match (
+        retained_boundary.opacity_clamp,
+        candidate_boundary.opacity_clamp,
+    ) {
+        (Some(retained_clamp), Some(candidate_clamp)) if retained_clamp != candidate_clamp => false,
+        (None, Some(candidate_clamp)) => {
+            retained_boundary.opacity_clamp = Some(candidate_clamp);
+            true
+        }
+        _ => true,
+    }
+}
+
 fn sort_and_merge_timeline_boundaries(boundaries: &mut Vec<TimelineBoundary>) {
     boundaries.sort_by(|left, right| left.time_ms.total_cmp(&right.time_ms));
     let mut merged: Vec<TimelineBoundary> = Vec::with_capacity(boundaries.len());
     for boundary in boundaries.drain(..) {
         if let Some(previous) = merged.last_mut()
-            && previous.time_ms == boundary.time_ms
+            && merge_timeline_boundary(previous, boundary)
         {
-            if previous.opacity_clamp.is_none() {
-                previous.opacity_clamp = boundary.opacity_clamp;
-            }
             continue;
         }
         merged.push(boundary);
@@ -1331,11 +1348,10 @@ where
                 progresses.extend(extrema);
                 sort_and_merge_nearby_boundary_offsets(&mut progresses);
                 for boundary in progresses {
-                    if boundary.progress > segment_visible_start
-                        && boundary.progress < segment_visible_end
-                    {
+                    let timeline_time_ms = boundary_time_ms(boundary.progress);
+                    if timeline_time_ms >= visible_start_ms && timeline_time_ms <= visible_end_ms {
                         visitor(TimelineBoundary {
-                            time_ms: boundary_time_ms(boundary.progress),
+                            time_ms: timeline_time_ms,
                             opacity_clamp: boundary.opacity_clamp,
                         })?;
                     }
@@ -1360,8 +1376,8 @@ where
     Ok(())
 }
 
-fn visit_distinct_boundary<F>(
-    previous_boundary: &mut Option<f64>,
+fn queue_timeline_boundary<F>(
+    pending_boundary: &mut Option<TimelineBoundary>,
     boundary: TimelineBoundary,
     playback: DocumentPlayback,
     visitor: &mut F,
@@ -1381,14 +1397,32 @@ where
         *trace.entry(std::thread::current().id()).or_default() += 1;
     }
     let clamped_time_ms = time_ms.clamp(0.0, playback.duration_ms);
-    if previous_boundary.is_some_and(|previous| previous == clamped_time_ms) {
-        return Ok(());
-    }
-    visitor(TimelineBoundary {
+    let clamped_boundary = TimelineBoundary {
         time_ms: clamped_time_ms,
         opacity_clamp: boundary.opacity_clamp,
-    })?;
-    *previous_boundary = Some(clamped_time_ms);
+    };
+    if let Some(retained_boundary) = pending_boundary.as_mut() {
+        if merge_timeline_boundary(retained_boundary, clamped_boundary) {
+            return Ok(());
+        }
+        visitor(*retained_boundary)?;
+        *retained_boundary = clamped_boundary;
+    } else {
+        *pending_boundary = Some(clamped_boundary);
+    }
+    Ok(())
+}
+
+fn flush_pending_boundary<F>(
+    pending_boundary: &mut Option<TimelineBoundary>,
+    visitor: &mut F,
+) -> Result<(), EngineError>
+where
+    F: FnMut(TimelineBoundary) -> Result<(), EngineError>,
+{
+    if let Some(boundary) = pending_boundary.take() {
+        visitor(boundary)?;
+    }
     Ok(())
 }
 
@@ -1401,11 +1435,12 @@ fn visit_track_boundaries_with<F>(
 where
     F: FnMut(TimelineBoundary) -> Result<(), EngineError>,
 {
-    // The visitor keeps precision and count passes at O(1) output memory. A
-    // full boundary vector is materialized only by the post-budget plan sink.
-    let mut previous_boundary = None;
-    visit_distinct_boundary(
-        &mut previous_boundary,
+    // Retain one boundary so an exact-time clamp root can enrich a plain cut
+    // before either reaches precision/count sinks. Incompatible roots stay
+    // separate, and the full vector remains deferred to the post-budget sink.
+    let mut pending_boundary = None;
+    queue_timeline_boundary(
+        &mut pending_boundary,
         TimelineBoundary::plain(0.0),
         playback,
         visitor,
@@ -1426,20 +1461,20 @@ where
         boundaries.sort_by(f64::total_cmp);
         boundaries.dedup_by(|left, right| *left == *right);
         for boundary in boundaries {
-            visit_distinct_boundary(
-                &mut previous_boundary,
+            queue_timeline_boundary(
+                &mut pending_boundary,
                 TimelineBoundary::plain(boundary),
                 playback,
                 visitor,
             )?;
         }
-        visit_distinct_boundary(
-            &mut previous_boundary,
+        queue_timeline_boundary(
+            &mut pending_boundary,
             TimelineBoundary::plain(playback.duration_ms),
             playback,
             visitor,
         )?;
-        return Ok(());
+        return flush_pending_boundary(&mut pending_boundary, visitor);
     }
 
     let first_iteration = ((-delay_ms) / source.spec.duration_ms).floor().max(0.0);
@@ -1473,7 +1508,7 @@ where
                 playback,
                 resolved_easing,
                 &mut |boundary| {
-                    visit_distinct_boundary(&mut previous_boundary, boundary, playback, visitor)
+                    queue_timeline_boundary(&mut pending_boundary, boundary, playback, visitor)
                 },
             )?;
         }
@@ -1487,12 +1522,13 @@ where
         }
         iteration_index = next_iteration_index;
     }
-    visit_distinct_boundary(
-        &mut previous_boundary,
+    queue_timeline_boundary(
+        &mut pending_boundary,
         TimelineBoundary::plain(playback.duration_ms),
         playback,
         visitor,
-    )
+    )?;
+    flush_pending_boundary(&mut pending_boundary, visitor)
 }
 
 fn collect_boundaries(
@@ -2071,6 +2107,46 @@ fn push_nearby_step_boundaries(
     }
 }
 
+fn resolve_document_endpoint_boundary(
+    source: &TrackSource,
+    playback: DocumentPlayback,
+    resolved_easing: ResolvedEasing,
+    endpoint_time_ms: f64,
+) -> Result<Option<TimelineBoundary>, EngineError> {
+    let mut endpoint_boundaries = vec![TimelineBoundary::plain(endpoint_time_ms)];
+    if matches!(resolved_easing, ResolvedEasing::Cubic(_))
+        && !spec_values_are_constant(&source.spec)
+    {
+        let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
+        let source_iteration_count = source_iterations(&source.spec);
+        for iteration_index in selected_representability_iterations(source, playback) {
+            let iteration_start_ms = delay_ms + iteration_index * source.spec.duration_ms;
+            let iteration_progress_limit = source_iteration_count
+                .map_or(1.0, |count| (count - iteration_index).clamp(0.0, 1.0));
+            visit_iteration_boundaries(
+                source,
+                iteration_start_ms,
+                iteration_progress_limit,
+                playback,
+                resolved_easing,
+                &mut |boundary| {
+                    if boundary.time_ms == endpoint_time_ms {
+                        endpoint_boundaries.push(TimelineBoundary {
+                            time_ms: endpoint_time_ms,
+                            opacity_clamp: boundary.opacity_clamp,
+                        });
+                    }
+                    Ok(())
+                },
+            )?;
+        }
+    }
+    sort_and_merge_timeline_boundaries(&mut endpoint_boundaries);
+    // Incompatible roots are a precision failure. Keep the endpoint unresolved
+    // so representability does not preempt the later precision stage.
+    Ok((endpoint_boundaries.len() == 1).then_some(endpoint_boundaries[0]))
+}
+
 fn final_hold_discontinuity(
     source: &TrackSource,
     playback: DocumentPlayback,
@@ -2085,10 +2161,20 @@ fn final_hold_discontinuity(
     }
     let hold_time_ms = fraction * playback.duration_ms;
     let delta_ms = playback.delta_ms();
-    let exact_start = exact_track_value(source, 0.0)?;
-    let exact_end = exact_track_value(source, playback.duration_ms)?;
-    if exact_start != exact_end && hold_time_ms < delta_ms {
-        return Ok(Some(0.0));
+    let document_start =
+        resolve_document_endpoint_boundary(source, playback, resolved_easing, 0.0)?;
+    let document_end = resolve_document_endpoint_boundary(
+        source,
+        playback,
+        resolved_easing,
+        playback.duration_ms,
+    )?;
+    if let (Some(start_boundary), Some(end_boundary)) = (document_start, document_end) {
+        let exact_start = exact_track_value_at_boundary(source, start_boundary)?;
+        let exact_end = exact_track_value_at_boundary(source, end_boundary)?;
+        if exact_start != exact_end && hold_time_ms < delta_ms {
+            return Ok(Some(0.0));
+        }
     }
 
     let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
@@ -2328,16 +2414,23 @@ fn bounded_non_steps_precision_boundaries(
     source: &TrackSource,
     playback: DocumentPlayback,
     resolved_easing: ResolvedEasing,
-) -> Result<Vec<f64>, EngineError> {
-    let mut boundaries = vec![0.0, playback.duration_ms];
+) -> Result<Vec<TimelineBoundary>, EngineError> {
+    let mut boundaries = vec![
+        TimelineBoundary::plain(0.0),
+        TimelineBoundary::plain(playback.duration_ms),
+    ];
     let delay_ms = source.spec.delay_ms.unwrap_or(0.0);
-    push_boundary(&mut boundaries, delay_ms, playback.duration_ms);
+    if delay_ms >= 0.0 && delay_ms <= playback.duration_ms && delay_ms.is_finite() {
+        boundaries.push(TimelineBoundary::plain(delay_ms));
+    }
     if let Some(iterations) = source_iterations(&source.spec) {
-        push_boundary(
-            &mut boundaries,
-            delay_ms + iterations * source.spec.duration_ms,
-            playback.duration_ms,
-        );
+        let active_end_ms = delay_ms + iterations * source.spec.duration_ms;
+        if active_end_ms >= 0.0
+            && active_end_ms <= playback.duration_ms
+            && active_end_ms.is_finite()
+        {
+            boundaries.push(TimelineBoundary::plain(active_end_ms));
+        }
     }
     if !spec_values_are_constant(&source.spec) {
         let source_iteration_count = source_iterations(&source.spec);
@@ -2352,17 +2445,18 @@ fn bounded_non_steps_precision_boundaries(
                 playback,
                 resolved_easing,
                 &mut |boundary| {
-                    boundaries.push(boundary.time_ms);
+                    boundaries.push(boundary);
                     Ok(())
                 },
             )?;
         }
     }
     boundaries.retain(|boundary| {
-        boundary.is_finite() && *boundary >= 0.0 && *boundary <= playback.duration_ms
+        boundary.time_ms.is_finite()
+            && boundary.time_ms >= 0.0
+            && boundary.time_ms <= playback.duration_ms
     });
-    boundaries.sort_by(f64::total_cmp);
-    boundaries.dedup_by(|left, right| *left == *right);
+    sort_and_merge_timeline_boundaries(&mut boundaries);
     Ok(boundaries)
 }
 
@@ -2377,7 +2471,7 @@ fn precision_preflight_track(
     let mut state = PrecisionPreflightState::new(playback);
     if !matches!(resolved_easing, ResolvedEasing::Steps { .. }) {
         for boundary in bounded_non_steps_precision_boundaries(source, playback, resolved_easing)? {
-            state.visit(boundary)?;
+            state.visit(boundary.time_ms)?;
         }
         return Ok(());
     }
@@ -3395,6 +3489,139 @@ mod tests {
                 .expect("the post-clamp cubic should compile");
                 assert_eq!(left_piece.end_value.opacity, Some(1.0));
                 assert_eq!(right_piece.start_value.opacity, Some(1.0));
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_collapsed_distinct_clamp_roots_before_plan_expansion() {
+        let keyframe = |at: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
+            at,
+            opacity: Some(opacity),
+            transform: with_transform.then_some(AnimationTransform2D {
+                translate_x: Some(7.0),
+                ..AnimationTransform2D::default()
+            }),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1_000_000.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        for with_transform in [false, true] {
+            let spec = AnimationSpec {
+                keyframes: vec![
+                    keyframe(0.0, 0.0, with_transform),
+                    keyframe(1.0, 1.0, with_transform),
+                ],
+                duration_ms: 1_000_000.0,
+                delay_ms: Some(0.0),
+                easing: Some(AnimationEasing::CubicBezier([0.0, -1.0e16, 1.0, 1.0e16])),
+                iterations: Some(AnimationIterations::Count(1.0)),
+                fill: Some("both".to_string()),
+            };
+
+            for source in [
+                timeline_ir(spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                let mut track_sources = Vec::new();
+                collect_track_sources(&source.root, &mut track_sources);
+                let track_source = &track_sources[0];
+                let resolved_easing = resolve_track_easing(track_source)
+                    .expect("the validated cubic easing should resolve");
+                assert_eq!(
+                    analyzed_track_stop_count(track_source, playback, resolved_easing),
+                    4.0
+                );
+                let precision_boundaries =
+                    bounded_non_steps_precision_boundaries(track_source, playback, resolved_easing)
+                        .expect("precision boundaries should retain structural roots");
+                let mut collapsed_clamps = precision_boundaries
+                    .iter()
+                    .filter(|boundary| boundary.time_ms == 500_000.0)
+                    .filter_map(|boundary| boundary.opacity_clamp)
+                    .collect::<Vec<_>>();
+                collapsed_clamps.sort_by(f64::total_cmp);
+                assert_eq!(collapsed_clamps, vec![0.0, 1.0]);
+
+                let test_thread_id = std::thread::current().id();
+                COMPILE_TRACK_TRACE
+                    .lock()
+                    .expect("compile track trace should not be poisoned")
+                    .entry(test_thread_id)
+                    .or_default()
+                    .clear();
+
+                let error = compile_document_animation_plan(&source, playback, 0.0)
+                    .expect_err("distinct clamp roots at one timeline offset must fail precision");
+                let EngineError::StructuredContext { code, context, .. } = error else {
+                    panic!("collapsed clamp roots should produce timeline context");
+                };
+                assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
+                assert_eq!(context["kind"], "f32-order");
+                assert_eq!(context["leftTimeMs"], 500_000.0);
+                assert_eq!(context["rightTimeMs"], 500_000.0);
+                let trace = COMPILE_TRACK_TRACE
+                    .lock()
+                    .expect("compile track trace should not be poisoned");
+                assert_eq!(trace.get(&test_thread_id), Some(&Vec::new()));
+            }
+        }
+    }
+
+    #[test]
+    fn canonicalizes_document_zero_cut_clamp_roots_before_final_hold_classification() {
+        let keyframe = |at: f64, opacity: f64, with_transform: bool| AnimationKeyframe {
+            at,
+            opacity: Some(opacity),
+            transform: with_transform.then_some(AnimationTransform2D {
+                translate_x: Some(7.0),
+                ..AnimationTransform2D::default()
+            }),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1_000.0,
+            iterations: DocumentIterationCount::Finite(1.000_000_1),
+        };
+
+        for with_transform in [false, true] {
+            let spec = AnimationSpec {
+                keyframes: vec![
+                    keyframe(0.0, 0.0, with_transform),
+                    keyframe(1.0, 1.0, with_transform),
+                ],
+                duration_ms: 1_000.0,
+                delay_ms: Some(-395.200_000_000_000_3),
+                easing: Some(AnimationEasing::CubicBezier([0.3, 2.3, 0.7, -0.2])),
+                iterations: Some(AnimationIterations::Count(1.0)),
+                fill: Some("both".to_string()),
+            };
+
+            for source in [
+                timeline_ir(spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                let plan = compile_document_animation_plan(&source, playback, 0.0)
+                    .expect("the document zero cut is structurally continuous at the clamp root");
+                let track = &plan.tracks[0];
+                assert_eq!(track.keyframes[0].time_ms, 0.0);
+                assert_eq!(track.keyframes[0].value.opacity, Some(1.0));
+                assert!(!track.discontinuities_ms.contains(&0.0));
             }
         }
     }

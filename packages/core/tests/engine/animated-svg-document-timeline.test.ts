@@ -91,7 +91,15 @@ function exactEndpointScene(owner: EndpointOwner, channel: EndpointChannel, seam
   return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
-function clampRootScene(owner: EndpointOwner, withTransform: boolean) {
+function clampRootScene(
+  owner: EndpointOwner,
+  withTransform: boolean,
+  clampTiming: {
+    durationMs: number;
+    delayMs?: number;
+    easing: [number, number, number, number];
+  } = { durationMs: 1_000, easing: [0.3, 2.3, 0.7, -0.2] },
+) {
   const animation: AnimationSpec = {
     keyframes: [
       {
@@ -105,8 +113,9 @@ function clampRootScene(owner: EndpointOwner, withTransform: boolean) {
         ...(withTransform ? { transform: { translateX: 7 } } : {}),
       },
     ],
-    durationMs: 1_000,
-    easing: [0.3, 2.3, 0.7, -0.2],
+    durationMs: clampTiming.durationMs,
+    ...(clampTiming.delayMs === undefined ? {} : { delayMs: clampTiming.delayMs }),
+    easing: clampTiming.easing,
     iterations: 1,
     fill: "both",
   };
@@ -278,6 +287,53 @@ describe("animated SVG document timeline", () => {
         expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
         expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
         expect(direct).toMatch(/39\.52\d*% \{ opacity: 1/);
+      }
+    }
+  });
+
+  it("rejects collapsed distinct clamp roots across owners and public render paths", () => {
+    const options = {
+      playback: { mode: "timeline", durationMs: 1_000_000, iterations: "infinite" },
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      for (const withTransform of [false, true]) {
+        const scene = clampRootScene(owner, withTransform, {
+          durationMs: 1_000_000,
+          easing: [0, -1e16, 1, 1e16],
+        });
+        const compiled = engine.compile(scene);
+        for (const render of [
+          () => engine.renderToAnimatedSvg(scene, options),
+          () => engine.renderToAnimatedSvgAndIR(scene, options),
+          () => engine.renderCompiledToAnimatedSvg(compiled, options),
+        ]) {
+          expect(captureFatal(render)).toMatchObject({
+            code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+            context: { kind: "f32-order", leftTimeMs: 500_000, rightTimeMs: 500_000 },
+          });
+        }
+      }
+    }
+  });
+
+  it("canonicalizes document-zero clamp roots across owners and public render paths", () => {
+    const options = {
+      playback: { mode: "timeline", durationMs: 1_000, iterations: 1.000_000_1 },
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      for (const withTransform of [false, true]) {
+        const scene = clampRootScene(owner, withTransform, {
+          durationMs: 1_000,
+          delayMs: -395.200_000_000_000_3,
+          easing: [0.3, 2.3, 0.7, -0.2],
+        });
+        const compiled = engine.compile(scene);
+        const direct = engine.renderToAnimatedSvg(scene, options);
+        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+        expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
+        expect(direct).toMatch(/0% \{ opacity: 1/);
       }
     }
   });
