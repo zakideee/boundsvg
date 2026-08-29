@@ -641,63 +641,60 @@ fn collect_track_sources(node: &IrNode, sources: &mut Vec<TrackSource>) {
 }
 
 fn validate_authored_timeline_node(node: &IrNode) -> Result<(), EngineError> {
-    let (owner_kind, spec) = match &node.kind {
+    match &node.kind {
         IrNodeKind::Group {
             animation: Some(spec),
             ..
-        } => (TimelineOwnerKind::Node, spec),
+        } => validate_authored_timeline_spec_domain(
+            TrackIdentity {
+                owner_kind: TimelineOwnerKind::Node,
+                owner_id: &node.node_id,
+                unit_id: None,
+            },
+            spec,
+        ),
         IrNodeKind::Text {
             unit_animation: Some(unit_animation),
+            unit_map,
             ..
-        } => (TimelineOwnerKind::TextUnit, &unit_animation.animation),
-        _ => return Ok(()),
-    };
-    validate_authored_timeline_spec_domain(
-        TrackIdentity {
-            owner_kind,
-            owner_id: &node.node_id,
-            unit_id: None,
-        },
-        spec,
-    )
-}
-
-fn collect_validated_timeline_node_sources(
-    node: &IrNode,
-    sources: &mut Vec<TrackSource>,
-) -> Result<(), EngineError> {
-    let IrNodeKind::Text {
-        unit_map: Some(unit_map),
-        unit_animation: Some(unit_animation),
-        ..
-    } = &node.kind
-    else {
-        collect_track_sources_at_node(node, sources);
-        return Ok(());
-    };
-    let use_visual_order = matches!(unit_animation.order, Some(TextUnitAnimationOrder::Visual));
-    let base_delay_ms = unit_animation.animation.delay_ms.unwrap_or(0.0);
-    let delay_step_ms = unit_animation.delay_step_ms.unwrap_or(0.0);
-    for unit in &unit_map.units {
-        let order_index = if use_visual_order {
-            unit.visual_order
-        } else {
-            unit.logical_order
-        };
-        let effective_delay_ms = base_delay_ms + f64::from(order_index) * delay_step_ms;
-        if effective_delay_ms != base_delay_ms {
-            validate_authored_timeline_delay_domain(
+        } => {
+            validate_authored_timeline_spec_domain(
                 TrackIdentity {
                     owner_kind: TimelineOwnerKind::TextUnit,
                     owner_id: &node.node_id,
-                    unit_id: Some(unit.unit_id.as_str()),
+                    unit_id: None,
                 },
-                effective_delay_ms,
+                &unit_animation.animation,
             )?;
+            let Some(unit_map) = unit_map else {
+                return Ok(());
+            };
+            let use_visual_order =
+                matches!(unit_animation.order, Some(TextUnitAnimationOrder::Visual));
+            let base_delay_ms = unit_animation.animation.delay_ms.unwrap_or(0.0);
+            let delay_step_ms = unit_animation.delay_step_ms.unwrap_or(0.0);
+            for unit in &unit_map.units {
+                let order_index = if use_visual_order {
+                    unit.visual_order
+                } else {
+                    unit.logical_order
+                };
+                let effective_delay_ms = base_delay_ms + f64::from(order_index) * delay_step_ms;
+                if effective_delay_ms != base_delay_ms {
+                    validate_authored_timeline_delay_domain(
+                        TrackIdentity {
+                            owner_kind: TimelineOwnerKind::TextUnit,
+                            owner_id: &node.node_id,
+                            unit_id: Some(unit.unit_id.as_str()),
+                        },
+                        effective_delay_ms,
+                    )?;
+                }
+            }
+            Ok(())
         }
+        _ => Ok(()),
     }
-    collect_track_sources_at_node(node, sources);
-    Ok(())
 }
 
 fn source_iterations(spec: &AnimationSpec) -> Option<f64> {
@@ -2812,7 +2809,10 @@ pub fn compile_document_animation_plan_with_prefix(
     animation::validate_animations_with_node_hooks(
         ir,
         &mut validate_authored_timeline_node,
-        &mut |node| collect_validated_timeline_node_sources(node, &mut sources),
+        &mut |node| {
+            collect_track_sources_at_node(node, &mut sources);
+            Ok(())
+        },
     )?;
     let timing = playback.css_timing(time_ms);
     let (analyses, preflight_stop_count) = preflight_document_tracks(&sources, playback)?;
@@ -4756,7 +4756,7 @@ mod tests {
     }
 
     #[test]
-    fn compiles_text_units_in_sample_order_and_validates_every_visual_delay() {
+    fn compiles_text_units_in_sample_order_and_validates_every_effective_delay() {
         let root: IrNode = serde_json::from_value(json!({
                 "nodeId": "copy",
                 "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
@@ -4883,6 +4883,45 @@ mod tests {
             context["received"],
             format_js_number(next_up(MAX_AUTHORED_TIMELINE_DELAY_MS))
         );
+        assert!(context.get("boundaryTimeMs").is_none());
+
+        let mut overflow_source = source;
+        let IrNodeKind::Text {
+            unit_map: Some(unit_map),
+            unit_animation: Some(unit_animation),
+            unit_animation_samples: Some(samples),
+            ..
+        } = &mut overflow_source.root.kind
+        else {
+            panic!("text-unit fixture expected");
+        };
+        unit_animation.delay_step_ms = Some(f64::MAX);
+        unit_animation.order = Some(TextUnitAnimationOrder::Logical);
+        let mut third_unit = unit_map.units[1].clone();
+        third_unit.unit_id = "unit-c".to_string();
+        third_unit.source_start = 2;
+        third_unit.source_end = 3;
+        third_unit.logical_order = 2;
+        third_unit.visual_order = 2;
+        unit_map.units.push(third_unit);
+        let mut third_sample = samples[1].clone();
+        third_sample.unit_id = "unit-c".to_string();
+        samples.push(third_sample);
+        for sample in samples {
+            sample.bbox = None;
+        }
+        let error = compile_document_animation_plan(&overflow_source, infinite_playback(), 0.0)
+            .expect_err("the first finite out-of-domain unit must precede a later overflow");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("effective text-unit delay should carry timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+        assert_eq!(context["ownerKind"], "textUnit");
+        assert_eq!(context["ownerId"], "copy");
+        assert_eq!(context["unitId"], "unit-b");
+        assert_eq!(context["reason"], "authored-value-out-of-domain");
+        assert_eq!(context["field"], "delayMs");
+        assert_eq!(context["received"], format_js_number(f64::MAX));
         assert!(context.get("boundaryTimeMs").is_none());
     }
 

@@ -126,24 +126,32 @@ function assertIrOwnerJsonRepresentable(node: IRNode): void {
       ownerKind: "textUnit",
       ownerId: node.nodeId,
     });
-    const baseDelayMs = unitAnimation.animation.delayMs ?? 0;
-    const delayStepMs = unitAnimation.delayStepMs ?? 0;
-    const useVisualOrder = unitAnimation.order === "visual";
-    for (const unit of node.unitMap?.units ?? []) {
-      const orderIndex = useVisualOrder ? unit.visualOrder : unit.logicalOrder;
-      const effectiveDelayMs = baseDelayMs + orderIndex * delayStepMs;
-      if (effectiveDelayMs !== baseDelayMs) {
-        assertTimelineAuthoredDelayJsonRepresentable(effectiveDelayMs, {
-          ownerKind: "textUnit",
-          ownerId: node.nodeId,
-          unitId: unit.unitId,
-        });
-      }
-    }
+    assertTextUnitDelayStepJsonRepresentable(node);
   }
   if (node.type === "group") {
     for (const child of node.children ?? []) {
       assertIrOwnerJsonRepresentable(child);
+    }
+  }
+}
+
+function assertTextUnitDelayStepJsonRepresentable(node: Extract<IRNode, { type: "text" }>): void {
+  const unitAnimation = node.unitAnimation;
+  const delayStepMs = unitAnimation?.delayStepMs ?? 0;
+  if (unitAnimation === undefined || Number.isFinite(delayStepMs)) {
+    return;
+  }
+  const baseDelayMs = unitAnimation.animation.delayMs ?? 0;
+  const useVisualOrder = unitAnimation.order === "visual";
+  for (const unit of node.unitMap?.units ?? []) {
+    const orderIndex = useVisualOrder ? unit.visualOrder : unit.logicalOrder;
+    const effectiveDelayMs = baseDelayMs + orderIndex * delayStepMs;
+    if (effectiveDelayMs !== baseDelayMs) {
+      assertTimelineAuthoredDelayJsonRepresentable(effectiveDelayMs, {
+        ownerKind: "textUnit",
+        ownerId: node.nodeId,
+        unitId: unit.unitId,
+      });
     }
   }
 }

@@ -95,7 +95,7 @@ function authoredDomainProbeScene(
   };
 }
 
-function hiddenTextUnitDomainScene(delayStepMs: number) {
+function hiddenTextUnitDomainScene(delayStepMs: number, text = "AB") {
   return createElement(
     "Canvas",
     { width: 460, height: 220 },
@@ -128,7 +128,7 @@ function hiddenTextUnitDomainScene(delayStepMs: number) {
           order: "logical",
         },
       },
-      "AB",
+      text,
     ),
   );
 }
@@ -158,6 +158,32 @@ function findAuthoredAnimation(node: IRNode, ownerId: string): AnimationSpec {
     return animation;
   }
   throw new TypeError(`Missing animation owner ${ownerId}`);
+}
+
+function findTextUnitNode(node: IRNode, ownerId: string): Extract<IRNode, { type: "text" }> {
+  const find = (currentNode: IRNode): Extract<IRNode, { type: "text" }> | undefined => {
+    if (
+      currentNode.nodeId === ownerId &&
+      currentNode.type === "text" &&
+      currentNode.unitAnimation !== undefined
+    ) {
+      return currentNode;
+    }
+    if (currentNode.type === "group") {
+      for (const child of currentNode.children ?? []) {
+        const textNode = find(child);
+        if (textNode !== undefined) {
+          return textNode;
+        }
+      }
+    }
+    return undefined;
+  };
+  const textNode = find(node);
+  if (textNode !== undefined) {
+    return textNode;
+  }
+  throw new TypeError(`Missing text-unit animation owner ${ownerId}`);
 }
 
 type EndpointOwner = "node" | "textUnit";
@@ -855,6 +881,42 @@ describe("animated SVG document timeline", () => {
           reason: "authored-value-out-of-domain",
           field: "delayMs",
           received: String(aboveDelayUpperBound),
+        },
+      });
+      expect(fatal.context).not.toHaveProperty("boundaryTimeMs");
+    }
+  });
+
+  it("reports the first effective-delay domain failure before a later overflow", () => {
+    const options = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+    } as const satisfies RenderAnimatedSvgOptions;
+    const outsideScene = hiddenTextUnitDomainScene(Number.MAX_VALUE, "ABC");
+    const compiled = engine.compile(hiddenTextUnitDomainScene(0, "ABC"));
+    const compiledOwner = findTextUnitNode(compiled.ir.root, "hidden-domain-units");
+    const expectedUnitId = compiledOwner.unitMap?.units[1]?.unitId;
+    if (expectedUnitId === undefined || compiledOwner.unitAnimation === undefined) {
+      throw new TypeError("Expected a three-unit compiled text animation");
+    }
+    compiledOwner.unitAnimation.delayStepMs = Number.MAX_VALUE;
+
+    for (const render of [
+      () => engine.renderToAnimatedSvg(outsideScene, options),
+      () => engine.renderToAnimatedSvgAndIR(outsideScene, options),
+      () => engine.renderCompiledToAnimatedSvg(compiled, options),
+    ]) {
+      const fatal = captureFatal(render);
+      expect(fatal).toMatchObject({
+        code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+        context: {
+          ownerKind: "textUnit",
+          ownerId: "hidden-domain-units",
+          unitId: expectedUnitId,
+          reason: "authored-value-out-of-domain",
+          field: "delayMs",
+          received: String(Number.MAX_VALUE),
+          migration:
+            "Use playback mode independent or change the authored value to the supported timeline range.",
         },
       });
       expect(fatal.context).not.toHaveProperty("boundaryTimeMs");
