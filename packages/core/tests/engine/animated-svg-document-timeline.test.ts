@@ -187,17 +187,25 @@ function documentEndStepCutScene(owner: EndpointOwner) {
   return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
-function largeSourcePositionScene(owner: EndpointOwner, iterations: AnimationIterationCount) {
+function largeSourcePositionScene(
+  owner: EndpointOwner,
+  iterations: AnimationIterationCount,
+  endpoint?: {
+    keyframeOpacities: readonly [number, number];
+    fill: "none" | "both";
+  },
+) {
+  const keyframeOpacities = endpoint?.keyframeOpacities ?? [0, 1];
   const animation: AnimationSpec = {
     keyframes: [
-      { at: 0, opacity: 0 },
-      { at: 1, opacity: 1 },
+      { at: 0, opacity: keyframeOpacities[0] },
+      { at: 1, opacity: keyframeOpacities[1] },
     ],
     durationMs: 1,
     delayMs: -(2 ** 52 + 1),
     easing: { type: "steps", count: 1, position: "jump-end" },
     iterations,
-    fill: "both",
+    fill: endpoint?.fill ?? "both",
   };
   const animated =
     owner === "node"
@@ -548,6 +556,61 @@ describe("animated SVG document timeline", () => {
             rightTimeMs: 1,
           },
         });
+      }
+    }
+  });
+
+  it("rejects a constant finite source end whose explicit pair loses mapping precision", () => {
+    const sourceStart = 2 ** 52 + 1;
+    const options = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+      timeMs: 0.75,
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = largeSourcePositionScene(owner, sourceStart + 1, {
+        keyframeOpacities: [0, 0],
+        fill: "none",
+      });
+      const compiled = engine.compile(scene);
+      for (const render of [
+        () => engine.renderToAnimatedSvg(scene, options),
+        () => engine.renderToAnimatedSvgAndIR(scene, options),
+        () => engine.renderCompiledToAnimatedSvg(compiled, options),
+      ]) {
+        expect(captureFatal(render)).toMatchObject({
+          code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+          context: {
+            kind: "separation",
+            leftTimeMs: 0,
+            rightTimeMs: 1,
+          },
+        });
+      }
+    }
+  });
+
+  it("accepts safe constant tracks beyond the source-position guard", () => {
+    const sourceStart = 2 ** 52 + 1;
+    const options = {
+      playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
+      timeMs: 0.75,
+    } as const satisfies RenderAnimatedSvgOptions;
+
+    for (const [iterations, keyframeOpacity, fill] of [
+      ["infinite", 0, "none"],
+      [sourceStart + 1, 0, "both"],
+      [sourceStart + 1, 1, "none"],
+    ] as const) {
+      for (const owner of ["node", "textUnit"] as const) {
+        const scene = largeSourcePositionScene(owner, iterations, {
+          keyframeOpacities: [keyframeOpacity, keyframeOpacity],
+          fill,
+        });
+        const compiled = engine.compile(scene);
+        const direct = engine.renderToAnimatedSvg(scene, options);
+        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(direct);
+        expect(engine.renderCompiledToAnimatedSvg(compiled, options)).toBe(direct);
       }
     }
   });

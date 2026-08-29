@@ -2380,6 +2380,38 @@ fn precision_preflight_events<'a>(
     Ok(())
 }
 
+fn precision_preflight_explicit_event_pairs(
+    program: &CanonicalBoundaryProgram,
+) -> Result<(), EngineError> {
+    let mut events = program
+        .leading_events
+        .iter()
+        .chain(&program.trailing_events);
+    let Some(mut left_event) = events.next() else {
+        return Ok(());
+    };
+    for right_event in events {
+        precision_preflight_candidate_pair(
+            program,
+            PrecisionCandidatePair {
+                left_time: program.time_ms(left_event.coordinate),
+                right_time: program.time_ms(right_event.coordinate),
+                nominal_gap: (right_event.source_position - left_event.source_position)
+                    * program.source_duration_ms,
+                rounding_error_bound: coordinate_mapping_error_bound_ms(
+                    program,
+                    left_event.coordinate,
+                ) + coordinate_mapping_error_bound_ms(
+                    program,
+                    right_event.coordinate,
+                ),
+            },
+        )?;
+        left_event = right_event;
+    }
+    Ok(())
+}
+
 fn repeated_precision_window(
     pattern: RepeatedBoundaryProgram,
     repetition_index: f64,
@@ -2435,13 +2467,7 @@ fn precision_preflight_program(program: &CanonicalBoundaryProgram) -> Result<(),
     }
 
     if program.active_source_range.is_none() {
-        return precision_preflight_events(
-            program,
-            program
-                .leading_events
-                .iter()
-                .chain(&program.trailing_events),
-        );
+        return precision_preflight_explicit_event_pairs(program);
     }
 
     precision_preflight_events(program, &program.leading_events)?;
@@ -4517,6 +4543,126 @@ mod tests {
             assert_eq!(context["leftTimeMs"], 0.0);
             assert_eq!(context["rightTimeMs"], 1.0);
         }
+    }
+
+    #[test]
+    fn rejects_a_constant_finite_source_end_that_loses_mapping_precision() {
+        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: 1.0,
+            delay_ms: Some(-source_start),
+            easing: Some(AnimationEasing::Named("step-end".to_string())),
+            iterations: Some(AnimationIterations::Count(source_start + 1.0)),
+            fill: Some("none".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        for source in [
+            timeline_ir(spec.clone()),
+            Ir {
+                root: animated_text_unit("text-owner", "unit-0", &spec),
+                draw_order: Vec::new(),
+                width: 100.0,
+                height: 20.0,
+                debug: None,
+                warnings: Vec::new(),
+            },
+        ] {
+            let error = compile_document_animation_plan(&source, playback, 0.75)
+                .expect_err("a constant finite source end must retain its mapping proof");
+            let EngineError::StructuredContext { code, context, .. } = error else {
+                panic!("constant source-end precision should produce timeline context");
+            };
+            assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
+            assert_eq!(context["kind"], "separation");
+            assert_eq!(context["leftTimeMs"], 0.0);
+            assert_eq!(context["rightTimeMs"], 1.0);
+        }
+    }
+
+    #[test]
+    fn accepts_safe_constant_tracks_beyond_the_source_position_guard() {
+        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+        let playback = DocumentPlayback {
+            duration_ms: 1.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+        let constant_spec =
+            |opacity: f64, iterations: AnimationIterations, fill: &str| AnimationSpec {
+                keyframes: vec![
+                    AnimationKeyframe {
+                        at: 0.0,
+                        opacity: Some(opacity),
+                        transform: None,
+                    },
+                    AnimationKeyframe {
+                        at: 1.0,
+                        opacity: Some(opacity),
+                        transform: None,
+                    },
+                ],
+                duration_ms: 1.0,
+                delay_ms: Some(-source_start),
+                easing: Some(AnimationEasing::Named("step-end".to_string())),
+                iterations: Some(iterations),
+                fill: Some(fill.to_string()),
+            };
+
+        for spec in [
+            constant_spec(
+                0.0,
+                AnimationIterations::Infinite("infinite".to_string()),
+                "none",
+            ),
+            constant_spec(0.0, AnimationIterations::Count(source_start + 1.0), "both"),
+        ] {
+            for source in [
+                timeline_ir(spec.clone()),
+                Ir {
+                    root: animated_text_unit("text-owner", "unit-0", &spec),
+                    draw_order: Vec::new(),
+                    width: 100.0,
+                    height: 20.0,
+                    debug: None,
+                    warnings: Vec::new(),
+                },
+            ] {
+                compile_document_animation_plan(&source, playback, 0.75)
+                    .expect("an unobservable large-source endpoint should compile");
+            }
+        }
+
+        let matching_node_spec =
+            constant_spec(0.25, AnimationIterations::Count(source_start + 1.0), "none");
+        compile_document_animation_plan(&timeline_ir(matching_node_spec), playback, 0.75)
+            .expect("a node endpoint matching its base value should compile");
+        let matching_text_spec =
+            constant_spec(1.0, AnimationIterations::Count(source_start + 1.0), "none");
+        let matching_text_ir = Ir {
+            root: animated_text_unit("text-owner", "unit-0", &matching_text_spec),
+            draw_order: Vec::new(),
+            width: 100.0,
+            height: 20.0,
+            debug: None,
+            warnings: Vec::new(),
+        };
+        compile_document_animation_plan(&matching_text_ir, playback, 0.75)
+            .expect("a text-unit endpoint matching its base value should compile");
     }
 
     #[test]
