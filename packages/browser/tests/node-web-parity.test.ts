@@ -328,27 +328,43 @@ function buildDocumentEndStepCutScene(owner: EndpointOwner): VNode {
   return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
-function buildPassingLargeSourcePositionScene(): VNode {
-  return createElement(
-    "Canvas",
-    { width: 96, height: 48 },
-    createElement("Box", {
-      id: "large-source-position-node",
-      width: 32,
-      height: 20,
-      animate: {
-        keyframes: [
-          { at: 0, opacity: 0 },
-          { at: 1, opacity: 1 },
-        ],
-        durationMs: 1,
-        delayMs: -(2 ** 52 + 1),
-        easing: { type: "steps", count: 1, position: "jump-end" },
-        iterations: "infinite",
-        fill: "both",
-      },
-    }),
-  );
+function buildLargeSourcePositionScene(
+  owner: EndpointOwner,
+  iterations: number | "infinite",
+): VNode {
+  const animation: AnimationSpec = {
+    keyframes: [
+      { at: 0, opacity: 0 },
+      { at: 1, opacity: 1 },
+    ],
+    durationMs: 1,
+    delayMs: -(2 ** 52 + 1),
+    easing: { type: "steps", count: 1, position: "jump-end" },
+    iterations,
+    fill: "both",
+  };
+  const animated =
+    owner === "node"
+      ? createElement("Box", {
+          id: "large-source-position-node",
+          width: 32,
+          height: 20,
+          animate: animation,
+        })
+      : createElement(
+          "Text",
+          {
+            id: "large-source-position-text",
+            width: 32,
+            height: 20,
+            font: "NotoSansJP",
+            fontSizePx: 16,
+            lineHeightPx: 20,
+            animateUnits: { by: "cluster", animation },
+          },
+          "A",
+        );
+  return createElement("Canvas", { width: 96, height: 48 }, animated);
 }
 
 function buildOvershootCubicScene(
@@ -703,18 +719,49 @@ describe("nodejs/web WASM public parity", () => {
   });
 
   it("accepts a passing compressed pair beyond the source-position guard in every WASM artifact", () => {
-    const scene = buildPassingLargeSourcePositionScene();
     const options = {
       playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
     };
-    const expected = nodeEngine.renderToAnimatedSvg(scene, options);
-    expect(expected).toContain("0% { opacity: 0; }");
-    expect(expected).toContain("100% { opacity: 0; }");
 
-    for (const engine of timelineEngines) {
-      expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
-      expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
-      expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = buildLargeSourcePositionScene(owner, "infinite");
+      const expected = nodeEngine.renderToAnimatedSvg(scene, options);
+      expect(expected).toContain("0% { opacity: 0; }");
+      expect(expected).toContain("100% { opacity: 0; }");
+      for (const engine of timelineEngines) {
+        expect(engine.renderToAnimatedSvg(scene, options)).toBe(expected);
+        expect(engine.renderToAnimatedSvgAndIR(scene, options).svg).toBe(expected);
+        expect(engine.renderCompiledToAnimatedSvg(engine.compile(scene), options)).toBe(expected);
+      }
+    }
+  });
+
+  it("rejects finite source-end D-cuts that lose mapping precision in every WASM artifact", () => {
+    const sourceStart = 2 ** 52 + 1;
+    const options = {
+      playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
+      timeMs: 0.75,
+    };
+
+    for (const owner of ["node", "textUnit"] as const) {
+      const scene = buildLargeSourcePositionScene(owner, sourceStart + 1);
+      for (const engine of timelineEngines) {
+        const compiled = engine.compile(scene);
+        for (const render of [
+          () => engine.renderToAnimatedSvg(scene, options),
+          () => engine.renderToAnimatedSvgAndIR(scene, options),
+          () => engine.renderCompiledToAnimatedSvg(compiled, options),
+        ]) {
+          expect(captureThrown(render)).toMatchObject({
+            code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+            context: {
+              kind: "separation",
+              leftTimeMs: 0,
+              rightTimeMs: 1,
+            },
+          });
+        }
+      }
     }
   });
 

@@ -797,6 +797,7 @@ enum CanonicalBoundaryCoordinate {
 #[derive(Debug, Clone, PartialEq)]
 struct CanonicalBoundaryEvent {
     coordinate: CanonicalBoundaryCoordinate,
+    source_position: f64,
     left: CanonicalBoundarySide,
     exact: TrackValue,
     right: CanonicalBoundarySide,
@@ -805,6 +806,10 @@ struct CanonicalBoundaryEvent {
 impl CanonicalBoundaryEvent {
     fn plan_value(&self) -> &TrackValue {
         &self.exact
+    }
+
+    fn has_observable_boundary_difference(&self) -> bool {
+        self.left.value != self.exact || self.exact != self.right.value
     }
 }
 
@@ -920,6 +925,7 @@ impl CanonicalBoundaryProgram {
         let exact = local_event.right.value.clone();
         CanonicalBoundaryEvent {
             coordinate: CanonicalBoundaryCoordinate::SourcePosition(source_position),
+            source_position,
             left: local_event.left,
             exact,
             right: local_event.right,
@@ -1482,6 +1488,7 @@ fn source_boundary_event(
     );
     CanonicalBoundaryEvent {
         coordinate,
+        source_position,
         left: source_boundary_side(
             source,
             source_position,
@@ -1577,6 +1584,7 @@ fn build_canonical_boundary_program(
     );
     let mut leading_events = vec![CanonicalBoundaryEvent {
         coordinate: CanonicalBoundaryCoordinate::DocumentStart,
+        source_position: document_start_position,
         left: document_end_left.clone(),
         exact: document_start_right.value.clone(),
         right: document_start_right.clone(),
@@ -1605,6 +1613,7 @@ fn build_canonical_boundary_program(
     }
     trailing_events.push(CanonicalBoundaryEvent {
         coordinate: CanonicalBoundaryCoordinate::DocumentEnd,
+        source_position: document_end_position,
         left: document_end_left,
         exact: document_end_exact.value,
         right: document_start_right,
@@ -2272,7 +2281,15 @@ fn coordinate_mapping_error_bound_ms(
 ) -> f64 {
     match coordinate {
         CanonicalBoundaryCoordinate::DocumentStart | CanonicalBoundaryCoordinate::DocumentEnd => {
-            0.0
+            program
+                .leading_events
+                .iter()
+                .chain(&program.trailing_events)
+                .find(|event| event.coordinate == coordinate)
+                .filter(|event| event.has_observable_boundary_difference())
+                .map_or(0.0, |event| {
+                    source_mapping_error_bound_ms(program, event.source_position)
+                })
         }
         CanonicalBoundaryCoordinate::SourcePosition(source_position) => {
             source_mapping_error_bound_ms(program, source_position)
@@ -4450,6 +4467,56 @@ mod tests {
                 .iter()
                 .all(|keyframe| keyframe.value.opacity == Some(0.0))
         );
+    }
+
+    #[test]
+    fn rejects_a_finite_source_end_that_loses_mapping_precision() {
+        let source_start = MAX_TIMELINE_TIME_MS + 1.0;
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(1.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: 1.0,
+            delay_ms: Some(-source_start),
+            easing: Some(AnimationEasing::Named("step-end".to_string())),
+            iterations: Some(AnimationIterations::Count(source_start + 1.0)),
+            fill: Some("both".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1.0,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        for source in [
+            timeline_ir(spec.clone()),
+            Ir {
+                root: animated_text_unit("text-owner", "unit-0", &spec),
+                draw_order: Vec::new(),
+                width: 100.0,
+                height: 20.0,
+                debug: None,
+                warnings: Vec::new(),
+            },
+        ] {
+            let error = compile_document_animation_plan(&source, playback, 0.75)
+                .expect_err("an observable finite source end must retain its mapping proof");
+            let EngineError::StructuredContext { code, context, .. } = error else {
+                panic!("source-end precision should produce timeline context");
+            };
+            assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
+            assert_eq!(context["kind"], "separation");
+            assert_eq!(context["leftTimeMs"], 0.0);
+            assert_eq!(context["rightTimeMs"], 1.0);
+        }
     }
 
     #[test]
