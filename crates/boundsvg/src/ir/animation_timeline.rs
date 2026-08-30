@@ -718,9 +718,8 @@ fn base_transition_time_ms(source: &TrackSource, playback: DocumentPlayback) -> 
     if delay_ms > 0.0 {
         return Some(delay_ms);
     }
-    active_end_ms
-        .filter(|end_ms| *end_ms <= playback.duration_ms)
-        .map(|end_ms| end_ms.max(0.0))
+    // Non-positive ends returned above, so a surviving finite end is already positive.
+    active_end_ms.filter(|end_ms| *end_ms <= playback.duration_ms)
 }
 
 fn spec_values_are_constant(spec: &AnimationSpec) -> bool {
@@ -1064,9 +1063,12 @@ impl CanonicalBoundaryProgram {
         match coordinate {
             CanonicalBoundaryCoordinate::DocumentStart => 0.0,
             CanonicalBoundaryCoordinate::DocumentEnd => self.playback.duration_ms,
-            CanonicalBoundaryCoordinate::SourcePosition(source_position) => (self.delay_ms
-                + source_position * self.source_duration_ms)
-                .clamp(0.0, self.playback.duration_ms),
+            CanonicalBoundaryCoordinate::SourcePosition(source_position) => {
+                let time_ms = self.delay_ms + source_position * self.source_duration_ms;
+                // SourcePosition is emitted only inside the validated active document interval.
+                debug_assert!((0.0..=self.playback.duration_ms).contains(&time_ms));
+                time_ms
+            }
         }
     }
 
@@ -1501,12 +1503,10 @@ fn evaluate_segment(
     let start_keyframe = &spec.keyframes[segment_index];
     let end_keyframe = &spec.keyframes[segment_index + 1];
     let segment_duration_ms = spec.duration_ms * (end_keyframe.at - start_keyframe.at);
-    let eased_progress = animation::apply_easing(
-        input_progress.clamp(0.0, 1.0),
-        resolved_easing,
-        before,
-        segment_duration_ms,
-    );
+    // active_piece_endpoint derives this ratio from a validated, strictly increasing interval.
+    debug_assert!((0.0..=1.0).contains(&input_progress));
+    let eased_progress =
+        animation::apply_easing(input_progress, resolved_easing, before, segment_duration_ms);
     interpolate_keyframes(start_keyframe, end_keyframe, eased_progress)
 }
 
@@ -1894,7 +1894,9 @@ fn build_canonical_boundary_program(
                     lower_progress: start_progress,
                     upper_progress: 1.0,
                 });
-                let repetitions = (end_iteration - start_iteration - 1.0).max(0.0);
+                // source_end > source_start and distinct floors imply at least one iteration gap.
+                let repetitions = end_iteration - start_iteration - 1.0;
+                debug_assert!(repetitions >= 0.0);
                 if repetitions > 0.0 {
                     pattern = Some(RepeatedBoundaryProgram {
                         first_iteration: start_iteration + 1.0,
