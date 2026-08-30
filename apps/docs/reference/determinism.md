@@ -4,8 +4,10 @@ title: Determinism Contract
 
 # Determinism Contract
 
-boundsvg's core promise: **identical inputs produce byte-identical output,
-independent of the machine, OS, installed fonts, or JavaScript runtime.**
+boundsvg's version-scoped promise: **for accepted inputs on the declared
+surfaces below, identical contract inputs produce byte-identical covered
+artifacts across supported runtimes.** Byte identity describes the artifact;
+it does not mean that every number is accepted or preserved unchanged.
 
 ## The contract
 
@@ -19,14 +21,35 @@ Given the same
 `renderToSvg` and `renderToAnimatedSvg` return the same SVG string, and
 `renderToPng`, `renderToWebp`, `renderToAnimatedWebp`, and
 `renderToAnimatedGif` return the same bytes on Node.js, in the browser, and in
-a Web Worker.
+a Web Worker, subject to the mode boundaries and exceptions on this page.
+Structured fatal failures and ordered recoverable warnings are deterministic
+contract artifacts too.
 
 This holds because the entire text pipeline — shaping (rustybuzz), line
 breaking, kinsoku, vertical layout, font metrics — and the rasterizer (resvg)
-and every image encoder run inside a single WASM module compiled once per
-release. There is
-no browser text engine, no `canvas.measureText`, and no OS font lookup
-anywhere in the pipeline.
+and every bundled image encoder run in version-pinned WASM built from the same
+release source. There is no browser text engine, no `canvas.measureText`, and
+no OS font lookup in owned text measurement.
+
+## Numeric surface modes
+
+Numeric guarantees are declared per surface. The four modes describe where
+the oracle lives and what happens at its boundary; they are not quality tiers.
+
+| Mode                   | Contract boundary                                                                                                                        | Major surfaces                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Strict-owned**       | The accepted domain is documented and validated. Out-of-domain input fails with a deterministic structured fatal error before output.    | Document-timeline playback, duration, iteration, keyframe, and sampling fields; layout fields with published ranges  |
+| **Normalized-owned**   | A documented canonical transform, default, clamp, quantization, or fallback defines the accepted result and any recoverable warning.     | Font/default resolution, raster oversize adjustment, and GIF schedule quantization                                   |
+| **Delegated / opaque** | boundsvg owns the container and security boundary, while numeric or rendering semantics are explicitly delegated to another interpreter. | Raw `<Svg content>` markup                                                                                           |
+| **Derived / internal** | Values arise only after accepted input and are checked by the owning algorithm; they are not a separate public numeric-input promise.    | Shaping, layout, geometry, bounding-box, rasterization, and encoder intermediates used to build the covered artifact |
+
+The byte contract covers accepted strict-owned inputs and the documented
+result of normalized-owned surfaces. A normalized result can intentionally
+differ from the authored number: for example, raster oversize adjustment and
+GIF delay quantization report a recoverable warning and produce the declared
+fallback. Delegated semantics stop at their stated boundary. Derived values
+are covered only through the final artifact they help produce, not as a claim
+that every internal floating-point intermediate is mathematically exact.
 
 ## WASM runtime variants
 
@@ -41,10 +64,11 @@ or replacing artifacts is unsupported.
 ## Text is always geometry
 
 Declarative text (`<Text>`, `<Inline>`, `<Ruby>`) is emitted as **glyph
-outline paths**, never as SVG `<text>` elements. The SVG you get renders
-identically in every viewer because no viewer-side font resolution or
-re-shaping happens. The same glyph paths feed the PNG rasterizer, so SVG and
-PNG output show the same glyphs at the same positions by construction.
+outline paths**, never as SVG `<text>` elements. Its SVG geometry therefore
+does not depend on viewer-side font resolution or re-shaping. The same glyph
+paths feed the bundled rasterizer, so covered SVG and raster outputs use the
+same resolved glyph geometry. Pixel rendering performed later by an arbitrary
+SVG viewer is not itself a boundsvg byte artifact.
 
 Accessibility is preserved via `aria-label` and `data-boundsvg-text`
 attributes on each text group.
@@ -126,8 +150,8 @@ the `viewBox`, child geometry, or ordinary stroke attributes.
 
 - **Visual regression testing** — snapshot the SVG string or PNG hash in CI:
   no headless browser, no font-installation drift, no flaky pixels.
-- **Cache-safe generation** — content-addressed caching of rendered assets is
-  sound because the mapping input → bytes is a pure function.
+- **Cache-safe generation** — content-addressed caching is sound when the cache
+  key includes the boundsvg version and every contract input listed above.
 - **Cross-environment static preview** — a browser, Node.js batch job, and Worker
   produce the same sampled still at the same `timeMs`. Timeline animated SVG
   bytes also match across runtimes; live browser scheduling remains

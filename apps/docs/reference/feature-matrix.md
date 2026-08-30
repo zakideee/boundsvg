@@ -5,8 +5,9 @@ title: Feature Matrix
 # Feature Matrix
 
 Support tiers are defined in [Versioning & Stability](/getting-started/versioning):
-**Supported** (tested, determinism contract applies), **Experimental** (works,
-may change in any minor release), **Not supported** (documented gap).
+**Supported** (tested, with the determinism contract applying at each
+documented surface boundary), **Experimental** (works, may change in any minor
+release), **Not supported** (documented gap).
 
 ## Text & typography
 
@@ -88,4 +89,4 @@ may change in any minor release), **Not supported** (documented gap).
 | Worker frame pool                                 | Experimental | Ordered, bounded prepared sampling and full-scene materialized streams                                                |
 | Interactive events / hit-testing                  | Experimental |                                                                                                                       |
 | CLI (`convert` / `export` / `inspect` / `doctor`) | Experimental | SVG import analyzer has documented limits                                                                             |
-| Node.js / browser / worker runtimes               | Supported    | Same output everywhere (see contract)                                                                                 |
+| Node.js / browser / worker runtimes               | Supported    | Same covered artifacts for accepted inputs on declared surfaces (see contract)                                        |
