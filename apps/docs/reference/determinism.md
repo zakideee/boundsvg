@@ -39,17 +39,19 @@ the oracle lives and what happens at its boundary; they are not quality tiers.
 | Mode                   | Contract boundary                                                                                                                        | Major surfaces                                                                                                       |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | **Strict-owned**       | The accepted domain is documented and validated. Out-of-domain input fails with a deterministic structured fatal error before output.    | Document-timeline playback, duration, iteration, keyframe, and sampling fields; layout fields with published ranges  |
-| **Normalized-owned**   | A documented canonical transform, default, clamp, quantization, or fallback defines the accepted result and any recoverable warning.     | Font/default resolution, raster oversize adjustment, and GIF schedule quantization                                   |
+| **Normalized-owned**   | A documented canonical transform, default, clamp, quantization, or fallback defines the accepted result and any recoverable warning.     | Font/default resolution and documented color or format canonicalization                                              |
 | **Delegated / opaque** | boundsvg owns the container and security boundary, while numeric or rendering semantics are explicitly delegated to another interpreter. | Raw `<Svg content>` markup                                                                                           |
 | **Derived / internal** | Values arise only after accepted input and are checked by the owning algorithm; they are not a separate public numeric-input promise.    | Shaping, layout, geometry, bounding-box, rasterization, and encoder intermediates used to build the covered artifact |
 
 The byte contract covers accepted strict-owned inputs and the documented
 result of normalized-owned surfaces. A normalized result can intentionally
-differ from the authored number: for example, raster oversize adjustment and
-GIF delay quantization report a recoverable warning and produce the declared
-fallback. Delegated semantics stop at their stated boundary. Derived values
-are covered only through the final artifact they help produce, not as a claim
-that every internal floating-point intermediate is mathematically exact.
+differ from the authored value; each surface in this mode declares its
+canonical transform and any associated warning. Raster oversize adjustment and
+GIF delay quantization remain separately documented compatibility behavior,
+not declarations under this mode. Delegated semantics stop at their stated
+boundary. Derived values are covered only through the final artifact they help
+produce, not as a claim that every internal floating-point intermediate is
+mathematically exact.
 
 ## WASM runtime variants
 

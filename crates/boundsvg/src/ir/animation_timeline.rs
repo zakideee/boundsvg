@@ -1063,12 +1063,11 @@ impl CanonicalBoundaryProgram {
         match coordinate {
             CanonicalBoundaryCoordinate::DocumentStart => 0.0,
             CanonicalBoundaryCoordinate::DocumentEnd => self.playback.duration_ms,
-            CanonicalBoundaryCoordinate::SourcePosition(source_position) => {
-                let time_ms = self.delay_ms + source_position * self.source_duration_ms;
-                // SourcePosition is emitted only inside the validated active document interval.
-                debug_assert!((0.0..=self.playback.duration_ms).contains(&time_ms));
-                time_ms
-            }
+            // A position can be mathematically inside the active interval while
+            // affine recomputation rounds one step beyond a document endpoint.
+            CanonicalBoundaryCoordinate::SourcePosition(source_position) => (self.delay_ms
+                + source_position * self.source_duration_ms)
+                .clamp(0.0, self.playback.duration_ms),
         }
     }
 
@@ -4401,6 +4400,48 @@ mod tests {
             assert_eq!(near_context["leftTimeMs"], near_end_ms);
             assert_eq!(near_context["rightTimeMs"], duration_ms);
         }
+    }
+
+    #[test]
+    fn clamps_an_active_end_neighbor_before_precision_classification() {
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 0.88,
+                    opacity: Some(0.5),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(1.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: 2.5,
+            delay_ms: Some(-1.0),
+            easing: Some(AnimationEasing::Named("linear".to_string())),
+            iterations: Some(AnimationIterations::Infinite("infinite".to_string())),
+            fill: Some("both".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1.2,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        let error = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
+            .expect_err("the rounded document-end neighbor must fail as a duplicate time");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("the rounded endpoint should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
+        assert_eq!(context["kind"], "separation");
+        assert_eq!(context["leftTimeMs"], playback.duration_ms);
+        assert_eq!(context["rightTimeMs"], playback.duration_ms);
     }
 
     #[test]
