@@ -1,0 +1,1 @@
+[{"severity":"recoverable","code":"MISSING_GLYPH","message":"Font \"NotoSansJP\" is missing glyphs for: U+1F389 (🎉)","fallback":"blank","stage":"text","nodeId":"parity-missing-glyph","context":{"stage":"text","nodeId":"parity-missing-glyph"}}]

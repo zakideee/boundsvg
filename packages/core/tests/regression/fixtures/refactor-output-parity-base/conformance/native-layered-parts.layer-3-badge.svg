@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" data-boundsvg-node-id="nlp-canvas" viewBox="0 0 600 315" width="600" height="315">
+  <g data-boundsvg-node-id="nlp-arrow">
+    <svg data-boundsvg-node-id="nlp-arrow" x="38" y="154" width="180" height="36" overflow="hidden">
+      <path d="M0,14.4L18,14.4L18,21.6L0,21.6Z" fill="#a5b4fc" data-boundsvg-part-id="tail"/>
+      <path d="M18,14.4L126,14.4L126,21.6L18,21.6Z" fill="#6366f1" data-boundsvg-part-id="shaft"/>
+      <path d="M126,7.2L180,18L126,28.8Z" fill="#4338ca" data-boundsvg-part-id="head"/>
+    </svg>
+  </g>
+</svg>

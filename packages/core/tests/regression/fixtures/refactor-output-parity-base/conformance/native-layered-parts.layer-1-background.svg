@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" data-boundsvg-node-id="nlp-canvas" viewBox="0 0 600 315" width="600" height="315">
+  <defs>
+    <linearGradient id="grad-nlp-bg:bg" gradientUnits="userSpaceOnUse" x1="300" y1="0" x2="300" y2="110">
+      <stop offset="0%" stop-color="#e0e7ff"/>
+      <stop offset="100%" stop-color="#f8fafc"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="600" height="110" fill="url(#grad-nlp-bg:bg)"/>
+</svg>

@@ -1,0 +1,1 @@
+{"severity":"fatal","code":"ANIMATED_SVG_TIMELINE_PRECISION_LOSS","message":"Animated SVG timeline keyframe precision check failed: separation","stage":"emit","context":{"kind":"separation","leftTimeMs":0,"rightTimeMs":0,"stage":"emit"}}

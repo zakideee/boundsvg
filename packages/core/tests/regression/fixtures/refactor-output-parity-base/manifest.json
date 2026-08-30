@@ -1,0 +1,29 @@
+{
+  "formatVersion": 1,
+  "referenceCommit": "442833c415f049b86ba5fd510e6d253a6a025295",
+  "artifacts": [
+    "conformance/native-layered-parts.ir.json",
+    "conformance/native-layered-parts.layer-0-default.svg",
+    "conformance/native-layered-parts.layer-1-background.svg",
+    "conformance/native-layered-parts.layer-2-content.svg",
+    "conformance/native-layered-parts.layer-3-badge.svg",
+    "conformance/native-layered-parts.layer-4-default.svg",
+    "conformance/native-layered-parts.layer-5-content.svg",
+    "conformance/native-layered-parts.layered-manifest.json",
+    "conformance/native-layered-parts.svg",
+    "contracts/root-runtime-exports.json",
+    "contracts/wasm-schema-version.txt",
+    "fallback/missing-glyph.svg",
+    "fallback/missing-glyph.warnings.json",
+    "fallback/png-resolution-adjusted.png",
+    "fallback/png-resolution-adjusted.warnings.json",
+    "fatal/timeline-precision-loss.json",
+    "p1/animation.gif",
+    "p1/animation.webp",
+    "p1/frame.png",
+    "p1/frame.svg",
+    "p1/frame.webp",
+    "p1/timeline.ir.json",
+    "p1/timeline.svg"
+  ]
+}
