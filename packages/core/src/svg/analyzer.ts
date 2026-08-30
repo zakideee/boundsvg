@@ -6,7 +6,7 @@
 // boundsvg's text engine and non-text is preserved as raw SVG.
 // ---------------------------------------------------------------------------
 
-import { RecoverableError } from "../errors.js";
+import { createInternalRecoverableError, type RecoverableError } from "../errors.js";
 import { createElement } from "../vnode/create-element.js";
 import type { VNode } from "../vnode/types.js";
 import {
@@ -140,7 +140,7 @@ export function analyzeSvg(svgString: string, options: AnalyzeSvgOptions): Analy
   // Check for <style> blocks
   if (/<style\b/i.test(svgString)) {
     warnings.push(
-      new RecoverableError(
+      createInternalRecoverableError(
         "SVG_STYLE_BLOCK_DETECTED",
         "SVG contains <style> block which may affect text rendering. CSS class-based styling is not supported.",
         {
@@ -155,7 +155,7 @@ export function analyzeSvg(svgString: string, options: AnalyzeSvgOptions): Analy
   const nestedSvgCount = (svgString.match(/<svg\b/gi) ?? []).length;
   if (nestedSvgCount > 1) {
     warnings.push(
-      new RecoverableError(
+      createInternalRecoverableError(
         "SVG_NESTED_SVG_DETECTED",
         "SVG contains nested <svg> elements. Only the outermost <svg> is processed for text extraction.",
         {
@@ -202,7 +202,7 @@ export function analyzeSvg(svgString: string, options: AnalyzeSvgOptions): Analy
         };
         bboxSource = "viewbox-fallback";
         warnings.push(
-          new RecoverableError(
+          createInternalRecoverableError(
             "BBOX_INFERRED_FROM_VIEWBOX",
             `Text element ${i} BBOX inferred from viewBox (no enclosing rect found).`,
             {
@@ -464,7 +464,7 @@ function checkUnsupportedTextAttributes(svgString: string, warnings: Recoverable
       if (!KNOWN_TEXT_ATTRS.has(key) && UNSUPPORTED_TEXT_ATTRS.has(key) && !seen.has(key)) {
         seen.add(key);
         warnings.push(
-          new RecoverableError(
+          createInternalRecoverableError(
             "SVG_UNSUPPORTED_PROPERTY",
             `SVG text attribute "${key}" is not supported and will be ignored.`,
             {
@@ -480,7 +480,7 @@ function checkUnsupportedTextAttributes(svgString: string, warnings: Recoverable
       if (!KNOWN_TEXT_ATTRS.has(key) && UNSUPPORTED_TEXT_ATTRS.has(key) && !seen.has(key)) {
         seen.add(key);
         warnings.push(
-          new RecoverableError(
+          createInternalRecoverableError(
             "SVG_UNSUPPORTED_PROPERTY",
             `SVG text style property "${key}" is not supported and will be ignored.`,
             {
@@ -532,7 +532,7 @@ function checkExternalImageRefs(svgContent: string, warnings: RecoverableError[]
     const href = (match[1] ?? match[2] ?? "").trim();
     if (href && !href.startsWith("data:")) {
       warnings.push(
-        new RecoverableError(
+        createInternalRecoverableError(
           "SVG_EXTERNAL_IMAGE_DETECTED",
           `SVG contains <image> with external href "${href}" — use inlineExternalImages() or provide a data URI for reliable rendering.`,
           {

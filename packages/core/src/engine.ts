@@ -15,7 +15,12 @@ import {
   assertAnimatedSvgTimelineIrJsonRepresentable,
   assertAnimatedSvgTimelineVNodeJsonRepresentable,
 } from "./engine/timeline-domain-transport.js";
-import { FatalError, RecoverableError, type StructuredError } from "./errors.js";
+import {
+  createInternalRecoverableError,
+  FatalError,
+  RecoverableError,
+  type StructuredError,
+} from "./errors.js";
 import { GENERIC_FONT_FAMILIES } from "./font/generic-families.js";
 import { DEFAULT_FONT_WEIGHT } from "./font/types.js";
 import { hitTest } from "./ir/hit-test.js";
@@ -1783,7 +1788,7 @@ export class Engine {
     if (emittedMs <= requestedMs * (1 + GIF_TIMING_TOLERANCE)) {
       return undefined;
     }
-    return new RecoverableError(
+    return createInternalRecoverableError(
       "ANIMATED_GIF_TIMING_ADJUSTED",
       `GIF frame delays are limited to whole centiseconds of at least ${GIF_MIN_FRAME_MS / GIF_DELAY_UNIT_MS}; the animation plays for ${emittedMs} ms instead of ${requestedMs} ms. ${
         sampled
@@ -3157,10 +3162,14 @@ export class Engine {
       throw new FatalError("PNG_PIXEL_LIMIT", warningMessage, { stage: "emit", ...warning });
     }
     emitOpts?.onPngResolutionAdjusted?.(warning);
-    const recoverableWarning = new RecoverableError("PNG_RESOLUTION_ADJUSTED", warningMessage, {
-      fallback: "auto-adjusted scale",
-      context: { stage: "emit", ...warning },
-    });
+    const recoverableWarning = createInternalRecoverableError(
+      "PNG_RESOLUTION_ADJUSTED",
+      warningMessage,
+      {
+        fallback: "auto-adjusted scale",
+        context: { stage: "emit", ...warning },
+      },
+    );
     ir.warnings.push(recoverableWarning);
     emitOpts?.onWarning?.(recoverableWarning);
   }
@@ -3340,7 +3349,7 @@ export class Engine {
         thresholdRatio: validationOptions.maxDifferenceRatio,
       });
       renderOpts?.onWarning?.(
-        new RecoverableError(
+        createInternalRecoverableError(
           "LAYERED_COMPOSITION_VALIDATION_UNAVAILABLE",
           "Layered composition validation is not available in this engine.",
           {
@@ -3394,7 +3403,7 @@ export class Engine {
       };
       if (mismatched) {
         renderOpts?.onWarning?.(
-          new RecoverableError(
+          createInternalRecoverableError(
             "LAYERED_COMPOSITION_MISMATCH",
             `Layered composition validation detected ${metrics.differentPixels} differing pixels (${metrics.differenceRatio}).`,
             {
@@ -3423,7 +3432,7 @@ export class Engine {
         thresholdRatio: validationOptions.maxDifferenceRatio,
       });
       renderOpts?.onWarning?.(
-        new RecoverableError(
+        createInternalRecoverableError(
           "LAYERED_COMPOSITION_VALIDATION_UNAVAILABLE",
           `Layered composition validation could not run: ${message}`,
           {

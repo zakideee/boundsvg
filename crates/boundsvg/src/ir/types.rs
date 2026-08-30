@@ -1138,6 +1138,61 @@ pub struct RenderWarning {
     pub fallback: Option<String>,
 }
 
+impl RenderWarning {
+    pub(crate) fn recoverable(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        stage: PipelineStage,
+        node_id: Option<String>,
+        fallback: impl Into<String>,
+    ) -> Self {
+        let code = code.into();
+        let message = message.into();
+        let fallback = fallback.into();
+        debug_assert!(
+            matches!(
+                code.as_str(),
+                "IMAGE_LOAD_FAILED"
+                    | "IMAGE_SRC_NOT_EMBEDDED"
+                    | "INLINE_BOX_MAX_DEPTH"
+                    | "KINSOKU_UNRESOLVED"
+                    | "LONG_RUBY_ANNOTATION"
+                    | "MISSING_GLYPH"
+                    | "RUBY_INTER_CHARACTER_FALLBACK"
+                    | "SHAPE_PART_PAINT_UNKNOWN_PART"
+                    | "SVG_EMBEDDED_TEXT"
+                    | "TEXT_ANIMATION_FRAGMENT_COUNT_HIGH"
+                    | "TEXT_ANIMATION_UNIT_COUNT_HIGH"
+                    | "TEXT_DECORATION_SKIP_INK_LIMIT"
+            ),
+            "recoverable warning code must have a declared policy"
+        );
+        debug_assert!(
+            code.starts_with(|character: char| character.is_ascii_uppercase())
+                && code.chars().all(|character| character.is_ascii_uppercase()
+                    || character.is_ascii_digit()
+                    || character == '_'),
+            "recoverable warning code must be stable SCREAMING_SNAKE_CASE"
+        );
+        debug_assert!(
+            !message.trim().is_empty(),
+            "recoverable warning message must not be empty"
+        );
+        debug_assert!(
+            !fallback.trim().is_empty(),
+            "recoverable warning fallback must not be empty"
+        );
+        Self {
+            severity: ErrorSeverity::Recoverable,
+            code,
+            message,
+            stage,
+            node_id,
+            fallback: Some(fallback),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Hit target (returned alongside SVG for TS-side spatial indexing)
 // ---------------------------------------------------------------------------
@@ -1381,6 +1436,24 @@ fn count_ascii_digits(bytes: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recoverable_warning_constructor_fixes_the_required_wire_fields() {
+        let warning = RenderWarning::recoverable(
+            "IMAGE_LOAD_FAILED",
+            "warning message",
+            PipelineStage::Ir,
+            Some("node-1".to_string()),
+            "deterministic fallback",
+        );
+
+        assert_eq!(warning.severity, ErrorSeverity::Recoverable);
+        assert_eq!(warning.code, "IMAGE_LOAD_FAILED");
+        assert_eq!(warning.message, "warning message");
+        assert_eq!(warning.stage, PipelineStage::Ir);
+        assert_eq!(warning.node_id.as_deref(), Some("node-1"));
+        assert_eq!(warning.fallback.as_deref(), Some("deterministic fallback"));
+    }
 
     #[test]
     fn test_bbox_new() {
