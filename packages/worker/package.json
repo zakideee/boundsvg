@@ -1,6 +1,6 @@
 {
   "name": "@boundsvg/worker",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Web Worker adapter for boundsvg — offloads WASM rendering to a background thread",
   "keywords": [
     "svg",
