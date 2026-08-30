@@ -146,9 +146,6 @@ const typeTargets: Record<string, TypeTarget[]> = {
       intentionallyIgnoredTsFields: ["skipValidation", "onWarning"],
     },
   ],
-  AnimatedSvgPlaybackInput: [
-    { file: "packages/core/src/engine.ts", typeName: "AnimatedSvgPlayback" },
-  ],
   OutputGenerator: [
     { file: "packages/core/src/engine.ts", typeName: "OutputGenerator" },
     { file: wasmIndexFile, typeName: "PngRenderOptions", path: ["generator"] },
@@ -280,11 +277,6 @@ const unitEnumTargets: Record<string, TypeTarget> = {
     file: "packages/core/src/engine.ts",
     typeName: "InternalRenderOptions",
     path: ["animation"],
-  },
-  AnimatedSvgPlaybackModeInput: {
-    file: "packages/core/src/engine.ts",
-    typeName: "AnimatedSvgPlayback",
-    path: ["mode"],
   },
   FillRule: { file: wasmIndexFile, typeName: "FlowExclusionShape", path: ["fillRule"] },
   FlowOverflowReason: { file: wasmIndexFile, typeName: "FlowOverflowReason" },
@@ -775,6 +767,8 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       "BorderRadiusInputValue",
       "AnimationEasing",
       "AnimationIterations",
+      "AnimatedSvgPlaybackInput",
+      "AnimatedSvgTimelineIterationsInput",
       "AnimatedRasterInfinite",
       "AnimatedRasterIterations",
       "ReducedMotionInput",
@@ -796,8 +790,8 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(861);
-    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(78);
+    ).toBe(863);
+    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(81);
   });
 
   it("keeps struct wire fields and requiredness directionally compatible", () => {
@@ -954,6 +948,39 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
     }
   });
 
+  it("keeps tagged animated SVG playback variants aligned with the TS union", () => {
+    const dto = rustDtos.get("AnimatedSvgPlaybackInput");
+    expect(dto?.serdeAttributes.some((attribute) => /\btag = "mode"/.test(attribute))).toBe(true);
+    if (!dto) {
+      return;
+    }
+    const playbackTypes = declarationType(program, checker, {
+      file: "packages/core/src/engine.ts",
+      typeName: "AnimatedSvgPlayback",
+    });
+    for (const variant of dto.variants) {
+      const variantTypes = playbackTypes.filter((type) => {
+        const mode = checker.getPropertyOfType(type, "mode");
+        const location = mode?.valueDeclaration ?? mode?.declarations?.[0];
+        return (
+          mode != null &&
+          location != null &&
+          stringLiterals([checker.getTypeOfSymbolAtLocation(mode, location)]).includes(variant.name)
+        );
+      });
+      expect(variantTypes, `missing TS playback variant ${variant.name}`).toHaveLength(1);
+      compareFields(
+        {
+          ...dto,
+          fields: [{ name: "mode", required: true }, ...variant.fields],
+          variants: [],
+        },
+        `AnimatedSvgPlayback.${variant.name}`,
+        fieldShape(variantTypes, checker),
+      );
+    }
+  });
+
   it("keeps the untagged resolved border radius scalar/object arms aligned", () => {
     const dto = rustDtos.get("BorderRadius");
     expect(dto?.serdeAttributes).toContain("untagged");
@@ -992,6 +1019,20 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
     ]);
     expect(rustDtos.get("AnimationIterations")?.serdeAttributes).toContain("untagged");
     expect(rustDtos.get("AnimationIterations")?.variants).toHaveLength(2);
+
+    expect(rustDtos.get("AnimatedSvgTimelineIterationsInput")?.serdeAttributes).toContain(
+      "untagged",
+    );
+    expect(rustDtos.get("AnimatedSvgTimelineIterationsInput")?.variants).toHaveLength(2);
+    const animatedSvgIterationTypes = declarationType(program, checker, {
+      file: "packages/core/src/engine.ts",
+      typeName: "AnimationTimeline",
+      path: ["iterations"],
+    });
+    expect(
+      animatedSvgIterationTypes.some((type) => (type.flags & ts.TypeFlags.NumberLike) !== 0),
+    ).toBe(true);
+    expect(stringLiterals(animatedSvgIterationTypes)).toEqual(["infinite"]);
 
     expect(rustDtos.get("AnimatedRasterIterations")?.serdeAttributes).toContain("untagged");
     expect(rustDtos.get("AnimatedRasterIterations")?.variants).toHaveLength(2);

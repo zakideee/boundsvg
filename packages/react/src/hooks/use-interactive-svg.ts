@@ -59,7 +59,7 @@ export type UseInteractiveSvgOptions = InteractiveBehaviorOptions &
         renderOptions?: RenderSvgOptions;
       }
     | {
-        /** Preserve independent authored tracks in the interactive SVG document. */
+        /** Preserve authored tracks in the interactive SVG document. */
         renderMode: "animated";
         renderOptions: RenderAnimatedSvgOptions;
       }

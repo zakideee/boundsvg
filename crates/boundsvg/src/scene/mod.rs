@@ -29,6 +29,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::error::EngineError;
+use crate::ir::animation_timeline::{CssIterationCount, DocumentAnimationPlan, DocumentKeyframe};
 use crate::ir::types::{
     AnimationSpec, BBox, BorderRadius, BoxShadow, Gradient, Ir, IrNode, IrNodeKind, IrTextAlign,
     ShapePathPart, StrokeLinecap, StrokeLinejoin, StrokeScaling, TextOutlinePath, TextShadowLayer,
@@ -70,6 +71,7 @@ pub struct PaintSceneOptions {
     pub animation_mode: AnimationMode,
     pub time_ms: f64,
     pub reduced_motion: ReducedMotionMode,
+    pub timeline_plan: Option<DocumentAnimationPlan>,
     pub generator: Option<crate::output_generator::OutputGenerator>,
 }
 
@@ -100,6 +102,7 @@ impl Default for PaintSceneOptions {
             animation_mode: AnimationMode::Declarative,
             time_ms: 0.0,
             reduced_motion: ReducedMotionMode::Keep,
+            timeline_plan: None,
             generator: None,
         }
     }
@@ -174,6 +177,7 @@ pub struct PaintScene {
     pub generator: Option<crate::output_generator::OutputGenerator>,
     pub defs: SceneDefs,
     pub animations: Vec<AnimationStyle>,
+    pub timeline_css_bytes: Option<usize>,
     pub canvas_strokes: Vec<CanvasStrokeStyle>,
     pub animation_time_ms: f64,
     pub reduced_motion: ReducedMotionMode,
@@ -189,7 +193,18 @@ pub struct AnimationStyle {
     pub class_name: String,
     pub keyframes_name: String,
     pub bbox: BBox,
-    pub spec: AnimationSpec,
+    pub playback: AnimationPlaybackStyle,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AnimationPlaybackStyle {
+    Independent(AnimationSpec),
+    Timeline {
+        duration_ms: f64,
+        delay_ms: f64,
+        iterations: CssIterationCount,
+        keyframes: Vec<DocumentKeyframe>,
+    },
 }
 
 /// Browser-side restoration rule for a canvas-stable stroke.
@@ -508,7 +523,11 @@ pub fn resolve_paint_scene(
     let declarative_animation = options.animation_mode == AnimationMode::Declarative;
     let mut animations = Vec::new();
     if declarative_animation {
-        collect_animations(&ir.root, &identifier_namespace, &mut animations);
+        if let Some(timeline_plan) = &options.timeline_plan {
+            collect_timeline_animations(timeline_plan, &identifier_namespace, &mut animations);
+        } else {
+            collect_animations(&ir.root, &identifier_namespace, &mut animations);
+        }
     }
 
     let mut items: Vec<PaintItem> = Vec::new();
@@ -557,6 +576,10 @@ pub fn resolve_paint_scene(
         generator: options.generator.clone(),
         defs,
         animations,
+        timeline_css_bytes: options
+            .timeline_plan
+            .as_ref()
+            .map(|plan| plan.exact_css_bytes),
         canvas_strokes: canvas_stroke_state.styles,
         animation_time_ms: options.time_ms,
         reduced_motion: options.reduced_motion,
@@ -595,7 +618,7 @@ fn collect_animations(
                     class_name,
                     keyframes_name,
                     bbox: node.bbox,
-                    spec: spec.clone(),
+                    playback: AnimationPlaybackStyle::Independent(spec.clone()),
                 });
             }
             for child in children {
@@ -647,11 +670,33 @@ fn collect_animations(
                     class_name,
                     keyframes_name,
                     bbox,
-                    spec,
+                    playback: AnimationPlaybackStyle::Independent(spec),
                 });
             }
         }
         _ => {}
+    }
+}
+
+fn collect_timeline_animations(
+    plan: &DocumentAnimationPlan,
+    identifier_namespace: &SvgIdentifierNamespace,
+    animations: &mut Vec<AnimationStyle>,
+) {
+    for track in &plan.tracks {
+        let (class_name, keyframes_name) =
+            animation_names(&track.animation_name_owner, identifier_namespace);
+        animations.push(AnimationStyle {
+            class_name,
+            keyframes_name,
+            bbox: track.bbox,
+            playback: AnimationPlaybackStyle::Timeline {
+                duration_ms: plan.duration_ms,
+                delay_ms: plan.css_delay_ms,
+                iterations: plan.css_iteration_count,
+                keyframes: track.keyframes.clone(),
+            },
+        });
     }
 }
 

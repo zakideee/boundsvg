@@ -75,17 +75,26 @@ the `viewBox`, child geometry, or ordinary stroke attributes.
    need the guarantee to cover it.
 2. **Animation playback timing.** Animated SVG uses CSS `@keyframes`, and
    animated GIF stores delays in 10 ms units that browsers override below
-   2 centiseconds. The bytes are covered; how long a viewer actually shows each
-   frame is not.
-   Which frame a viewer shows at a wall-clock instant comes from the viewer's
-   animation clock and is outside this contract. The static SVG baked at
-   `timeMs`, PNG output (always static), and the animated SVG's attribute
-   base pose are covered. A non-CSS viewer or resvg shows that base-pose still,
-   which rasterizes identically to static PNG at the same `timeMs`. boundsvg
-   emits a `prefers-reduced-motion` opt-out only when `reducedMotion: "pause"`
-   is passed; the default `"keep"` emits nothing and leaves the policy to the
-   embedding application. Either way the choice is part of the input, so output
-   stays deterministic. See [Animation](/guides/animation).
+   2 centiseconds. Animated SVG bytes are covered in both `independent` and
+   `timeline` modes, as are the static SVG baked at `timeMs`, PNG output, IR,
+   and the animated SVG's attribute base pose. A non-CSS viewer or resvg shows
+   that deterministic base-pose still.
+
+   Timeline live playback has a separate computed-value contract in supported
+   browsers. Away from discontinuities it follows the document sampler within
+   the published numeric tolerance. Inside the bounded discontinuity window it
+   may use either one-sided continuation; at the exact instant it may show the
+   left or right limit. Browser scheduling still decides when a wall-clock
+   frame is painted, so wall-clock timing and independent-mode live evaluation
+   are not byte-determinism claims. Use static rendering with the document-time
+   mapping in the [Animation guide](/guides/animation#document-timeline-playback)
+   for exact checkpoint verification.
+
+   boundsvg emits a `prefers-reduced-motion` opt-out only when
+   `reducedMotion: "pause"` is passed; the default `"keep"` emits nothing. The
+   choice is part of the input, and timeline validation and budgets apply in
+   either case.
+
 3. **Encoded video is not covered at all.** MP4 export — `renderToMp4` in the
    browser, `--format mp4` in the CLI — hands the sampled frames to an encoder
    boundsvg does not ship: the browser's WebCodecs implementation, or an ffmpeg
@@ -120,5 +129,6 @@ the `viewBox`, child geometry, or ordinary stroke attributes.
 - **Cache-safe generation** — content-addressed caching of rendered assets is
   sound because the mapping input → bytes is a pure function.
 - **Cross-environment static preview** — a browser, Node.js batch job, and Worker
-  produce the same sampled still at the same `timeMs`. Animated SVG playback
-  timing remains viewer-dependent as described above.
+  produce the same sampled still at the same `timeMs`. Timeline animated SVG
+  bytes also match across runtimes; live browser scheduling remains
+  viewer-dependent as described above.

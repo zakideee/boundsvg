@@ -1,4 +1,8 @@
 import { parseColor } from "../color.js";
+import {
+  assertTimelineAuthoredSpecJsonRepresentable,
+  type TimelineAuthoredDomainOwner,
+} from "../engine/timeline-domain-transport.js";
 import { FatalError } from "../errors.js";
 import { getUnsafeSvgReason } from "../svg/security.js";
 import { assertValidTransform2D } from "../transform.js";
@@ -315,7 +319,11 @@ function validateAnimationTransform(transform: unknown, nid: string, frameIndex:
   }
 }
 
-function validateAnimationSpecOptions(animation: Record<string, unknown>, nid: string): void {
+function validateAnimationSpecOptions(
+  animation: Record<string, unknown>,
+  nid: string,
+  timelineOwner?: TimelineAuthoredDomainOwner,
+): void {
   for (const key of Object.keys(animation)) {
     if (!ANIMATION_SPEC_KEYS.has(key)) {
       throw animationValidationError(nid, `unsupported spec key "${key}"`);
@@ -323,22 +331,32 @@ function validateAnimationSpecOptions(animation: Record<string, unknown>, nid: s
   }
 
   const { durationMs, delayMs, easing, iterations, fill } = animation;
-  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) {
+  if (
+    typeof durationMs !== "number" ||
+    (timelineOwner === undefined && (!Number.isFinite(durationMs) || durationMs <= 0))
+  ) {
     throw animationValidationError(nid, "durationMs must be a positive finite number");
   }
-  if (delayMs !== undefined && (typeof delayMs !== "number" || !Number.isFinite(delayMs))) {
+  if (
+    delayMs !== undefined &&
+    (typeof delayMs !== "number" || (timelineOwner === undefined && !Number.isFinite(delayMs)))
+  ) {
     throw animationValidationError(nid, "delayMs must be a finite number");
   }
   validateAnimationEasing(easing, nid);
   if (
     iterations !== undefined &&
     iterations !== "infinite" &&
-    (typeof iterations !== "number" || !Number.isFinite(iterations) || iterations <= 0)
+    (typeof iterations !== "number" ||
+      (timelineOwner === undefined && (!Number.isFinite(iterations) || iterations <= 0)))
   ) {
     throw animationValidationError(nid, 'iterations must be positive or "infinite"');
   }
   if (fill !== undefined && fill !== "none" && fill !== "both") {
     throw animationValidationError(nid, 'fill must be "none" or "both"');
+  }
+  if (timelineOwner !== undefined) {
+    assertTimelineAuthoredSpecJsonRepresentable({ durationMs, delayMs, iterations }, timelineOwner);
   }
 }
 
@@ -412,7 +430,11 @@ function assertAnimationTargetsComplete(
   }
 }
 
-export function validateAnimationProp(node: VNode, nid: string): void {
+export function validateAnimationProp(
+  node: VNode,
+  nid: string,
+  timelineOwner?: TimelineAuthoredDomainOwner,
+): void {
   const animation = Reflect.get(node.props as Record<string, unknown>, "animate");
   if (animation === undefined) {
     return;
@@ -420,12 +442,16 @@ export function validateAnimationProp(node: VNode, nid: string): void {
   if (!ANIMATION_SUPPORTED_TYPES.has(node.type)) {
     throw animationValidationError(nid, `${node.type} does not support prop "animate"`);
   }
-  validateAnimationValue(animation, nid);
+  validateAnimationValue(animation, nid, timelineOwner);
 }
 
-export function validateAnimationValue(animation: unknown, nid: string): void {
+export function validateAnimationValue(
+  animation: unknown,
+  nid: string,
+  timelineOwner?: TimelineAuthoredDomainOwner,
+): void {
   assertAnimationRecord(animation, nid, "spec");
-  validateAnimationSpecOptions(animation, nid);
+  validateAnimationSpecOptions(animation, nid, timelineOwner);
 
   const { keyframes } = animation;
   if (!Array.isArray(keyframes) || keyframes.length < 2) {

@@ -1,4 +1,5 @@
 import type { Preset } from "../types";
+import { animatedSvgTimelinePreset } from "./animated-svg-timeline";
 import { bubbleFlowPreset } from "./bubble-flow";
 import { defsSharingPreset } from "./defs-sharing";
 import { fitPreset } from "./fit";
@@ -35,6 +36,7 @@ import { verticalRichEllipsisPreset } from "./vertical-rich-ellipsis";
 import { zIndexPreset } from "./z-index";
 
 export const presets: Record<string, Preset> = {
+  "animated-svg-timeline": animatedSvgTimelinePreset,
   fit: fitPreset,
   "font-fallback": fontFallbackPreset,
   "variable-font": variableFontPreset,

@@ -13,9 +13,11 @@
  */
 
 import type {
+  Engine,
   IR,
   LayeredPngResult,
   LayeredSvgResult,
+  RenderAnimatedSvgOptions,
   RenderPngOptions,
   RenderSvgOptions,
   VNode,
@@ -26,7 +28,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BoundSvgContext } from "../src/context.js";
 import type { BoundSvgContextValue } from "../src/types.js";
-import { makeInvalidVNode, makeWorkerEngineMock } from "./test-doubles.js";
+import { makeEngineMock, makeInvalidVNode, makeWorkerEngineMock } from "./test-doubles.js";
 
 // Fully mock @boundsvg/core — no actual module loading (avoids WASM OOM)
 const mockToSceneDocument = vi.fn((vnode: VNode) => {
@@ -45,6 +47,7 @@ const { useRenderToSvgAsync } = await import("../src/hooks/use-render-svg-async.
 const { useRenderToAnimatedSvgAsync } = await import(
   "../src/hooks/use-render-animated-svg-async.js"
 );
+const { useRenderToAnimatedSvg } = await import("../src/hooks/use-render-animated-svg.js");
 const { useRenderToAnimatedSvgAndIrAsync } = await import(
   "../src/hooks/use-render-animated-svg-and-ir-async.js"
 );
@@ -79,6 +82,16 @@ function workerCtx(workerEngine: WorkerEngine): BoundSvgContextValue {
   return {
     engine: null,
     workerEngine,
+    status: "ready",
+    error: null,
+    defaultCommonOptions: { textPathMode: "merged" },
+  };
+}
+
+function mainThreadCtx(engine: Engine): BoundSvgContextValue {
+  return {
+    engine,
+    workerEngine: null,
     status: "ready",
     error: null,
     defaultCommonOptions: { textPathMode: "merged" },
@@ -753,6 +766,54 @@ describe("useRenderToSvgAsync", () => {
 // ---------------------------------------------------------------------------
 
 describe("animated SVG Worker hooks", () => {
+  it("returns the same timeline artifact through sync and async rendering", async () => {
+    const timelineSvg = '<svg data-playback="timeline"></svg>';
+    const renderOptions: RenderAnimatedSvgOptions = {
+      playback: { mode: "timeline", durationMs: 1_000, iterations: 2.25 },
+      timeMs: 1_100,
+      resourceIdPrefix: "timeline-",
+    };
+    const renderToAnimatedSvg = vi.fn(() => timelineSvg);
+    const workerRenderToAnimatedSvg = vi.fn(async () => timelineSvg);
+    const engine = makeEngineMock({ renderToAnimatedSvg });
+    const workerEngine = makeWorkerEngineMock({
+      renderToAnimatedSvg: workerRenderToAnimatedSvg,
+    });
+    let syncSnapshot: ReturnType<typeof useRenderToAnimatedSvg> | null = null;
+    let asyncSnapshot: ReturnType<typeof useRenderToAnimatedSvgAsync> | null = null;
+
+    function SyncProbe() {
+      syncSnapshot = useRenderToAnimatedSvg(VALID_VNODE, renderOptions);
+      return null;
+    }
+
+    function AsyncProbe() {
+      asyncSnapshot = useRenderToAnimatedSvgAsync(VALID_VNODE, renderOptions);
+      return null;
+    }
+
+    const syncMount = mount(<SyncProbe />, mainThreadCtx(engine));
+    expect(syncSnapshot?.svg).toBe(timelineSvg);
+    syncMount.unmount();
+
+    const asyncMount = mount(<AsyncProbe />, workerCtx(workerEngine));
+    await flush();
+
+    expect(asyncSnapshot?.svg).toBe(syncSnapshot?.svg);
+    expect(renderToAnimatedSvg).toHaveBeenCalledWith(VALID_VNODE, {
+      textPathMode: "merged",
+      ...renderOptions,
+    });
+    expect(workerRenderToAnimatedSvg).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "canvas" }),
+      {
+        textPathMode: "merged",
+        ...renderOptions,
+      },
+    );
+    asyncMount.unmount();
+  });
+
   it("renders through WorkerEngine.renderToAnimatedSvg with independent playback", async () => {
     const renderToAnimatedSvg = vi.fn(async () => '<svg data-mode="animated"></svg>');
     const workerEngine = makeWorkerEngineMock({ renderToAnimatedSvg });

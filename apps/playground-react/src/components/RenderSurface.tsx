@@ -3,6 +3,7 @@ import {
   BoundSvg,
   type CompileOptions,
   type OutputCommonOptions,
+  type RenderAnimatedSvgOptions,
   useRenderToAnimatedSvg,
   useRenderToSvg,
   type VNode,
@@ -24,6 +25,7 @@ type RenderSurfaceProps = {
   renderer: RendererMode;
   vnode: VNode | null;
   renderOptions?: CompileOptions & OutputCommonOptions;
+  animatedSvgOptions?: RenderAnimatedSvgOptions;
   isPending?: boolean;
 };
 
@@ -54,12 +56,26 @@ function resolvePreviewScale(scale: number | undefined): number {
   return scale;
 }
 
-export function RenderSurface({ renderer, vnode, renderOptions, isPending }: RenderSurfaceProps) {
+export function RenderSurface({
+  renderer,
+  vnode,
+  renderOptions,
+  animatedSvgOptions,
+  isPending,
+}: RenderSurfaceProps) {
   const surface =
     renderer === "boundsvg" ? (
-      <BoundSvgSurface vnode={vnode} renderOptions={renderOptions} />
+      <BoundSvgSurface
+        vnode={vnode}
+        renderOptions={renderOptions}
+        animatedSvgOptions={animatedSvgOptions}
+      />
     ) : renderer === "svg-hook" ? (
-      <SvgHookSurface vnode={vnode} renderOptions={renderOptions} />
+      <SvgHookSurface
+        vnode={vnode}
+        renderOptions={renderOptions}
+        animatedSvgOptions={animatedSvgOptions}
+      />
     ) : (
       <PngHookSurface vnode={vnode} renderOptions={renderOptions} />
     );
@@ -79,9 +95,11 @@ export function RenderSurface({ renderer, vnode, renderOptions, isPending }: Ren
 function BoundSvgSurface({
   vnode,
   renderOptions,
+  animatedSvgOptions,
 }: {
   vnode: VNode | null;
   renderOptions?: CompileOptions & OutputCommonOptions;
+  animatedSvgOptions?: RenderAnimatedSvgOptions;
 }) {
   const animated = useMemo(() => declaresAnimation(vnode), [vnode]);
   const fallback = <p className="placeholder-text">Rendering…</p>;
@@ -94,7 +112,7 @@ function BoundSvgSurface({
         <AnimatedBoundSvg
           vnode={vnode}
           className="rendered-content"
-          renderOptions={{ ...renderOptions, ...INDEPENDENT_PLAYBACK }}
+          renderOptions={{ ...renderOptions, ...(animatedSvgOptions ?? INDEPENDENT_PLAYBACK) }}
           fallback={fallback}
           errorFallback={errorFallback}
         />
@@ -114,6 +132,7 @@ function BoundSvgSurface({
 function SvgHookSurface(props: {
   vnode: VNode | null;
   renderOptions?: CompileOptions & OutputCommonOptions;
+  animatedSvgOptions?: RenderAnimatedSvgOptions;
 }) {
   const animated = useMemo(() => declaresAnimation(props.vnode), [props.vnode]);
   return animated ? <AnimatedSvgHookSurface {...props} /> : <StaticSvgHookSurface {...props} />;
@@ -122,13 +141,15 @@ function SvgHookSurface(props: {
 function AnimatedSvgHookSurface({
   vnode,
   renderOptions,
+  animatedSvgOptions,
 }: {
   vnode: VNode | null;
   renderOptions?: CompileOptions & OutputCommonOptions;
+  animatedSvgOptions?: RenderAnimatedSvgOptions;
 }) {
   const animatedRenderOptions = useMemo(
-    () => ({ ...renderOptions, ...INDEPENDENT_PLAYBACK }),
-    [renderOptions],
+    () => ({ ...renderOptions, ...(animatedSvgOptions ?? INDEPENDENT_PLAYBACK) }),
+    [renderOptions, animatedSvgOptions],
   );
   const { svg, error, isReady } = useRenderToAnimatedSvg(vnode, animatedRenderOptions);
   return <SvgHookResult svg={svg} error={error} isReady={isReady} />;

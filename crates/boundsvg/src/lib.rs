@@ -195,6 +195,10 @@ struct RenderSvgOptionsInput {
     /// Public package/service identity embedded in the exported file.
     #[serde(default)]
     generator: Option<output_generator::OutputGenerator>,
+    /// Parsed animated-SVG document playback. This is an internal pipeline
+    /// field and is never accepted by the legacy render-options DTO.
+    #[serde(skip)]
+    timeline_playback: Option<ir::animation_timeline::DocumentPlayback>,
 }
 
 /// Public static-SVG transport options. Declarative playback and reduced
@@ -230,15 +234,41 @@ struct StaticSvgOptionsInput {
 
 /// Declarative animated-SVG playback contract.
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct AnimatedSvgPlaybackInput {
-    mode: AnimatedSvgPlaybackModeInput,
+#[serde(
+    tag = "mode",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum AnimatedSvgPlaybackInput {
+    Independent,
+    Timeline {
+        duration_ms: f64,
+        iterations: AnimatedSvgTimelineIterationsInput,
+    },
 }
 
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum AnimatedSvgPlaybackModeInput {
-    Independent,
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum AnimatedSvgTimelineIterationsInput {
+    Count(f64),
+    Infinite(#[serde(deserialize_with = "deserialize_animated_svg_infinite_keyword")] ()),
+}
+
+fn deserialize_animated_svg_infinite_keyword<'de, Deserializer>(
+    deserializer: Deserializer,
+) -> Result<(), Deserializer::Error>
+where
+    Deserializer: serde::Deserializer<'de>,
+{
+    let keyword = <String as serde::Deserialize>::deserialize(deserializer)?;
+    if keyword == "infinite" {
+        Ok(())
+    } else {
+        Err(<Deserializer::Error as serde::de::Error>::custom(
+            "expected the string infinite",
+        ))
+    }
 }
 
 /// Public declarative animated-SVG transport options.
@@ -297,10 +327,23 @@ impl From<StaticSvgOptionsInput> for RenderSvgOptionsInput {
 
 impl From<AnimatedSvgOptionsInput> for RenderSvgOptionsInput {
     fn from(options: AnimatedSvgOptionsInput) -> Self {
-        let AnimatedSvgPlaybackInput { mode } = options.playback;
-        match mode {
-            AnimatedSvgPlaybackModeInput::Independent => {}
-        }
+        let timeline_playback = match options.playback {
+            AnimatedSvgPlaybackInput::Independent => None,
+            AnimatedSvgPlaybackInput::Timeline {
+                duration_ms,
+                iterations,
+            } => Some(ir::animation_timeline::DocumentPlayback {
+                duration_ms,
+                iterations: match iterations {
+                    AnimatedSvgTimelineIterationsInput::Count(count) => {
+                        ir::animation_timeline::DocumentIterationCount::Finite(count)
+                    }
+                    AnimatedSvgTimelineIterationsInput::Infinite(()) => {
+                        ir::animation_timeline::DocumentIterationCount::Infinite
+                    }
+                },
+            }),
+        };
         Self {
             scale: options.scale,
             debug: options.debug,
@@ -316,6 +359,7 @@ impl From<AnimatedSvgOptionsInput> for RenderSvgOptionsInput {
             preserve_resolved_unit_outlines: options.preserve_resolved_unit_outlines,
             enforce_png_outline_glyph_limit: options.enforce_png_outline_glyph_limit,
             generator: options.generator,
+            timeline_playback,
             ..Self::default()
         }
     }
@@ -443,6 +487,83 @@ fn parse_static_svg_options(options_json: &str) -> Result<StaticSvgOptionsInput,
     })
 }
 
+fn animated_timeline_wire_error(field: &str, received: impl Into<String>) -> error::EngineError {
+    error::EngineError::StructuredContext {
+        code: "ANIMATED_SVG_INVALID_TIMELINE".to_string(),
+        message: format!("Animated SVG timeline {field} has an invalid value"),
+        stage: Some("validate".to_string()),
+        node_id: None,
+        context: Box::new(serde_json::json!({
+            "field": field,
+            "received": received.into(),
+        })),
+    }
+}
+
+fn timeline_wire_received(value: Option<&serde_json::Value>) -> String {
+    match value {
+        Some(serde_json::Value::String(value)) => value.clone(),
+        Some(value) => value.to_string(),
+        None => "missing".to_string(),
+    }
+}
+
+fn validate_animated_timeline_wire_options(
+    raw_options: &serde_json::Value,
+) -> Result<(), error::EngineError> {
+    let Some(playback) = raw_options
+        .get("playback")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Ok(());
+    };
+    let playback_mode = playback.get("mode").and_then(serde_json::Value::as_str);
+    if playback_mode == Some("independent") {
+        if playback.len() != 1 {
+            return Err(error::EngineError::Structured {
+                code: "UNSUPPORTED_RENDER_OPTION".to_string(),
+                message: "Animated SVG independent playback only accepts the mode property."
+                    .to_string(),
+                stage: Some("validate".to_string()),
+                node_id: None,
+            });
+        }
+        return Ok(());
+    }
+    if playback_mode != Some("timeline") {
+        return Ok(());
+    }
+
+    let duration_ms = playback.get("durationMs");
+    if duration_ms.and_then(serde_json::Value::as_f64).is_none() {
+        return Err(animated_timeline_wire_error(
+            "durationMs",
+            timeline_wire_received(duration_ms),
+        ));
+    }
+
+    let iterations = playback.get("iterations");
+    let valid_iterations = iterations.is_some_and(|value| {
+        serde_json::from_value::<AnimatedSvgTimelineIterationsInput>(value.clone()).is_ok()
+    });
+    if !valid_iterations {
+        return Err(animated_timeline_wire_error(
+            "iterations",
+            timeline_wire_received(iterations),
+        ));
+    }
+
+    if let Some(time_ms) = raw_options.get("timeMs")
+        && time_ms.as_f64().is_none()
+    {
+        return Err(animated_timeline_wire_error(
+            "timeMs",
+            timeline_wire_received(Some(time_ms)),
+        ));
+    }
+    Ok(())
+}
+
 fn parse_animated_svg_options(options_json: &str) -> Result<AnimatedSvgOptionsInput, JsValue> {
     let raw_options: serde_json::Value = serde_json::from_str(options_json).map_err(|error| {
         render_error_envelope(
@@ -452,31 +573,26 @@ fn parse_animated_svg_options(options_json: &str) -> Result<AnimatedSvgOptionsIn
             None,
         )
     })?;
-    let playback_supported = raw_options
-        .get("playback")
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|playback| {
-            playback.len() == 1
-                && playback
-                    .get("mode")
-                    .is_some_and(|mode| mode == "independent")
-        });
-    if !playback_supported {
-        return Err(render_error_envelope(
-            "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
-            "Animated SVG playback must be exactly { mode: \"independent\" }.",
-            Some("validate"),
-            None,
-        ));
-    }
-    serde_json::from_value(raw_options).map_err(|error| {
-        render_error_envelope(
-            "UNSUPPORTED_RENDER_OPTION",
-            &format!("Invalid animated SVG render options: {error}"),
-            Some("validate"),
-            None,
+    validate_animated_timeline_wire_options(&raw_options)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+    let options: AnimatedSvgOptionsInput =
+        serde_json::from_value(raw_options).map_err(|error| {
+            render_error_envelope(
+                "UNSUPPORTED_RENDER_OPTION",
+                &format!("Invalid animated SVG render options: {error}"),
+                Some("validate"),
+                None,
+            )
+        })?;
+    let render_options = RenderSvgOptionsInput::from(options.clone());
+    if let Some(playback) = render_options.timeline_playback {
+        ir::animation_timeline::validate_document_playback(
+            playback,
+            options.time_ms.unwrap_or(0.0),
         )
-    })
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+    }
+    Ok(options)
 }
 
 fn text_decoration_wire_error(
@@ -763,6 +879,7 @@ fn to_paint_scene_options(
             ReducedMotionInput::Keep => scene::ReducedMotionMode::Keep,
             ReducedMotionInput::Pause => scene::ReducedMotionMode::Pause,
         },
+        timeline_plan: None,
         generator: options.generator.clone(),
     })
 }
@@ -830,14 +947,46 @@ fn emit_prepared_ir(
     prepared_ir: &ir::types::Ir,
     options: &RenderSvgOptionsInput,
 ) -> Result<String, JsValue> {
-    let sampled_ir = ir::animation::sample_animation(prepared_ir, options.time_ms.unwrap_or(0.0))
-        .map_err(|e| engine_error_to_render_envelope(&e))?;
-    let paint_options =
+    let (sampled_ir, timeline_plan) = sample_svg_animation(prepared_ir, options)?;
+    let mut paint_options =
         to_paint_scene_options(options).map_err(|e| engine_error_to_render_envelope(&e))?;
+    paint_options.timeline_plan = timeline_plan;
     let paint_scene = scene::resolve_paint_scene(&sampled_ir, &paint_options)
         .map_err(|e| engine_error_to_render_envelope(&e))?;
     svg_emit::emitter::emit_svg_scene(&paint_scene, to_svg_emit_options(options))
         .map_err(|e| engine_error_to_render_envelope(&e))
+}
+
+fn sample_svg_animation(
+    source_ir: &ir::types::Ir,
+    options: &RenderSvgOptionsInput,
+) -> Result<
+    (
+        ir::types::Ir,
+        Option<ir::animation_timeline::DocumentAnimationPlan>,
+    ),
+    JsValue,
+> {
+    let time_ms = options.time_ms.unwrap_or(0.0);
+    let (sample_time_ms, timeline_plan) = if let Some(playback) = options.timeline_playback {
+        let plan = ir::animation_timeline::compile_document_animation_plan_with_prefix(
+            source_ir,
+            playback,
+            time_ms,
+            options.resource_id_prefix.as_deref().unwrap_or_default(),
+            matches!(
+                options.reduced_motion.unwrap_or_default(),
+                ReducedMotionInput::Pause
+            ),
+        )
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+        (playback.authored_sample_time_ms(time_ms), Some(plan))
+    } else {
+        (time_ms, None)
+    };
+    let sampled_ir = ir::animation::sample_animation(source_ir, sample_time_ms)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
+    Ok((sampled_ir, timeline_plan))
 }
 
 fn render_layout_to_svg(
@@ -871,8 +1020,7 @@ fn render_layout_to_svg(
     if require_static_time {
         assert_static_animation_time(&built_ir, options)?;
     }
-    let mut sampled_ir = ir::animation::sample_animation(&built_ir, options.time_ms.unwrap_or(0.0))
-        .map_err(|error| engine_error_to_render_envelope(&error))?;
+    let (mut sampled_ir, timeline_plan) = sample_svg_animation(&built_ir, options)?;
 
     let mut outline_options = to_outline_resolve_options(options);
     outline_options.preserve_resolved_unit_outlines = true;
@@ -883,8 +1031,9 @@ fn render_layout_to_svg(
     )
     .map_err(|error| engine_error_to_render_envelope(&error))?;
 
-    let paint_options =
+    let mut paint_options =
         to_paint_scene_options(options).map_err(|error| engine_error_to_render_envelope(&error))?;
+    paint_options.timeline_plan = timeline_plan;
     let paint_scene = scene::resolve_paint_scene(&sampled_ir, &paint_options)
         .map_err(|error| engine_error_to_render_envelope(&error))?;
     let svg = svg_emit::emitter::emit_svg_scene(&paint_scene, to_svg_emit_options(options))
@@ -924,6 +1073,23 @@ fn render_error_envelope(
         "message": message,
         "stage": stage,
         "nodeId": node_id,
+    });
+    JsValue::from_str(&envelope.to_string())
+}
+
+fn render_error_envelope_with_context(
+    code: &str,
+    message: &str,
+    stage: Option<&str>,
+    node_id: Option<&str>,
+    context: &serde_json::Value,
+) -> JsValue {
+    let envelope = serde_json::json!({
+        "code": code,
+        "message": message,
+        "stage": stage,
+        "nodeId": node_id,
+        "context": context,
     });
     JsValue::from_str(&envelope.to_string())
 }
@@ -969,13 +1135,27 @@ fn engine_error_to_render_envelope(error: &error::EngineError) -> JsValue {
             stage,
             node_id,
         } => render_error_envelope(code, message, stage.as_deref(), node_id.as_deref()),
+        error::EngineError::StructuredContext {
+            code,
+            message,
+            stage,
+            node_id,
+            context,
+        } => render_error_envelope_with_context(
+            code,
+            message,
+            stage.as_deref(),
+            node_id.as_deref(),
+            context,
+        ),
         other => render_error_envelope("WASM_RENDER_FAILED", &other.to_string(), None, None),
     }
 }
 
 fn raster_error_to_js_value(error: error::EngineError) -> JsValue {
     match error {
-        structured @ error::EngineError::Structured { .. } => {
+        structured @ (error::EngineError::Structured { .. }
+        | error::EngineError::StructuredContext { .. }) => {
             engine_error_to_render_envelope(&structured)
         }
         other => JsValue::from_str(&other.to_string()),
@@ -1280,7 +1460,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 27;
+pub const WASM_SCHEMA_VERSION: u32 = 28;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -1630,7 +1810,7 @@ impl BoundSvgEngine {
     ///
     /// # Errors
     ///
-    /// Returns `JsValue` for invalid input or options, unsupported playback,
+    /// Returns `JsValue` for invalid input or options, timeline compilation,
     /// layout/IR failures, or SVG emission failures.
     pub fn render_to_animated_svg(
         &self,
@@ -1674,8 +1854,8 @@ impl BoundSvgEngine {
     ///
     /// # Errors
     ///
-    /// Returns `JsValue` if the IR/options payload is invalid, playback is
-    /// unsupported, or SVG emission fails.
+    /// Returns `JsValue` if the IR/options payload is invalid, timeline
+    /// compilation fails, or SVG emission fails.
     pub fn emit_animated_svg_from_ir(
         &self,
         ir_json: &str,
@@ -1856,7 +2036,7 @@ impl BoundSvgEngine {
     ///
     /// # Errors
     ///
-    /// Returns `JsValue` for invalid IR/options, unsupported playback,
+    /// Returns `JsValue` for invalid IR/options, timeline compilation,
     /// outline materialization failure, or SVG emission failure.
     pub fn resolve_and_emit_animated_svg_from_ir(
         &self,
@@ -2989,7 +3169,7 @@ pub fn uax14_line_breaks(text: &str) -> Result<String, JsValue> {
 mod tests {
     use super::{
         BoundSvgEngine, panic_payload_message, pipeline_phase_trace,
-        validate_layout_text_decoration_wire_values,
+        validate_animated_timeline_wire_options, validate_layout_text_decoration_wire_values,
     };
 
     fn phase_trace_transition_state(slot_height: u32) -> String {
@@ -3067,6 +3247,84 @@ mod tests {
         engine
     }
 
+    fn timeline_ir_json() -> String {
+        serde_json::json!({
+            "root": {
+                "nodeId": "root",
+                "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0 },
+                "type": "group",
+                "children": [{
+                    "nodeId": "card",
+                    "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0 },
+                    "type": "group",
+                    "opacity": 0.25,
+                    "children": [],
+                    "animation": {
+                        "keyframes": [
+                            { "at": 0.0, "opacity": 0.0 },
+                            { "at": 1.0, "opacity": 1.0 }
+                        ],
+                        "durationMs": 100.0,
+                        "delayMs": 20.0,
+                        "easing": "linear",
+                        "iterations": 1.0,
+                        "fill": "none"
+                    }
+                }]
+            },
+            "width": 100.0,
+            "height": 50.0
+        })
+        .to_string()
+    }
+
+    fn timeline_layout_json() -> String {
+        serde_json::json!({
+            "root": {
+                "nodeId": "root",
+                "nodeType": "canvas",
+                "authoredId": true,
+                "style": {
+                    "flexDirection": "column",
+                    "alignItems": "stretch",
+                    "justifyContent": "flex-start",
+                    "width": 100,
+                    "height": 50
+                },
+                "children": [{
+                    "nodeId": "card",
+                    "nodeType": "box",
+                    "authoredId": true,
+                    "style": {
+                        "flexDirection": "column",
+                        "alignItems": "stretch",
+                        "justifyContent": "flex-start",
+                        "width": 100,
+                        "height": 50
+                    },
+                    "children": [],
+                    "visual": {
+                        "background": "#112233",
+                        "opacity": 0.25,
+                        "animation": {
+                            "keyframes": [
+                                { "at": 0.0, "opacity": 0.0 },
+                                { "at": 1.0, "opacity": 1.0 }
+                            ],
+                            "durationMs": 100.0,
+                            "delayMs": 20.0,
+                            "easing": "linear",
+                            "iterations": 1.0,
+                            "fill": "none"
+                        }
+                    }
+                }]
+            },
+            "fonts": []
+        })
+        .to_string()
+    }
+
     #[test]
     fn str_panic_payload_formats_as_error_message() {
         let payload = std::panic::catch_unwind(|| panic!("boom")).unwrap_err();
@@ -3077,6 +3335,301 @@ mod tests {
     fn string_panic_payload_formats_as_error_message() {
         let payload = std::panic::catch_unwind(|| panic!("boom: {}", 42)).unwrap_err();
         assert_eq!(panic_payload_message(&*payload), "WASM panic: boom: 42");
+    }
+
+    #[test]
+    fn animated_svg_wasm_transport_emits_document_timeline_css_and_base_pose() {
+        let engine = BoundSvgEngine::create();
+        let options = serde_json::json!({
+            "playback": {
+                "mode": "timeline",
+                "durationMs": 200.0,
+                "iterations": 2.5
+            },
+            "timeMs": 250.0
+        })
+        .to_string();
+        let svg = engine
+            .emit_animated_svg_from_ir(&timeline_ir_json(), &options)
+            .expect("timeline emit should succeed");
+        assert!(svg.contains("animation-duration: 200ms;"));
+        assert!(svg.contains("animation-delay: -50ms;"));
+        assert!(svg.contains("animation-iteration-count: 1.5;"));
+        assert!(svg.contains("linear(0,"));
+        assert!(svg.contains("opacity=\"0.3\""));
+    }
+
+    #[test]
+    fn animated_timeline_two_pass_count_matches_serialized_utf8_bytes() {
+        let engine = BoundSvgEngine::create();
+        let resource_id_prefix = "文書 one/";
+        let options = serde_json::json!({
+            "playback": {
+                "mode": "timeline",
+                "durationMs": 200.0,
+                "iterations": 2.5
+            },
+            "timeMs": 250.0,
+            "resourceIdPrefix": resource_id_prefix
+        })
+        .to_string();
+        let svg = engine
+            .emit_animated_svg_from_ir(&timeline_ir_json(), &options)
+            .expect("timeline emit should succeed");
+        let parsed_ir = super::parse_emit_ir(&timeline_ir_json()).expect("IR should parse");
+        let plan = crate::ir::animation_timeline::compile_document_animation_plan_with_prefix(
+            &parsed_ir,
+            crate::ir::animation_timeline::DocumentPlayback {
+                duration_ms: 200.0,
+                iterations: crate::ir::animation_timeline::DocumentIterationCount::Finite(2.5),
+            },
+            250.0,
+            resource_id_prefix,
+            false,
+        )
+        .expect("timeline plan should compile");
+        let css_start = svg
+            .find("  <style>\n")
+            .map(|index| index + "  <style>\n".len())
+            .expect("style start should exist");
+        let css_end = svg[css_start..]
+            .find("  </style>")
+            .map(|index| css_start + index)
+            .expect("style end should exist");
+        assert_eq!(svg[css_start..css_end].len(), plan.exact_css_bytes);
+    }
+
+    #[test]
+    fn animated_timeline_reduced_motion_is_in_the_exact_css_count() {
+        let engine = BoundSvgEngine::create();
+        let resource_id_prefix = "文書 pause/";
+        let options = serde_json::json!({
+            "playback": {
+                "mode": "timeline",
+                "durationMs": 200.0,
+                "iterations": 2.5
+            },
+            "timeMs": 250.0,
+            "resourceIdPrefix": resource_id_prefix,
+            "reducedMotion": "pause"
+        })
+        .to_string();
+        let svg = engine
+            .emit_animated_svg_from_ir(&timeline_ir_json(), &options)
+            .expect("timeline reduced-motion emit should succeed");
+        let parsed_ir = super::parse_emit_ir(&timeline_ir_json()).expect("IR should parse");
+        let plan = crate::ir::animation_timeline::compile_document_animation_plan_with_prefix(
+            &parsed_ir,
+            crate::ir::animation_timeline::DocumentPlayback {
+                duration_ms: 200.0,
+                iterations: crate::ir::animation_timeline::DocumentIterationCount::Finite(2.5),
+            },
+            250.0,
+            resource_id_prefix,
+            true,
+        )
+        .expect("timeline reduced-motion plan should compile");
+        let css_start = svg
+            .find("  <style>\n")
+            .map(|index| index + "  <style>\n".len())
+            .expect("style start should exist");
+        let css_end = svg[css_start..]
+            .find("  </style>")
+            .map(|index| css_start + index)
+            .expect("style end should exist");
+        assert!(svg.contains("@media (prefers-reduced-motion: reduce)"));
+        assert_eq!(svg[css_start..css_end].len(), plan.exact_css_bytes);
+    }
+
+    #[test]
+    fn animated_timeline_reduced_motion_cannot_bypass_the_css_budget() {
+        let resource_id_prefix = "a".repeat(5_000_000);
+        let parsed_ir = super::parse_emit_ir(&timeline_ir_json()).expect("IR should parse");
+        let playback = crate::ir::animation_timeline::DocumentPlayback {
+            duration_ms: 200.0,
+            iterations: crate::ir::animation_timeline::DocumentIterationCount::Infinite,
+        };
+        let keep_plan = crate::ir::animation_timeline::compile_document_animation_plan_with_prefix(
+            &parsed_ir,
+            playback,
+            0.0,
+            &resource_id_prefix,
+            false,
+        )
+        .expect("the animation rules alone should remain below the CSS limit");
+        assert!(keep_plan.exact_css_bytes <= crate::ir::animation_timeline::MAX_TIMELINE_CSS_BYTES);
+
+        let error = crate::ir::animation_timeline::compile_document_animation_plan_with_prefix(
+            &parsed_ir,
+            playback,
+            0.0,
+            &resource_id_prefix,
+            true,
+        )
+        .expect_err("the reduced-motion selector must count toward the CSS limit");
+        let crate::error::EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("reduced-motion budget should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_LIMIT");
+        assert_eq!(context["metric"], "cssBytes");
+        assert!(
+            context["actual"]
+                .as_u64()
+                .expect("actual should be numeric")
+                > crate::ir::animation_timeline::MAX_TIMELINE_CSS_BYTES as u64
+        );
+        assert_eq!(
+            context["limit"],
+            crate::ir::animation_timeline::MAX_TIMELINE_CSS_BYTES
+        );
+    }
+
+    #[test]
+    fn every_animated_svg_wasm_export_accepts_timeline_playback() {
+        let engine = BoundSvgEngine::create();
+        let options = serde_json::json!({
+            "playback": {
+                "mode": "timeline",
+                "durationMs": 200.0,
+                "iterations": "infinite"
+            },
+            "timeMs": 50.0
+        })
+        .to_string();
+        let one_shot = engine
+            .render_to_animated_svg(&timeline_layout_json(), &options)
+            .expect("one-shot timeline render should succeed");
+        let direct = engine
+            .emit_animated_svg_from_ir(&timeline_ir_json(), &options)
+            .expect("direct timeline emit should succeed");
+        let resolved = engine
+            .resolve_and_emit_animated_svg_from_ir(&timeline_ir_json(), &options)
+            .expect("resolved timeline emit should succeed");
+        assert!(one_shot.contains("animation-duration: 200ms;"));
+        assert_eq!(direct, resolved);
+        assert_eq!(
+            direct,
+            engine
+                .emit_animated_svg_from_ir(&timeline_ir_json(), &options)
+                .expect("second direct pass should succeed")
+        );
+    }
+
+    #[test]
+    fn animated_svg_final_hold_bytes_do_not_depend_on_time_ms() {
+        let engine = BoundSvgEngine::create();
+        let options = |time_ms| {
+            serde_json::json!({
+                "playback": {
+                    "mode": "timeline",
+                    "durationMs": 200.0,
+                    "iterations": 2.5
+                },
+                "timeMs": time_ms
+            })
+            .to_string()
+        };
+        let at_end = engine
+            .emit_animated_svg_from_ir(&timeline_ir_json(), &options(500.0))
+            .expect("final hold should emit");
+        let after_end = engine
+            .emit_animated_svg_from_ir(&timeline_ir_json(), &options(700.0))
+            .expect("post-final hold should emit");
+        assert_eq!(at_end, after_end);
+        assert!(at_end.contains("animation-delay: -100ms;"));
+        assert!(at_end.contains("animation-iteration-count: 0.5;"));
+    }
+
+    #[test]
+    fn animated_timeline_wire_validation_uses_the_fixed_context_shape() {
+        for (field, options, received) in [
+            (
+                "durationMs",
+                serde_json::json!({
+                    "playback": {
+                        "mode": "timeline",
+                        "iterations": 1.0
+                    }
+                }),
+                "missing",
+            ),
+            (
+                "iterations",
+                serde_json::json!({
+                    "playback": {
+                        "mode": "timeline",
+                        "durationMs": 200.0,
+                        "iterations": "forever"
+                    }
+                }),
+                "forever",
+            ),
+            (
+                "timeMs",
+                serde_json::json!({
+                    "playback": {
+                        "mode": "timeline",
+                        "durationMs": 200.0,
+                        "iterations": "infinite"
+                    },
+                    "timeMs": null
+                }),
+                "null",
+            ),
+        ] {
+            let error = validate_animated_timeline_wire_options(&options)
+                .expect_err("invalid timeline wire value should fail");
+            let crate::error::EngineError::StructuredContext {
+                code,
+                stage,
+                node_id,
+                context,
+                ..
+            } = error
+            else {
+                panic!("timeline wire validation should return structured context");
+            };
+            assert_eq!(code, "ANIMATED_SVG_INVALID_TIMELINE");
+            assert_eq!(stage.as_deref(), Some("validate"));
+            assert_eq!(node_id, None);
+            assert_eq!(
+                *context,
+                serde_json::json!({
+                    "field": field,
+                    "received": received,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn animated_svg_wire_validation_rejects_independent_playback_properties() {
+        validate_animated_timeline_wire_options(&serde_json::json!({
+            "playback": {
+                "mode": "independent"
+            }
+        }))
+        .expect("the exact independent playback shape should pass wire validation");
+
+        let error = validate_animated_timeline_wire_options(&serde_json::json!({
+            "playback": {
+                "mode": "independent",
+                "extra": 1
+            }
+        }))
+        .expect_err("independent playback must not accept extra properties");
+        let crate::error::EngineError::Structured {
+            code,
+            stage,
+            node_id,
+            ..
+        } = error
+        else {
+            panic!("independent wire validation should return a structured error");
+        };
+        assert_eq!(code, "UNSUPPORTED_RENDER_OPTION");
+        assert_eq!(stage.as_deref(), Some("validate"));
+        assert_eq!(node_id, None);
     }
 
     #[test]

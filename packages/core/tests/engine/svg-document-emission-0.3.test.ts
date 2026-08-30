@@ -148,7 +148,7 @@ describe("SVG document emission 0.3 contract", () => {
     expect(animatedSvg).toContain("@keyframes");
   });
 
-  it("rejects unsupported playback, document timeline, legacy, and unknown options", () => {
+  it("rejects malformed playback, legacy, and unknown options", () => {
     const source = animatedScene();
     const compiled = engine.compile(source);
 
@@ -161,14 +161,14 @@ describe("SVG document emission 0.3 contract", () => {
         engine.renderToAnimatedSvg(source, {
           playback: { mode: "timeline" },
         } as unknown as RenderAnimatedSvgOptions),
-      "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
+      "ANIMATED_SVG_INVALID_TIMELINE",
     );
     expectFatalCode(
       () =>
         engine.renderCompiledToAnimatedSvg(compiled, {
           playback: { mode: "independent", timeline: [] },
         } as unknown as EmitAnimatedSvgOptions),
-      "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
+      "UNSUPPORTED_RENDER_OPTION",
     );
     expectFatalCode(
       () =>
@@ -271,7 +271,7 @@ describe("SVG document emission 0.3 contract", () => {
           playbackGuardEngine.renderToAnimatedSvg(animatedScene(), {
             playback: { mode: "independent" },
           }),
-        "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
+        "ANIMATED_SVG_INVALID_TIMELINE",
       );
     } finally {
       staticGuardEngine.dispose();

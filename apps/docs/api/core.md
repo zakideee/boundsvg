@@ -480,9 +480,9 @@ pass an explicit non-negative finite `timeMs`; omitting it fails with
 
 ### `engine.renderToAnimatedSvg(input, options)`
 
-Emits a self-animating SVG while preserving every authored track's delay,
-duration, easing, fill, and iteration count independently. The 0.3 playback
-contract is explicit and has one supported mode:
+Emits a self-animating SVG with an explicit playback mode. `independent`
+preserves every authored track's delay, duration, easing, fill, and iteration
+count:
 
 ```ts
 const svg = engine.renderToAnimatedSvg(node, {
@@ -492,8 +492,40 @@ const svg = engine.renderToAnimatedSvg(node, {
 ```
 
 `timeMs` selects the deterministic base pose shown by static SVG viewers.
-Caller-defined document timelines, document durations, and document-level
-iterations are not supported in 0.3.
+Use `timeline` to compile every authored track onto a caller-owned document
+clock:
+
+```ts
+const svg = engine.renderToAnimatedSvg(node, {
+  playback: {
+    mode: "timeline",
+    durationMs: 2400,
+    iterations: "infinite",
+  },
+  timeMs: 600,
+  reducedMotion: "pause",
+});
+```
+
+Timeline `durationMs` must be finite in `1..2^32`. `iterations` is
+`"infinite"` or a positive finite number at most `2^20`; fractional counts are
+valid. Timeline `timeMs` is document elapsed time and must be finite in
+`0..2^52`, with an additional `timeMs / durationMs <= 2^31` precision bound.
+In timeline mode, each authored track must also use `durationMs` in
+`[1, 2^32]`, `delayMs` in `[-2^32, 2^32]`, and finite local `iterations` in
+`[2^-32, 2^20]` (or `"infinite"`). These authored-track limits do not narrow
+independent playback. Each `animateUnits` effective delay after `delayStepMs`
+must remain in the same `delayMs` range. An out-of-domain track fails before output with
+`ANIMATED_SVG_TIMELINE_UNREPRESENTABLE`, reason
+`authored-value-out-of-domain`, and a context containing `field`, `received`,
+and `migration` but no `boundaryTimeMs`.
+Unsupported track functions, browser-offset precision loss, and stop/CSS
+budgets fail with structured timeline errors rather than approximation. See the
+[animation guide](/guides/animation#document-timeline-playback) for finite hold,
+discontinuity, and exact-checkpoint semantics.
+An opacity cubic that actually leaves `[0, 1]` before clamping fails with
+reason `clamped-overshoot-cubic`; select `playback: { mode: "independent" }`
+to preserve that authored easing.
 
 ### `engine.renderToPng(input, options?)`
 
@@ -668,13 +700,13 @@ Performs hit-testing on an IR. Returns the `NodeId` of the topmost element at `(
 
 ### `engine.compile(input, options?)`
 
-Compiles a VNode tree into a `CompiledScene` (holds the IR). The compiled result can be rendered multiple times with different emit options, avoiding repeated layout computation. Animated scenes keep their raw tracks in the compiled IR and are sampled independently by each `renderCompiled*` call.
+Compiles a VNode tree into a `CompiledScene` (holds the IR). The compiled result can be rendered multiple times with different emit options, avoiding repeated layout computation. Animated scenes keep their raw tracks in the compiled IR; each `renderCompiled*` call can sample a static time or select independent/document-timeline animated SVG playback.
 
 ```ts
 const compiled: CompiledScene = engine.compile(node);
 const svg = engine.renderCompiledToSvg(compiled, { timeMs: 0 });
 const animatedSvg = engine.renderCompiledToAnimatedSvg(compiled, {
-  playback: { mode: "independent" },
+  playback: { mode: "timeline", durationMs: 2400, iterations: "infinite" },
 });
 const png = engine.renderCompiledToPng(compiled, { scale: 2 });
 ```
@@ -715,8 +747,9 @@ animated compiled scene requires an explicit `timeMs`.
 
 ### `engine.renderCompiledToAnimatedSvg(compiled, options)`
 
-Renders a `CompiledScene` to an independently playing animated SVG. Pass
-`playback: { mode: "independent" }` explicitly.
+Renders a `CompiledScene` to an animated SVG. Pass either
+`playback: { mode: "independent" }` or a `timeline` playback with explicit
+`durationMs` and document-level `iterations`.
 
 ### `engine.renderCompiledToPng(compiled, options?)`
 
@@ -792,10 +825,21 @@ type RenderSvgOptions = CompileOptions &
 type RenderAnimatedSvgOptions = CompileOptions &
   OutputCommonOptions &
   SvgEmissionOptions & {
-    playback: { mode: "independent" };
+    playback: AnimatedSvgPlayback;
     timeMs?: number;
     reducedMotion?: "keep" | "pause";
   };
+
+type AnimationIterationCount = number | "infinite";
+
+type AnimationTimeline = {
+  durationMs: number;
+  iterations: AnimationIterationCount;
+};
+
+type AnimatedSvgPlayback =
+  | { mode: "independent" }
+  | ({ mode: "timeline" } & AnimationTimeline);
 
 type RenderPngOptions = CompileOptions &
   OutputCommonOptions &
@@ -811,7 +855,7 @@ type RenderWebpOptions = CompileOptions &
 | Compile             | `skipValidation`, `textPathMode`                                                                                                     |
 | Output common       | `scale`, `debug`, `onWarning`, `showMissingGlyphs`, `generator`                                                                      |
 | SVG emission        | `resourceIdPrefix`, `nodeIdMetadata`                                                                                                 |
-| Animated SVG only   | required `playback`, optional `reducedMotion`; `timeMs` is the base pose                                                             |
+| Animated SVG only   | required independent/timeline `playback`, optional `reducedMotion`; `timeMs` is the base pose/document elapsed time                  |
 | Raster emission     | `rasterBackground`, `rasterOversizeBehavior`, `onPngResolutionAdjusted`                                                              |
 | Static SVG / raster | optional `timeMs`; static SVG requires it when the scene contains animation                                                          |
 | Animated WebP / GIF | raster options plus a schedule and required total-play `iterations`; no SVG namespace, metadata, playback, or reduced-motion options |
@@ -1157,11 +1201,14 @@ const svg = renderToSvg(node);
 
 ### `renderToAnimatedSvg(input, options)`
 
-Render an independently playing animated SVG using the default engine.
+Render an animated SVG using the default engine. The playback contract is the
+same as `engine.renderToAnimatedSvg`: choose independent authored clocks or an
+explicit document timeline.
 
 ```ts
 const svg = renderToAnimatedSvg(node, {
-  playback: { mode: "independent" },
+  playback: { mode: "timeline", durationMs: 2400, iterations: 2.5 },
+  timeMs: 600,
 });
 ```
 

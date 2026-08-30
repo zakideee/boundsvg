@@ -109,7 +109,7 @@ export function renderPreset(engine: Engine, key: string): void {
       ? engine.renderToSvgAndIR(vnode, svgOptions)
       : engine.renderToAnimatedSvgAndIR(vnode, {
           ...svgOptions,
-          playback: { mode: "independent" },
+          ...(preset.animatedSvgOptions ?? { playback: { mode: "independent" } }),
         });
   coreState.cachedSvgString = svg;
   svgOutput.innerHTML = svg;

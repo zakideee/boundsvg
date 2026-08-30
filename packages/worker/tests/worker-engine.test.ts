@@ -425,6 +425,81 @@ describe("WorkerEngine", () => {
       engine.dispose();
     });
 
+    it("transfers timeline playback without changing the request family", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-animated-svg") {
+          mockWorker.respond({
+            id: request.id,
+            type: "render-animated-svg-ok",
+            svg: '<svg data-playback="timeline"/>',
+            warnings: [],
+          });
+        }
+      });
+
+      const svg = await engine.renderToAnimatedSvg(SCENE, {
+        playback: { mode: "timeline", durationMs: 800, iterations: 2.25 },
+        timeMs: 950,
+      });
+
+      expect(svg).toContain('data-playback="timeline"');
+      expect(mockWorker.lastRequest()).toMatchObject({
+        type: "render-animated-svg",
+        options: {
+          playback: { mode: "timeline", durationMs: 800, iterations: 2.25 },
+          timeMs: 950,
+        },
+      });
+      engine.dispose();
+    });
+
+    it("rehydrates timeline Fatal context without flattening it", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-animated-svg") {
+          mockWorker.respond({
+            id: request.id,
+            type: "error",
+            error: {
+              severity: "fatal",
+              code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+              message: "spring cannot be represented",
+              stage: "emit",
+              nodeId: "spring-box",
+              context: {
+                ownerKind: "node",
+                ownerId: "spring-box",
+                reason: "spring-easing",
+                boundaryTimeMs: 0,
+                migration: "Use independent playback.",
+              },
+            },
+          });
+        }
+      });
+
+      await expect(
+        engine.renderToAnimatedSvg(SCENE, {
+          playback: { mode: "timeline", durationMs: 800, iterations: "infinite" },
+        }),
+      ).rejects.toMatchObject({
+        code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+        stage: "emit",
+        nodeId: "spring-box",
+        context: {
+          stage: "emit",
+          nodeId: "spring-box",
+          ownerKind: "node",
+          ownerId: "spring-box",
+          reason: "spring-easing",
+          boundaryTimeMs: 0,
+          migration: "Use independent playback.",
+        },
+      });
+      engine.dispose();
+    });
+
     it("renders animated SVG + IR through its dedicated request family", async () => {
       const engine = await createEngine(mockWorker);
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {

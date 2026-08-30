@@ -14,6 +14,7 @@ import {
 import { presets } from "../src/presets/index";
 
 const MIRRORED_SAMPLE_KEYS = [
+  "animated-svg-timeline",
   "decoration-path-fit",
   "font-fallback",
   "inline-primitives",
@@ -199,7 +200,7 @@ describe("mirrored core and React samples", () => {
 
   afterAll(() => engine.dispose());
 
-  it("renders all nine mirrored samples with semantic SVG equality", () => {
+  it("renders all ten mirrored samples with semantic SVG equality", () => {
     const byteEqualKeys: string[] = [];
     const normalizedCounts = new Map<string, { core: number; react: number }>();
 
@@ -235,6 +236,39 @@ describe("mirrored core and React samples", () => {
         expect(normalizedCounts.get(sampleKey)).toEqual({ core: 0, react: 0 });
       }
     }
+  });
+
+  it("renders the mirrored timeline sample with identical document playback", () => {
+    const sampleKey = "animated-svg-timeline";
+    const preset = presets[sampleKey];
+    const definition = TEMPLATE_DEFINITIONS[sampleKey];
+    expect(preset).toBeDefined();
+    expect(definition).toBeDefined();
+    if (!preset || !definition) {
+      return;
+    }
+    const coreOptions = preset.animatedSvgOptions;
+    const reactOptions = definition.animatedSvgOptions;
+    expect(reactOptions).toEqual(coreOptions);
+    expect(coreOptions).toEqual({
+      playback: { mode: "timeline", durationMs: 2_400, iterations: "infinite" },
+      timeMs: 600,
+      reducedMotion: "pause",
+    });
+    if (!coreOptions || !reactOptions) {
+      return;
+    }
+
+    const coreSvg = engine.renderToAnimatedSvg(preset.build(engine), coreOptions);
+    const reactSvg = engine.renderToAnimatedSvg(
+      buildReactTemplate(sampleKey, engine),
+      reactOptions,
+    );
+    expect(reactSvg).toBe(coreSvg);
+    expect(coreSvg).toContain("animation-duration: 2400ms;");
+    expect(coreSvg).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(coreSvg).toContain("timeline-fast-track");
+    expect(coreSvg).toContain("timeline-slow-track");
   });
 
   it("normalizes key-derived suffixes in definitions and references with one mapping", () => {

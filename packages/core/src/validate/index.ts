@@ -1,5 +1,7 @@
+import type { TimelineAuthoredDomainOwner } from "../engine/timeline-domain-transport.js";
 import { FatalError } from "../errors.js";
-import { assertNodeIdIsWellFormedUnicode } from "../ir/node-id.js";
+import type { NodePosition } from "../ir/internal.js";
+import { assertNodeIdIsWellFormedUnicode, generateNodeId } from "../ir/node-id.js";
 import { assertLayoutTreeDepth } from "../layout/limits.js";
 import { assertUniqueNodeIds } from "../node-ids.js";
 import type { VNode, VNodeType } from "../vnode/types.js";
@@ -40,6 +42,15 @@ import {
  * Throws on structural violations (Fatal errors).
  */
 export function validate(node: VNode): void {
+  validateTree(node, false);
+}
+
+/** Validate a VNode while preserving timeline-domain errors across the JSON boundary. */
+export function validateAnimatedSvgTimeline(node: VNode): void {
+  validateTree(node, true);
+}
+
+function validateTree(node: VNode, isTimeline: boolean): void {
   // Root must be Canvas
   if (node.type !== "Canvas") {
     throw new FatalError(
@@ -50,7 +61,11 @@ export function validate(node: VNode): void {
   }
 
   const seenIds = new Set<string>();
-  validateNode(node, seenIds, { insideCanvas: false, depth: 0 });
+  validateNode(node, seenIds, {
+    insideCanvas: false,
+    position: { depth: 0, siblingIndex: 0 },
+    isTimeline,
+  });
   assertUniqueNodeIds(node);
 }
 
@@ -61,6 +76,38 @@ function nodeLabel(node: VNode): string {
   return `<${node.type}>`;
 }
 
+function timelineOwnerId(
+  node: VNode,
+  position: NodePosition,
+  isTimeline: boolean,
+): string | undefined {
+  if (!isTimeline) {
+    return undefined;
+  }
+  return generateNodeId(node, position).id;
+}
+
+function timelineOwner(
+  ownerKind: TimelineAuthoredDomainOwner["ownerKind"],
+  ownerId: string | undefined,
+): TimelineAuthoredDomainOwner | undefined {
+  if (ownerId === undefined) {
+    return undefined;
+  }
+  return { ownerKind, ownerId };
+}
+
+function childNodePosition(
+  parentPosition: NodePosition,
+  siblingIndex: number,
+  parentNodeId: string | undefined,
+): NodePosition {
+  if (parentNodeId === undefined) {
+    return { depth: parentPosition.depth + 1, siblingIndex };
+  }
+  return { depth: parentPosition.depth + 1, siblingIndex, parentNodeId };
+}
+
 function validateNode(
   node: VNode,
   seenIds: Set<string>,
@@ -68,12 +115,14 @@ function validateNode(
     insideCanvas: boolean;
     insideTextOnPath?: boolean;
     parentType?: VNodeType;
-    depth: number;
+    position: NodePosition;
+    isTimeline: boolean;
   },
 ): void {
-  const { insideCanvas, insideTextOnPath = false, parentType, depth } = options;
-  assertLayoutTreeDepth(node, depth);
+  const { insideCanvas, insideTextOnPath = false, parentType, position, isTimeline } = options;
+  assertLayoutTreeDepth(node, position.depth);
   const nid = nodeLabel(node);
+  const currentTimelineOwnerId = timelineOwnerId(node, position, isTimeline);
   validateRichTextParent(node.type, parentType, nid);
   if (node.type === "Inline" && (insideTextOnPath || parentType === "TextOnPath")) {
     validateTextOnPathInlineNode(node, nid);
@@ -119,7 +168,7 @@ function validateNode(
     validateTextOnPathNumericProps(node, nid);
   }
   validateTransformProp(node, nid);
-  validateAnimationProp(node, nid);
+  validateAnimationProp(node, nid, timelineOwner("node", currentTimelineOwnerId));
   validateStrokeScalingProp(node, nid);
   validateZIndexProp(node, nid);
   validateMetaProp(node, nid);
@@ -132,10 +181,10 @@ function validateNode(
   // Node-type-specific validation
   switch (node.type) {
     case "Text":
-      validateTextNode(node, nid);
+      validateTextNode(node, nid, timelineOwner("textUnit", currentTimelineOwnerId));
       break;
     case "TextOnPath":
-      validateTextOnPathNode(node, nid);
+      validateTextOnPathNode(node, nid, timelineOwner("textUnit", currentTimelineOwnerId));
       break;
     case "Inline":
       validateInlineNode(node, nid);
@@ -177,6 +226,7 @@ function validateNode(
   // path — it used to be silently dropped from both the render and the
   // SceneDocument round-trip, so it is rejected instead.
   const isCanvas = node.type === "Canvas";
+  let siblingIndex = 0;
   for (const child of node.children) {
     if (typeof child === "string") {
       assertStringChildAllowed(node, child, nid);
@@ -186,8 +236,10 @@ function validateNode(
       insideCanvas: insideCanvas || isCanvas,
       insideTextOnPath: insideTextOnPath || node.type === "TextOnPath",
       parentType: node.type,
-      depth: depth + 1,
+      position: childNodePosition(position, siblingIndex, currentTimelineOwnerId),
+      isTimeline,
     });
+    siblingIndex += 1;
   }
 }
 

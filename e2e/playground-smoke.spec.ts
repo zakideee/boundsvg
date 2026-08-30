@@ -94,6 +94,38 @@ test.describe("public playground smoke", () => {
     expect(errors).toEqual([]);
   });
 
+  test("document timeline template reaches live and reduced-motion playback", async ({ page }) => {
+    const errors = collectPageErrors(page);
+    await openRoute(page, "templates");
+
+    await page.locator(".template-button", { hasText: "Animated SVG Timeline" }).click();
+    await expect(page.locator(".preview-header-meta h3")).toHaveText("Animated SVG Timeline");
+
+    const svg = renderedSvg(page);
+    await expect(svg).toBeVisible({ timeout: 30_000 });
+    const markup = await svg.evaluate((element) => element.outerHTML);
+    expect(markup).toContain("animation-duration: 2400ms;");
+    expect(markup).toContain("@media (prefers-reduced-motion: reduce)");
+
+    const animatedNodes = svg.locator('[class*="bsvg-anim-"]');
+    await expect(animatedNodes).toHaveCount(2);
+    expect(
+      await animatedNodes.evaluateAll((elements) =>
+        elements.every((element) => getComputedStyle(element).animationName !== "none"),
+      ),
+    ).toBe(true);
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect
+      .poll(() =>
+        animatedNodes.evaluateAll((elements) =>
+          elements.every((element) => getComputedStyle(element).animationName === "none"),
+        ),
+      )
+      .toBe(true);
+    expect(errors).toEqual([]);
+  });
+
   test("the desktop Worker sample retains SVG and PNG outputs", async ({ page }) => {
     await openRoute(page, "worker");
     await expect(page.getByText("SVG Output", { exact: true })).toBeVisible();

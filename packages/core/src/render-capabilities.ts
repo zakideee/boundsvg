@@ -19,6 +19,12 @@ export const MAX_ANIMATION_FRAMES = 300;
  */
 export const MAX_ANIMATION_SVG_PAYLOAD_CHARS = 64 * 1_024 * 1_024;
 
+/** Hard limits enforced before document-timeline animation CSS is serialized. */
+export const animatedSvgTimelineLimits = Object.freeze({
+  maxKeyframeStops: 16_384,
+  maxCssBytes: 16 * 1_024 * 1_024,
+});
+
 /** Post-layout base dimensions and requested scale used to resolve a raster plan. */
 export type RasterScaleOptions = {
   /** Effective unscaled root width in px (for a render prediction, use current compiled IR). */

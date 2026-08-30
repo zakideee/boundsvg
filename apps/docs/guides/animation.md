@@ -383,6 +383,15 @@ const animatedSvg = engine.renderToAnimatedSvg(scene, {
   timeMs: 0,
 });
 
+const synchronizedSvg = engine.renderToAnimatedSvg(scene, {
+  playback: {
+    mode: "timeline",
+    durationMs: 2400,
+    iterations: "infinite",
+  },
+  timeMs: 600,
+});
+
 const stillSvg = engine.renderToSvg(scene, {
   timeMs: 400,
 });
@@ -392,12 +401,12 @@ const stillPng = engine.renderToPng(scene, {
 });
 ```
 
-| Output                            | Behavior                                                                                             |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `renderToAnimatedSvg`             | Emits CSS `@keyframes`; required `playback: { mode: "independent" }` preserves every authored track. |
-| `renderToSvg`                     | Emits a static pose with no animation CSS. Animated input requires an explicit `timeMs`.             |
-| `renderToPng` / `renderToWebp`    | Samples a static pose at `timeMs`; SVG-only playback and namespace options are rejected.             |
-| `renderToAnimatedWebp` / `...Gif` | Samples the requested frame schedule; a required `iterations` controls total container plays.        |
+| Output                            | Behavior                                                                                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `renderToAnimatedSvg`             | Emits CSS `@keyframes`; `independent` preserves authored clocks, while `timeline` compiles them onto one caller-defined document clock.           |
+| `renderToSvg`                     | Emits a static pose with no animation CSS. Animated input requires an explicit `timeMs`.                                                          |
+| `renderToPng` / `renderToWebp`    | Samples a static pose at `timeMs`; SVG-only playback and namespace options are rejected.                                                          |
+| `renderToAnimatedWebp` / `...Gif` | Samples the requested frame schedule; a required `iterations` controls total container plays and is separate from animated SVG timeline playback. |
 
 `timeMs` must be a non-negative finite number. It is optional for nonanimated
 static input and selects the base pose of animated SVG output. When more
@@ -408,12 +417,67 @@ animation names, classes, resources, and references to be guaranteed disjoint.
 For example, fixed-width scopes are suitable; `doc-` and `doc-clip-` are not,
 because the former is a prefix of the latter.
 
-The animated SVG method does not infer or synchronize a document duration.
-The 0.3 `AnimatedSvgPlayback` union supports only independent authored tracks;
-there is no `mode: "timeline"`, document `durationMs`, or document-level
-iteration option.
+The animated SVG method never infers a document duration. Choose `independent`
+to retain each authored clock, or supply a timeline explicitly.
 
-### Migrating output-mode calls to 0.3
+### Document timeline playback
+
+`playback: { mode: "timeline", durationMs: D, iterations }` makes `D` the length
+of one document cycle. Every emitted track uses that same CSS duration. A local
+800 ms track therefore repeats three times in a 2400 ms document cycle, while a
+1200 ms track repeats twice. The timeline owns document-level iteration count;
+each track's authored duration, delay, fill, easing, and local iterations still
+define its value inside `[0, D]`.
+
+Timeline mode has a strict numeric domain for each authored track:
+
+| Authored track field | Timeline range                   |
+| -------------------- | -------------------------------- |
+| `durationMs`         | finite `[1, 2^32]` ms            |
+| `delayMs`            | finite `[-2^32, 2^32]` ms        |
+| finite `iterations`  | `[2^-32, 2^20]`, or `"infinite"` |
+
+These limits apply only to `playback: { mode: "timeline" }`; independent mode
+keeps the authored-track acceptance rules above. A value outside the timeline
+domain fails before rendering with `ANIMATED_SVG_TIMELINE_UNREPRESENTABLE` and
+reason `authored-value-out-of-domain`. Its context identifies `field` and the
+JSON-safe string `received`; unlike boundary-specific representability errors,
+this reason has no `boundaryTimeMs`. Select independent playback or change the
+authored value to the documented range. For `animateUnits`, every unit's
+effective delay after applying `delayStepMs` must also remain in the `delayMs`
+range; a failure identifies the affected `unitId`.
+
+`iterations` accepts a positive number, including a fraction, or `"infinite"`.
+`timeMs` is the document elapsed time at load, not a wall-clock timestamp. During
+active playback it selects `timeMs mod D`; after a finite timeline has completed,
+the SVG holds its exact final document value. The emitted delay remains within
+one cycle even when `timeMs` is much larger than `D`.
+
+Timeline compilation is strict. It rejects tracks that cannot be represented
+exactly by the supported CSS vocabulary, stop offsets that lose browser
+precision, and output that exceeds the published stop or CSS-byte budget. It
+does not approximate spring easing or silently fall back to independent mode.
+For opacity, a cubic whose y controls leave `[0, 1]` is accepted only when the
+raw interpolated opacity still stays in `[0, 1]` over every emitted interval.
+If it would require a clamped plateau, compilation fails with
+`ANIMATED_SVG_TIMELINE_UNREPRESENTABLE` and reason
+`clamped-overshoot-cubic`; use `playback: { mode: "independent" }` to retain
+that authored track. Timeline mode does not synthesize clamp-root or output-
+extremum keyframes.
+
+The generated bytes and the baked `timeMs` base pose are deterministic. Live
+playback is a browser-evaluated layer: away from a discontinuity it follows the
+document sampler within the documented tolerance; close to a jump, either
+one-sided continuation is allowed. At the exact instant of a discontinuity, the
+live value may be either the left or right limit.
+
+When an exact value at arbitrary document elapsed time `e` is required, render a
+static SVG instead. For an active or infinite timeline, pass `e mod D` as static
+`timeMs`. After a finite `n * D` endpoint, pass `D` when `n` is an integer, or
+`fract(n) * D` otherwise. Static rendering avoids the live-playback instant
+carve-out and is the verification path for exact checkpoints.
+
+### Migrating output-mode calls from 0.3
 
 Audit every no-option `renderToSvg(scene)` call whose scene may contain
 `animate` or `animateUnits`; choose either a deterministic static time or the
@@ -427,6 +491,27 @@ animated entry point. Then migrate mechanically:
 - Make the same choice for `renderToSvgAndIR`, compiled methods, Worker calls,
   React components, and hooks. Removed or artifact-incompatible own keys fail;
   they are not silently projected away.
+- Keep 0.3 authored-track behavior as `playback: { mode: "independent" }`. If an
+  application used one chosen duration as a document-wide loop, express that
+  clock as `playback: { mode: "timeline", durationMs, iterations }` instead.
+- If migration to `timeline` reports `clamped-overshoot-cubic`, keep that call
+  in `independent` mode or author an opacity cubic whose raw values remain
+  within `[0, 1]`; timeline compilation never approximates the clamp.
+- If it reports `authored-value-out-of-domain`, keep the call in `independent`
+  mode or move the reported authored field into the timeline numeric domain.
+- Update exhaustive `AnimatedSvgPlayback` switches with a `"timeline"` case;
+  timeline fields belong on the playback variant, not on the animation spec.
+
+```ts
+function playbackLabel(playback: AnimatedSvgPlayback): string {
+  switch (playback.mode) {
+    case "independent":
+      return "authored clocks";
+    case "timeline":
+      return `${playback.durationMs} ms document clock`;
+  }
+}
+```
 
 ### Canvas-stable strokes
 
@@ -494,10 +579,12 @@ that **base pose**. Rasterizing it produces the same PNG bytes as
 ## What is not guaranteed
 
 CSS playback uses the SVG viewer's animation clock and interpolation engine.
-The exact browser frame shown at a wall-clock instant is outside the determinism
-contract. Playback also requires a viewer that honors inline CSS animations;
-viewers without that support, static renderers such as resvg, and environments
-that block the animation style show the `timeMs` base-pose still image instead.
+For timeline mode, computed values are covered by the live-playback contract,
+including its discontinuity carve-out, but the exact wall-clock instant at which
+a viewer paints a frame is not deterministic. Playback also requires a viewer
+that honors inline CSS animations; viewers without that support, static
+renderers such as resvg, and environments that block the animation style show
+the deterministic `timeMs` base-pose still image instead.
 
 ## Reduced motion
 
@@ -524,6 +611,11 @@ The result is the `timeMs` pose held still, not an unstyled element: the base
 pose already lives in the element's attributes, so stopping playback leaves a
 coherent frame. The selector list covers node and text-unit tracks alike, and the block is
 emitted last so it wins over the per-class rules.
+
+The option behaves the same in `independent` and `timeline` modes. Timeline
+validation, representability, precision, and budget checks still run before the
+reduced-motion block is emitted; `"pause"` cannot turn an invalid timeline into
+a successful static fallback.
 
 The default is `"keep"`, which emits nothing — a render that never passes the
 option and one that passes `"keep"` produce identical bytes. Opting in is
@@ -554,7 +646,8 @@ fixed time, request a new IR, and use that IR for hit-testing or selection.
 
 `compile(scene)` keeps the raw animation track. Each
 static compiled call samples that immutable compiled scene at its own `timeMs`,
-while `renderCompiledToAnimatedSvg` preserves independent playback.
+while `renderCompiledToAnimatedSvg` accepts either independent or document
+timeline playback without recompiling layout.
 
 ```ts
 const compiled = engine.compile(scene);

@@ -52,17 +52,39 @@ describe("text motion playground presets", () => {
     });
   });
 
-  it("keeps the five samples together in the Text Motion group", () => {
+  it("keeps the six samples together in the Text Motion group", () => {
     const textMotionGroup = PRESET_GROUPS.find((group) => group.key === "text-motion");
 
     expect(textMotionGroup?.label).toBe("Text Motion");
     expect(textMotionGroup?.presetKeys).toEqual([
+      "animated-svg-timeline",
       "typing-ime-timeline",
       "text-on-path-basics",
       "decoration-path-fit",
       "rich-text-on-path",
       "text-path-motion",
     ]);
+  });
+
+  it("renders document timeline playback and reduced-motion poster metadata", () => {
+    const preset = presets["animated-svg-timeline"]!;
+    expect(preset.animationDurationMs).toBe(2_400);
+    expect(preset.animatedSvgOptions).toEqual({
+      playback: { mode: "timeline", durationMs: 2_400, iterations: "infinite" },
+      timeMs: 600,
+      reducedMotion: "pause",
+    });
+    const options = preset.animatedSvgOptions;
+    expect(options).toBeDefined();
+    if (!options) {
+      return;
+    }
+    const svg = engine.renderToAnimatedSvg(preset.build(engine), options);
+    expect(svg).toContain("DOCUMENT TIMELINE · D = 2400 ms");
+    expect(svg).toContain("animation-duration: 2400ms;");
+    expect(svg).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(preset.source).toContain("const fastTrack");
+    expect(preset.source).toContain("const slowTrack");
   });
 
   it("renders eight terminal/IME snapshots with composition and diagnostics", () => {

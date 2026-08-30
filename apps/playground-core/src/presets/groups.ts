@@ -59,6 +59,7 @@ export const PRESET_GROUPS: PresetGroupDef[] = [
     key: "text-motion",
     label: "Text Motion",
     presetKeys: [
+      "animated-svg-timeline",
       "typing-ime-timeline",
       "text-on-path-basics",
       "decoration-path-fit",

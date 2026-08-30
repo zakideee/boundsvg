@@ -16,7 +16,7 @@ import {
   type IR,
   inspectHitTestCandidates,
 } from "@boundsvg/core/scene";
-import type { Engine, RenderSvgOptions, VNode } from "@boundsvg/react";
+import type { Engine, RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/react";
 import Prism from "prismjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -241,6 +241,7 @@ export function useSvgInspect(
   vnode: VNode | null,
   renderOptions?: RenderSvgOptions,
   overlayDisplay?: EventEffectOverlayDisplayOptions,
+  animatedSvgOptions?: RenderAnimatedSvgOptions,
 ): {
   highlightedSvg: string;
   setPreviewEl: (element: HTMLDivElement | null) => void;
@@ -258,14 +259,14 @@ export function useSvgInspect(
       const { svg, ir } = animated
         ? engine.renderToAnimatedSvgAndIR(vnode, {
             ...renderOptions,
-            playback: { mode: "independent" },
+            ...(animatedSvgOptions ?? { playback: { mode: "independent" } }),
           })
         : engine.renderToSvgAndIR(vnode, renderOptions);
       return computeSvgRenderData(svg, ir);
     } catch {
       return EMPTY_DATA;
     }
-  }, [engine, status, vnode, renderOptions]);
+  }, [engine, status, vnode, renderOptions, animatedSvgOptions]);
 
   const { setPreviewEl, setCodeEl } = useInspectHover(data, overlayDisplay);
 

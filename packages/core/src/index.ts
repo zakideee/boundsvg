@@ -11,7 +11,9 @@ export type {
   AnimatedRasterIterations,
   AnimatedSvgPlayback,
   AnimationAffineMatrix,
+  AnimationIterationCount,
   AnimationStateSample,
+  AnimationTimeline,
   CompiledScene,
   CompileOptions,
   EmitAnimatedSvgOptions,
@@ -141,6 +143,7 @@ export {
 // Render capability contract
 export type { RasterScaleOptions, ResolvedRasterScale } from "./render-capabilities.js";
 export {
+  animatedSvgTimelineLimits,
   MAX_ANIMATION_FRAMES,
   MAX_ANIMATION_SVG_PAYLOAD_CHARS,
   RASTER_DIMENSION_SATURATION,

@@ -4,10 +4,12 @@
 export type {
   AnimatedSvgPlayback,
   AnimationEasing,
+  AnimationIterationCount,
   AnimationKeyframe,
   AnimationSpec,
   AnimationSpring,
   AnimationStepPosition,
+  AnimationTimeline,
   AnimationTransform2D,
   AnyVNode,
   BooleanOp,

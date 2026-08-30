@@ -261,7 +261,14 @@ export function TemplatesPage() {
     highlightedSvg: highlightedRenderedSvg,
     setPreviewEl,
     setCodeEl,
-  } = useSvgInspect(engine, status, deferredVNode, baseRenderOptions);
+  } = useSvgInspect(
+    engine,
+    status,
+    deferredVNode,
+    baseRenderOptions,
+    undefined,
+    template.animatedSvgOptions,
+  );
 
   return (
     <div className="playground-layout">
@@ -460,6 +467,7 @@ export function TemplatesPage() {
                 renderer={overrides.renderer}
                 vnode={deferredVNode}
                 renderOptions={deferredRenderOptions}
+                animatedSvgOptions={template.animatedSvgOptions}
                 isPending={isPending}
               />
               {template.licenseNotice ? (

@@ -11,6 +11,10 @@ import {
   resolveGifDelaysCs,
 } from "./animation-schedule.js";
 import { invokeMeasurementTransport } from "./engine/measurement-transport.js";
+import {
+  assertAnimatedSvgTimelineIrJsonRepresentable,
+  assertAnimatedSvgTimelineVNodeJsonRepresentable,
+} from "./engine/timeline-domain-transport.js";
 import { FatalError, RecoverableError, type StructuredError } from "./errors.js";
 import { GENERIC_FONT_FAMILIES } from "./font/generic-families.js";
 import { DEFAULT_FONT_WEIGHT } from "./font/types.js";
@@ -55,7 +59,7 @@ import { collectTextFontAliases } from "./text/inline-runs.js";
 import { projectResolvedTextOutlines } from "./text/outline-projection.js";
 import { assertRichTextNodeDepth } from "./text/rich-text-limits.js";
 import type { RichTextNode, TextOutlineNode, TextPathMode } from "./text/types.js";
-import { validate } from "./validate/index.js";
+import { validate, validateAnimatedSvgTimeline } from "./validate/index.js";
 import type { AnimationSpec, VNode } from "./vnode/types.js";
 import type {
   AnimationEncodeInput,
@@ -421,19 +425,114 @@ function assertSvgEmissionOptionValues(options: SvgEmissionOptions | undefined):
   }
 }
 
-function assertAnimatedSvgPlayback(playback: unknown): asserts playback is AnimatedSvgPlayback {
-  if (
-    typeof playback !== "object" ||
-    playback === null ||
-    Array.isArray(playback) ||
-    Object.keys(playback).length !== 1 ||
-    !Object.hasOwn(playback, "mode") ||
-    Reflect.get(playback, "mode") !== "independent"
-  ) {
+const MAX_TIMELINE_DURATION_MS = 2 ** 32;
+const MAX_TIMELINE_ITERATIONS = 2 ** 20;
+const MAX_TIMELINE_TIME_MS = 2 ** 52;
+const MAX_TIMELINE_TIME_RATIO = 2 ** 31;
+
+function timelineReceived(container: object, field: string): string {
+  if (!Object.hasOwn(container, field)) {
+    return "missing";
+  }
+  const value = Reflect.get(container, field);
+  if (value === null || typeof value !== "object") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function invalidAnimatedSvgTimeline(field: string, received: string): FatalError {
+  return new FatalError(
+    "ANIMATED_SVG_INVALID_TIMELINE",
+    `Animated SVG timeline ${field} is outside the supported range.`,
+    { stage: "validate", field, received },
+  );
+}
+
+function assertAnimatedSvgPlayback(
+  playback: unknown,
+  timeMs: unknown,
+): asserts playback is AnimatedSvgPlayback {
+  if (typeof playback !== "object" || playback === null || Array.isArray(playback)) {
     throw new FatalError(
       "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
-      'Animated SVG playback must be exactly { mode: "independent" }.',
+      'Animated SVG playback must use mode "independent" or "timeline".',
       { stage: "validate" },
+    );
+  }
+  const mode = Reflect.get(playback, "mode");
+  if (mode === "independent") {
+    if (Object.keys(playback).length !== 1 || !Object.hasOwn(playback, "mode")) {
+      throw new FatalError(
+        "UNSUPPORTED_RENDER_OPTION",
+        "Independent animated SVG playback only supports the mode field.",
+        { stage: "validate" },
+      );
+    }
+    return;
+  }
+  if (mode !== "timeline") {
+    throw new FatalError(
+      "UNSUPPORTED_ANIMATED_SVG_PLAYBACK",
+      'Animated SVG playback must use mode "independent" or "timeline".',
+      { stage: "validate" },
+    );
+  }
+
+  const durationMs = Reflect.get(playback, "durationMs");
+  if (
+    typeof durationMs !== "number" ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 1 ||
+    durationMs > MAX_TIMELINE_DURATION_MS
+  ) {
+    throw invalidAnimatedSvgTimeline("durationMs", timelineReceived(playback, "durationMs"));
+  }
+  const iterations = Reflect.get(playback, "iterations");
+  if (
+    iterations !== "infinite" &&
+    (typeof iterations !== "number" ||
+      !Number.isFinite(iterations) ||
+      iterations <= 0 ||
+      iterations > MAX_TIMELINE_ITERATIONS)
+  ) {
+    throw invalidAnimatedSvgTimeline("iterations", timelineReceived(playback, "iterations"));
+  }
+  const timelineKeys = new Set(["mode", "durationMs", "iterations"]);
+  const unsupportedKey = Object.keys(playback).find((key) => !timelineKeys.has(key));
+  if (unsupportedKey !== undefined) {
+    throw new FatalError(
+      "UNSUPPORTED_RENDER_OPTION",
+      `Animated SVG timeline playback does not support field ${JSON.stringify(unsupportedKey)}.`,
+      { stage: "validate" },
+    );
+  }
+
+  const elapsedMs = timeMs === undefined ? 0 : timeMs;
+  if (
+    typeof elapsedMs !== "number" ||
+    !Number.isFinite(elapsedMs) ||
+    elapsedMs < 0 ||
+    elapsedMs > MAX_TIMELINE_TIME_MS
+  ) {
+    const received = timeMs === undefined ? "missing" : timelineReceived({ timeMs }, "timeMs");
+    throw invalidAnimatedSvgTimeline("timeMs", received);
+  }
+  if (elapsedMs / durationMs > MAX_TIMELINE_TIME_RATIO) {
+    throw new FatalError(
+      "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+      "Animated SVG timeline timeMs/durationMs ratio exceeds the supported precision limit.",
+      {
+        stage: "validate",
+        kind: "time-ratio",
+        timeMs: elapsedMs,
+        durationMs,
+        limitRatio: MAX_TIMELINE_TIME_RATIO,
+      },
     );
   }
 }
@@ -780,8 +879,20 @@ export type CompileOptions = {
 /** Options that affect layout-tree construction. */
 export type LayoutRenderOptions = Pick<CompileOptions, "skipValidation">;
 
-/** 0.3 animated SVG playback deliberately preserves independent authored tracks. */
-export type AnimatedSvgPlayback = { mode: "independent" };
+/** Total document plays, including a fractional final play, or unbounded playback. */
+export type AnimationIterationCount = number | "infinite";
+
+/** Document clock shared by every authored animation track in timeline playback. */
+export type AnimationTimeline = {
+  /** One document-cycle duration in milliseconds. */
+  durationMs: number;
+  /** Total document plays, including a fractional final play, or unbounded playback. */
+  iterations: AnimationIterationCount;
+};
+
+export type AnimatedSvgPlayback =
+  | { mode: "independent" }
+  | ({ mode: "timeline" } & AnimationTimeline);
 
 export type RenderSvgOptions = CompileOptions &
   OutputCommonOptions &
@@ -1241,7 +1352,7 @@ export class Engine {
   renderToAnimatedSvg(input: EngineInput, renderOpts: RenderAnimatedSvgOptions): string {
     assertOwnOptionKeys(renderOpts, ANIMATED_SVG_OPTION_KEYS, "renderToAnimatedSvg");
     assertSvgEmissionOptionValues(renderOpts);
-    assertAnimatedSvgPlayback(renderOpts?.playback);
+    assertAnimatedSvgPlayback(renderOpts?.playback, renderOpts?.timeMs);
     assertValidAnimationRenderOptions(renderOpts);
     return this.renderWithWasmBackend(input, renderOpts, {
       resolveReturnedIrOutlines: false,
@@ -1256,7 +1367,7 @@ export class Engine {
   ): { svg: string; ir: IR } {
     assertOwnOptionKeys(renderOpts, ANIMATED_SVG_OPTION_KEYS, "renderToAnimatedSvgAndIR");
     assertSvgEmissionOptionValues(renderOpts);
-    assertAnimatedSvgPlayback(renderOpts?.playback);
+    assertAnimatedSvgPlayback(renderOpts?.playback, renderOpts?.timeMs);
     assertValidAnimationRenderOptions(renderOpts);
     return this.renderWithWasmBackend(input, renderOpts, {
       resolveReturnedIrOutlines: true,
@@ -2394,7 +2505,13 @@ export class Engine {
       );
     }
     const vnode = this.resolveInput(input);
-    if (!renderOpts?.skipValidation) {
+    if (renderOpts?.playback?.mode === "timeline") {
+      if (renderOpts.skipValidation) {
+        assertAnimatedSvgTimelineVNodeJsonRepresentable(vnode);
+      } else {
+        validateAnimatedSvgTimeline(vnode);
+      }
+    } else if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
     this.assertVNodeFontAliasesRegistered(vnode);
@@ -2791,10 +2908,13 @@ export class Engine {
   renderCompiledToAnimatedSvg(compiled: CompiledScene, emitOpts: EmitAnimatedSvgOptions): string {
     assertOwnOptionKeys(emitOpts, EMIT_ANIMATED_SVG_OPTION_KEYS, "renderCompiledToAnimatedSvg");
     assertSvgEmissionOptionValues(emitOpts);
-    assertAnimatedSvgPlayback(emitOpts?.playback);
+    assertAnimatedSvgPlayback(emitOpts?.playback, emitOpts?.timeMs);
     assertValidAnimationRenderOptions(emitOpts);
     this.ensureNotDisposed();
     assertRenderableCanvas(compiled.ir);
+    if (emitOpts.playback.mode === "timeline") {
+      assertAnimatedSvgTimelineIrJsonRepresentable(compiled.ir);
+    }
     const requestedScale = emitOpts?.scale ?? 1;
     if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
       throw new FatalError(

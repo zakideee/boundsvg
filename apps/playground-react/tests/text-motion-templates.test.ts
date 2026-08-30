@@ -76,17 +76,34 @@ before(async () => {
 
 after(() => engine.dispose());
 
-test("React Templates groups the same five Text Motion samples as core", () => {
+test("React Templates groups the same six Text Motion samples as core", () => {
   const textMotionGroup = TEMPLATE_GROUPS.find((group) => group.key === "text-motion");
 
   assert.equal(textMotionGroup?.label, "Text Motion");
   assert.deepEqual(textMotionGroup?.templateKeys, [
+    "animated-svg-timeline",
     "typing-ime-timeline",
     "text-on-path-basics",
     "decoration-path-fit",
     "rich-text-on-path",
     "text-path-motion",
   ]);
+});
+
+test("React Animated SVG Timeline carries document playback and reduced-motion options", () => {
+  const definition = TEMPLATE_DEFINITIONS["animated-svg-timeline"];
+  assert.ok(definition);
+  const options = definition.animatedSvgOptions;
+  assert.ok(options);
+  assert.deepEqual(options, {
+    playback: { mode: "timeline", durationMs: 2_400, iterations: "infinite" },
+    timeMs: 600,
+    reducedMotion: "pause",
+  });
+  const svg = engine.renderToAnimatedSvg(buildTemplate("animated-svg-timeline"), options);
+  assert.match(svg, /DOCUMENT TIMELINE · D = 2400 ms/u);
+  assert.match(svg, /animation-duration: 2400ms;/u);
+  assert.match(svg, /@media \(prefers-reduced-motion: reduce\)/u);
 });
 
 test("React Terminal / IME Timeline renders all authored states and composition decoration", () => {

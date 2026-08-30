@@ -15,16 +15,21 @@
 //! arithmetic. Indentation is two spaces per depth; parts join with `\n`.
 
 use crate::error::EngineError;
+use crate::ir::animation_timeline::{
+    CompiledCssEasing, CssIterationCount, DocumentAnimationPlan, DocumentKeyframe,
+    MAX_TIMELINE_CSS_BYTES,
+};
 use crate::ir::gradient::angle_to_svg_coords;
 use crate::ir::types::{
-    AnimationEasing, AnimationIterations, AnimationKeyframe, AnimationSpec, AnimationSpring,
-    AnimationTransform2D, BBox, BorderRadii, BorderRadius, Gradient, RadialGradientGeometry,
+    AnimationEasing, AnimationIterations, AnimationKeyframe, AnimationSpring, AnimationTransform2D,
+    BBox, BorderRadii, BorderRadius, Gradient, RadialGradientGeometry,
 };
 use crate::scene::{
-    ClipPathDef, DebugLineItem, DebugRectItem, DebugRectKind, FilterDef, GradientDef,
-    GroupOpenItem, ImageItem, NestedSvgItem, PaintItem, PaintScene, PathItem, RectItem,
-    ReducedMotionMode, ShapePartItem, SharedShapePathDef, TextGlyphItem, TextItem,
+    AnimationPlaybackStyle, ClipPathDef, DebugLineItem, DebugRectItem, DebugRectKind, FilterDef,
+    GradientDef, GroupOpenItem, ImageItem, NestedSvgItem, PaintItem, PaintScene, PathItem,
+    RectItem, ReducedMotionMode, ShapePartItem, SharedShapePathDef, TextGlyphItem, TextItem,
 };
+use crate::svg_emit::identifier_namespace::{SvgIdentifierNamespace, SvgIdentifierRole};
 use crate::svg_emit::num_format::{format_js_number, format_number};
 use crate::svg_emit::paint::{
     StrokeStyleFields, append_stroke_style_attrs, linecap_str, linejoin_str,
@@ -401,11 +406,13 @@ fn emit_animation_keyframe(
     ))
 }
 
-fn emit_animation_rule(
+fn emit_independent_animation_rule(
     animation: &crate::scene::AnimationStyle,
     time_ms: f64,
 ) -> Result<Vec<String>, EngineError> {
-    let spec: &AnimationSpec = &animation.spec;
+    let AnimationPlaybackStyle::Independent(spec) = &animation.playback else {
+        return Ok(Vec::new());
+    };
     let Some(first) = spec.keyframes.first() else {
         return Err(EngineError::Structured {
             code: "ANIMATION_INVALID_SPEC".to_string(),
@@ -498,6 +505,267 @@ fn emit_animation_rule(
     Ok(lines)
 }
 
+fn timeline_easing_css(easing: &CompiledCssEasing) -> String {
+    match easing {
+        CompiledCssEasing::Linear => "linear".to_string(),
+        CompiledCssEasing::OutputScaledLinear(alpha) => {
+            format!("linear(0, {})", format_js_number(*alpha))
+        }
+        CompiledCssEasing::CubicBezier([x1, y1, x2, y2]) => format!(
+            "cubic-bezier({}, {}, {}, {})",
+            format_js_number(*x1),
+            format_js_number(*y1),
+            format_js_number(*x2),
+            format_js_number(*y2)
+        ),
+        CompiledCssEasing::StepEnd => "steps(1, end)".to_string(),
+    }
+}
+
+fn timeline_iterations_css(iterations: CssIterationCount) -> String {
+    match iterations {
+        CssIterationCount::Finite(count) => format_js_number(count),
+        CssIterationCount::Infinite => "infinite".to_string(),
+    }
+}
+
+fn timeline_keyframe_declarations(
+    keyframe: &DocumentKeyframe,
+    bbox: BBox,
+) -> Result<String, EngineError> {
+    let mut declarations = Vec::new();
+    if let Some(opacity) = keyframe.value.opacity {
+        declarations.push(format!("opacity: {}", format_number(opacity, 6)?));
+    }
+    if let Some(transform) = &keyframe.value.transform {
+        declarations.push(format!(
+            "transform: {}",
+            animation_transform_css(transform, bbox)?
+        ));
+    }
+    if let Some(easing) = &keyframe.easing_to_next {
+        declarations.push(format!(
+            "animation-timing-function: {}",
+            timeline_easing_css(easing)
+        ));
+    }
+    Ok(declarations.join("; "))
+}
+
+fn write_timeline_css(
+    output: &mut impl std::fmt::Write,
+    arguments: std::fmt::Arguments<'_>,
+) -> Result<(), EngineError> {
+    output.write_fmt(arguments).map_err(|_| {
+        EngineError::Validation("Failed to write animated SVG timeline CSS".to_string())
+    })
+}
+
+fn write_timeline_animation_rule(
+    output: &mut impl std::fmt::Write,
+    animation: &crate::scene::AnimationStyle,
+) -> Result<bool, EngineError> {
+    let AnimationPlaybackStyle::Timeline {
+        duration_ms,
+        delay_ms,
+        iterations,
+        keyframes,
+    } = &animation.playback
+    else {
+        return Ok(false);
+    };
+    write_timeline_animation_rule_parts(
+        output,
+        &TimelineAnimationRule {
+            class_name: &animation.class_name,
+            keyframes_name: &animation.keyframes_name,
+            bbox: animation.bbox,
+            duration_ms: *duration_ms,
+            delay_ms: *delay_ms,
+            iterations: *iterations,
+            keyframes,
+        },
+    )?;
+    Ok(true)
+}
+
+struct TimelineAnimationRule<'a> {
+    class_name: &'a str,
+    keyframes_name: &'a str,
+    bbox: BBox,
+    duration_ms: f64,
+    delay_ms: f64,
+    iterations: CssIterationCount,
+    keyframes: &'a [DocumentKeyframe],
+}
+
+fn write_timeline_animation_rule_parts(
+    output: &mut impl std::fmt::Write,
+    rule: &TimelineAnimationRule<'_>,
+) -> Result<(), EngineError> {
+    let keyframes_name = escape_css_identifier(rule.keyframes_name);
+    let class_name = escape_css_identifier(rule.class_name);
+    write_timeline_css(output, format_args!("    @keyframes {keyframes_name} {{\n"))?;
+    for keyframe in rule.keyframes {
+        write_timeline_css(
+            output,
+            format_args!(
+                "      {}% {{ {}; }}\n",
+                format_js_number(keyframe.time_ms / rule.duration_ms * 100.0),
+                timeline_keyframe_declarations(keyframe, rule.bbox)?
+            ),
+        )?;
+    }
+    write_timeline_css(output, format_args!("    }}\n"))?;
+    write_timeline_css(output, format_args!("    .{class_name} {{\n"))?;
+    write_timeline_css(
+        output,
+        format_args!("      animation-name: {keyframes_name};\n"),
+    )?;
+    write_timeline_css(
+        output,
+        format_args!(
+            "      animation-duration: {}ms;\n",
+            format_js_number(rule.duration_ms)
+        ),
+    )?;
+    write_timeline_css(
+        output,
+        format_args!(
+            "      animation-delay: {}ms;\n",
+            format_js_number(rule.delay_ms)
+        ),
+    )?;
+    write_timeline_css(
+        output,
+        format_args!(
+            "      animation-iteration-count: {};\n",
+            timeline_iterations_css(rule.iterations)
+        ),
+    )?;
+    write_timeline_css(output, format_args!("      animation-fill-mode: both;\n"))?;
+    if rule
+        .keyframes
+        .iter()
+        .any(|keyframe| keyframe.value.transform.is_some())
+    {
+        write_timeline_css(output, format_args!("      transform-box: view-box;\n"))?;
+        write_timeline_css(output, format_args!("      transform-origin: 0 0;\n"))?;
+    }
+    write_timeline_css(output, format_args!("    }}"))?;
+    Ok(())
+}
+
+fn timeline_animation_rule(
+    animation: &crate::scene::AnimationStyle,
+) -> Result<Option<String>, EngineError> {
+    let mut rule = String::new();
+    if write_timeline_animation_rule(&mut rule, animation)? {
+        Ok(Some(rule))
+    } else {
+        Ok(None)
+    }
+}
+
+#[derive(Default)]
+struct CssByteCounter {
+    bytes: usize,
+}
+
+impl std::fmt::Write for CssByteCounter {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        self.bytes = self.bytes.saturating_add(value.len());
+        Ok(())
+    }
+}
+
+fn enforce_timeline_css_byte_limit(actual_css_bytes: usize) -> Result<(), EngineError> {
+    if actual_css_bytes <= MAX_TIMELINE_CSS_BYTES {
+        return Ok(());
+    }
+    Err(EngineError::StructuredContext {
+        code: "ANIMATED_SVG_TIMELINE_LIMIT".to_string(),
+        message: "Animated SVG timeline cssBytes exceeds the supported limit".to_string(),
+        stage: Some("emit".to_string()),
+        node_id: None,
+        context: Box::new(serde_json::json!({
+            "metric": "cssBytes",
+            "actual": actual_css_bytes,
+            "limit": MAX_TIMELINE_CSS_BYTES,
+        })),
+    })
+}
+
+fn timeline_css_byte_count(scene: &PaintScene) -> Result<usize, EngineError> {
+    let mut counter = CssByteCounter::default();
+    let mut has_timeline_animation = false;
+    for animation in &scene.animations {
+        if !write_timeline_animation_rule(&mut counter, animation)? {
+            continue;
+        }
+        has_timeline_animation = true;
+        counter.bytes = counter.bytes.saturating_add(1);
+        enforce_timeline_css_byte_limit(counter.bytes)?;
+    }
+    if has_timeline_animation && scene.reduced_motion == ReducedMotionMode::Pause {
+        write_reduced_motion_rule(
+            &mut counter,
+            scene
+                .animations
+                .iter()
+                .map(|animation| animation.class_name.as_str()),
+        )?;
+        enforce_timeline_css_byte_limit(counter.bytes)?;
+    }
+    Ok(counter.bytes)
+}
+
+pub(crate) fn timeline_plan_css_byte_count(
+    plan: &DocumentAnimationPlan,
+    resource_id_prefix: &str,
+    include_reduced_motion: bool,
+) -> Result<usize, EngineError> {
+    let identifier_namespace = SvgIdentifierNamespace::new(resource_id_prefix);
+    let mut counter = CssByteCounter::default();
+    for track in &plan.tracks {
+        let class_name = identifier_namespace.identifier(
+            SvgIdentifierRole::AnimationClass,
+            &track.animation_name_owner,
+        );
+        let keyframes_name = identifier_namespace.identifier(
+            SvgIdentifierRole::AnimationKeyframes,
+            &track.animation_name_owner,
+        );
+        write_timeline_animation_rule_parts(
+            &mut counter,
+            &TimelineAnimationRule {
+                class_name: &class_name,
+                keyframes_name: &keyframes_name,
+                bbox: track.bbox,
+                duration_ms: plan.duration_ms,
+                delay_ms: plan.css_delay_ms,
+                iterations: plan.css_iteration_count,
+                keyframes: &track.keyframes,
+            },
+        )?;
+        counter.bytes = counter.bytes.saturating_add(1);
+        enforce_timeline_css_byte_limit(counter.bytes)?;
+    }
+    if include_reduced_motion {
+        write_reduced_motion_rule(
+            &mut counter,
+            plan.tracks.iter().map(|track| {
+                identifier_namespace.identifier(
+                    SvgIdentifierRole::AnimationClass,
+                    &track.animation_name_owner,
+                )
+            }),
+        )?;
+        enforce_timeline_css_byte_limit(counter.bytes)?;
+    }
+    Ok(counter.bytes)
+}
+
 /// Emit the opt-out that stops every animation this render started.
 ///
 /// One block covering all animated classes, appended last so it wins over the
@@ -508,22 +776,52 @@ fn emit_animation_rule(
 /// The base pose invariant is what makes `animation: none` safe: the
 /// element's attributes already carry the sampled pose, so stopping playback
 /// leaves a coherent still rather than an unstyled element.
-fn emit_reduced_motion_rule(scene: &PaintScene) -> Vec<String> {
-    let selectors: Vec<String> = scene
-        .animations
-        .iter()
-        .map(|animation| format!(".{}", escape_css_identifier(&animation.class_name)))
-        .collect();
-    if selectors.is_empty() {
-        return Vec::new();
+fn write_reduced_motion_rule<I, S>(
+    output: &mut impl std::fmt::Write,
+    class_names: I,
+) -> Result<bool, EngineError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut class_names = class_names.into_iter().peekable();
+    if class_names.peek().is_none() {
+        return Ok(false);
     }
-    vec![
-        "    @media (prefers-reduced-motion: reduce) {".to_string(),
-        format!("      {} {{", selectors.join(", ")),
-        "        animation: none !important;".to_string(),
-        "      }".to_string(),
-        "    }".to_string(),
-    ]
+    write_timeline_css(
+        output,
+        format_args!("    @media (prefers-reduced-motion: reduce) {{\n"),
+    )?;
+    write_timeline_css(output, format_args!("      "))?;
+    for (index, class_name) in class_names.enumerate() {
+        if index > 0 {
+            write_timeline_css(output, format_args!(", "))?;
+        }
+        write_timeline_css(
+            output,
+            format_args!(".{}", escape_css_identifier(class_name.as_ref())),
+        )?;
+    }
+    write_timeline_css(
+        output,
+        format_args!(" {{\n        animation: none !important;\n      }}\n    }}\n"),
+    )?;
+    Ok(true)
+}
+
+fn reduced_motion_rule(scene: &PaintScene) -> Result<Option<String>, EngineError> {
+    let mut rule = String::new();
+    if write_reduced_motion_rule(
+        &mut rule,
+        scene
+            .animations
+            .iter()
+            .map(|animation| animation.class_name.as_str()),
+    )? {
+        Ok(Some(rule))
+    } else {
+        Ok(None)
+    }
 }
 
 fn emit_canvas_stroke_rules(scene: &PaintScene) -> Result<Vec<String>, EngineError> {
@@ -548,12 +846,31 @@ fn emit_canvas_stroke_rules(scene: &PaintScene) -> Result<Vec<String>, EngineErr
 }
 
 fn emit_styles(scene: &PaintScene) -> Result<String, EngineError> {
+    let timeline_css_bytes = timeline_css_byte_count(scene)?;
+    if let Some(expected_css_bytes) = scene.timeline_css_bytes
+        && timeline_css_bytes != expected_css_bytes
+    {
+        return Err(EngineError::Validation(format!(
+            "Animated SVG timeline CSS byte count changed between passes: expected {expected_css_bytes}, observed {timeline_css_bytes}"
+        )));
+    }
     let mut lines = vec!["  <style>".to_string()];
     for animation in &scene.animations {
-        lines.extend(emit_animation_rule(animation, scene.animation_time_ms)?);
+        match &animation.playback {
+            AnimationPlaybackStyle::Independent(_) => lines.extend(
+                emit_independent_animation_rule(animation, scene.animation_time_ms)?,
+            ),
+            AnimationPlaybackStyle::Timeline { .. } => {
+                if let Some(rule) = timeline_animation_rule(animation)? {
+                    lines.extend(rule.lines().map(str::to_string));
+                }
+            }
+        }
     }
     if scene.reduced_motion == ReducedMotionMode::Pause {
-        lines.extend(emit_reduced_motion_rule(scene));
+        if let Some(rule) = reduced_motion_rule(scene)? {
+            lines.extend(rule.lines().map(str::to_string));
+        }
     }
     lines.extend(emit_canvas_stroke_rules(scene)?);
     lines.push("  </style>".to_string());
@@ -1401,7 +1718,7 @@ fn emit_filter_def(filter: &FilterDef) -> Result<String, EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::types::{AnimationSteps, GradientStop};
+    use crate::ir::types::{AnimationSpec, AnimationSteps, GradientStop};
 
     fn default_spring() -> AnimationEasing {
         AnimationEasing::Spring(AnimationSpring {
@@ -1436,6 +1753,60 @@ mod tests {
             &crate::rasterize::RasterizeOptions::default(),
         )
         .expect("gradient SVG rasterizes")
+    }
+
+    #[test]
+    fn keeps_independent_animation_css_byte_stable() {
+        let animation = crate::scene::AnimationStyle {
+            class_name: "bsvg-anim-card".to_string(),
+            keyframes_name: "anim-card-keyframes".to_string(),
+            bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
+            playback: AnimationPlaybackStyle::Independent(AnimationSpec {
+                keyframes: vec![
+                    AnimationKeyframe {
+                        at: 0.0,
+                        opacity: Some(0.0),
+                        transform: None,
+                    },
+                    AnimationKeyframe {
+                        at: 1.0,
+                        opacity: Some(1.0),
+                        transform: None,
+                    },
+                ],
+                duration_ms: 100.0,
+                delay_ms: Some(20.0),
+                easing: Some(AnimationEasing::Named("linear".to_string())),
+                iterations: Some(AnimationIterations::Count(1.0)),
+                fill: Some("none".to_string()),
+            }),
+        };
+        assert_eq!(
+            emit_independent_animation_rule(&animation, 50.0)
+                .expect("independent CSS should emit")
+                .join("\n"),
+            "    @keyframes anim-card-keyframes {\n      0% { opacity: 0; }\n      100% { opacity: 1; }\n    }\n    .bsvg-anim-card {\n      animation-name: anim-card-keyframes;\n      animation-duration: 100ms;\n      animation-delay: -30ms;\n      animation-timing-function: linear;\n      animation-iteration-count: 1;\n      animation-fill-mode: none;\n    }"
+        );
+    }
+
+    #[test]
+    fn timeline_css_byte_budget_is_inclusive() {
+        enforce_timeline_css_byte_limit(MAX_TIMELINE_CSS_BYTES)
+            .expect("the exact CSS byte limit should be accepted");
+        let error = enforce_timeline_css_byte_limit(MAX_TIMELINE_CSS_BYTES + 1)
+            .expect_err("one byte over the CSS limit should fail");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("CSS budget should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_LIMIT");
+        assert_eq!(
+            *context,
+            serde_json::json!({
+                "metric": "cssBytes",
+                "actual": MAX_TIMELINE_CSS_BYTES + 1,
+                "limit": MAX_TIMELINE_CSS_BYTES,
+            })
+        );
     }
 
     #[test]
