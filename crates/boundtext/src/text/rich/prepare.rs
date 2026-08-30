@@ -734,14 +734,14 @@ fn flatten_inline_box_children(
                 span_key,
             } => {
                 if depth >= super::MAX_INLINE_BOX_DEPTH {
-                    warnings.push(TextWarning {
-                        code: "INLINE_BOX_MAX_DEPTH".to_string(),
-                        message: format!(
+                    warnings.push(TextWarning::recoverable(
+                        "INLINE_BOX_MAX_DEPTH",
+                        format!(
                             "InlineBox nesting exceeds max depth ({}) and was skipped",
                             super::MAX_INLINE_BOX_DEPTH
                         ),
-                        fallback: Some("skipped".to_string()),
-                    });
+                        "skipped",
+                    ));
                 } else {
                     let box_style = resolve_style(style, current_style, scale);
                     let mut child_nodes = Vec::new();
@@ -942,22 +942,21 @@ fn push_long_ruby_annotation_warning(
         .map(|segment| segment.text.as_str())
         .collect();
 
-    warnings.push(TextWarning {
-        code: "LONG_RUBY_ANNOTATION".to_string(),
-        message: format!(
+    warnings.push(TextWarning::recoverable(
+        "LONG_RUBY_ANNOTATION",
+        format!(
             "Ruby annotation \"{rt_text}\" is wider than base text \"{base_text}\"; long ruby overhang is experimental"
         ),
-        fallback: Some("rendered-without-jlreq-overhang-adjustment".to_string()),
-    });
+        "rendered-without-jlreq-overhang-adjustment",
+    ));
 }
 
 fn push_inter_character_fallback_warning(warnings: &mut Vec<TextWarning>) {
-    warnings.push(TextWarning {
-        code: "RUBY_INTER_CHARACTER_FALLBACK".to_string(),
-        message: "rubyPosition=\"inter-character\" is not implemented yet; rendering as over ruby"
-            .to_string(),
-        fallback: Some("ruby-position-over".to_string()),
-    });
+    warnings.push(TextWarning::recoverable(
+        "RUBY_INTER_CHARACTER_FALLBACK",
+        "rubyPosition=\"inter-character\" is not implemented yet; rendering as over ruby",
+        "ruby-position-over",
+    ));
 }
 
 fn estimate_ruby_inline_advance(segments: &[RichSegment]) -> f64 {

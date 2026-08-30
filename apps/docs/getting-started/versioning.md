@@ -33,9 +33,11 @@ of three tiers:
 
 Rendered output (SVG markup and raster bytes) is part of the contract only as
 described in the [Determinism Contract](/reference/determinism). In short:
-identical inputs produce identical output **within a given boundsvg version**;
-output may change between versions (e.g. improved line breaking), and such
-changes are called out in release notes as _output-affecting_.
+accepted inputs on a declared surface produce identical covered artifacts
+**within a given boundsvg version**, after any documented normalization;
+delegated surfaces stop at their stated boundary. Output may change between
+versions (e.g. improved line breaking), and such changes are called out in
+release notes as _output-affecting_.
 
 Snapshot-testing users should therefore pin an exact version and re-baseline
 snapshots when upgrading.

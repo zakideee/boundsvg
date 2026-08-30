@@ -8,7 +8,15 @@ title: Introduction
 
 SVG has no built-in text measurement or layout: you cannot auto-size text to fit a container, wrap lines, or use flexbox the way HTML does. The usual workarounds — `canvas.measureText`, hidden DOM elements — depend on the runtime, so the same document can measure differently across OS fonts and browser engines.
 
-boundsvg takes the runtime out of the equation. Font shaping (rustybuzz, HarfBuzz-compatible) and layout (Taffy flexbox and CSS Grid) run in WASM against fonts you supply, so measurement is exact and the SVG, PNG, WebP, and GIF output is identical regardless of environment. Text can shrink or grow to fit its container, wrap, truncate with an ellipsis, or stop at a line limit.
+boundsvg takes OS font measurement out of the equation. Font shaping
+(rustybuzz, HarfBuzz-compatible) and layout (Taffy flexbox and CSS Grid) run in
+version-pinned WASM against fonts you supply. Within one boundsvg version,
+accepted owned inputs produce byte-identical SVG, PNG, WebP, and GIF artifacts
+across supported runtimes after any documented normalization. Raw embedded
+SVG, live animation scheduling, and external video encoders have explicit
+boundaries in the [determinism contract](/reference/determinism). Text can
+shrink or grow to fit its container, wrap, truncate with an ellipsis, or stop
+at a line limit.
 
 ## Examples
 

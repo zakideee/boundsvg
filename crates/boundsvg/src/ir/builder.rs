@@ -19,8 +19,8 @@ use super::gradient::{is_supported_gradient_function, parse_gradient_for_box};
 use super::svg_id_rewrite::rewrite_svg_ids;
 use super::svg_security::unsafe_svg_reason;
 use super::types::{
-    BBox, BorderRadii, BorderRadius, BorderRadiusInput, ErrorSeverity, HandlersRef, Ir, IrFillRule,
-    IrNode, IrNodeKind, IrTextAlign, PipelineStage, RenderWarning, ShapePartBounds, ShapePartPaint,
+    BBox, BorderRadii, BorderRadius, BorderRadiusInput, HandlersRef, Ir, IrFillRule, IrNode,
+    IrNodeKind, IrTextAlign, PipelineStage, RenderWarning, ShapePartBounds, ShapePartPaint,
     ShapePathPart, StrokeLinecap, StrokeLinejoin, TEXT_ANIMATION_FRAGMENT_WARNING_THRESHOLD,
     TEXT_ANIMATION_UNIT_WARNING_THRESHOLD, TextShadowLayer, TextStrokeLayer, parse_box_shadow,
     resolve_border_radius,
@@ -78,24 +78,22 @@ fn append_text_animation_budget_warnings(
     let (unit_count, fragment_count) = super::animation::text_animation_budget_counts(root);
     super::animation::validate_text_animation_budget_counts(unit_count, fragment_count)?;
     if unit_count > TEXT_ANIMATION_UNIT_WARNING_THRESHOLD {
-        warnings.push(RenderWarning {
-            severity: ErrorSeverity::Recoverable,
-            code: "TEXT_ANIMATION_UNIT_COUNT_HIGH".to_string(),
-            message: format!("Text animation unit count is {unit_count}"),
-            stage: PipelineStage::Layout,
-            node_id: None,
-            fallback: Some("rendered without truncation".to_string()),
-        });
+        warnings.push(RenderWarning::recoverable(
+            "TEXT_ANIMATION_UNIT_COUNT_HIGH",
+            format!("Text animation unit count is {unit_count}"),
+            PipelineStage::Layout,
+            None,
+            "rendered without truncation",
+        ));
     }
     if fragment_count > TEXT_ANIMATION_FRAGMENT_WARNING_THRESHOLD {
-        warnings.push(RenderWarning {
-            severity: ErrorSeverity::Recoverable,
-            code: "TEXT_ANIMATION_FRAGMENT_COUNT_HIGH".to_string(),
-            message: format!("Text animation fragment estimate is {fragment_count}"),
-            stage: PipelineStage::Emit,
-            node_id: None,
-            fallback: Some("rendered without truncation".to_string()),
-        });
+        warnings.push(RenderWarning::recoverable(
+            "TEXT_ANIMATION_FRAGMENT_COUNT_HIGH",
+            format!("Text animation fragment estimate is {fragment_count}"),
+            PipelineStage::Emit,
+            None,
+            "rendered without truncation",
+        ));
     }
     Ok(())
 }
@@ -529,33 +527,29 @@ fn append_text_warnings(context: &mut TextChildContext, layout: &TextLayoutOutpu
                 })
                 .filter(|name| !name.is_empty())
                 .map_or("unknown font", |name| name.as_str());
-            context.warnings.push(RenderWarning {
-                severity: ErrorSeverity::Recoverable,
-                code: "MISSING_GLYPH".to_string(),
-                message: format!(
+            context.warnings.push(RenderWarning::recoverable(
+                "MISSING_GLYPH",
+                format!(
                     "Font \"{font_name}\" is missing glyphs for: {}",
                     notdef_chars.join(", ")
                 ),
-                stage: PipelineStage::Text,
-                node_id: Some(context.node_id.to_string()),
-                fallback: Some("blank".to_string()),
-            });
+                PipelineStage::Text,
+                Some(context.node_id.to_string()),
+                "blank",
+            ));
         }
     } else {
         for warning in &layout.warnings {
-            context.warnings.push(RenderWarning {
-                severity: ErrorSeverity::Recoverable,
-                code: warning.code.clone(),
-                message: warning.message.clone(),
-                stage: PipelineStage::Text,
-                node_id: Some(context.node_id.to_string()),
-                fallback: Some(
-                    warning
-                        .fallback
-                        .clone()
-                        .unwrap_or_else(|| "blank".to_string()),
-                ),
-            });
+            context.warnings.push(RenderWarning::recoverable(
+                warning.code.clone(),
+                warning.message.clone(),
+                PipelineStage::Text,
+                Some(context.node_id.to_string()),
+                warning
+                    .fallback
+                    .clone()
+                    .unwrap_or_else(|| "blank".to_string()),
+            ));
         }
     }
 
@@ -567,16 +561,15 @@ fn append_text_warnings(context: &mut TextChildContext, layout: &TextLayoutOutpu
                 .as_deref()
                 .map(|reason| format!(" ({reason})"))
                 .unwrap_or_default();
-            context.warnings.push(RenderWarning {
-                severity: ErrorSeverity::Recoverable,
-                code: "KINSOKU_UNRESOLVED".to_string(),
-                message: format!(
+            context.warnings.push(RenderWarning::recoverable(
+                "KINSOKU_UNRESOLVED",
+                format!(
                     "Kinsoku line breaking could not be fully resolved for text node \"{node_id}\"; a forced break was used{reason_suffix}.",
                 ),
-                stage: PipelineStage::Text,
-                node_id: Some(node_id.to_string()),
-                fallback: Some("forced-break".to_string()),
-            });
+                PipelineStage::Text,
+                Some(node_id.to_string()),
+                "forced-break",
+            ));
         }
     }
 }
@@ -1079,30 +1072,28 @@ fn build_image_child(
     // reference passes through unchanged; absence means embedding failed.
     if let Some(src) = visual.src.as_deref() {
         if !src.starts_with("data:") {
-            warnings.push(RenderWarning {
-                severity: ErrorSeverity::Recoverable,
-                code: "IMAGE_SRC_NOT_EMBEDDED".to_string(),
-                message: format!(
+            warnings.push(RenderWarning::recoverable(
+                "IMAGE_SRC_NOT_EMBEDDED",
+                format!(
                     "Image src for node \"{node_id}\" is a reference, not embedded data. SVG keeps the reference; PNG rasterization omits the image. Pass a Uint8Array or a data: URI to embed it.",
                 ),
-                stage: PipelineStage::Ir,
-                node_id: Some(node_id.to_string()),
-                fallback: Some("svg_reference_only".to_string()),
-            });
+                PipelineStage::Ir,
+                Some(node_id.to_string()),
+                "svg_reference_only",
+            ));
         }
     }
 
     let data_uri = match visual.src.as_deref() {
         Some(uri) if !uri.is_empty() => uri.to_string(),
         _ => {
-            warnings.push(RenderWarning {
-                severity: ErrorSeverity::Recoverable,
-                code: "IMAGE_LOAD_FAILED".to_string(),
-                message: format!("Image load failed for node \"{node_id}\""),
-                stage: PipelineStage::Ir,
-                node_id: Some(node_id.to_string()),
-                fallback: Some("placeholder_rect".to_string()),
-            });
+            warnings.push(RenderWarning::recoverable(
+                "IMAGE_LOAD_FAILED",
+                format!("Image load failed for node \"{node_id}\""),
+                PipelineStage::Ir,
+                Some(node_id.to_string()),
+                "placeholder_rect",
+            ));
             children.push(IrNode {
                 node_id: node_id.to_string(),
                 bbox,
@@ -1413,16 +1404,13 @@ fn build_shape_child(context: ShapeChildContext) -> Result<(), EngineError> {
             .collect();
         for (part_id, _) in &overrides.0 {
             if !known.contains(&Some(part_id.as_str())) {
-                context.warnings.push(RenderWarning {
-                    severity: ErrorSeverity::Recoverable,
-                    code: "SHAPE_PART_PAINT_UNKNOWN_PART".to_string(),
-                    message: format!(
-                        "partPaint references unknown partId \"{part_id}\"; entry ignored.",
-                    ),
-                    stage: PipelineStage::Ir,
-                    node_id: Some(node_id.to_string()),
-                    fallback: Some("ignored".to_string()),
-                });
+                context.warnings.push(RenderWarning::recoverable(
+                    "SHAPE_PART_PAINT_UNKNOWN_PART",
+                    format!("partPaint references unknown partId \"{part_id}\"; entry ignored."),
+                    PipelineStage::Ir,
+                    Some(node_id.to_string()),
+                    "ignored",
+                ));
             }
         }
     }
@@ -1522,14 +1510,13 @@ fn build_svg_child(
     if contains_embedded_text_element(&inner_content) {
         // Embedded <text> is re-shaped by the viewer / rasterizer fonts,
         // which is outside the determinism contract.
-        warnings.push(RenderWarning {
-            severity: ErrorSeverity::Recoverable,
-            code: "SVG_EMBEDDED_TEXT".to_string(),
-            message: "Embedded Svg content contains <text>; it is re-shaped by the viewer/rasterizer and is not covered by the determinism contract. Convert it to paths for reproducible output.".to_string(),
-            stage: PipelineStage::Ir,
-            node_id: Some(node_id.to_string()),
-            fallback: Some("pass-through".to_string()),
-        });
+        warnings.push(RenderWarning::recoverable(
+            "SVG_EMBEDDED_TEXT",
+            "Embedded Svg content contains <text>; it is re-shaped by the viewer/rasterizer and is not covered by the determinism contract. Convert it to paths for reproducible output.",
+            PipelineStage::Ir,
+            Some(node_id.to_string()),
+            "pass-through",
+        ));
     }
 
     children.push(IrNode {

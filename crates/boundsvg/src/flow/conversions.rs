@@ -77,6 +77,17 @@ impl bt_flow::RegionProvider for ExclusionRegionProvider<'_> {
 
 /// Convert a `TextWarning` from boundtext to the WASM-facing `FlowWarning`.
 pub(super) fn text_warning_to_flow_warning(warning: &TextWarning) -> FlowWarning {
+    debug_assert!(
+        !warning.code.trim().is_empty() && !warning.message.trim().is_empty(),
+        "recoverable text warning must retain code and message"
+    );
+    debug_assert!(
+        warning
+            .fallback
+            .as_deref()
+            .is_some_and(|fallback| !fallback.trim().is_empty()),
+        "recoverable text warning must retain a non-empty fallback"
+    );
     FlowWarning {
         severity: "recoverable".to_string(),
         code: warning.code.clone(),

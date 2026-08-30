@@ -19,7 +19,7 @@ use boundshape::{
 
 use crate::error::EngineError;
 use crate::font::FontRegistry;
-use crate::ir::types::{BBox, ErrorSeverity, IrNode, IrNodeKind, PipelineStage, RenderWarning};
+use crate::ir::types::{BBox, IrNode, IrNodeKind, PipelineStage, RenderWarning};
 use crate::text::decoration::{
     MAX_TEXT_DECORATION_PATTERN_CONTOURS, MAX_TEXT_DECORATION_PATTERN_SEGMENTS,
 };
@@ -96,14 +96,13 @@ pub fn resolve_text_decoration_skip_ink(
     };
     *text_decorations = Some(fallback_decorations);
     root.bbox = text_bbox_with_decorations(&root.kind, original_bbox, &node_id)?;
-    warnings.push(RenderWarning {
-        severity: ErrorSeverity::Recoverable,
-        code: "TEXT_DECORATION_SKIP_INK_LIMIT".to_string(),
-        message: warning_message,
-        stage: PipelineStage::Ir,
-        node_id: Some(node_id),
-        fallback: Some("rendered text decoration without skip-ink".to_string()),
-    });
+    warnings.push(RenderWarning::recoverable(
+        "TEXT_DECORATION_SKIP_INK_LIMIT",
+        warning_message,
+        PipelineStage::Ir,
+        Some(node_id),
+        "rendered text decoration without skip-ink",
+    ));
     Ok(())
 }
 

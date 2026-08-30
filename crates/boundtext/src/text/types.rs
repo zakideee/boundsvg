@@ -1285,6 +1285,48 @@ pub struct TextWarning {
     pub fallback: Option<String>,
 }
 
+impl TextWarning {
+    pub(crate) fn recoverable(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        fallback: impl Into<String>,
+    ) -> Self {
+        let code = code.into();
+        let message = message.into();
+        let fallback = fallback.into();
+        debug_assert!(
+            matches!(
+                code.as_str(),
+                "INLINE_BOX_MAX_DEPTH"
+                    | "LONG_RUBY_ANNOTATION"
+                    | "MISSING_GLYPH"
+                    | "RUBY_INTER_CHARACTER_FALLBACK"
+            ),
+            "recoverable text warning code must have a declared policy"
+        );
+        debug_assert!(
+            code.starts_with(|character: char| character.is_ascii_uppercase())
+                && code.chars().all(|character| character.is_ascii_uppercase()
+                    || character.is_ascii_digit()
+                    || character == '_'),
+            "recoverable warning code must be stable SCREAMING_SNAKE_CASE"
+        );
+        debug_assert!(
+            !message.trim().is_empty(),
+            "recoverable warning message must not be empty"
+        );
+        debug_assert!(
+            !fallback.trim().is_empty(),
+            "recoverable warning fallback must not be empty"
+        );
+        Self {
+            code,
+            message,
+            fallback: Some(fallback),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // .notdef (missing glyph) diagnostics
 // ---------------------------------------------------------------------------
@@ -1412,14 +1454,14 @@ pub fn build_notdef_warnings(infos: &[NotdefInfo]) -> Vec<TextWarning> {
                     }
                 })
                 .collect();
-            TextWarning {
-                code: "MISSING_GLYPH".to_string(),
-                message: format!(
+            TextWarning::recoverable(
+                "MISSING_GLYPH",
+                format!(
                     "Font {label} is missing glyphs for: {}",
                     chars_display.join(", ")
                 ),
-                fallback: Some("blank".to_string()),
-            }
+                "blank",
+            )
         })
         .collect()
 }
@@ -1427,6 +1469,16 @@ pub fn build_notdef_warnings(infos: &[NotdefInfo]) -> Vec<TextWarning> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recoverable_text_warning_constructor_requires_a_fallback() {
+        let warning =
+            TextWarning::recoverable("MISSING_GLYPH", "warning message", "deterministic fallback");
+
+        assert_eq!(warning.code, "MISSING_GLYPH");
+        assert_eq!(warning.message, "warning message");
+        assert_eq!(warning.fallback.as_deref(), Some("deterministic fallback"));
+    }
 
     fn rich_text_style() -> RichTextStyleInput {
         RichTextStyleInput {

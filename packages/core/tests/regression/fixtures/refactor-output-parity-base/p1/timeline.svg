@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 48" width="96" height="48">
+  <style>
+    @keyframes parity-timeline-anim-parity-timeline-box-keyframes {
+      0% { opacity: 0; animation-timing-function: steps(1, end); }
+      100% { opacity: 0; }
+    }
+    .bsvg-parity-timeline-anim-parity-timeline-box {
+      animation-name: parity-timeline-anim-parity-timeline-box-keyframes;
+      animation-duration: 1ms;
+      animation-delay: -0.5ms;
+      animation-iteration-count: infinite;
+      animation-fill-mode: both;
+    }
+  </style>
+  <rect x="0" y="0" width="96" height="48" fill="#f8fafc"/>
+  <g class="bsvg-parity-timeline-anim-parity-timeline-box" opacity="0">
+    <rect x="0" y="0" width="32" height="20" fill="#2563eb"/>
+  </g>
+</svg>

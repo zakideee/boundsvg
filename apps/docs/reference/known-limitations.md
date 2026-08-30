@@ -201,8 +201,10 @@ supported props and error codes.
   3840×2160 px (long edge 3840); oversized renders auto-adjust or error
   depending on `rasterOversizeBehavior`.
 - WebP encoding is lossless (VP8L) only. There is no lossy VP8 encoder in the
-  pipeline, so WebP has no quality knob — which is also why its bytes are
-  deterministic. Lossless WebP is usually smaller than the equivalent PNG.
+  pipeline, so WebP has no quality knob. VP8L preserves pixels; byte
+  determinism comes separately from the version-pinned bundled encoder and
+  the documented input contract. Lossless WebP is usually smaller than the
+  equivalent PNG.
 - Animated WebP stores every frame as a full-canvas lossless replacement. There
   is no inter-frame delta or sub-rectangle optimization, so a long animation of
   a mostly-static scene is larger than a tuned encoder would produce.

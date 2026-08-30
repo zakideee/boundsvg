@@ -718,9 +718,8 @@ fn base_transition_time_ms(source: &TrackSource, playback: DocumentPlayback) -> 
     if delay_ms > 0.0 {
         return Some(delay_ms);
     }
-    active_end_ms
-        .filter(|end_ms| *end_ms <= playback.duration_ms)
-        .map(|end_ms| end_ms.max(0.0))
+    // Non-positive ends returned above, so a surviving finite end is already positive.
+    active_end_ms.filter(|end_ms| *end_ms <= playback.duration_ms)
 }
 
 fn spec_values_are_constant(spec: &AnimationSpec) -> bool {
@@ -987,6 +986,12 @@ struct PrecisionCandidatePair {
     rounding_error_bound: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConstructionPrecisionState {
+    Constructable,
+    Unconstructable,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct RepeatedBoundaryProgram {
     first_iteration: f64,
@@ -1011,7 +1016,7 @@ struct CanonicalBoundaryProgram {
     tail: Option<BoundaryProgramWindow>,
     trailing_events: Vec<CanonicalBoundaryEvent>,
     active_source_range: Option<(f64, f64)>,
-    construction_precision_candidate: Option<PrecisionCandidatePair>,
+    construction_precision_state: ConstructionPrecisionState,
     event_count: f64,
 }
 
@@ -1058,23 +1063,18 @@ impl CanonicalBoundaryProgram {
         match coordinate {
             CanonicalBoundaryCoordinate::DocumentStart => 0.0,
             CanonicalBoundaryCoordinate::DocumentEnd => self.playback.duration_ms,
+            // A position can be mathematically inside the active interval while
+            // affine recomputation rounds one step beyond a document endpoint.
             CanonicalBoundaryCoordinate::SourcePosition(source_position) => (self.delay_ms
                 + source_position * self.source_duration_ms)
                 .clamp(0.0, self.playback.duration_ms),
         }
     }
 
-    fn unconstructable_precision_candidate(&self) -> PrecisionCandidatePair {
-        let active_start_time_ms = self
-            .leading_events
+    fn active_start_time_ms(&self) -> f64 {
+        self.leading_events
             .last()
-            .map_or(0.0, |event| self.time_ms(event.coordinate));
-        PrecisionCandidatePair {
-            left_time: active_start_time_ms,
-            right_time: active_start_time_ms,
-            nominal_gap: 0.0,
-            rounding_error_bound: f64::INFINITY,
-        }
+            .map_or(0.0, |event| self.time_ms(event.coordinate))
     }
 
     fn canonical_local_event(
@@ -1502,12 +1502,10 @@ fn evaluate_segment(
     let start_keyframe = &spec.keyframes[segment_index];
     let end_keyframe = &spec.keyframes[segment_index + 1];
     let segment_duration_ms = spec.duration_ms * (end_keyframe.at - start_keyframe.at);
-    let eased_progress = animation::apply_easing(
-        input_progress.clamp(0.0, 1.0),
-        resolved_easing,
-        before,
-        segment_duration_ms,
-    );
+    // active_piece_endpoint derives this ratio from a validated, strictly increasing interval.
+    debug_assert!((0.0..=1.0).contains(&input_progress));
+    let eased_progress =
+        animation::apply_easing(input_progress, resolved_easing, before, segment_duration_ms);
     interpolate_keyframes(start_keyframe, end_keyframe, eased_progress)
 }
 
@@ -1867,7 +1865,7 @@ fn build_canonical_boundary_program(
     let mut pattern = None;
     let mut tail = None;
     let mut active_source_range = None;
-    let mut construction_precision_failure = false;
+    let mut construction_precision_state = ConstructionPrecisionState::Constructable;
     if !spec_values_are_constant(&source.spec) && !finite_source_ended_by_document_start {
         let source_start = ((0.0 - delay_ms) / source_duration_ms).max(0.0);
         let source_end = finite_source_end
@@ -1876,7 +1874,7 @@ fn build_canonical_boundary_program(
             })
             .max(0.0);
         if !source_start.is_finite() || !source_end.is_finite() {
-            construction_precision_failure = true;
+            construction_precision_state = ConstructionPrecisionState::Unconstructable;
         } else if source_end > source_start {
             active_source_range = Some((source_start, source_end));
             let start_iteration = source_start.floor();
@@ -1895,7 +1893,9 @@ fn build_canonical_boundary_program(
                     lower_progress: start_progress,
                     upper_progress: 1.0,
                 });
-                let repetitions = (end_iteration - start_iteration - 1.0).max(0.0);
+                // source_end > source_start and distinct floors imply at least one iteration gap.
+                let repetitions = end_iteration - start_iteration - 1.0;
+                debug_assert!(repetitions >= 0.0);
                 if repetitions > 0.0 {
                     pattern = Some(RepeatedBoundaryProgram {
                         first_iteration: start_iteration + 1.0,
@@ -1927,7 +1927,7 @@ fn build_canonical_boundary_program(
         .into_iter()
         .fold(0.0, saturating_finite_stop_count);
 
-    let mut program = CanonicalBoundaryProgram {
+    CanonicalBoundaryProgram {
         playback,
         delay_ms,
         source_duration_ms,
@@ -1938,12 +1938,9 @@ fn build_canonical_boundary_program(
         tail,
         trailing_events,
         active_source_range,
-        construction_precision_candidate: None,
+        construction_precision_state,
         event_count,
-    };
-    program.construction_precision_candidate =
-        construction_precision_failure.then(|| program.unconstructable_precision_candidate());
-    program
+    }
 }
 fn function_piece(
     source: &TrackSource,
@@ -2722,9 +2719,10 @@ fn precision_preflight_repeated_pattern(
 }
 
 fn precision_preflight_program(program: &CanonicalBoundaryProgram) -> Result<(), EngineError> {
-    if let Some(candidate) = program.construction_precision_candidate {
+    if program.construction_precision_state == ConstructionPrecisionState::Unconstructable {
         precision_preflight_events(program, &program.leading_events)?;
-        return precision_preflight_candidate_pair(program, candidate);
+        let active_start_time_ms = program.active_start_time_ms();
+        return precision_check_pair(program.playback, active_start_time_ms, active_start_time_ms);
     }
 
     if program.active_source_range.is_none() {
@@ -4405,6 +4403,48 @@ mod tests {
     }
 
     #[test]
+    fn clamps_an_active_end_neighbor_before_precision_classification() {
+        let spec = AnimationSpec {
+            keyframes: vec![
+                AnimationKeyframe {
+                    at: 0.0,
+                    opacity: Some(0.0),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 0.88,
+                    opacity: Some(0.5),
+                    transform: None,
+                },
+                AnimationKeyframe {
+                    at: 1.0,
+                    opacity: Some(1.0),
+                    transform: None,
+                },
+            ],
+            duration_ms: 2.5,
+            delay_ms: Some(-1.0),
+            easing: Some(AnimationEasing::Named("linear".to_string())),
+            iterations: Some(AnimationIterations::Infinite("infinite".to_string())),
+            fill: Some("both".to_string()),
+        };
+        let playback = DocumentPlayback {
+            duration_ms: 1.2,
+            iterations: DocumentIterationCount::Infinite,
+        };
+
+        let error = compile_document_animation_plan(&timeline_ir(spec), playback, 0.0)
+            .expect_err("the rounded document-end neighbor must fail as a duplicate time");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("the rounded endpoint should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
+        assert_eq!(context["kind"], "separation");
+        assert_eq!(context["leftTimeMs"], playback.duration_ms);
+        assert_eq!(context["rightTimeMs"], playback.duration_ms);
+    }
+
+    #[test]
     fn keeps_keyframes_independent_of_active_time_but_freezes_case_b() {
         let source = timeline_ir(representable_linear_spec());
         let playback = DocumentPlayback {
@@ -5190,6 +5230,29 @@ mod tests {
             assert_eq!(context["leftTimeMs"], 0.0);
             assert_eq!(context["rightTimeMs"], playback.duration_ms);
         }
+    }
+
+    #[test]
+    fn reports_unconstructable_construction_precision_from_the_typed_state() {
+        let source = timeline_ir(representable_linear_spec());
+        let playback = infinite_playback();
+        let mut track_sources = Vec::new();
+        collect_track_sources(&source.root, &mut track_sources);
+        let track_source = &track_sources[0];
+        let resolved_easing = resolve_track_easing(track_source).expect("easing should resolve");
+        let mut program = build_canonical_boundary_program(track_source, playback, resolved_easing);
+        program.construction_precision_state = ConstructionPrecisionState::Unconstructable;
+        let active_start_time_ms = program.active_start_time_ms();
+
+        let error = precision_preflight_program(&program)
+            .expect_err("unconstructable state must retain the precision diagnosis");
+        let EngineError::StructuredContext { code, context, .. } = error else {
+            panic!("unconstructable state should produce timeline context");
+        };
+        assert_eq!(code, "ANIMATED_SVG_TIMELINE_PRECISION_LOSS");
+        assert_eq!(context["kind"], "separation");
+        assert_eq!(context["leftTimeMs"], active_start_time_ms);
+        assert_eq!(context["rightTimeMs"], active_start_time_ms);
     }
 
     #[test]

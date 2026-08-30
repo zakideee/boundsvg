@@ -3,7 +3,7 @@ layout: home
 hero:
   name: boundsvg
   text: Font Measurement & Layout Library for SVG
-  tagline: Deterministic text shaping and layout in WASM.
+  tagline: Version-pinned text shaping and layout in WASM.
   image:
     src: /logo/boundsvg-logo-violet-muted.svg
     alt: boundsvg logo
@@ -25,7 +25,9 @@ features:
   - title: Auto-fit & Layout System
     details: Auto-fit text and use Flexbox/Grid layouts via Taffy.
   - title: Deterministic Output
-    details: Same input, same SVG, PNG, WebP and GIF across Node.js and browser.
+    details: Accepted owned inputs produce the same covered SVG, PNG, WebP, and GIF artifacts across supported runtimes, after documented normalization.
+    link: /reference/determinism
+    linkText: Read the contract
   - title: Try It in the Browser
     details: Edit JSX, SVG, or CLI input and see rendered output live in the interactive playgrounds.
     link: /playground/react/
