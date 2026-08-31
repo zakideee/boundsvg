@@ -1,12 +1,11 @@
 /** @jsxImportSource react */
 
-import type {
-  CompiledScene,
-  EmitPngOptions,
+import {
+  type EmitPngOptions,
   Engine,
-  IR,
-  LayoutResult,
-  VNode,
+  type IR,
+  type LayoutResult,
+  type VNode,
 } from "@boundsvg/core";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -74,6 +73,19 @@ function createContextValue(engine: Engine): BoundSvgContextValue {
     error: null,
     defaultCommonOptions: { textPathMode: "merged" },
   };
+}
+
+function makeAssetEngine(): Engine {
+  return new Engine({
+    computeLayoutFn: () => "{}",
+    renderToIrFn: () => {
+      const ir = sampleIr();
+      return JSON.stringify({
+        ir: { ...ir, root: { ...ir.root, children: [] }, drawOrder: [] },
+        warnings: [],
+      });
+    },
+  });
 }
 
 describe("react debug/assets", () => {
@@ -171,19 +183,19 @@ describe("react debug/assets", () => {
   });
 
   it("renders asset outputs from a compiled scene", () => {
-    const compiled: CompiledScene = {
-      ir: sampleIr(),
-      width: 100,
-      height: 80,
-      textPathMode: "merged",
-    };
-    const renderCompiledToSvg = vi.fn(() => "<svg></svg>");
-    const renderCompiledToPng = vi.fn(() => new Uint8Array([137, 80, 78, 71]));
-    const engine = makeEngineMock({
-      compile: vi.fn(() => compiled),
-      renderCompiledToSvg,
-      renderCompiledToPng,
+    const engine = makeAssetEngine();
+    const compiled = engine.compile({
+      type: "Canvas",
+      props: { width: 100, height: 80 },
+      children: [],
     });
+    vi.spyOn(engine, "compile").mockReturnValue(compiled);
+    const renderCompiledToSvg = vi
+      .spyOn(engine, "renderCompiledToSvg")
+      .mockReturnValue("<svg></svg>");
+    const renderCompiledToPng = vi
+      .spyOn(engine, "renderCompiledToPng")
+      .mockReturnValue(new Uint8Array([137, 80, 78, 71]));
     let result: ReturnType<typeof useRenderAsset> | null = null;
 
     function Probe() {
@@ -200,9 +212,11 @@ describe("react debug/assets", () => {
     expect(result?.isReady).toBe(true);
     expect(result?.svg).toBe("<svg></svg>");
     expect(result?.dataUrl).toContain("data:image/png;base64");
+    expect(renderCompiledToSvg).toHaveBeenCalledTimes(1);
     expect(renderCompiledToPng).toHaveBeenCalledWith(compiled, {
       scale: 2,
     } satisfies EmitPngOptions);
+    engine.dispose();
   });
 });
 

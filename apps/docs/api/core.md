@@ -419,6 +419,7 @@ interface Engine {
     options?: RenderTextOutlinesOptions,
   ): TextOutlineNode[];
   compile(input: EngineInput, options?: CompileOptions): CompiledScene;
+  snapshotCompiledIR(compiled: CompiledScene): IR;
   renderCompiledToSvg(
     compiled: CompiledScene,
     options?: EmitSvgOptions,
@@ -700,7 +701,11 @@ Performs hit-testing on an IR. Returns the `NodeId` of the topmost element at `(
 
 ### `engine.compile(input, options?)`
 
-Compiles a VNode tree into a `CompiledScene` (holds the IR). The compiled result can be rendered multiple times with different emit options, avoiding repeated layout computation. Animated scenes keep their raw tracks in the compiled IR; each `renderCompiled*` call can sample a static time or select independent/document-timeline animated SVG playback.
+Compiles a VNode tree into an opaque, immutable `CompiledScene`. The artifact
+can be rendered multiple times with different emit options, avoiding repeated
+layout computation. Animated scenes keep their raw tracks in private compiled
+state; each `renderCompiled*` call can sample a static time or select
+independent/document-timeline animated SVG playback.
 
 ```ts
 const compiled: CompiledScene = engine.compile(node);
@@ -716,10 +721,29 @@ layout run once at compile time. Each `renderCompiled*` call resolves glyph
 outlines and emits inside WASM without returning an intermediate resolved IR.
 Rendering never mutates the compiled scene; repeated SVG output from the same
 `CompiledScene` is byte-identical, including after PNG renders in between.
-`CompiledScene.ir` is nevertheless a public mutable object. Compiled render
-methods read its current value at call time. The outer `CompiledScene.width` and
-`height` fields are convenience snapshots copied when compilation completes;
-they are not synchronized after caller mutation of the IR.
+Its only public data is readonly `width`, `height`, and `textPathMode` metadata,
+which always describes the private state used for rendering.
+
+A `CompiledScene` belongs to the exact `Engine` that created it. It cannot be
+constructed as an object literal, cloned, persisted, or transported to another
+engine. A clone or hand-built value fails with `COMPILED_SCENE_INVALID`; an
+authentic artifact passed to another engine fails with
+`COMPILED_SCENE_WRONG_ENGINE` before output-option or resource validation.
+
+Use `engine.snapshotCompiledIR(compiled)` for inspection. It returns a fresh,
+deeply detached editable `IR` on every call, including detached warnings and
+warning context. Mutating the snapshot cannot affect later renders. The
+snapshot is inspection data, not a renderable artifact, and there is no API to
+bind it back into a `CompiledScene`.
+
+```ts
+const snapshot = engine.snapshotCompiledIR(compiled);
+console.log(snapshot.width, snapshot.warnings);
+```
+
+The same rule applies to the default-engine functions: `compileScene`,
+`snapshotCompiledIR`, and every `renderCompiled*` call must use the same
+configured default Engine instance.
 
 ```ts
 const outputs: Uint8Array[] = [];
@@ -915,10 +939,10 @@ consumers without requiring WASM initialization:
 `resolveRasterScale({ width, height, requestedScale })` computes the raster
 plan for the base dimensions supplied to it. Raster entry points supply the
 root dimensions produced by layout. To predict a compiled render, use the
-current `compiled.ir.width` / `height`; these are the dimensions the render
-method reads. The outer `CompiledScene.width` / `height` fields match only the
-unchanged IR returned by `compile()`. Passing authored Canvas props directly to
-the resolver is not guaranteed to predict the rendered dimensions. The returned `ResolvedRasterScale` contains
+readonly `compiled.width` and `compiled.height`; these authoritative values
+describe the private dimensions the render method reads. Passing authored
+Canvas props directly to the resolver is not guaranteed to predict the
+rendered dimensions. The returned `ResolvedRasterScale` contains
 `appliedScale`, the requested and output dimensions, and `adjusted`.
 `adjusted` is `true` only when a legal request is scaled downward to satisfy a
 raster cap; a request exactly on either cap remains unchanged. Requested
@@ -934,7 +958,7 @@ that are too large to remain finite through layout fail with the same code.
 Integer inputs are not exempt from this boundary: 16,777,216 remains exact, but
 the layout representation does not distinguish every adjacent integer above
 that boundary. For example, authored width 16,777,217 becomes 16,777,216. Use
-the current compiled IR dimensions for exact output prediction rather than
+the readonly compiled artifact dimensions for exact output prediction rather than
 relying on authored values or integer-ness alone.
 
 The resolver validates its supplied scale and base dimensions. Scale must be

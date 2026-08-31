@@ -5,7 +5,6 @@ import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   animatedSvgTimelineLimits,
-  type CompiledScene,
   createElement,
   createEngineAsync,
   type Engine,
@@ -289,13 +288,13 @@ describe("public render capability contract", () => {
     const exactBoundary = engine.compile(createElement("Canvas", { width: 16_777_216, height }));
     const compiled = engine.compile(createElement("Canvas", { width, height }));
     const currentIrResolution = resolveRasterScale({
-      width: compiled.ir.width,
-      height: compiled.ir.height,
+      width: compiled.width,
+      height: compiled.height,
       requestedScale,
     });
 
-    expect(exactBoundary.ir.width).toBe(16_777_216);
-    expect({ width: compiled.ir.width, height: compiled.ir.height }).toEqual({
+    expect(exactBoundary.width).toBe(16_777_216);
+    expect({ width: compiled.width, height: compiled.height }).toEqual({
       width: 16_777_216,
       height: 100,
     });
@@ -319,20 +318,21 @@ describe("public render capability contract", () => {
     });
   });
 
-  it("uses current compiled IR dimensions as the render prediction source", () => {
+  it("keeps detached snapshot mutation out of the render prediction source", () => {
     const compiled = engine.compile(createElement("Canvas", { width: 10, height: 10 }));
-    compiled.ir.width = 20;
-    compiled.ir.root.bbox.w = 20;
-    const currentIrResolution = resolveRasterScale({
-      width: compiled.ir.width,
-      height: compiled.ir.height,
+    const snapshot = engine.snapshotCompiledIR(compiled);
+    snapshot.width = 20;
+    snapshot.root.bbox.w = 20;
+    const compiledResolution = resolveRasterScale({
+      width: compiled.width,
+      height: compiled.height,
       requestedScale: 1,
     });
 
     expect({ width: compiled.width, height: compiled.height }).toEqual({ width: 10, height: 10 });
     expect(pngSize(engine.renderCompiledToPng(compiled))).toEqual({
-      width: currentIrResolution.outputWidth,
-      height: currentIrResolution.outputHeight,
+      width: compiledResolution.outputWidth,
+      height: compiledResolution.outputHeight,
     });
   });
 
@@ -680,10 +680,10 @@ describe("public render capability contract", () => {
     }
   }, 30_000);
 
-  it("reports the same non-finite Canvas contract across every raster input kind", () => {
+  it("reports the same non-finite Canvas contract across both source input kinds", () => {
     const nonFiniteValues = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
     const mismatches: Array<{
-      inputKind: "VNode" | "SceneNode" | "mutable CompiledScene";
+      inputKind: "VNode" | "SceneNode";
       route: string;
       value: string;
       actual: { code: string; stage: string | undefined };
@@ -691,7 +691,7 @@ describe("public render capability contract", () => {
     let routeChecks = 0;
 
     const inspect = (
-      inputKind: "VNode" | "SceneNode" | "mutable CompiledScene",
+      inputKind: "VNode" | "SceneNode",
       route: string,
       value: number,
       run: () => unknown,
@@ -741,17 +741,9 @@ describe("public render capability contract", () => {
           inspect(inputKind, route.label, width, route.run);
         }
       }
-
-      const compiled: CompiledScene = engine.compile(
-        createElement("Canvas", { width: 10, height: 10 }),
-      );
-      compiled.ir.width = width;
-      inspect("mutable CompiledScene", "compiled PNG", width, () =>
-        engine.renderCompiledToPng(compiled),
-      );
     }
 
-    expect({ routeChecks, mismatches }).toEqual({ routeChecks: 39, mismatches: [] });
+    expect({ routeChecks, mismatches }).toEqual({ routeChecks: 36, mismatches: [] });
   }, 30_000);
 
   it("rejects a root Canvas accessor without reading it across every raster route", () => {
@@ -843,7 +835,7 @@ describe("public render capability contract", () => {
         });
       } else {
         const compiled = engine.compile(scene);
-        expect({ width: compiled.ir.width, height: compiled.ir.height }, fixture.label).toEqual({
+        expect({ width: compiled.width, height: compiled.height }, fixture.label).toEqual({
           width: decodeContractNumber(fixture.effectiveWidth ?? fixture.width),
           height: decodeContractNumber(fixture.effectiveHeight ?? fixture.height),
         });

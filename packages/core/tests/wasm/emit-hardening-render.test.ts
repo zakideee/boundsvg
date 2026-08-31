@@ -96,7 +96,7 @@ describe("emit hardening (render path)", () => {
     expect(unsafeClipped).not.toBe(unsafeUnclipped);
   });
 
-  it("rejects a compiled scene with a non-finite canvas size", () => {
+  it("rejects a forged compiled scene before inspecting its canvas", () => {
     const compiled = engine.compile(
       createElement(
         "Canvas",
@@ -104,10 +104,16 @@ describe("emit hardening (render path)", () => {
         createElement("Box", { width: 10, height: 10, background: "#000000" }),
       ),
     );
-    const broken = { ...compiled, ir: { ...compiled.ir, width: Number.NaN } };
+    const forged = { ...compiled, width: Number.NaN };
 
-    expect(() => engine.renderCompiledToSvg(broken)).toThrow(FatalError);
-    expect(() => engine.renderCompiledToPng(broken)).toThrow(FatalError);
+    for (const render of [
+      () => Reflect.apply(engine.renderCompiledToSvg, engine, [forged]),
+      () => Reflect.apply(engine.renderCompiledToPng, engine, [forged]),
+    ]) {
+      expect(render).toThrowError(
+        expect.objectContaining({ code: "COMPILED_SCENE_INVALID", stage: "engine" }),
+      );
+    }
   });
 });
 
@@ -317,9 +323,13 @@ describe("textAlign", () => {
       expect(outlines[0]?.bbox.x).toBeCloseTo(168, 4);
       expect(outlines[0]?.bbox.w).toBeCloseTo(32, 4);
       expect(firstPath?.bbox.x).toBeGreaterThan(160);
-      expect(engine.hitTest(compiled.ir, firstPath?.bbox.x ?? 0, firstPath?.bbox.y ?? 0)).toBe(
-        "aligned",
-      );
+      expect(
+        engine.hitTest(
+          engine.snapshotCompiledIR(compiled),
+          firstPath?.bbox.x ?? 0,
+          firstPath?.bbox.y ?? 0,
+        ),
+      ).toBe("aligned");
     } finally {
       engine.dispose();
     }

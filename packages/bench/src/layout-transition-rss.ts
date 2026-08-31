@@ -168,7 +168,8 @@ function executeScenario(
   input: LayoutTransitionInput,
 ): string {
   if (scenario.operation === "transition") {
-    return JSON.stringify(engine.compileLayoutTransition(input).ir);
+    const compiledTransition = engine.compileLayoutTransition(input);
+    return JSON.stringify(engine.snapshotCompiledIR(compiledTransition));
   }
   const referenceInput = input.states.A;
   const targetInput = input.states.B;
@@ -177,7 +178,7 @@ function executeScenario(
   }
   const reference = engine.compile(referenceInput);
   const target = engine.compile(targetInput);
-  return JSON.stringify([reference.ir, target.ir]);
+  return JSON.stringify([engine.snapshotCompiledIR(reference), engine.snapshotCompiledIR(target)]);
 }
 
 async function runChild(scenario: RssScenario): Promise<ChildResult> {

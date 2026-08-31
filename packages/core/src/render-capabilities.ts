@@ -27,9 +27,9 @@ export const animatedSvgTimelineLimits = Object.freeze({
 
 /** Post-layout base dimensions and requested scale used to resolve a raster plan. */
 export type RasterScaleOptions = {
-  /** Effective unscaled root width in px (for a render prediction, use current compiled IR). */
+  /** Effective unscaled root width in px (use CompiledScene.width for compiled output). */
   width: number;
-  /** Effective unscaled root height in px (for a render prediction, use current compiled IR). */
+  /** Effective unscaled root height in px (use CompiledScene.height for compiled output). */
   height: number;
   /** Caller-requested raster multiplier. */
   requestedScale: number;
@@ -126,7 +126,7 @@ function fitsRasterCaps(outputWidth: number, outputHeight: number): boolean {
  *
  * Raster renderers call this with post-layout root dimensions. Authored Canvas
  * props can be changed by layout, including large integers beyond the exact
- * layout boundary, so pass the current `compiled.ir` dimensions when
+ * layout boundary, so pass the readonly CompiledScene metadata dimensions when
  * predicting an actual compiled render. Invalid inputs and positive inputs
  * that quantize to a zero-pixel axis use the renderer's structured raster
  * errors.

@@ -291,7 +291,7 @@ describe("declarative animation v1", () => {
   it("retains raw tracks in CompiledScene and samples them at each emit", () => {
     const scene = nativeAnimatedScene.build();
     const compiled = engine.compile(scene);
-    const rawCard = findNode(compiled.ir.root, "na-card");
+    const rawCard = findNode(engine.snapshotCompiledIR(compiled).root, "na-card");
     expect(rawCard?.type).toBe("group");
     if (rawCard?.type !== "group") {
       throw new Error("Animated card group missing from compiled IR");

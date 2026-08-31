@@ -116,10 +116,11 @@ export async function renderToMp4(
 }
 
 /**
- * Render a call-time snapshot of an already compiled animation to MP4.
+ * Render an already compiled immutable animation to MP4.
  *
  * Schedule validation, WebCodecs encoding, muxing, cancellation, and cleanup
- * are shared with {@link renderToMp4}; only the frame producer differs.
+ * are shared with {@link renderToMp4}; only the frame producer differs. The
+ * supplied engine must be the exact Engine that created `compiled`.
  */
 export async function renderCompiledToMp4(
   engine: Engine,

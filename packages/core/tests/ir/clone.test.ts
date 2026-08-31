@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RecoverableError } from "../../src/errors.js";
-import { cloneIRForLayeredTransform, cloneRenderMutableIR } from "../../src/ir/clone.js";
+import { cloneIR, cloneIRForLayeredTransform, cloneRenderMutableIR } from "../../src/ir/clone.js";
 import type {
   IR,
   IRGroupNode,
@@ -571,5 +571,39 @@ describe("cloneRenderMutableIR", () => {
     expect(source.warnings).toHaveLength(1);
     expect(textNode.glyphPaths).toHaveLength(1);
     expect(textNode.unitAnimationSamples).toHaveLength(1);
+  });
+});
+
+describe("cloneIR", () => {
+  it("detaches the complete IR and rehydrates warning semantics", () => {
+    const warning = new RecoverableError("TEST_WARNING", "warning", {
+      fallback: "continue",
+      context: {
+        stage: "ir",
+        nodeId: "text",
+        details: {
+          labels: ["first", "second"],
+          coordinates: [{ x: 1, y: 2 }],
+        },
+      },
+    });
+    const source: IR = {
+      root: { ...groupNode, children: [textNode, imageNode, pathNode, svgNode, shapeNode] },
+      drawOrder: ["text", "image", "path", "svg", "shape"],
+      width: 100,
+      height: 100,
+      debug: true,
+      warnings: [warning],
+    };
+
+    const snapshot = cloneIR(source);
+
+    expect(snapshot).toEqual(source);
+    const sourceReferences = collectObjectReferences(source);
+    for (const snapshotReference of collectObjectReferences(snapshot)) {
+      expect(sourceReferences.has(snapshotReference)).toBe(false);
+    }
+    expect(snapshot.warnings[0]).toBeInstanceOf(RecoverableError);
+    expect(snapshot.warnings[0]?.toJSON()).toEqual(warning.toJSON());
   });
 });

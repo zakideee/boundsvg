@@ -361,7 +361,7 @@ describe("partPaint", () => {
     } as CanvasSceneNode);
     return {
       svg: engine.renderCompiledToSvg(compiled),
-      warnings: compiled.ir.warnings.map((warning) => warning.code),
+      warnings: engine.snapshotCompiledIR(compiled).warnings.map((warning) => warning.code),
     };
   }
 

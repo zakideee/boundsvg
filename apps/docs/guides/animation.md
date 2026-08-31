@@ -658,6 +658,12 @@ const frames = [0, 100, 200, 300].map((timeMs) =>
 );
 ```
 
+The opaque artifact is owned by the exact `Engine` that compiled it. Its
+readonly `width`, `height`, and `textPathMode` metadata can be read directly;
+use `engine.snapshotCompiledIR(compiled)` for a detached editable inspection
+copy. That snapshot is not renderable, and cloning, persisting, transporting,
+or rebuilding a `CompiledScene` does not preserve its authority.
+
 For a complete fixed-scene frame schedule, `renderFrames` compiles
 and prepares once, then samples every requested time without repeating
 validation, layout, shaping, outline resolution, or IR parsing:

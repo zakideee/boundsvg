@@ -8,6 +8,7 @@ import {
   renderCompiledToSvg,
   renderToSvg,
   renderToSvgAndIR,
+  snapshotCompiledIR,
 } from "../../src/render.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
@@ -60,8 +61,30 @@ describe("lazy init", () => {
     expect(svg).toContain("<svg");
     expect(ir.width).toBe(400);
     expect(compiled.width).toBe(400);
+    const firstSnapshot = snapshotCompiledIR(compiled);
+    firstSnapshot.width = 1;
+    expect(snapshotCompiledIR(compiled).width).toBe(400);
     expect(renderCompiledToSvg(compiled)).toContain("<svg");
     expect(renderCompiledToPng(compiled)).toEqual(new Uint8Array([0x89, 0x50]));
+  });
+
+  it("keeps default wrappers bound to one exact default Engine", () => {
+    init(engineOptionsFromHandle(handle));
+    const compiled = compileScene(createElement("Canvas", { width: 400, height: 300 }));
+    dispose();
+    init(engineOptionsFromHandle(handle));
+
+    try {
+      snapshotCompiledIR(compiled);
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "COMPILED_SCENE_WRONG_ENGINE",
+        message: "Compiled scene belongs to a different Engine",
+        stage: "engine",
+      });
+      return;
+    }
+    throw new TypeError("Expected default-engine ownership rejection");
   });
 
   it("double init is a no-op (no error)", () => {

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { type CompiledScene, Engine } from "../../src/engine.js";
+import { Engine } from "../../src/engine.js";
 import { FatalError, type RecoverableError } from "../../src/errors.js";
-import type { IRNode, IRTextNode } from "../../src/ir/types.js";
+import type { IR, IRNode, IRTextNode } from "../../src/ir/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import {
@@ -64,8 +64,8 @@ function findTextNode(node: IRNode): IRTextNode {
   throw new Error("Expected compiled fixture IR to contain a text node");
 }
 
-function replacePositionedGlyphs(compiled: CompiledScene, glyphCount: number): void {
-  const textNode = findTextNode(compiled.ir.root);
+function replacePositionedGlyphs(ir: IR, glyphCount: number): void {
+  const textNode = findTextNode(ir.root);
   const line = textNode.lines[0];
   const glyph = line?.positionedGlyphs?.[0];
   if (!line || !glyph) {
@@ -74,8 +74,8 @@ function replacePositionedGlyphs(compiled: CompiledScene, glyphCount: number): v
   line.positionedGlyphs = Array.from({ length: glyphCount }, () => ({ ...glyph }));
 }
 
-function replacePositionedGlyphFontAlias(compiled: CompiledScene, fontAlias: string): void {
-  const textNode = findTextNode(compiled.ir.root);
+function replacePositionedGlyphFontAlias(ir: IR, fontAlias: string): void {
+  const textNode = findTextNode(ir.root);
   for (const line of textNode.lines) {
     for (const glyph of line.positionedGlyphs ?? []) {
       glyph.fontAlias = fontAlias;
@@ -84,7 +84,7 @@ function replacePositionedGlyphFontAlias(compiled: CompiledScene, fontAlias: str
 }
 
 function positionedGlyphCount(irJson: string): number {
-  const ir = JSON.parse(irJson) as CompiledScene["ir"];
+  const ir = JSON.parse(irJson) as IR;
   return findTextNode(ir.root).lines.reduce(
     (count, line) => count + (line.positionedGlyphs?.length ?? 0),
     0,
@@ -379,7 +379,9 @@ describe("PNG outline glyph limit", () => {
   it("reports strict pixel overflow before resolving a missing compiled font alias", () => {
     const resolveAndEmitToSvg = vi.fn(() => "<svg/>");
     const preflightRasterSceneFn = vi.fn((irJson: string, optionsJson: string) => {
-      const sceneHandle = handle.preflightRasterScene(irJson, optionsJson);
+      const ir = JSON.parse(irJson) as IR;
+      replacePositionedGlyphFontAlias(ir, "review-missing-font-alias");
+      const sceneHandle = handle.preflightRasterScene(JSON.stringify(ir), optionsJson);
       return {
         resolveAndEmitToSvg: () => {
           resolveAndEmitToSvg();
@@ -396,7 +398,6 @@ describe("PNG outline glyph limit", () => {
       svgToPngFn: () => new Uint8Array(),
     });
     const compiled = strictEngine.compile(createTextScene("A", { width: 5_000, height: 1_000 }));
-    replacePositionedGlyphFontAlias(compiled, "review-missing-font-alias");
 
     expect(
       captureFatalError(() =>
@@ -421,35 +422,35 @@ describe("PNG outline glyph limit", () => {
     expect(svgToPngFn).not.toHaveBeenCalled();
   });
 
-  it("rechecks a compiled IR mutated from below to above the glyph limit", () => {
+  it("ignores a detached snapshot mutated from below to above the glyph limit", () => {
     const { engine, preflightRasterSceneFn, rasterResolveAndEmitFn, svgToPngFn } = createHarness();
     const compiled = engine.compile(createScene(1));
 
     expect(engine.renderCompiledToPng(compiled)).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
-    replacePositionedGlyphs(compiled, MAX_OUTLINE_GLYPHS + 1);
-
-    expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
-
-    expect(preflightRasterSceneFn).toHaveBeenCalledTimes(2);
-    expect(rasterResolveAndEmitFn).toHaveBeenCalledTimes(1);
-    expect(svgToPngFn).toHaveBeenCalledTimes(1);
-  });
-
-  it("rechecks a compiled IR mutated from above to below the glyph limit", () => {
-    const { engine, preflightRasterSceneFn, rasterResolveAndEmitFn, svgToPngFn } = createHarness();
-    const compiled = engine.compile(createScene(MAX_OUTLINE_GLYPHS + 1));
-
-    expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
-    replacePositionedGlyphs(compiled, 1);
+    replacePositionedGlyphs(engine.snapshotCompiledIR(compiled), MAX_OUTLINE_GLYPHS + 1);
 
     expect(engine.renderCompiledToPng(compiled)).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
 
     expect(preflightRasterSceneFn).toHaveBeenCalledTimes(2);
-    expect(rasterResolveAndEmitFn).toHaveBeenCalledTimes(1);
-    expect(svgToPngFn).toHaveBeenCalledTimes(1);
+    expect(rasterResolveAndEmitFn).toHaveBeenCalledTimes(2);
+    expect(svgToPngFn).toHaveBeenCalledTimes(2);
   });
 
-  it("emits the same snapshot preflighted before onPngResolutionAdjusted mutates compiled IR", () => {
+  it("ignores a detached snapshot mutated from above to below the glyph limit", () => {
+    const { engine, preflightRasterSceneFn, rasterResolveAndEmitFn, svgToPngFn } = createHarness();
+    const compiled = engine.compile(createScene(MAX_OUTLINE_GLYPHS + 1));
+
+    expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
+    replacePositionedGlyphs(engine.snapshotCompiledIR(compiled), 1);
+
+    expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
+
+    expect(preflightRasterSceneFn).toHaveBeenCalledTimes(2);
+    expect(rasterResolveAndEmitFn).not.toHaveBeenCalled();
+    expect(svgToPngFn).not.toHaveBeenCalled();
+  });
+
+  it("keeps detached snapshot mutation out of onPngResolutionAdjusted", () => {
     const emittedGlyphCounts: number[] = [];
     const preflightRasterSceneFn = createCapturingRasterTransport(emittedGlyphCounts);
     const svgToPngFn = vi.fn(() => new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
@@ -458,11 +459,13 @@ describe("PNG outline glyph limit", () => {
       svgToPngFn,
     });
     const compiled = snapshotEngine.compile(createScene(1));
+    const detachedSnapshot = snapshotEngine.snapshotCompiledIR(compiled);
 
     expect(
       snapshotEngine.renderCompiledToPng(compiled, {
         scale: 200,
-        onPngResolutionAdjusted: () => replacePositionedGlyphs(compiled, MAX_OUTLINE_GLYPHS + 1),
+        onPngResolutionAdjusted: () =>
+          replacePositionedGlyphs(detachedSnapshot, MAX_OUTLINE_GLYPHS + 1),
       }),
     ).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
 
@@ -470,7 +473,7 @@ describe("PNG outline glyph limit", () => {
     expect(emittedGlyphCounts).toEqual([1]);
   });
 
-  it("emits the same snapshot preflighted before onWarning mutates compiled IR", () => {
+  it("keeps detached snapshot mutation out of onWarning", () => {
     const emittedGlyphCounts: number[] = [];
     const preflightRasterSceneFn = createCapturingRasterTransport(emittedGlyphCounts);
     const svgToPngFn = vi.fn(() => new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
@@ -479,15 +482,16 @@ describe("PNG outline glyph limit", () => {
       svgToPngFn,
     });
     const compiled = snapshotEngine.compile(createTextScene("A日本語"));
-    const snapshotGlyphCount = findTextNode(compiled.ir.root).lines.reduce(
+    const detachedSnapshot = snapshotEngine.snapshotCompiledIR(compiled);
+    const snapshotGlyphCount = findTextNode(detachedSnapshot.root).lines.reduce(
       (count, line) => count + (line.positionedGlyphs?.length ?? 0),
       0,
     );
-    expect(compiled.ir.warnings.length).toBeGreaterThan(0);
+    expect(detachedSnapshot.warnings.length).toBeGreaterThan(0);
 
     expect(
       snapshotEngine.renderCompiledToPng(compiled, {
-        onWarning: () => replacePositionedGlyphs(compiled, MAX_OUTLINE_GLYPHS + 1),
+        onWarning: () => replacePositionedGlyphs(detachedSnapshot, MAX_OUTLINE_GLYPHS + 1),
       }),
     ).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
 

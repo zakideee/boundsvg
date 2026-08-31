@@ -42,24 +42,32 @@ describe("layout transition IR provenance", () => {
   });
 
   it("cannot distinguish authored Box from authored Flex after IR build", () => {
-    const boxIr = engine.compile(createContainerScene("Box", "authored")).ir;
-    const flexIr = engine.compile(createContainerScene("Flex", "authored")).ir;
+    const boxIr = engine.snapshotCompiledIR(
+      engine.compile(createContainerScene("Box", "authored")),
+    );
+    const flexIr = engine.snapshotCompiledIR(
+      engine.compile(createContainerScene("Flex", "authored")),
+    );
 
     expect(flexIr).toEqual(boxIr);
   });
 
   it("cannot distinguish generated IDs from authored IDs using the same strings", () => {
-    const automaticIdIr = engine.compile(createContainerScene("Box", "automatic")).ir;
-    const authoredIdIr = engine.compile(createContainerScene("Box", "authored")).ir;
+    const automaticIdIr = engine.snapshotCompiledIR(
+      engine.compile(createContainerScene("Box", "automatic")),
+    );
+    const authoredIdIr = engine.snapshotCompiledIR(
+      engine.compile(createContainerScene("Box", "authored")),
+    );
 
     expect(authoredIdIr).toEqual(automaticIdIr);
   });
 
   it("keeps the public CompiledScene and IR byte shape free of transition provenance", () => {
     const compiled = engine.compile(createContainerScene("Box", "automatic"));
-    const serializedIr = JSON.stringify(compiled.ir);
+    const serializedIr = JSON.stringify(engine.snapshotCompiledIR(compiled));
 
-    expect(Object.keys(compiled)).toEqual(["ir", "width", "height", "textPathMode"]);
+    expect(Object.keys(compiled)).toEqual(["width", "height", "textPathMode"]);
     expect(serializedIr).toBe(
       '{"root":{"nodeId":"auto:0","bbox":{"x":0,"y":0,"w":100,"h":100},"type":"group","children":[{"nodeId":"auto:0.0","bbox":{"x":0,"y":0,"w":40,"h":30},"type":"group"}]},"drawOrder":[],"width":100,"height":100,"warnings":[]}',
     );

@@ -87,7 +87,7 @@ describe("no I/O during render", () => {
 
     const compiled = engine.compile(sceneWithImages);
 
-    expect(compiled.ir.root).toBeDefined();
+    expect(engine.snapshotCompiledIR(compiled).root).toBeDefined();
     expect(fetchStub).not.toHaveBeenCalled();
   });
 });

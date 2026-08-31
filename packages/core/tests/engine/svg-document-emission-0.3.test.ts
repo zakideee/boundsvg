@@ -304,7 +304,7 @@ describe("SVG document emission 0.3 contract", () => {
     expect(omittedResult.svg).toContain('data-boundsvg-generator="metadata-test"');
 
     const compiled = engine.compile(source);
-    const compiledIrBefore = JSON.stringify(compiled.ir);
+    const compiledIrBefore = JSON.stringify(engine.snapshotCompiledIR(compiled));
     const compiledIncluded = engine.renderCompiledToSvg(compiled, {
       generator,
       nodeIdMetadata: "include",
@@ -315,7 +315,7 @@ describe("SVG document emission 0.3 contract", () => {
     });
     expect(compiledIncluded).toBe(defaultResult.svg);
     expect(compiledOmitted).toBe(omittedResult.svg);
-    expect(JSON.stringify(compiled.ir)).toBe(compiledIrBefore);
+    expect(JSON.stringify(engine.snapshotCompiledIR(compiled))).toBe(compiledIrBefore);
   });
 
   it("keeps SVG scale semantics identical across static and animated direct/compiled paths", () => {

@@ -1,12 +1,13 @@
 // @vitest-environment happy-dom
 /** @jsxImportSource react */
 
-import type {
-  CompiledScene,
-  EmitPngOptions,
+import {
+  type CompiledScene,
+  type EmitPngOptions,
   Engine,
-  RenderPngOptions,
-  VNode,
+  type IR,
+  type RenderPngOptions,
+  type VNode,
 } from "@boundsvg/core";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -40,26 +41,50 @@ function vnodeWidth(vnode: VNode): number {
   return Number(Reflect.get(vnode.props, "width"));
 }
 
+function makeIr(width: number): IR {
+  return {
+    root: {
+      type: "group",
+      nodeId: "auto:0",
+      bbox: { x: 0, y: 0, w: width, h: 10 },
+      children: [],
+    },
+    drawOrder: [],
+    width,
+    height: 10,
+    warnings: [],
+  };
+}
+
 function makeEngine() {
-  const compile = vi.fn((vnode: VNode) => ({ vnode }) as unknown as CompiledScene);
-  const renderToPng = vi.fn(
-    (vnode: VNode, options: RenderPngOptions) =>
-      new Uint8Array([vnodeWidth(vnode), options.scale ?? 1]),
-  );
-  const renderCompiledToSvg = vi.fn(() => "<svg></svg>");
-  const renderCompiledToPng = vi.fn(
-    (compiled: CompiledScene, options: EmitPngOptions) =>
-      new Uint8Array([
-        vnodeWidth(Reflect.get(compiled as object, "vnode") as VNode),
-        options.scale ?? 1,
-      ]),
-  );
-  const engine = {
-    compile,
-    renderToPng,
-    renderCompiledToSvg,
-    renderCompiledToPng,
-  } as unknown as Engine;
+  let compileWidth = vnodeWidth(STABLE_VNODE);
+  const engine = new Engine({
+    computeLayoutFn: () => "{}",
+    renderToIrFn: () => JSON.stringify({ ir: makeIr(compileWidth), warnings: [] }),
+  });
+  const originalCompile = engine.compile.bind(engine);
+  const compile = vi.spyOn(engine, "compile").mockImplementation((input, options) => {
+    compileWidth = vnodeWidth(input as VNode);
+    const artifactInput: VNode = {
+      type: "Canvas",
+      props: { width: compileWidth, height: 10 },
+      children: [],
+    };
+    return originalCompile(artifactInput, options);
+  });
+  const renderToPng = vi
+    .spyOn(engine, "renderToPng")
+    .mockImplementation(
+      (vnode: VNode, options: RenderPngOptions) =>
+        new Uint8Array([vnodeWidth(vnode), options.scale ?? 1]),
+    );
+  vi.spyOn(engine, "renderCompiledToSvg").mockReturnValue("<svg></svg>");
+  const renderCompiledToPng = vi
+    .spyOn(engine, "renderCompiledToPng")
+    .mockImplementation(
+      (compiled: CompiledScene, options: EmitPngOptions) =>
+        new Uint8Array([compiled.width, options.scale ?? 1]),
+    );
   return { engine, compile, renderToPng, renderCompiledToPng };
 }
 

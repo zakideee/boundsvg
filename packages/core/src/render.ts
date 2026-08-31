@@ -172,6 +172,11 @@ export function compileLayoutTransition(
   return getEngine().compileLayoutTransition(input, options);
 }
 
+/** Return a detached inspection snapshot from a default-engine artifact. */
+export function snapshotCompiledIR(compiled: CompiledScene): IR {
+  return getEngine().snapshotCompiledIR(compiled);
+}
+
 export function renderCompiledToSvg(compiled: CompiledScene, options?: EmitSvgOptions): string {
   return getEngine().renderCompiledToSvg(compiled, options);
 }
@@ -192,8 +197,8 @@ export function renderFrames(input: EngineInput, options: RenderFramesOptions): 
 }
 
 /**
- * Render a call-time snapshot of an already compiled scene at explicit times.
- * The returned iterator is single-use and releases its prepared native state
+ * Render an already compiled immutable scene at explicit times. The returned
+ * iterator is single-use and releases its prepared native state
  * on completion, early return, failure, or default-engine disposal.
  */
 export function renderCompiledFrames(
@@ -204,8 +209,8 @@ export function renderCompiledFrames(
 }
 
 /**
- * Render a call-time snapshot of an already compiled animation to animated
- * lossless WebP using the default engine. The compiled scene is not recompiled.
+ * Render an already compiled immutable animation to animated lossless WebP
+ * using the default engine. The compiled scene is not recompiled.
  */
 export function renderCompiledToAnimatedWebp(
   compiled: CompiledScene,
@@ -215,8 +220,8 @@ export function renderCompiledToAnimatedWebp(
 }
 
 /**
- * Render a call-time snapshot of an already compiled animation to animated
- * GIF using the default engine. The compiled scene is not recompiled.
+ * Render an already compiled immutable animation to animated GIF using the
+ * default engine. The compiled scene is not recompiled.
  */
 export function renderCompiledToAnimatedGif(
   compiled: CompiledScene,

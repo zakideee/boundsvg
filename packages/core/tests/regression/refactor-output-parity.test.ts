@@ -26,6 +26,9 @@ const referenceRoot = path.resolve(__dirname, "fixtures/refactor-output-parity-b
 const referenceManifestPath = path.join(referenceRoot, "manifest.json");
 const updateReference = process.env.REFACTOR_PARITY_UPDATE === "1";
 const utf8Encoder = new TextEncoder();
+// Preserve the literal baseline for pre-existing exports while the direct
+// guard below pins each intentional addition independently.
+const intentionalRuntimeExportAdditions = new Set(["snapshotCompiledIR"]);
 
 type ReferenceManifest = {
   formatVersion: number;
@@ -172,9 +175,16 @@ function missingGlyphScene() {
 async function captureCorpus(engine: Engine): Promise<CapturedCorpus> {
   const artifacts = new Map<string, Uint8Array>();
   artifacts.set("contracts/wasm-schema-version.txt", utf8(String(EXPECTED_WASM_SCHEMA_VERSION)));
+  if (typeof publicCoreEntry.snapshotCompiledIR !== "function") {
+    throw new TypeError("Missing snapshotCompiledIR runtime export");
+  }
   artifacts.set(
     "contracts/root-runtime-exports.json",
-    jsonBytes(Object.keys(publicCoreEntry).sort()),
+    jsonBytes(
+      Object.keys(publicCoreEntry)
+        .filter((exportName) => !intentionalRuntimeExportAdditions.has(exportName))
+        .sort(),
+    ),
   );
 
   const conformanceScene = CONFORMANCE_SCENES.find((scene) => scene.id === "native-layered-parts");

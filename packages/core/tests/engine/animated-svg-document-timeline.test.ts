@@ -8,7 +8,7 @@ import type {
   RenderAnimatedSvgOptions,
 } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
-import type { IRNode } from "../../src/ir/types.js";
+import type { IR, IRNode } from "../../src/ir/types.js";
 import { animatedSvgTimelineLimits } from "../../src/render-capabilities.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
@@ -131,33 +131,6 @@ function hiddenTextUnitDomainScene(delayStepMs: number, text = "AB") {
       text,
     ),
   );
-}
-
-function findAuthoredAnimation(node: IRNode, ownerId: string): AnimationSpec {
-  const find = (currentNode: IRNode): AnimationSpec | undefined => {
-    if (currentNode.nodeId === ownerId) {
-      if (currentNode.type === "group" && currentNode.animation !== undefined) {
-        return currentNode.animation;
-      }
-      if (currentNode.type === "text" && currentNode.unitAnimation !== undefined) {
-        return currentNode.unitAnimation.animation;
-      }
-    }
-    if (currentNode.type === "group") {
-      for (const child of currentNode.children ?? []) {
-        const animation = find(child);
-        if (animation !== undefined) {
-          return animation;
-        }
-      }
-    }
-    return undefined;
-  };
-  const animation = find(node);
-  if (animation !== undefined) {
-    return animation;
-  }
-  throw new TypeError(`Missing animation owner ${ownerId}`);
 }
 
 function findTextUnitNode(node: IRNode, ownerId: string): Extract<IRNode, { type: "text" }> {
@@ -892,34 +865,50 @@ describe("animated SVG document timeline", () => {
       playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
     } as const satisfies RenderAnimatedSvgOptions;
     const outsideScene = hiddenTextUnitDomainScene(Number.MAX_VALUE, "ABC");
-    const compiled = engine.compile(hiddenTextUnitDomainScene(0, "ABC"));
-    const compiledOwner = findTextUnitNode(compiled.ir.root, "hidden-domain-units");
+    const compiledEngine = createEngineFromHandle(handle, {
+      resolveAndEmitAnimatedSvgFromIrFn: (irJson, optionsJson) => {
+        const ir = JSON.parse(irJson) as IR;
+        const compiledOwner = findTextUnitNode(ir.root, "hidden-domain-units");
+        if (compiledOwner.unitAnimation === undefined) {
+          throw new TypeError("Expected a compiled text animation");
+        }
+        compiledOwner.unitAnimation.delayStepMs = Number.MAX_VALUE;
+        return handle.resolveAndEmitAnimatedSvgFromIr(JSON.stringify(ir), optionsJson);
+      },
+    });
+    const compiled = compiledEngine.compile(hiddenTextUnitDomainScene(0, "ABC"));
+    const compiledOwner = findTextUnitNode(
+      compiledEngine.snapshotCompiledIR(compiled).root,
+      "hidden-domain-units",
+    );
     const expectedUnitId = compiledOwner.unitMap?.units[1]?.unitId;
     if (expectedUnitId === undefined || compiledOwner.unitAnimation === undefined) {
       throw new TypeError("Expected a three-unit compiled text animation");
     }
-    compiledOwner.unitAnimation.delayStepMs = Number.MAX_VALUE;
-
-    for (const render of [
-      () => engine.renderToAnimatedSvg(outsideScene, options),
-      () => engine.renderToAnimatedSvgAndIR(outsideScene, options),
-      () => engine.renderCompiledToAnimatedSvg(compiled, options),
-    ]) {
-      const fatal = captureFatal(render);
-      expect(fatal).toMatchObject({
-        code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
-        context: {
-          ownerKind: "textUnit",
-          ownerId: "hidden-domain-units",
-          unitId: expectedUnitId,
-          reason: "authored-value-out-of-domain",
-          field: "delayMs",
-          received: String(Number.MAX_VALUE),
-          migration:
-            "Use playback mode independent or change the authored value to the supported timeline range.",
-        },
-      });
-      expect(fatal.context).not.toHaveProperty("boundaryTimeMs");
+    try {
+      for (const render of [
+        () => engine.renderToAnimatedSvg(outsideScene, options),
+        () => engine.renderToAnimatedSvgAndIR(outsideScene, options),
+        () => compiledEngine.renderCompiledToAnimatedSvg(compiled, options),
+      ]) {
+        const fatal = captureFatal(render);
+        expect(fatal).toMatchObject({
+          code: "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
+          context: {
+            ownerKind: "textUnit",
+            ownerId: "hidden-domain-units",
+            unitId: expectedUnitId,
+            reason: "authored-value-out-of-domain",
+            field: "delayMs",
+            received: String(Number.MAX_VALUE),
+            migration:
+              "Use playback mode independent or change the authored value to the supported timeline range.",
+          },
+        });
+        expect(fatal.context).not.toHaveProperty("boundaryTimeMs");
+      }
+    } finally {
+      compiledEngine.dispose();
     }
   });
 
@@ -928,20 +917,16 @@ describe("animated SVG document timeline", () => {
     ["delayMs", Number.POSITIVE_INFINITY],
     ["delayMs", Number.NEGATIVE_INFINITY],
     ["iterations", -0],
-  ] as const)("routes authored %s=%s to the domain error across owners and public paths", (authoredField, received) => {
+  ] as const)("routes authored %s=%s to the domain error across owners and source paths", (authoredField, received) => {
     const options = {
       playback: { mode: "timeline", durationMs: 1, iterations: "infinite" },
     } as const satisfies RenderAnimatedSvgOptions;
 
     for (const owner of ["node", "textUnit"] as const) {
       const invalid = authoredDomainProbeScene(owner, authoredField, received);
-      const valid = authoredDomainProbeScene(owner);
-      const compiled = engine.compile(valid.scene);
-      findAuthoredAnimation(compiled.ir.root, valid.ownerId)[authoredField] = received;
       for (const render of [
         () => engine.renderToAnimatedSvg(invalid.scene, options),
         () => engine.renderToAnimatedSvgAndIR(invalid.scene, options),
-        () => engine.renderCompiledToAnimatedSvg(compiled, options),
       ]) {
         const fatal = captureFatal(render);
         expect(fatal.context).toEqual({

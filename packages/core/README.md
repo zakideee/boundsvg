@@ -30,6 +30,23 @@ const svg = engine.renderToSvg(
 );
 ```
 
+Compile once when several outputs share one layout:
+
+```ts
+const compiled = engine.compile(vnode);
+const svg = engine.renderCompiledToSvg(compiled);
+const png = engine.renderCompiledToPng(compiled, { scale: 2 });
+const inspectionIr = engine.snapshotCompiledIR(compiled);
+```
+
+`CompiledScene` is an opaque, immutable runtime artifact owned by the exact
+`Engine` that created it. It exposes readonly `width`, `height`, and
+`textPathMode` metadata; it has no public `.ir`. Do not clone, persist,
+transport, or construct it as a plain object. Use `snapshotCompiledIR` for a
+detached editable inspection copy, which is not accepted by compiled render
+methods. Forged values fail with `COMPILED_SCENE_INVALID`, and authentic
+artifacts passed to another Engine fail with `COMPILED_SCENE_WRONG_ENGINE`.
+
 ## When to use the utility entry points
 
 ```ts

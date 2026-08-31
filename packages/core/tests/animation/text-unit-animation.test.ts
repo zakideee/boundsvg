@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Engine } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
-import type { IRNode, IRTextNode } from "../../src/ir/types.js";
+import type { IR, IRNode, IRTextNode } from "../../src/ir/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { AnimationSpec } from "../../src/vnode/types.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
@@ -113,6 +113,16 @@ describe("Text animateUnits", () => {
     engine.dispose();
     handle.dispose();
   });
+
+  function createIrFaultEngine(mutateIr: (ir: IR) => void): Engine {
+    return createEngineFromHandle(handle, {
+      resolveAndEmitSvgFromIrFn: (irJson, optionsJson) => {
+        const ir = JSON.parse(irJson) as IR;
+        mutateIr(ir);
+        return handle.resolveAndEmitSvgFromIr(JSON.stringify(ir), optionsJson);
+      },
+    });
+  }
 
   it("retains stable membership, actual outline bounds, and staggered sampled poses", () => {
     const scene = clusterScene();
@@ -241,7 +251,7 @@ describe("Text animateUnits", () => {
   it("keeps raw tracks and outline bounds in compiled scenes and samples each emit", () => {
     const scene = clusterScene();
     const compiled = engine.compile(scene);
-    const text = findText(compiled.ir.root, "units");
+    const text = findText(engine.snapshotCompiledIR(compiled).root, "units");
 
     expect(text.glyphPaths).toHaveLength(2);
     expect(text.unitAnimationSamples?.every((sample) => sample.bbox !== undefined)).toBe(true);
@@ -284,41 +294,49 @@ describe("Text animateUnits", () => {
   });
 
   it("rejects a legacy glyph index space when unit membership is active", () => {
-    const compiled = engine.compile(clusterScene());
-    const text = findText(compiled.ir.root, "units");
-    const firstLine = text.lines[0];
-    if (!firstLine) {
-      throw new TypeError("Missing Text line");
+    const faultEngine = createIrFaultEngine((ir) => {
+      const firstLine = findText(ir.root, "units").lines[0];
+      if (!firstLine) {
+        throw new TypeError("Missing Text line");
+      }
+      firstLine.positionedGlyphs = undefined;
+    });
+    try {
+      const compiled = faultEngine.compile(clusterScene());
+      expect(() =>
+        faultEngine.renderCompiledToSvg(compiled, {
+          timeMs: 25,
+          showMissingGlyphs: true,
+        }),
+      ).toThrowError(
+        expect.objectContaining({ code: "TEXT_UNIT_INDEX_SPACE_MISMATCH", stage: "text" }),
+      );
+    } finally {
+      faultEngine.dispose();
     }
-    firstLine.positionedGlyphs = undefined;
-
-    expect(() =>
-      engine.renderCompiledToSvg(compiled, {
-        timeMs: 25,
-        showMissingGlyphs: true,
-      }),
-    ).toThrowError(
-      expect.objectContaining({ code: "TEXT_UNIT_INDEX_SPACE_MISMATCH", stage: "text" }),
-    );
   });
 
   it("rejects out-of-range positioned glyph membership", () => {
-    const compiled = engine.compile(clusterScene());
-    const text = findText(compiled.ir.root, "units");
-    const firstMember = text.unitMap?.units[0]?.members[0];
-    if (!firstMember) {
-      throw new TypeError("Missing Text unit member");
+    const faultEngine = createIrFaultEngine((ir) => {
+      const firstMember = findText(ir.root, "units").unitMap?.units[0]?.members[0];
+      if (!firstMember) {
+        throw new TypeError("Missing Text unit member");
+      }
+      firstMember.glyphIndex = Number.MAX_SAFE_INTEGER;
+    });
+    try {
+      const compiled = faultEngine.compile(clusterScene());
+      expect(() =>
+        faultEngine.renderCompiledToSvg(compiled, {
+          timeMs: 25,
+          showMissingGlyphs: true,
+        }),
+      ).toThrowError(
+        expect.objectContaining({ code: "TEXT_UNIT_INDEX_SPACE_MISMATCH", stage: "text" }),
+      );
+    } finally {
+      faultEngine.dispose();
     }
-    firstMember.glyphIndex = Number.MAX_SAFE_INTEGER;
-
-    expect(() =>
-      engine.renderCompiledToSvg(compiled, {
-        timeMs: 25,
-        showMissingGlyphs: true,
-      }),
-    ).toThrowError(
-      expect.objectContaining({ code: "TEXT_UNIT_INDEX_SPACE_MISMATCH", stage: "text" }),
-    );
   });
 
   it("rejects a finite stagger whose effective unit delay overflows", () => {
