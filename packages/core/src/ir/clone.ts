@@ -306,7 +306,7 @@ function cloneWarningContext(context: Record<string, unknown>): Record<string, u
   return clonedContext;
 }
 
-function cloneRecoverableError(warning: RecoverableError): RecoverableError {
+export function cloneRecoverableError(warning: RecoverableError): RecoverableError {
   return new RecoverableError(warning.code, warning.message, {
     fallback: warning.fallback,
     ...(warning.context === undefined ? {} : { context: cloneWarningContext(warning.context) }),

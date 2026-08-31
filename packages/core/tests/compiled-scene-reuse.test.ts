@@ -27,6 +27,8 @@ afterAll(() => {
 function createTestEngine(): Engine {
   return createEngineFromHandle(handle, {
     svgToPngFn: () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    svgsToAnimatedWebpFn: () => new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+    svgsToAnimatedGifFn: () => new Uint8Array([0x47, 0x49, 0x46, 0x38]),
   });
 }
 
@@ -294,5 +296,92 @@ describe("CompiledScene reuse", () => {
     engine.renderCompiledToSvg(compiled);
 
     expect(engine.snapshotCompiledIR(compiled).warnings.length).toBe(warningCount);
+  });
+
+  it("detaches callback warnings across every compiled render route", () => {
+    const engine = createTestEngine();
+    const compiled = engine.compile(scene);
+    const baselineWarnings = engine
+      .snapshotCompiledIR(compiled)
+      .warnings.map((warning) => warning.toJSON());
+    expect(baselineWarnings).toHaveLength(1);
+
+    const deliveredWarnings: RecoverableError[] = [];
+    const mutateWarning = (warning: RecoverableError): void => {
+      expect(warning).toBeInstanceOf(RecoverableError);
+      expect(warning.toJSON()).toEqual(baselineWarnings[0]);
+      expect(warning.context).toBeDefined();
+      warning.message = "callback mutation";
+      if (warning.context) {
+        warning.context.callbackMutation = { labels: ["mutated"] };
+      }
+      Object.setPrototypeOf(warning, null);
+      deliveredWarnings.push(warning);
+    };
+    const routes: Array<{
+      name: string;
+      run: (onWarning: (warning: RecoverableError) => void) => unknown;
+    }> = [
+      {
+        name: "SVG",
+        run: (onWarning) => engine.renderCompiledToSvg(compiled, { onWarning }),
+      },
+      {
+        name: "animated SVG",
+        run: (onWarning) =>
+          engine.renderCompiledToAnimatedSvg(compiled, {
+            playback: { mode: "independent" },
+            onWarning,
+          }),
+      },
+      {
+        name: "text outlines",
+        run: (onWarning) => engine.renderCompiledToTextOutlines(compiled, { onWarning }),
+      },
+      {
+        name: "PNG",
+        run: (onWarning) => engine.renderCompiledToPng(compiled, { onWarning }),
+      },
+      {
+        name: "frames",
+        run: (onWarning) => [
+          ...engine.renderCompiledFrames(compiled, {
+            timesMs: [0],
+            format: "svg",
+            onWarning,
+          }),
+        ],
+      },
+      {
+        name: "animated WebP",
+        run: (onWarning) =>
+          engine.renderCompiledToAnimatedWebp(compiled, {
+            timesMs: [0],
+            frameDurationsMs: [100],
+            iterations: 1,
+            onWarning,
+          }),
+      },
+      {
+        name: "animated GIF",
+        run: (onWarning) =>
+          engine.renderCompiledToAnimatedGif(compiled, {
+            timesMs: [0],
+            frameDurationsMs: [100],
+            iterations: 1,
+            onWarning,
+          }),
+      },
+    ];
+
+    for (const route of routes) {
+      route.run(mutateWarning);
+      expect(
+        engine.snapshotCompiledIR(compiled).warnings.map((warning) => warning.toJSON()),
+      ).toEqual(baselineWarnings);
+    }
+
+    expect(deliveredWarnings).toHaveLength(routes.length);
+    expect(new Set(deliveredWarnings).size).toBe(routes.length);
   });
 });

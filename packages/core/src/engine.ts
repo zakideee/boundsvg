@@ -32,6 +32,7 @@ import {
 } from "./errors.js";
 import { GENERIC_FONT_FAMILIES } from "./font/generic-families.js";
 import { DEFAULT_FONT_WEIGHT } from "./font/types.js";
+import { cloneRecoverableError } from "./ir/clone.js";
 import { hitTest } from "./ir/hit-test.js";
 import type { NodePosition } from "./ir/internal.js";
 import { generateNodeId } from "./ir/node-id.js";
@@ -211,6 +212,16 @@ function assertPngScale(requestedScale: number): void {
  */
 function deliverIrWarnings(ir: IR, onWarning?: (warning: RecoverableError) => void): void {
   deliverWarnings(ir.warnings, onWarning);
+}
+
+/** Keep callback mutation outside a reusable compiled artifact's warning state. */
+function deliverDetachedIrWarnings(ir: IR, onWarning?: (warning: RecoverableError) => void): void {
+  if (!onWarning) {
+    return;
+  }
+  for (const warning of ir.warnings) {
+    onWarning(cloneRecoverableError(warning));
+  }
 }
 
 function deliverWarnings(
@@ -2144,7 +2155,9 @@ export class Engine {
     if (plan.rasterPlan !== undefined) {
       this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
     }
-    return this.renderFramesFromCompiledRecord(compiledRecord, plan);
+    return this.renderFramesFromCompiledRecord(compiledRecord, plan, {
+      detachCompiledWarnings: true,
+    });
   }
 
   /** `renderFrames` plus the raster plan used by animated containers. */
@@ -2165,7 +2178,9 @@ export class Engine {
       textPathMode: plan.stableOptions.textPathMode,
     });
     const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
-    return this.renderFramesFromCompiledRecord(compiledRecord, plan);
+    return this.renderFramesFromCompiledRecord(compiledRecord, plan, {
+      detachCompiledWarnings: false,
+    });
   }
 
   private createFrameRenderPlan(
@@ -2213,11 +2228,14 @@ export class Engine {
   private renderFramesFromCompiledRecord(
     compiledRecord: CompiledSceneRecord,
     plan: FrameRenderPlan,
+    warningOptions: { detachCompiledWarnings: boolean },
   ): Iterable<Frame> {
     const { stableOptions, timesMs, format, frameEncoder, rasterPlan, pngOptions } = plan;
     const irMetadataSnapshot: IR = {
       ...compiledRecord.ir,
-      warnings: [...compiledRecord.ir.warnings],
+      warnings: warningOptions.detachCompiledWarnings
+        ? compiledRecord.ir.warnings.map(cloneRecoverableError)
+        : [...compiledRecord.ir.warnings],
     };
     assertRenderableCanvas(irMetadataSnapshot);
     const irSnapshotJson = JSON.stringify({ ...irMetadataSnapshot, warnings: [] });
@@ -2922,7 +2940,7 @@ export class Engine {
         { stage: "emit" },
       );
     }
-    deliverIrWarnings(compiledRecord.ir, emitOpts?.onWarning);
+    deliverDetachedIrWarnings(compiledRecord.ir, emitOpts?.onWarning);
     return this.resolveAndEmitIrViaWasm(compiledRecord.ir, compiledRecord.textPathMode, {
       emitOptions: {
         scale: emitOpts?.scale,
@@ -2957,7 +2975,7 @@ export class Engine {
         { stage: "emit" },
       );
     }
-    deliverIrWarnings(compiledRecord.ir, emitOpts?.onWarning);
+    deliverDetachedIrWarnings(compiledRecord.ir, emitOpts?.onWarning);
     return this.resolveAndEmitIrViaWasm(compiledRecord.ir, compiledRecord.textPathMode, {
       emitOptions: {
         scale: emitOpts?.scale,
@@ -2986,7 +3004,7 @@ export class Engine {
       new Set(["showMissingGlyphs", "onWarning"]),
       "renderCompiledToTextOutlines",
     );
-    deliverIrWarnings(compiledRecord.ir, options?.onWarning);
+    deliverDetachedIrWarnings(compiledRecord.ir, options?.onWarning);
     const resolvedIr = this.resolveIrViaWasm(compiledRecord.ir, compiledRecord.textPathMode, {
       showMissingGlyphs: options?.showMissingGlyphs,
       preserveResolvedUnitOutlines: !options?.showMissingGlyphs,
@@ -3012,7 +3030,7 @@ export class Engine {
     const behavior = stableEmitOpts?.rasterOversizeBehavior ?? "auto-adjust";
     const irMetadataSnapshot: IR = {
       ...compiledRecord.ir,
-      warnings: [...compiledRecord.ir.warnings],
+      warnings: compiledRecord.ir.warnings.map(cloneRecoverableError),
     };
     let scaleResolution: ResolvedRasterScale | undefined;
     let scaleError: FatalError | undefined;
