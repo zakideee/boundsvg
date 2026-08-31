@@ -1,4 +1,4 @@
-import type { StructuredError } from "../errors.js";
+import type { SerializedRecoverableError } from "../errors.js";
 import type { GeneratedOutputIr } from "../generated/ir/output-ir.js";
 import type { InlineRectFragment, TextDecorationFragment, TextUnitMap } from "../text/types.js";
 
@@ -389,7 +389,7 @@ export type WasmIrOutput = GeneratedOutputIr;
 /** Decoded envelope returned by `render_to_ir`. */
 export type RenderToIrEnvelope = {
   ir: WasmIrOutput;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type PngOutlineGlyphLimitExceeded = {
@@ -402,7 +402,7 @@ export type PngOutlineGlyphLimitExceeded = {
 export type RenderToSvgEnvelope = {
   svg: string;
   ir?: WasmIrOutput;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
   textNodeIds: string[];
 };
 

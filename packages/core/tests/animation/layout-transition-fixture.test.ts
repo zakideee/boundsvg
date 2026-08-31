@@ -783,10 +783,9 @@ describe("portable layout transition fixture", () => {
     expect(thrown).toMatchObject({
       code: "LAYOUT_TRANSITION_INCOMPATIBLE",
       stage: "layout",
+      nodeId: "slot",
       context: {
-        stage: "layout",
         category: "paint",
-        nodeId: "slot",
         expected: "no non-identity authored static transform under generated scale",
         observed: "generated world scale with authored static transform",
       },
@@ -841,10 +840,10 @@ describe("portable layout transition fixture", () => {
       expect(thrown).toBeInstanceOf(FatalError);
       expect(thrown).toMatchObject({
         code: "LAYOUT_TRANSITION_INCOMPATIBLE",
+        stage: "layout",
+        nodeId: kind === "box" ? "stroke-box" : "stroke-path",
         context: {
-          stage: "layout",
           category: "stroke",
-          nodeId: kind === "box" ? "stroke-box" : "stroke-path",
           expected:
             "uniform positive generated local scale on every wrapper ancestor for canvas-stable stroke",
           observed: `non-uniform generated local scale x=2, y=1.5 at source node "${kind === "box" ? "stroke-box" : "stroke-path"}"`,
@@ -897,10 +896,9 @@ describe("portable layout transition fixture", () => {
     expect(thrown).toMatchObject({
       code: "LAYOUT_TRANSITION_INCOMPATIBLE",
       stage: "layout",
+      nodeId: "residual-child",
       context: {
-        stage: "layout",
         category: "stroke",
-        nodeId: "residual-child",
         expected:
           "uniform positive generated local scale on every wrapper ancestor for canvas-stable stroke",
         observed: 'non-uniform generated local scale x=2, y=1.5 at source node "residual-parent"',
@@ -1101,6 +1099,7 @@ describe("portable layout transition fixture", () => {
       if (!expectedContext) {
         continue;
       }
+      const { nodeId, ...context } = expectedContext;
       let thrown: unknown;
       try {
         engine.compileLayoutTransition(fixture.input as unknown as LayoutTransitionInput);
@@ -1111,7 +1110,8 @@ describe("portable layout transition fixture", () => {
       expect(thrown, fixture.name).toMatchObject({
         code: "LAYOUT_TRANSITION_INCOMPATIBLE",
         stage: "layout",
-        context: { stage: "layout", ...expectedContext },
+        nodeId,
+        context,
       });
     }
   });

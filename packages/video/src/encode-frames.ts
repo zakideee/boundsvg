@@ -87,7 +87,11 @@ export async function encodeFrames(
         throw new FatalError(
           "VIDEO_INVALID_FRAMES",
           `the frame stream is longer than the expected ${options.expectedFrameCount} frames`,
-          { frameCount: options.expectedFrameCount },
+          {
+            context: {
+              frameCount: options.expectedFrameCount,
+            },
+          },
         );
       }
 
@@ -119,7 +123,11 @@ export async function encodeFrames(
       throw new FatalError(
         "VIDEO_INVALID_FRAMES",
         `MP4 export needs at least ${VIDEO_EXPORT_FRAMES_MIN} frames; a shorter clip has no duration to play (got ${frameCount})`,
-        { frameCount },
+        {
+          context: {
+            frameCount,
+          },
+        },
       );
     }
     await run.pipeline.finish();
@@ -131,7 +139,12 @@ export async function encodeFrames(
       throw new FatalError(
         "VIDEO_ENCODER_UNSUPPORTED",
         `the encoder returned ${sampleCount} samples for ${frameCount} frames; MP4 export needs one sample per frame`,
-        { sampleCount, frameCount },
+        {
+          context: {
+            sampleCount,
+            frameCount,
+          },
+        },
       );
     }
     return run.writer.finish();
@@ -200,7 +213,11 @@ function assertMatchingFrameSize(
   throw new FatalError(
     "VIDEO_INVALID_FRAMES",
     `every frame must be the same size: frame ${frameIndex} is ${bitmap.width}x${bitmap.height}, expected ${run.frameSize.width}x${run.frameSize.height}`,
-    { frameIndex },
+    {
+      context: {
+        frameIndex,
+      },
+    },
   );
 }
 
@@ -234,7 +251,11 @@ function resolveBitrate(canvas: PaddedFrameCanvas, options: EncodeFramesOptions)
     throw new FatalError(
       "VIDEO_INVALID_OPTION",
       `bitrate must be a positive whole number of bits per second (got ${String(bitrate)})`,
-      { bitrate },
+      {
+        context: {
+          bitrate: Number.isFinite(bitrate) ? bitrate : String(bitrate),
+        },
+      },
     );
   }
   return bitrate;
@@ -257,6 +278,11 @@ export function tooManyFrames(frameCount: number): FatalError {
   return new FatalError(
     "VIDEO_TOO_MANY_FRAMES",
     `MP4 export is limited to ${VIDEO_EXPORT_FRAMES_MAX} frames (got ${frameCount})`,
-    { frameCount, frameCountMax: VIDEO_EXPORT_FRAMES_MAX },
+    {
+      context: {
+        frameCount,
+        frameCountMax: VIDEO_EXPORT_FRAMES_MAX,
+      },
+    },
   );
 }

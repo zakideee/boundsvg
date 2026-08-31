@@ -531,6 +531,7 @@ describe("cloneRenderMutableIR", () => {
   it("isolates exactly the render mutation set from a compiled IR", () => {
     const warning = new RecoverableError("TEST_WARNING", "warning", {
       fallback: "continue",
+      stage: "ir",
     });
     const source: IR = {
       root: { ...groupNode, children: [textNode] },
@@ -578,9 +579,9 @@ describe("cloneIR", () => {
   it("detaches the complete IR and rehydrates warning semantics", () => {
     const warning = new RecoverableError("TEST_WARNING", "warning", {
       fallback: "continue",
+      stage: "ir",
+      nodeId: "text",
       context: {
-        stage: "ir",
-        nodeId: "text",
         details: {
           labels: ["first", "second"],
           coordinates: [{ x: 1, y: 2 }],

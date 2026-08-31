@@ -32,11 +32,11 @@ describe("internal recoverable policy", () => {
   it("constructs approved and legacy warnings without changing their public shape", () => {
     const approved = createInternalRecoverableError("SVG_STYLE_BLOCK_DETECTED", "style warning", {
       fallback: "style block ignored",
-      context: { stage: "analyzer" },
+      stage: "analyzer",
     });
     const legacy = createInternalRecoverableError("PNG_RESOLUTION_ADJUSTED", "resolution warning", {
       fallback: "auto-adjusted scale",
-      context: { stage: "emit" },
+      stage: "emit",
     });
 
     expect(approved.toJSON()).toEqual({
@@ -45,7 +45,6 @@ describe("internal recoverable policy", () => {
       message: "style warning",
       fallback: "style block ignored",
       stage: "analyzer",
-      context: { stage: "analyzer" },
     });
     expect(legacy.fallback).toBe("auto-adjusted scale");
   });
@@ -54,17 +53,19 @@ describe("internal recoverable policy", () => {
     expect(() =>
       createInternalRecoverableError("SVG_STYLE_BLOCK_DETECTED", "message", {
         fallback: "  ",
+        stage: "analyzer",
       }),
     ).toThrow("requires a non-empty fallback");
     expect(() =>
       createInternalRecoverableError("SVG_STYLE_BLOCK_DETECTED", " ", {
         fallback: "ignored",
+        stage: "analyzer",
       }),
     ).toThrow("requires a non-empty message");
     expect(() =>
       createInternalRecoverableError("SVG_STYLE_BLOCK_DETECTED", "message", {
         fallback: "ignored",
-        context: { stage: "unknown" },
+        stage: "unknown",
       }),
     ).toThrow("invalid pipeline stage");
   });
@@ -76,8 +77,7 @@ describe("internal recoverable policy", () => {
       "utf8",
     );
 
-    // The sole direct construction is the frozen legacy WASM transport adapter.
-    expect(engineSource.match(/new RecoverableError\(/g)).toHaveLength(1);
+    expect(engineSource).not.toContain("new RecoverableError(");
     expect(analyzerSource).not.toContain("new RecoverableError(");
   });
 });

@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import type { Engine, Frame, RecoverableError, StructuredError } from "@boundsvg/core";
+import type {
+  Engine,
+  Frame,
+  RecoverableError,
+  SerializedFatalError,
+  SerializedRecoverableError,
+} from "@boundsvg/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { WasmEngineHandle } from "../../core/src/wasm/index.js";
 import {
@@ -59,7 +65,7 @@ class CoreBackedWorker implements WorkerLike {
       try {
         this.handle(request);
       } catch (error) {
-        this.respond({ id: request.id, type: "error", error: toStructuredError(error) });
+        this.respond({ id: request.id, type: "error", error: toSerializedFatalError(error) });
       }
     });
   }
@@ -82,7 +88,7 @@ class CoreBackedWorker implements WorkerLike {
       case "render-layout-transition-animated-webp": {
         const { skipValidation, textPathMode, ...renderOptions } = request.options;
         const compiled = this.compile(request.transition, { skipValidation, textPathMode });
-        const warnings: StructuredError[] = [];
+        const warnings: SerializedRecoverableError[] = [];
         const webp = this.engine.renderCompiledToAnimatedWebp(compiled, {
           ...renderOptions,
           onWarning: collectWarning(warnings),
@@ -93,7 +99,7 @@ class CoreBackedWorker implements WorkerLike {
       case "render-layout-transition-animated-gif": {
         const { skipValidation, textPathMode, ...renderOptions } = request.options;
         const compiled = this.compile(request.transition, { skipValidation, textPathMode });
-        const warnings: StructuredError[] = [];
+        const warnings: SerializedRecoverableError[] = [];
         const gif = this.engine.renderCompiledToAnimatedGif(compiled, {
           ...renderOptions,
           onWarning: collectWarning(warnings),
@@ -104,7 +110,7 @@ class CoreBackedWorker implements WorkerLike {
       case "open-layout-transition-frame-stream": {
         const { skipValidation, textPathMode, ...renderOptions } = request.options;
         const compiled = this.compile(request.transition, { skipValidation, textPathMode });
-        const warnings: StructuredError[] = [];
+        const warnings: SerializedRecoverableError[] = [];
         const iterator = this.engine
           .renderCompiledFrames(compiled, {
             ...renderOptions,
@@ -222,17 +228,19 @@ function pngSize(bytes: Uint8Array): { width: number; height: number } {
   return { width: view.getUint32(16), height: view.getUint32(20) };
 }
 
-function collectWarning(warnings: StructuredError[]): (warning: RecoverableError) => void {
+function collectWarning(
+  warnings: SerializedRecoverableError[],
+): (warning: RecoverableError) => void {
   return (warning) => warnings.push(warning.toJSON());
 }
 
-function toStructuredError(error: unknown): StructuredError {
+function toSerializedFatalError(error: unknown): SerializedFatalError {
   if (
     typeof error === "object" &&
     error !== null &&
     typeof Reflect.get(error, "toJSON") === "function"
   ) {
-    return Reflect.apply(Reflect.get(error, "toJSON") as () => StructuredError, error, []);
+    return Reflect.apply(Reflect.get(error, "toJSON") as () => SerializedFatalError, error, []);
   }
   return {
     severity: "fatal",

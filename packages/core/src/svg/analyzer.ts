@@ -143,10 +143,7 @@ export function analyzeSvg(svgString: string, options: AnalyzeSvgOptions): Analy
       createInternalRecoverableError(
         "SVG_STYLE_BLOCK_DETECTED",
         "SVG contains <style> block which may affect text rendering. CSS class-based styling is not supported.",
-        {
-          fallback: "Style block ignored; inline styles used where available.",
-          context: { stage: "analyzer" },
-        },
+        { fallback: "Style block ignored; inline styles used where available.", stage: "analyzer" },
       ),
     );
   }
@@ -158,10 +155,7 @@ export function analyzeSvg(svgString: string, options: AnalyzeSvgOptions): Analy
       createInternalRecoverableError(
         "SVG_NESTED_SVG_DETECTED",
         "SVG contains nested <svg> elements. Only the outermost <svg> is processed for text extraction.",
-        {
-          fallback: "Nested <svg> elements preserved as non-text content.",
-          context: { stage: "analyzer" },
-        },
+        { fallback: "Nested <svg> elements preserved as non-text content.", stage: "analyzer" },
       ),
     );
   }
@@ -207,7 +201,8 @@ export function analyzeSvg(svgString: string, options: AnalyzeSvgOptions): Analy
             `Text element ${i} BBOX inferred from viewBox (no enclosing rect found).`,
             {
               fallback: "Using viewBox as BBOX fallback.",
-              context: { stage: "analyzer", textIndex: i, text: textEl.text.slice(0, 50) },
+              stage: "analyzer",
+              context: { textIndex: i, text: textEl.text.slice(0, 50) },
             },
           ),
         );
@@ -469,7 +464,8 @@ function checkUnsupportedTextAttributes(svgString: string, warnings: Recoverable
             `SVG text attribute "${key}" is not supported and will be ignored.`,
             {
               fallback: `Attribute "${key}" ignored.`,
-              context: { stage: "analyzer", attribute: key },
+              stage: "analyzer",
+              context: { attribute: key },
             },
           ),
         );
@@ -485,7 +481,8 @@ function checkUnsupportedTextAttributes(svgString: string, warnings: Recoverable
             `SVG text style property "${key}" is not supported and will be ignored.`,
             {
               fallback: `Style property "${key}" ignored.`,
-              context: { stage: "analyzer", attribute: key },
+              stage: "analyzer",
+              context: { attribute: key },
             },
           ),
         );
@@ -537,7 +534,8 @@ function checkExternalImageRefs(svgContent: string, warnings: RecoverableError[]
           `SVG contains <image> with external href "${href}" — use inlineExternalImages() or provide a data URI for reliable rendering.`,
           {
             fallback: "External image may not render in all contexts.",
-            context: { stage: "analyzer", href },
+            stage: "analyzer",
+            context: { href },
           },
         ),
       );

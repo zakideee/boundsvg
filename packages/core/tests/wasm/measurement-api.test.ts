@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createEngineAsync, type Engine } from "../../src/engine.js";
 import { initNodeWasm } from "../../src/node.js";
+import type { RichTextNode, RichTextStyle } from "../../src/text/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import {
   assertWasmPkgAvailable,
@@ -8,6 +9,27 @@ import {
   loadJetBrainsMonoFont,
   loadSubsetFont,
 } from "./test-prerequisites.js";
+
+const intrinsicWarningStyle: RichTextStyle = {
+  font: "NotoSansJP",
+  fontWeight: 400,
+  fontStyle: "normal",
+  color: "#222222",
+  fontSizePx: 18,
+  letterSpacingPx: 0,
+};
+
+function createIntrinsicWarningRichText(): RichTextNode[] {
+  let nestedNode: RichTextNode = { kind: "text", text: "省略対象" };
+  for (let depth = 0; depth < 4; depth += 1) {
+    nestedNode = {
+      kind: "inlineBox",
+      style: intrinsicWarningStyle,
+      children: [nestedNode],
+    };
+  }
+  return [{ kind: "text", text: "基準" }, nestedNode];
+}
 
 describe("Measurement WASM APIs", () => {
   let engine: Engine;
@@ -2662,6 +2684,21 @@ describe("Measurement WASM APIs", () => {
 
     expect(result.minContentInlineSize).toBeGreaterThan(0);
     expect(result.maxContentInlineSize).toBeGreaterThanOrEqual(result.minContentInlineSize);
+  });
+
+  it("reproduces intrinsic warning transport validation", () => {
+    expect(() =>
+      engine.measureIntrinsicInlineSize({
+        text: "",
+        fontFamily: "NotoSansJP",
+        fontSizePx: 18,
+        richText: createIntrinsicWarningRichText(),
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "WASM_INVALID_INTRINSIC_INLINE_SIZE_OUTPUT",
+      }),
+    );
   });
 
   it("bridges real mixed-size crossSize values through WASM", () => {

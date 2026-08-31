@@ -105,11 +105,13 @@ function assertPositiveRasterOutput(
       `${String(options.width)}x${String(options.height)}`,
     {
       stage: "emit",
-      width: options.width,
-      height: options.height,
-      requestedScale: options.requestedScale,
-      outputWidth,
-      outputHeight,
+      context: {
+        width: options.width,
+        height: options.height,
+        requestedScale: options.requestedScale,
+        outputWidth,
+        outputHeight,
+      },
     },
   );
 }

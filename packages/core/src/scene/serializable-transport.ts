@@ -185,12 +185,23 @@ function serializabilityError(
     return new FatalError(
       "WORKER_MATERIALIZED_FRAME_NOT_SERIALIZABLE",
       `Materialized frame ${frameIndex} is not serializable at ${path}: ${reason}`,
-      { stage: "engine", frameIndex, path },
+      {
+        stage: "engine",
+        context: {
+          frameIndex,
+          path,
+        },
+      },
     );
   }
   return new FatalError(
     "SCENE_NOT_SERIALIZABLE",
     `Scene is not serializable at ${path}: ${reason}`,
-    { stage: "engine", path },
+    {
+      stage: "engine",
+      context: {
+        path,
+      },
+    },
   );
 }

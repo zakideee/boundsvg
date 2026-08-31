@@ -488,8 +488,6 @@ describe("WorkerEngine", () => {
         stage: "emit",
         nodeId: "spring-box",
         context: {
-          stage: "emit",
-          nodeId: "spring-box",
           ownerKind: "node",
           ownerId: "spring-box",
           reason: "spring-easing",
@@ -538,7 +536,15 @@ describe("WorkerEngine", () => {
             id: request.id,
             type: "render-svg-ok",
             svg: "<svg/>",
-            warnings: [{ severity: "recoverable", code: "W1", message: "warn1", fallback: "fb" }],
+            warnings: [
+              {
+                severity: "recoverable",
+                code: "W1",
+                message: "warn1",
+                fallback: "fb",
+                stage: "emit",
+              },
+            ],
           });
         }
       });
@@ -612,6 +618,7 @@ describe("WorkerEngine", () => {
                   code: "W1",
                   message: "warn1",
                   fallback: "fb",
+                  stage: "emit",
                 },
               ],
             },
@@ -681,6 +688,8 @@ describe("WorkerEngine", () => {
                   severity: "recoverable",
                   code: "PNG_RESOLUTION_ADJUSTED",
                   message: "adjusted",
+                  fallback: "adjusted scale",
+                  stage: "emit",
                   context: {
                     requestedScale: 2,
                     appliedScale: 1.5,
@@ -1012,6 +1021,8 @@ describe("WorkerEngine", () => {
                 severity: "recoverable",
                 code: "ANIMATED_GIF_TIMING_ADJUSTED",
                 message: "adjusted",
+                fallback: "adjusted timing",
+                stage: "emit",
               },
             ],
           });
@@ -1134,7 +1145,6 @@ describe("WorkerEngine", () => {
                 fallback: "auto-adjusted scale",
                 stage: "emit",
                 context: {
-                  stage: "emit",
                   requestedScale: 4,
                   appliedScale: 2,
                   baseWidth: 1000,
@@ -1193,7 +1203,6 @@ describe("WorkerEngine", () => {
                 fallback: "auto-adjusted scale",
                 stage: "emit",
                 context: {
-                  stage: "emit",
                   requestedScale: 4,
                   // Missing appliedScale and other fields
                 },

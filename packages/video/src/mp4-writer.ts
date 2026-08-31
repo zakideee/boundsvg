@@ -146,9 +146,11 @@ function createMuxer(options: Mp4WriterOptions): Mp4VideoMuxer {
       "VIDEO_ENCODER_UNSUPPORTED",
       `MP4 container setup failed: ${describeError(error)}`,
       {
-        width: options.width,
-        height: options.height,
-        frameRate: options.frameRate,
+        context: {
+          width: options.width,
+          height: options.height,
+          frameRate: options.frameRate,
+        },
       },
     );
   }

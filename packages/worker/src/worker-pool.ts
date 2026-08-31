@@ -11,7 +11,7 @@ import {
   type RenderSvgFramesOptions,
   type RenderSvgOptions,
   type SceneNode,
-  type StructuredError,
+  type SerializedRecoverableError,
   type SymbolDefinition,
 } from "@boundsvg/core";
 import {
@@ -114,7 +114,7 @@ type AssignedWorker = {
 
 type OpenedWorkerStream = AssignedWorker & {
   streamId: number;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
   received: number;
 };
 
@@ -156,7 +156,7 @@ type MaterializedCompletion =
       kind: "frame";
       slot: number;
       frame: Frame;
-      warnings: StructuredError[];
+      warnings: SerializedRecoverableError[];
     }
   | { kind: "error"; slot: number; error: unknown };
 
@@ -644,7 +644,12 @@ function assetSnapshotError(name: string, error: unknown): FatalError {
   return new FatalError(
     "WORKER_POOL_ASSET_SNAPSHOT_FAILED",
     `Worker pool could not snapshot ${name}: ${error instanceof Error ? error.message : String(error)}`,
-    { stage: "engine", asset: name },
+    {
+      stage: "engine",
+      context: {
+        asset: name,
+      },
+    },
   );
 }
 
@@ -1044,7 +1049,12 @@ function validateMaterializedFrameInput(value: unknown, index: number): Material
     throw new FatalError(
       "ANIMATION_INVALID_TIME",
       `Animation timeMs must be a non-negative finite number, got ${String(timeMs)}`,
-      { stage: "emit", frameIndex: index },
+      {
+        stage: "emit",
+        context: {
+          frameIndex: index,
+        },
+      },
     );
   }
   const scene: unknown = sceneDescriptor.value;
@@ -1067,7 +1077,12 @@ function materializedInputError(index: number, reason: string): FatalError {
   return new FatalError(
     "WORKER_MATERIALIZED_FRAME_INVALID",
     `Materialized frame ${index} is invalid: ${reason}`,
-    { stage: "engine", frameIndex: index },
+    {
+      stage: "engine",
+      context: {
+        frameIndex: index,
+      },
+    },
   );
 }
 

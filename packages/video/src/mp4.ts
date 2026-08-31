@@ -192,7 +192,11 @@ export async function encodePngFramesToMp4(
       throw new FatalError(
         "VIDEO_INVALID_OPTION",
         `frameCount must be a whole number of at least ${VIDEO_EXPORT_FRAMES_MIN} (got ${String(declaredFrameCount)})`,
-        { frameCount: declaredFrameCount },
+        {
+          context: {
+            frameCount: diagnosticNumber(declaredFrameCount),
+          },
+        },
       );
     }
     if (declaredFrameCount > VIDEO_EXPORT_FRAMES_MAX) {
@@ -206,7 +210,12 @@ export async function encodePngFramesToMp4(
       throw new FatalError(
         "VIDEO_INVALID_OPTION",
         `frameCount is ${declaredFrameCount} but the frames given are ${actualLength} long`,
-        { frameCount: declaredFrameCount, actualLength },
+        {
+          context: {
+            frameCount: declaredFrameCount,
+            actualLength,
+          },
+        },
       );
     }
   }
@@ -271,7 +280,11 @@ function resolveSchedule(options: Mp4ExportOptions, frameRate: VideoFrameRate): 
       throw new FatalError(
         "VIDEO_INVALID_SCHEDULE",
         `timesMs needs at least ${VIDEO_EXPORT_FRAMES_MIN} entries; a one-frame MP4 has no duration to play (got ${options.timesMs.length})`,
-        { frameCount: options.timesMs.length },
+        {
+          context: {
+            frameCount: options.timesMs.length,
+          },
+        },
       );
     }
     assertFrameRateSchedule(options.timesMs, frameRate);
@@ -283,7 +296,11 @@ function resolveSchedule(options: Mp4ExportOptions, frameRate: VideoFrameRate): 
     throw new FatalError(
       "VIDEO_INVALID_SCHEDULE",
       `renderToMp4 needs a positive durationMs, or an explicit timesMs schedule (got ${String(durationMs)})`,
-      { durationMs },
+      {
+        context: {
+          durationMs: diagnosticNumber(durationMs),
+        },
+      },
     );
   }
 
@@ -296,6 +313,10 @@ function resolveSchedule(options: Mp4ExportOptions, frameRate: VideoFrameRate): 
     throw tooManyFrames(frameCount);
   }
   return buildFrameRateSchedule(frameRate, frameCount);
+}
+
+function diagnosticNumber(value: number | undefined): number | string {
+  return typeof value === "number" && Number.isFinite(value) ? value : String(value);
 }
 
 function buildFrameRateSchedule(frameRate: VideoFrameRate, frameCount: number): number[] {
@@ -323,7 +344,12 @@ function assertFrameRateSchedule(timesMs: readonly number[], frameRate: VideoFra
   throw new FatalError(
     "VIDEO_INVALID_SCHEDULE",
     `timesMs must be spaced at 1/frameRate because MP4 playback timing comes from frameRate alone; frame ${mismatchIndex} is at ${String(timesMs[mismatchIndex])}ms, expected ${String(expected[mismatchIndex])}ms`,
-    { frameRate, mismatchIndex },
+    {
+      context: {
+        frameRate,
+        mismatchIndex,
+      },
+    },
   );
 }
 

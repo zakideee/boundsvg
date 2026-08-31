@@ -27,8 +27,9 @@ import {
 import {
   createInternalRecoverableError,
   FatalError,
+  isPipelineStage,
   RecoverableError,
-  type StructuredError,
+  type SerializedRecoverableError,
 } from "./errors.js";
 import { GENERIC_FONT_FAMILIES } from "./font/generic-families.js";
 import { DEFAULT_FONT_WEIGHT } from "./font/types.js";
@@ -475,7 +476,13 @@ function invalidAnimatedSvgTimeline(field: string, received: string): FatalError
   return new FatalError(
     "ANIMATED_SVG_INVALID_TIMELINE",
     `Animated SVG timeline ${field} is outside the supported range.`,
-    { stage: "validate", field, received },
+    {
+      stage: "validate",
+      context: {
+        field,
+        received,
+      },
+    },
   );
 }
 
@@ -554,10 +561,12 @@ function assertAnimatedSvgPlayback(
       "Animated SVG timeline timeMs/durationMs ratio exceeds the supported precision limit.",
       {
         stage: "validate",
-        kind: "time-ratio",
-        timeMs: elapsedMs,
-        durationMs,
-        limitRatio: MAX_TIMELINE_TIME_RATIO,
+        context: {
+          kind: "time-ratio",
+          timeMs: elapsedMs,
+          durationMs,
+          limitRatio: MAX_TIMELINE_TIME_RATIO,
+        },
       },
     );
   }
@@ -636,21 +645,14 @@ function validateFrameSchedule(options: LegacyRenderFramesOptions | undefined): 
 }
 
 /** Rebuild RecoverableError instances from the structured wire warnings. */
-function rehydrateWasmWarnings(warnings: StructuredError[]): RecoverableError[] {
-  return warnings.map(
-    (warning) =>
-      new RecoverableError(warning.code, warning.message, {
-        fallback: warning.fallback ?? "",
-        context: {
-          ...(warning.stage !== undefined && { stage: warning.stage }),
-          ...(warning.nodeId !== undefined && { nodeId: warning.nodeId }),
-        },
-      }),
-  );
+function rehydrateWasmWarnings(
+  warnings: readonly SerializedRecoverableError[],
+): RecoverableError[] {
+  return warnings.map((warning) => RecoverableError.fromSerialized(warning));
 }
 
 /** Promote a validated wire IR to the public IR warning contract. */
-function rehydrateWasmIr(ir: WasmIrOutput, warnings: StructuredError[]): IR {
+function rehydrateWasmIr(ir: WasmIrOutput, warnings: readonly SerializedRecoverableError[]): IR {
   return {
     ...ir,
     warnings: rehydrateWasmWarnings(warnings),
@@ -677,18 +679,30 @@ function wrapWasmRenderError(error: unknown): FatalError {
       const nodeId = Reflect.get(parsed, "nodeId");
       const context = Reflect.get(parsed, "context");
       if (typeof code === "string" && typeof message === "string") {
-        const errorContext: Record<string, unknown> =
+        const errorContext =
           typeof context === "object" && context !== null && !Array.isArray(context)
             ? { ...(context as Record<string, unknown>) }
-            : {};
-        if (typeof stage === "string") {
-          errorContext.stage = stage;
+            : undefined;
+        if (errorContext) {
+          for (const reservedKey of [
+            "severity",
+            "code",
+            "message",
+            "fallback",
+            "stage",
+            "nodeId",
+          ]) {
+            Reflect.deleteProperty(errorContext, reservedKey);
+          }
         }
-        if (typeof nodeId === "string") {
-          errorContext.nodeId = nodeId;
-        }
-        return new FatalError(code, message, {
-          ...errorContext,
+        return FatalError.fromSerialized({
+          severity: "fatal",
+          code,
+          message,
+          ...(isPipelineStage(stage) && { stage }),
+          ...(typeof nodeId === "string" && { nodeId }),
+          ...(errorContext !== undefined &&
+            Object.keys(errorContext).length > 0 && { context: errorContext }),
         });
       }
     }
@@ -1818,7 +1832,7 @@ export class Engine {
           ? `Raise durationMs, or lower fps, so no sampled frame falls under ${GIF_MIN_FRAME_MS} ms.`
           : `Keep every frameDurationsMs entry at ${GIF_MIN_FRAME_MS} ms or longer.`
       }`,
-      { fallback: "clamped frame delays", context: { stage: "emit" } },
+      { fallback: "clamped frame delays", stage: "emit" },
     );
   }
 
@@ -3207,16 +3221,18 @@ export class Engine {
       `${scaleResolution.outputWidth}x${scaleResolution.outputHeight})`;
 
     if (behavior === "error") {
-      throw new FatalError("PNG_PIXEL_LIMIT", warningMessage, { stage: "emit", ...warning });
+      throw new FatalError("PNG_PIXEL_LIMIT", warningMessage, {
+        stage: "emit",
+        context: {
+          ...warning,
+        },
+      });
     }
     emitOpts?.onPngResolutionAdjusted?.(warning);
     const recoverableWarning = createInternalRecoverableError(
       "PNG_RESOLUTION_ADJUSTED",
       warningMessage,
-      {
-        fallback: "auto-adjusted scale",
-        context: { stage: "emit", ...warning },
-      },
+      { fallback: "auto-adjusted scale", stage: "emit", context: { ...warning } },
     );
     ir.warnings.push(recoverableWarning);
     emitOpts?.onWarning?.(recoverableWarning);
@@ -3402,8 +3418,8 @@ export class Engine {
           "Layered composition validation is not available in this engine.",
           {
             fallback: "skipped composition validation",
+            stage: "emit",
             context: {
-              stage: "emit",
               validationStatus: skippedResult.status,
               width: skippedResult.width,
               height: skippedResult.height,
@@ -3456,8 +3472,8 @@ export class Engine {
             `Layered composition validation detected ${metrics.differentPixels} differing pixels (${metrics.differenceRatio}).`,
             {
               fallback: "returned layered SVG with mismatch warning",
+              stage: "emit",
               context: {
-                stage: "emit",
                 validationStatus: result.status,
                 differentPixels: result.differentPixels,
                 differenceRatio: result.differenceRatio,
@@ -3485,8 +3501,8 @@ export class Engine {
           `Layered composition validation could not run: ${message}`,
           {
             fallback: "skipped composition validation",
+            stage: "emit",
             context: {
-              stage: "emit",
               validationStatus: skippedResult.status,
               width: skippedResult.width,
               height: skippedResult.height,

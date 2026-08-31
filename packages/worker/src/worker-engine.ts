@@ -20,6 +20,7 @@
  */
 
 import type {
+  DiagnosticContext,
   Frame,
   GeometryDoc,
   IntrinsicInlineSizeInput,
@@ -41,11 +42,11 @@ import type {
   RenderSvgOptions,
   RenderWebpOptions,
   SceneNode,
+  SerializedRecoverableError,
   ShrinkwrapFlowInput,
   ShrinkwrapFlowResult,
   ShrinkwrapTextInput,
   ShrinkwrapTextResult,
-  StructuredError,
   SymbolDefinition,
   TextFlowInput,
   TextFlowResult,
@@ -104,26 +105,26 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 export type WorkerRenderSvgResult = {
   svg: string;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type WorkerRenderPngResult = {
   png: Uint8Array;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type WorkerRenderLayeredSvgResult = LayeredSvgResult & {
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type WorkerRenderLayeredPngResult = LayeredPngResult & {
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type WorkerRenderSvgAndIrResult = {
   svg: string;
   ir: IR;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 // ---------------------------------------------------------------------------
@@ -141,20 +142,20 @@ type RecoverableWarning = Parameters<WarningCallback>[0];
 type PngResolutionAdjustedCallback = NonNullable<RasterEmissionOptions["onPngResolutionAdjusted"]>;
 
 export type WorkerRenderedFrame =
-  | { format: "svg"; data: string; warnings: StructuredError[] }
-  | { format: "png"; data: Uint8Array; warnings: StructuredError[] };
+  | { format: "svg"; data: string; warnings: SerializedRecoverableError[] }
+  | { format: "png"; data: Uint8Array; warnings: SerializedRecoverableError[] };
 
 export type WorkerPoolEndpoint = {
   open(
     scene: SceneNode,
     schedule: IndexedFrameTime[],
     options: WorkerFrameRenderOptions,
-  ): Promise<{ streamId: number; warnings: StructuredError[] }>;
+  ): Promise<{ streamId: number; warnings: SerializedRecoverableError[] }>;
   openLayoutTransition(
     transition: WorkerLayoutTransitionInput,
     schedule: IndexedFrameTime[],
     options: WorkerFrameRenderOptions,
-  ): Promise<{ streamId: number; warnings: StructuredError[] }>;
+  ): Promise<{ streamId: number; warnings: SerializedRecoverableError[] }>;
   next(streamId: number): Promise<Frame | undefined>;
   close(streamId: number): Promise<void>;
   render(
@@ -960,9 +961,14 @@ export class WorkerEngine {
 function workerLifecycleError(
   code: string,
   message: string,
-  context: Record<string, unknown> = {},
+  context: DiagnosticContext = {},
 ): FatalError {
-  return new FatalError(code, message, { ...context, stage: "engine" });
+  return new FatalError(code, message, {
+    stage: "engine",
+    context: {
+      ...context,
+    },
+  });
 }
 
 function workerEngineDisposedError(): FatalError {
@@ -1115,7 +1121,7 @@ function splitLayeredPngOptions(options?: LayeredPngOptions): SplitLayeredPngCal
  * required fields.
  */
 function extractPngResolutionWarning(
-  warning: StructuredError,
+  warning: SerializedRecoverableError,
 ): PngResolutionAdjustedWarning | undefined {
   if (warning.code !== "PNG_RESOLUTION_ADJUSTED" || !warning.context) {
     return undefined;
@@ -1163,23 +1169,15 @@ function extractPngResolutionWarning(
 }
 
 function getNumericContextValue(
-  context: NonNullable<StructuredError["context"]>,
+  context: NonNullable<SerializedRecoverableError["context"]>,
   key: keyof PngResolutionAdjustedWarning,
 ): number | undefined {
   const value = context[key];
   return typeof value === "number" ? value : undefined;
 }
 
-function rehydrateRecoverableWarning(warning: StructuredError): RecoverableWarning {
-  const rehydrated = rehydrateError(warning);
-  if (rehydrated instanceof RecoverableError) {
-    return rehydrated;
-  }
-  throw workerLifecycleError(
-    "WORKER_PROTOCOL_WARNING_SEVERITY",
-    `Expected recoverable warning from worker, received ${rehydrated.code}`,
-    { warningCode: rehydrated.code, warningSeverity: rehydrated.severity },
-  );
+function rehydrateRecoverableWarning(warning: SerializedRecoverableError): RecoverableWarning {
+  return RecoverableError.fromSerialized(warning);
 }
 
 /**
@@ -1189,7 +1187,7 @@ function rehydrateRecoverableWarning(warning: StructuredError): RecoverableWarni
  * `onPngResolutionAdjusted` when provided.
  */
 export function forwardWorkerWarnings(
-  warnings: StructuredError[],
+  warnings: SerializedRecoverableError[],
   onWarning: WarningCallback | undefined,
   onPngResolutionAdjusted?: PngResolutionAdjustedCallback | undefined,
 ): void {

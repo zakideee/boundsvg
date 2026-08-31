@@ -20,9 +20,11 @@ function layoutTransitionSemanticIdError(details: SemanticIdMismatch): FatalErro
     {
       stage: "layout",
       nodeId,
-      category: "id",
-      expected,
-      observed,
+      context: {
+        category: "id",
+        expected,
+        observed,
+      },
     },
   );
 }

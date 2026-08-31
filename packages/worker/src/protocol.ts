@@ -7,6 +7,7 @@
  */
 
 import {
+  FatalError,
   type Frame,
   type GeometryDoc,
   type IntrinsicInlineSizeInput,
@@ -19,6 +20,7 @@ import {
   type LayeredSvgResult,
   type MeasureTextBlockInput,
   type MeasureTextBlockResult,
+  RecoverableError,
   type RenderAnimatedGifOptions,
   type RenderAnimatedSvgOptions,
   type RenderAnimatedWebpOptions,
@@ -28,11 +30,12 @@ import {
   type RenderSvgOptions,
   type RenderWebpOptions,
   type SceneNode,
+  type SerializedFatalError,
+  type SerializedRecoverableError,
   type ShrinkwrapFlowInput,
   type ShrinkwrapFlowResult,
   type ShrinkwrapTextInput,
   type ShrinkwrapTextResult,
-  type StructuredError,
   type SymbolDefinition,
   type TextFlowInput,
   type TextFlowResult,
@@ -305,14 +308,14 @@ export type RenderSvgOkResponse = {
   id: number;
   type: "render-svg-ok";
   svg: string;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderAnimatedSvgOkResponse = {
   id: number;
   type: "render-animated-svg-ok";
   svg: string;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderPngOkResponse = {
@@ -320,7 +323,7 @@ export type RenderPngOkResponse = {
   type: "render-png-ok";
   /** PNG bytes. Transferred (not copied) back to the main thread. */
   png: Uint8Array;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderAnimatedWebpOkResponse = {
@@ -328,7 +331,7 @@ export type RenderAnimatedWebpOkResponse = {
   type: "render-animated-webp-ok";
   /** Animated WebP bytes. Transferred (not copied) back to the main thread. */
   webp: Uint8Array;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderAnimatedGifOkResponse = {
@@ -336,7 +339,7 @@ export type RenderAnimatedGifOkResponse = {
   type: "render-animated-gif-ok";
   /** Animated GIF bytes. Transferred (not copied) back to the main thread. */
   gif: Uint8Array;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderWebpOkResponse = {
@@ -344,14 +347,14 @@ export type RenderWebpOkResponse = {
   type: "render-webp-ok";
   /** Lossless WebP bytes. Transferred (not copied) back to the main thread. */
   webp: Uint8Array;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 type WorkerLayerSvgEntry = LayeredSvgResult["layers"][number];
 
 export type WorkerLayeredSvgResult = Omit<LayeredSvgResult, "layers"> & {
   layers: WorkerLayerSvgEntry[];
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderLayeredSvgOkResponse = {
@@ -364,7 +367,7 @@ type WorkerLayerPngEntry = LayeredPngResult["layers"][number];
 
 export type WorkerLayeredPngResult = Omit<LayeredPngResult, "layers"> & {
   layers: WorkerLayerPngEntry[];
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderLayeredPngOkResponse = {
@@ -388,7 +391,7 @@ export type RenderSvgAndIrOkResponse = {
   svg: string;
   /** IR with `warnings` stripped (see `WorkerIR`). */
   ir: WorkerIR;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderAnimatedSvgAndIrOkResponse = {
@@ -397,14 +400,14 @@ export type RenderAnimatedSvgAndIrOkResponse = {
   svg: string;
   /** IR with `warnings` stripped (see `WorkerIR`). */
   ir: WorkerIR;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type OpenFrameStreamOkResponse = {
   id: number;
   type: "open-frame-stream-ok";
   streamId: number;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type NextFrameStreamOkResponse =
@@ -467,7 +470,7 @@ export type MeasureIntrinsicInlineSizeOkResponse = {
 export type ErrorResponse = {
   id: number;
   type: "error";
-  error: StructuredError;
+  error: SerializedFatalError;
 };
 
 export type DisposeOkResponse = {
@@ -503,20 +506,6 @@ export type WorkerResponse =
 // Type guards
 // ---------------------------------------------------------------------------
 
-const VALID_SEVERITIES: ReadonlySet<string> = new Set(["fatal", "recoverable"]);
-
-const VALID_STAGES: ReadonlySet<string> = new Set([
-  "validate",
-  "layout",
-  "text",
-  "ir",
-  "emit",
-  "wasm",
-  "font",
-  "engine",
-  "analyzer",
-]);
-
 function isObjectLike(value: unknown): value is object {
   return typeof value === "object" && value !== null;
 }
@@ -547,40 +536,12 @@ export function getWorkerMessageId(value: unknown): number | undefined {
   return getNumberProperty(value, "id");
 }
 
-function isStructuredError(value: unknown): value is StructuredError {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  const severity = getStringProperty(value, "severity");
-  if (severity === undefined || !VALID_SEVERITIES.has(severity)) {
-    return false;
-  }
-  const code = getStringProperty(value, "code");
-  const message = getStringProperty(value, "message");
-  if (code === undefined || message === undefined) {
-    return false;
-  }
-  const stage = getProperty(value, "stage");
-  if (stage !== undefined && (typeof stage !== "string" || !VALID_STAGES.has(stage))) {
-    return false;
-  }
-  const nodeId = getProperty(value, "nodeId");
-  if (nodeId !== undefined && typeof nodeId !== "string") {
-    return false;
-  }
-  const fallback = getProperty(value, "fallback");
-  if (fallback !== undefined && typeof fallback !== "string") {
-    return false;
-  }
-  const context = getProperty(value, "context");
-  if (context !== undefined && !isObjectLike(context)) {
-    return false;
-  }
-  return true;
+function isSerializedFatalError(value: unknown): value is SerializedFatalError {
+  return FatalError.isSerialized(value);
 }
 
-function isRecoverableStructuredError(value: unknown): value is StructuredError {
-  return isStructuredError(value) && value.severity === "recoverable";
+function isSerializedRecoverableError(value: unknown): value is SerializedRecoverableError {
+  return RecoverableError.isSerialized(value);
 }
 
 function isFontTransfer(value: unknown): value is FontTransfer {
@@ -734,7 +695,7 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
       const svg = getStringProperty(value, "svg");
       const warnings = getProperty(value, "warnings");
       return (
-        svg !== undefined && Array.isArray(warnings) && warnings.every(isRecoverableStructuredError)
+        svg !== undefined && Array.isArray(warnings) && warnings.every(isSerializedRecoverableError)
       );
     }
     case "render-png-ok": {
@@ -743,7 +704,7 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
       return (
         png instanceof Uint8Array &&
         Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
+        warnings.every(isSerializedRecoverableError)
       );
     }
     case "render-animated-gif-ok": {
@@ -752,7 +713,7 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
       return (
         gif instanceof Uint8Array &&
         Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
+        warnings.every(isSerializedRecoverableError)
       );
     }
     case "render-animated-webp-ok":
@@ -762,7 +723,7 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
       return (
         webp instanceof Uint8Array &&
         Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
+        warnings.every(isSerializedRecoverableError)
       );
     }
     case "render-layered-svg-ok": {
@@ -781,7 +742,7 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
         svg !== undefined &&
         validateSerializedIR(serializedIr) &&
         Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
+        warnings.every(isSerializedRecoverableError)
       );
     }
     case "open-frame-stream-ok": {
@@ -789,7 +750,7 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
       return (
         isFrameStreamId(value) &&
         Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
+        warnings.every(isSerializedRecoverableError)
       );
     }
     case "next-frame-stream-ok": {
@@ -812,7 +773,7 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
     case "measure-intrinsic-inline-size-ok":
       return isObjectLike(getProperty(value, "result"));
     case "error":
-      return isStructuredError(getProperty(value, "error"));
+      return isSerializedFatalError(getProperty(value, "error"));
     default:
       return false;
   }
@@ -933,7 +894,7 @@ function isWorkerLayeredSvgResult(value: unknown): value is WorkerLayeredSvgResu
     Array.isArray(layers) &&
     layers.every(isLayerSvgEntry) &&
     Array.isArray(warnings) &&
-    warnings.every(isRecoverableStructuredError)
+    warnings.every(isSerializedRecoverableError)
   );
 }
 
@@ -955,6 +916,6 @@ function isWorkerLayeredPngResult(value: unknown): value is WorkerLayeredPngResu
     Array.isArray(layers) &&
     layers.every(isLayerPngEntry) &&
     Array.isArray(warnings) &&
-    warnings.every(isRecoverableStructuredError)
+    warnings.every(isSerializedRecoverableError)
   );
 }

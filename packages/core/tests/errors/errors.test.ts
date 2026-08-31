@@ -12,7 +12,8 @@ describe("FatalError", () => {
     expect(err.name).toBe("FatalError");
     expect(err.code).toBe("VALIDATION");
     expect(err.message).toBe("Something failed");
-    expect(err.context).toEqual({ nodeId: "n1" });
+    expect(err.nodeId).toBe("n1");
+    expect(err.context).toBeUndefined();
     expect(err.severity).toBe("fatal");
   });
 
@@ -30,7 +31,7 @@ describe("FatalError", () => {
     }).toThrow(FatalError);
   });
 
-  it("extracts stage from context", () => {
+  it("reads explicit stage and nodeId options", () => {
     const err = new FatalError("VALIDATION", "msg", {
       stage: "validate",
       nodeId: "myNode",
@@ -57,14 +58,14 @@ describe("FatalError", () => {
     }
   });
 
-  it("ignores invalid stage values", () => {
-    const err = new FatalError("TEST", "msg", { stage: "bogus" });
-    expect(err.stage).toBeUndefined();
+  it("rejects invalid stage values", () => {
+    expect(() => Reflect.construct(FatalError, ["TEST", "msg", { stage: "bogus" }])).toThrow(
+      TypeError,
+    );
   });
 
-  it("ignores non-string nodeId", () => {
-    const err = new FatalError("TEST", "msg", { nodeId: 42 });
-    expect(err.nodeId).toBeUndefined();
+  it("rejects non-string nodeId", () => {
+    expect(() => Reflect.construct(FatalError, ["TEST", "msg", { nodeId: 42 }])).toThrow(TypeError);
   });
 
   it("stage/nodeId are undefined without context", () => {
@@ -77,11 +78,13 @@ describe("FatalError", () => {
     const err = new FatalError("TEST", "msg", {
       stage: "ir",
       nodeId: "img1",
-      extra: "data",
+      context: {
+        extra: "data",
+      },
     });
     expect(err.stage).toBe("ir");
     expect(err.nodeId).toBe("img1");
-    expect(err.context).toEqual({ stage: "ir", nodeId: "img1", extra: "data" });
+    expect(err.context).toEqual({ extra: "data" });
   });
 
   it("toJSON() preserves message across JSON.stringify", () => {
@@ -102,7 +105,8 @@ describe("RecoverableError", () => {
   it("has correct properties", () => {
     const err = new RecoverableError("IMAGE_LOAD_FAILED", "Could not load image", {
       fallback: "placeholder_rect",
-      context: { nodeId: "img1" },
+      stage: "ir",
+      nodeId: "img1",
     });
 
     expect(err).toBeInstanceOf(Error);
@@ -111,12 +115,14 @@ describe("RecoverableError", () => {
     expect(err.code).toBe("IMAGE_LOAD_FAILED");
     expect(err.message).toBe("Could not load image");
     expect(err.fallback).toBe("placeholder_rect");
-    expect(err.context).toEqual({ nodeId: "img1" });
+    expect(err.stage).toBe("ir");
+    expect(err.nodeId).toBe("img1");
+    expect(err.context).toBeUndefined();
     expect(err.severity).toBe("recoverable");
   });
 
   it("works without context", () => {
-    const err = new RecoverableError("TEST", "msg", { fallback: "default" });
+    const err = new RecoverableError("TEST", "msg", { fallback: "default", stage: "engine" });
 
     expect(err.code).toBe("TEST");
     expect(err.fallback).toBe("default");
@@ -125,29 +131,34 @@ describe("RecoverableError", () => {
   });
 
   it("is not a FatalError", () => {
-    const err = new RecoverableError("CODE", "msg", { fallback: "fallback" });
+    const err = new RecoverableError("CODE", "msg", { fallback: "fallback", stage: "engine" });
     expect(err).not.toBeInstanceOf(FatalError);
   });
 
-  it("extracts stage and nodeId from context", () => {
+  it("reads explicit stage and nodeId options", () => {
     const err = new RecoverableError("IMG", "msg", {
       fallback: "fallback",
-      context: { stage: "ir", nodeId: "img-node" },
+      stage: "ir",
+      nodeId: "img-node",
     });
     expect(err.stage).toBe("ir");
     expect(err.nodeId).toBe("img-node");
   });
 
-  it("stage/nodeId are undefined without context", () => {
-    const err = new RecoverableError("TEST", "msg", { fallback: "fallback" });
-    expect(err.stage).toBeUndefined();
+  it("keeps nodeId optional without context", () => {
+    const err = new RecoverableError("TEST", "msg", {
+      fallback: "fallback",
+      stage: "engine",
+    });
+    expect(err.stage).toBe("engine");
     expect(err.nodeId).toBeUndefined();
   });
 
   it("toJSON() preserves message and fallback across JSON.stringify", () => {
     const err = new RecoverableError("IMAGE_LOAD_FAILED", "Load failed", {
       fallback: "placeholder_rect",
-      context: { stage: "ir", nodeId: "img1" },
+      stage: "ir",
+      nodeId: "img1",
     });
     const json = JSON.parse(JSON.stringify(err));
     expect(json.severity).toBe("recoverable");

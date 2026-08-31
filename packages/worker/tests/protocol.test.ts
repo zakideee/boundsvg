@@ -673,13 +673,13 @@ describe("isWorkerResponse", () => {
     expect(isWorkerResponse({ id: 1, type: "error", error: {} })).toBe(false);
   });
 
-  it("returns false for error response with partial StructuredError", () => {
+  it("returns false for a partial serialized fatal diagnostic", () => {
     expect(
       isWorkerResponse({ id: 1, type: "error", error: { severity: "fatal", code: "X" } }),
     ).toBe(false);
   });
 
-  it("returns false for render-svg-ok with non-StructuredError warnings", () => {
+  it("returns false for render-svg-ok with malformed recoverable warnings", () => {
     expect(isWorkerResponse({ id: 1, type: "render-svg-ok", svg: "<svg/>", warnings: [123] })).toBe(
       false,
     );
@@ -696,18 +696,26 @@ describe("isWorkerResponse", () => {
     ).toBe(false);
   });
 
-  it("returns true for render-svg-ok with valid StructuredError warnings", () => {
+  it("returns true for render-svg-ok with valid serialized recoverable warnings", () => {
     expect(
       isWorkerResponse({
         id: 1,
         type: "render-svg-ok",
         svg: "<svg/>",
-        warnings: [{ severity: "recoverable", code: "WARN", message: "test" }],
+        warnings: [
+          {
+            severity: "recoverable",
+            code: "WARN",
+            message: "test",
+            fallback: "continued",
+            stage: "emit",
+          },
+        ],
       }),
     ).toBe(true);
   });
 
-  it("returns false for render-png-ok with non-StructuredError warnings", () => {
+  it("returns false for render-png-ok with malformed recoverable warnings", () => {
     expect(
       isWorkerResponse({
         id: 1,
@@ -718,13 +726,21 @@ describe("isWorkerResponse", () => {
     ).toBe(false);
   });
 
-  it("returns true for render-png-ok with valid StructuredError warnings", () => {
+  it("returns true for render-png-ok with valid serialized recoverable warnings", () => {
     expect(
       isWorkerResponse({
         id: 1,
         type: "render-png-ok",
         png: new Uint8Array([1]),
-        warnings: [{ severity: "recoverable", code: "W", message: "w" }],
+        warnings: [
+          {
+            severity: "recoverable",
+            code: "W",
+            message: "w",
+            fallback: "continued",
+            stage: "emit",
+          },
+        ],
       }),
     ).toBe(true);
   });
@@ -821,7 +837,7 @@ describe("isWorkerResponse", () => {
     ).toBe(false);
   });
 
-  it("returns true for error with all valid optional fields", () => {
+  it("returns true for a fatal error with all permitted optional fields", () => {
     expect(
       isWorkerResponse({
         id: 1,
@@ -832,7 +848,6 @@ describe("isWorkerResponse", () => {
           message: "m",
           stage: "emit",
           nodeId: "node-1",
-          fallback: "used default",
           context: { key: "value" },
         },
       }),

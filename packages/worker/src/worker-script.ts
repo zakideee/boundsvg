@@ -18,9 +18,10 @@ import {
   type MeasureTextBlockInput,
   type RecoverableError,
   type SceneNode,
+  type SerializedFatalError,
+  type SerializedRecoverableError,
   type ShrinkwrapFlowInput,
   type ShrinkwrapTextInput,
-  type StructuredError,
   type TextFlowInput,
   type TextFlowWithExclusionsInput,
 } from "@boundsvg/core";
@@ -164,7 +165,7 @@ async function handleMessage(request: WorkerRequest): Promise<void> {
     respond({
       id: request.id,
       type: "error",
-      error: toStructuredError(err),
+      error: toSerializedFatalError(err),
     });
   }
 }
@@ -208,7 +209,7 @@ function handleRenderSvg(id: number, scene: SceneNode, options?: WorkerRenderSvg
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const svg = eng.renderToSvg(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -226,7 +227,7 @@ function handleRenderAnimatedSvg(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const svg = eng.renderToAnimatedSvg(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -244,7 +245,7 @@ function handleRenderSvgAndIr(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const { svg, ir } = eng.renderToSvgAndIR(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -265,7 +266,7 @@ function handleRenderAnimatedSvgAndIr(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const { svg, ir } = eng.renderToAnimatedSvgAndIR(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -280,7 +281,7 @@ function handleRenderPng(id: number, scene: SceneNode, options?: WorkerRenderPng
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const png = eng.renderToPng(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -296,7 +297,7 @@ function handleRenderWebp(id: number, scene: SceneNode, options?: WorkerRenderWe
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const webp = eng.renderToWebp(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -316,7 +317,7 @@ function handleRenderAnimatedWebp(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const webp = eng.renderToAnimatedWebp(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -336,7 +337,7 @@ function handleRenderAnimatedGif(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const gif = eng.renderToAnimatedGif(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -360,7 +361,7 @@ function handleRenderLayoutTransitionAnimatedWebp(
   }
   const { skipValidation, textPathMode, ...renderOptions } = options;
   const compiled = eng.compileLayoutTransition(transition, { skipValidation, textPathMode });
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const webp = eng.renderCompiledToAnimatedWebp(compiled, {
     ...renderOptions,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -383,7 +384,7 @@ function handleRenderLayoutTransitionAnimatedGif(
   }
   const { skipValidation, textPathMode, ...renderOptions } = options;
   const compiled = eng.compileLayoutTransition(transition, { skipValidation, textPathMode });
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const gif = eng.renderCompiledToAnimatedGif(compiled, {
     ...renderOptions,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -402,7 +403,7 @@ function handleRenderLayeredSvg(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const result = eng.renderToLayeredSvg(scene, {
     ...options,
     onWarning: (warning: RecoverableError) => warnings.push(warning.toJSON()),
@@ -427,7 +428,7 @@ function handleRenderLayeredPng(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const result = eng.renderToLayeredPng(scene, {
     ...options,
     onWarning: (warning: RecoverableError) => warnings.push(warning.toJSON()),
@@ -460,7 +461,7 @@ function handleOpenFrameStream(
 
   // renderFrames prepares eagerly, so every warning in the current core
   // contract is delivered before this open response is posted.
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const iterator = eng
     .renderFrames(request.scene, {
       ...request.options,
@@ -497,7 +498,7 @@ function handleOpenLayoutTransitionFrameStream(
     skipValidation,
     textPathMode,
   });
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const iterator = eng
     .renderCompiledFrames(compiled, {
       ...renderOptions,
@@ -670,7 +671,7 @@ function respond(response: WorkerResponse): void {
   self.postMessage(response);
 }
 
-function toStructuredError(err: unknown): StructuredError {
+function toSerializedFatalError(err: unknown): SerializedFatalError {
   if (err instanceof FatalError) {
     return err.toJSON();
   }

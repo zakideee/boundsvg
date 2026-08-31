@@ -8,9 +8,11 @@ import { FatalError } from "@boundsvg/core";
 export function throwIfExportAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) {
     throw new FatalError("VIDEO_EXPORT_ABORTED", "video export was aborted", {
-      // Described rather than carried: structured errors must survive JSON, and
-      // an abort reason is usually a DOMException, which stringifies to {}.
-      reason: describeAbortReason(signal.reason),
+      context: {
+        // Described rather than carried: structured errors must survive JSON, and
+        // an abort reason is usually a DOMException, which stringifies to {}.
+        reason: describeAbortReason(signal.reason),
+      },
     });
   }
 }

@@ -16,8 +16,10 @@ function throwGeometryDepthError(nodeId: string, actualDepth: number): never {
     {
       stage: "validate",
       nodeId,
-      maxDepth: MAX_GEOMETRY_TREE_DEPTH,
-      actualDepth,
+      context: {
+        maxDepth: MAX_GEOMETRY_TREE_DEPTH,
+        actualDepth,
+      },
     },
   );
 }

@@ -183,7 +183,13 @@ function assertValidShapeGeometry(geometry: GeometryDoc, nodeId: string): void {
           throw new FatalError(
             "SHAPE_DUPLICATE_PART_ID",
             `Shape contains duplicate addressable part id "${partId}".`,
-            { stage: "validate", nodeId, partId },
+            {
+              stage: "validate",
+              nodeId,
+              context: {
+                partId,
+              },
+            },
           );
         }
         seenPartIds.add(partId);

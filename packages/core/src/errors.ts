@@ -1,18 +1,55 @@
 /** Error severity — enables data-driven branching without instanceof checks. */
 export type ErrorSeverity = "fatal" | "recoverable";
 
-/** JSON-safe representation of a structured error (survives JSON.stringify round-trip). */
-export type StructuredError = {
-  severity: ErrorSeverity;
+/** JSON-safe value accepted in diagnostic context. */
+export type DiagnosticContextValue =
+  | null
+  | boolean
+  | number
+  | string
+  | DiagnosticContextValue[]
+  | { [key: string]: DiagnosticContextValue };
+
+/** Detached, mutable JSON object attached to a diagnostic. */
+export type DiagnosticContext = Record<string, DiagnosticContextValue>;
+
+/** Explicit metadata accepted by `FatalError`. */
+export type FatalErrorOptions = {
+  stage?: PipelineStage;
+  nodeId?: string;
+  context?: DiagnosticContext;
+};
+
+/** Explicit fallback and metadata accepted by `RecoverableError`. */
+export type RecoverableErrorOptions = {
+  fallback: string;
+  stage: PipelineStage;
+  nodeId?: string;
+  context?: DiagnosticContext;
+};
+
+/** Serialized fatal diagnostic. */
+export type SerializedFatalError = {
+  severity: "fatal";
   code: string;
   message: string;
   stage?: PipelineStage;
   nodeId?: string;
-  fallback?: string;
-  context?: Record<string, unknown>;
+  context?: DiagnosticContext;
 };
 
-/** Pipeline stages for structured error reporting */
+/** Serialized recoverable diagnostic. */
+export type SerializedRecoverableError = {
+  severity: "recoverable";
+  code: string;
+  message: string;
+  fallback: string;
+  stage: PipelineStage;
+  nodeId?: string;
+  context?: DiagnosticContext;
+};
+
+/** Closed pipeline stages for structured diagnostic reporting. */
 export type PipelineStage =
   | "validate"
   | "layout"
@@ -36,8 +73,331 @@ const PIPELINE_STAGES = new Set<string>([
   "analyzer",
 ]);
 
-function isPipelineStage(value: unknown): value is PipelineStage {
+const DIAGNOSTIC_CODE_PATTERN = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
+const RESERVED_CONTEXT_KEYS = new Set([
+  "severity",
+  "code",
+  "message",
+  "fallback",
+  "stage",
+  "nodeId",
+]);
+
+/** Return whether a value belongs to the closed diagnostic pipeline stage set. */
+export function isPipelineStage(value: unknown): value is PipelineStage {
   return typeof value === "string" && PIPELINE_STAGES.has(value);
+}
+
+function diagnosticTypeError(description: string): TypeError {
+  return new TypeError(`Invalid diagnostic ${description}`);
+}
+
+function readObjectPrototype(value: object, description: string): object | null {
+  try {
+    return Object.getPrototypeOf(value);
+  } catch {
+    throw diagnosticTypeError(`${description}: prototype is not readable`);
+  }
+}
+
+function isArrayValue(value: object, description: string): boolean {
+  try {
+    return Array.isArray(value);
+  } catch {
+    throw diagnosticTypeError(`${description}: array identity is not readable`);
+  }
+}
+
+function readOwnKeys(value: object, description: string): (string | symbol)[] {
+  try {
+    return Reflect.ownKeys(value);
+  } catch {
+    throw diagnosticTypeError(`${description}: own keys are not readable`);
+  }
+}
+
+function readOwnDescriptor(
+  value: object,
+  key: string | symbol,
+  description: string,
+): PropertyDescriptor {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+  } catch {
+    throw diagnosticTypeError(`${description}: property descriptor is not readable`);
+  }
+  if (!descriptor) {
+    throw diagnosticTypeError(`${description}: property descriptor is missing`);
+  }
+  return descriptor;
+}
+
+function readEnumerableDataValue(value: object, key: string, description: string): unknown {
+  const descriptor = readOwnDescriptor(value, key, description);
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    throw diagnosticTypeError(`${description}: ${key} must be an enumerable data property`);
+  }
+  return descriptor.value;
+}
+
+type DiagnosticContainer = DiagnosticContext | DiagnosticContextValue[];
+
+type DiagnosticContainerTask =
+  | {
+      action: "enter";
+      source: object;
+      target: DiagnosticContainer;
+      isRoot: boolean;
+    }
+  | { action: "exit"; source: object };
+
+function createDiagnosticContainer(source: object, isRoot: boolean): DiagnosticContainer {
+  const sourceIsArray = isArrayValue(source, "context value");
+  if (isRoot && sourceIsArray) {
+    throw diagnosticTypeError("context: root must be a plain object");
+  }
+  const prototype = readObjectPrototype(source, "context value");
+  if (sourceIsArray) {
+    if (prototype !== Array.prototype) {
+      throw diagnosticTypeError("context: array subclasses are not supported");
+    }
+    return [];
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw diagnosticTypeError("context: values must be plain objects");
+  }
+  return Object.create(prototype) as DiagnosticContext;
+}
+
+function cloneDiagnosticPrimitive(value: unknown): DiagnosticContextValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw diagnosticTypeError("context: numbers must be finite");
+    }
+    return Object.is(value, -0) ? 0 : value;
+  }
+  throw diagnosticTypeError("context: value is not JSON-safe");
+}
+
+function defineMutableDataProperty(
+  target: DiagnosticContainer,
+  key: string,
+  value: DiagnosticContextValue,
+): void {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value,
+  });
+}
+
+type DiagnosticEntry = { key: string; value: unknown };
+
+function readDiagnosticArrayEntries(
+  source: object,
+  keys: readonly (string | symbol)[],
+): DiagnosticEntry[] {
+  const lengthDescriptor = readOwnDescriptor(source, "length", "context array");
+  const length = "value" in lengthDescriptor ? lengthDescriptor.value : undefined;
+  if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) {
+    throw diagnosticTypeError("context: array length is invalid");
+  }
+  for (const key of keys) {
+    if (typeof key === "symbol") {
+      throw diagnosticTypeError("context: symbol keys are not supported");
+    }
+    if (key === "length") {
+      continue;
+    }
+    const index = Number(key);
+    if (!Number.isSafeInteger(index) || index < 0 || String(index) !== key || index >= length) {
+      throw diagnosticTypeError("context: arrays cannot have extra properties");
+    }
+  }
+  const entries: DiagnosticEntry[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const key = String(index);
+    entries.push({ key, value: readEnumerableDataValue(source, key, "context array") });
+  }
+  return entries;
+}
+
+function readDiagnosticObjectEntries(
+  source: object,
+  keys: readonly (string | symbol)[],
+  isRoot: boolean,
+): DiagnosticEntry[] {
+  const entries: DiagnosticEntry[] = [];
+  for (const key of keys) {
+    if (typeof key === "symbol") {
+      throw diagnosticTypeError("context: symbol keys are not supported");
+    }
+    if (isRoot && RESERVED_CONTEXT_KEYS.has(key)) {
+      throw diagnosticTypeError(`context: reserved root key ${key}`);
+    }
+    entries.push({ key, value: readEnumerableDataValue(source, key, "context object") });
+  }
+  return entries;
+}
+
+function readDiagnosticEntries(source: object, isRoot: boolean): DiagnosticEntry[] {
+  const keys = readOwnKeys(source, "context value");
+  return isArrayValue(source, "context value")
+    ? readDiagnosticArrayEntries(source, keys)
+    : readDiagnosticObjectEntries(source, keys, isRoot);
+}
+
+function enterDiagnosticContainer(
+  task: Extract<DiagnosticContainerTask, { action: "enter" }>,
+  tasks: DiagnosticContainerTask[],
+  activeContainers: WeakSet<object>,
+): void {
+  if (activeContainers.has(task.source)) {
+    throw diagnosticTypeError("context: cycles are not supported");
+  }
+  activeContainers.add(task.source);
+  tasks.push({ action: "exit", source: task.source });
+
+  const childTasks: DiagnosticContainerTask[] = [];
+  for (const entry of readDiagnosticEntries(task.source, task.isRoot)) {
+    if (typeof entry.value === "object" && entry.value !== null) {
+      const child = createDiagnosticContainer(entry.value, false);
+      defineMutableDataProperty(task.target, entry.key, child);
+      childTasks.push({
+        action: "enter",
+        source: entry.value,
+        target: child,
+        isRoot: false,
+      });
+    } else {
+      defineMutableDataProperty(task.target, entry.key, cloneDiagnosticPrimitive(entry.value));
+    }
+  }
+  for (let index = childTasks.length - 1; index >= 0; index -= 1) {
+    const childTask = childTasks[index];
+    if (childTask) {
+      tasks.push(childTask);
+    }
+  }
+}
+
+function runDiagnosticContainerTask(
+  task: DiagnosticContainerTask,
+  tasks: DiagnosticContainerTask[],
+  activeContainers: WeakSet<object>,
+): void {
+  if (task.action === "exit") {
+    activeContainers.delete(task.source);
+    return;
+  }
+  enterDiagnosticContainer(task, tasks, activeContainers);
+}
+
+function cloneDiagnosticContext(value: unknown): DiagnosticContext {
+  if (typeof value !== "object" || value === null) {
+    throw diagnosticTypeError("context: root must be a plain object");
+  }
+  const root = createDiagnosticContainer(value, true);
+  const tasks: DiagnosticContainerTask[] = [
+    { action: "enter", source: value, target: root, isRoot: true },
+  ];
+  const activeContainers = new WeakSet<object>();
+
+  while (tasks.length > 0) {
+    const task = tasks.pop();
+    if (task) {
+      runDiagnosticContainerTask(task, tasks, activeContainers);
+    }
+  }
+
+  return root as DiagnosticContext;
+}
+
+type ExactFieldRules = {
+  allowedFields: ReadonlySet<string>;
+  requiredFields: ReadonlySet<string>;
+  description: string;
+};
+
+function readExactFields(value: unknown, rules: ExactFieldRules): Map<string, unknown> {
+  const { allowedFields, requiredFields, description } = rules;
+  if (typeof value !== "object" || value === null || isArrayValue(value, description)) {
+    throw diagnosticTypeError(`${description}: expected a plain object`);
+  }
+  const prototype = readObjectPrototype(value, description);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw diagnosticTypeError(`${description}: expected a plain object`);
+  }
+  const fields = new Map<string, unknown>();
+  for (const key of readOwnKeys(value, description)) {
+    if (typeof key === "symbol" || !allowedFields.has(key)) {
+      throw diagnosticTypeError(`${description}: unexpected field`);
+    }
+    fields.set(key, readEnumerableDataValue(value, key, description));
+  }
+  for (const field of requiredFields) {
+    if (!fields.has(field)) {
+      throw diagnosticTypeError(`${description}: missing ${field}`);
+    }
+  }
+  return fields;
+}
+
+function requireNonEmptyDiagnosticString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw diagnosticTypeError(`${field}: expected a non-empty string`);
+  }
+  return value;
+}
+
+function requireDiagnosticCode(value: unknown): string {
+  const code = requireNonEmptyDiagnosticString(value, "code");
+  if (!DIAGNOSTIC_CODE_PATTERN.test(code)) {
+    throw diagnosticTypeError("code: expected SCREAMING_SNAKE_CASE");
+  }
+  return code;
+}
+
+function readOptionalNodeId(fields: Map<string, unknown>): string | undefined {
+  if (!fields.has("nodeId")) {
+    return undefined;
+  }
+  const nodeId = fields.get("nodeId");
+  if (typeof nodeId !== "string") {
+    throw diagnosticTypeError("nodeId: expected a string");
+  }
+  return nodeId;
+}
+
+function readOptionalStage(fields: Map<string, unknown>): PipelineStage | undefined {
+  if (!fields.has("stage")) {
+    return undefined;
+  }
+  const stage = fields.get("stage");
+  if (!isPipelineStage(stage)) {
+    throw diagnosticTypeError("stage: expected a closed pipeline stage");
+  }
+  return stage;
+}
+
+function readRequiredStage(fields: Map<string, unknown>): PipelineStage {
+  const stage = fields.get("stage");
+  if (!isPipelineStage(stage)) {
+    throw diagnosticTypeError("stage: expected a closed pipeline stage");
+  }
+  return stage;
+}
+
+function readOptionalContext(fields: Map<string, unknown>): DiagnosticContext | undefined {
+  if (!fields.has("context")) {
+    return undefined;
+  }
+  return cloneDiagnosticContext(fields.get("context"));
 }
 
 type ApprovedRecoverablePolicy = {
@@ -153,102 +513,239 @@ export const INTERNAL_RECOVERABLE_POLICIES = [
 
 type InternalRecoverableCode = (typeof INTERNAL_RECOVERABLE_POLICIES)[number]["code"];
 
-/**
- * Fatal error — thrown immediately, rendering cannot continue.
- * Examples: invalid VNode structure, duplicate IDs, invalid color format.
- *
- * The optional `context` bag may include reserved keys:
- *   - `stage`: pipeline stage where the error occurred
- *   - `nodeId`: VNode id (or `<Type>` fallback) associated with the error
- */
+const FATAL_OPTION_FIELDS = new Set(["stage", "nodeId", "context"]);
+const FATAL_SERIALIZED_FIELDS = new Set([
+  "severity",
+  "code",
+  "message",
+  "stage",
+  "nodeId",
+  "context",
+]);
+const RECOVERABLE_OPTION_FIELDS = new Set(["fallback", "stage", "nodeId", "context"]);
+const RECOVERABLE_SERIALIZED_FIELDS = new Set([
+  "severity",
+  "code",
+  "message",
+  "fallback",
+  "stage",
+  "nodeId",
+  "context",
+]);
+
+type ParsedFatalDiagnostic = {
+  code: string;
+  message: string;
+  stage?: PipelineStage;
+  nodeId?: string;
+  context?: DiagnosticContext;
+};
+
+type ParsedRecoverableDiagnostic = {
+  code: string;
+  message: string;
+  fallback: string;
+  stage: PipelineStage;
+  nodeId?: string;
+  context?: DiagnosticContext;
+};
+
+function parseFatalOptions(
+  options: FatalErrorOptions | undefined,
+): Omit<ParsedFatalDiagnostic, "code" | "message"> {
+  if (options === undefined) {
+    return {};
+  }
+  const fields = readExactFields(options, {
+    allowedFields: FATAL_OPTION_FIELDS,
+    requiredFields: new Set(),
+    description: "fatal options",
+  });
+  const stage = readOptionalStage(fields);
+  const nodeId = readOptionalNodeId(fields);
+  const context = readOptionalContext(fields);
+  return {
+    ...(stage !== undefined && { stage }),
+    ...(nodeId !== undefined && { nodeId }),
+    ...(context !== undefined && { context }),
+  };
+}
+
+function parseRecoverableOptions(
+  options: RecoverableErrorOptions,
+): Omit<ParsedRecoverableDiagnostic, "code" | "message"> {
+  const fields = readExactFields(options, {
+    allowedFields: RECOVERABLE_OPTION_FIELDS,
+    requiredFields: new Set(["fallback", "stage"]),
+    description: "recoverable options",
+  });
+  const fallback = requireNonEmptyDiagnosticString(fields.get("fallback"), "fallback");
+  const stage = readRequiredStage(fields);
+  const nodeId = readOptionalNodeId(fields);
+  const context = readOptionalContext(fields);
+  return {
+    fallback,
+    stage,
+    ...(nodeId !== undefined && { nodeId }),
+    ...(context !== undefined && { context }),
+  };
+}
+
+function parseSerializedFatal(value: unknown): ParsedFatalDiagnostic {
+  const fields = readExactFields(value, {
+    allowedFields: FATAL_SERIALIZED_FIELDS,
+    requiredFields: new Set(["severity", "code", "message"]),
+    description: "serialized fatal diagnostic",
+  });
+  if (fields.get("severity") !== "fatal") {
+    throw diagnosticTypeError("severity: expected fatal");
+  }
+  const stage = readOptionalStage(fields);
+  const nodeId = readOptionalNodeId(fields);
+  const context = readOptionalContext(fields);
+  return {
+    code: requireDiagnosticCode(fields.get("code")),
+    message: requireNonEmptyDiagnosticString(fields.get("message"), "message"),
+    ...(stage !== undefined && { stage }),
+    ...(nodeId !== undefined && { nodeId }),
+    ...(context !== undefined && { context }),
+  };
+}
+
+function parseSerializedRecoverable(value: unknown): ParsedRecoverableDiagnostic {
+  const fields = readExactFields(value, {
+    allowedFields: RECOVERABLE_SERIALIZED_FIELDS,
+    requiredFields: new Set(["severity", "code", "message", "fallback", "stage"]),
+    description: "serialized recoverable diagnostic",
+  });
+  if (fields.get("severity") !== "recoverable") {
+    throw diagnosticTypeError("severity: expected recoverable");
+  }
+  const nodeId = readOptionalNodeId(fields);
+  const context = readOptionalContext(fields);
+  return {
+    code: requireDiagnosticCode(fields.get("code")),
+    message: requireNonEmptyDiagnosticString(fields.get("message"), "message"),
+    fallback: requireNonEmptyDiagnosticString(fields.get("fallback"), "fallback"),
+    stage: readRequiredStage(fields),
+    ...(nodeId !== undefined && { nodeId }),
+    ...(context !== undefined && { context }),
+  };
+}
+
+/** Fatal diagnostic thrown when rendering cannot continue. */
 export class FatalError extends Error {
   readonly severity: "fatal" = "fatal";
   readonly code: string;
   readonly stage?: PipelineStage;
   readonly nodeId?: string;
-  readonly context?: Record<string, unknown>;
+  readonly context?: DiagnosticContext;
 
-  constructor(code: string, message: string, context?: Record<string, unknown>) {
-    super(message);
+  constructor(code: string, message: string, options?: FatalErrorOptions) {
+    const validatedCode = requireDiagnosticCode(code);
+    const validatedMessage = requireNonEmptyDiagnosticString(message, "message");
+    const parsedOptions = parseFatalOptions(options);
+    super(validatedMessage);
     this.name = "FatalError";
-    this.code = code;
-    if (context) {
-      if (isPipelineStage(context.stage)) {
-        this.stage = context.stage;
-      }
-      if (typeof context.nodeId === "string") {
-        this.nodeId = context.nodeId;
-      }
-    }
-    this.context = context;
+    this.code = validatedCode;
+    this.stage = parsedOptions.stage;
+    this.nodeId = parsedOptions.nodeId;
+    this.context = parsedOptions.context;
   }
 
-  toJSON(): StructuredError {
+  /** Return whether a value exactly matches the serialized fatal contract. */
+  static isSerialized(value: unknown): value is SerializedFatalError {
+    try {
+      parseSerializedFatal(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Rehydrate an exact serialized fatal diagnostic. */
+  static fromSerialized(value: unknown): FatalError {
+    const parsed = parseSerializedFatal(value);
+    return new FatalError(parsed.code, parsed.message, {
+      ...(parsed.stage !== undefined && { stage: parsed.stage }),
+      ...(parsed.nodeId !== undefined && { nodeId: parsed.nodeId }),
+      ...(parsed.context !== undefined && { context: parsed.context }),
+    });
+  }
+
+  /** Serialize the current mutable context into a fresh detached value. */
+  toJSON(): SerializedFatalError {
+    const context = this.context === undefined ? undefined : cloneDiagnosticContext(this.context);
     return {
       severity: this.severity,
       code: this.code,
       message: this.message,
-      ...(this.stage != null && { stage: this.stage }),
-      ...(this.nodeId != null && { nodeId: this.nodeId }),
-      ...(this.context != null && { context: this.context }),
+      ...(this.stage !== undefined && { stage: this.stage }),
+      ...(this.nodeId !== undefined && { nodeId: this.nodeId }),
+      ...(context !== undefined && { context }),
     };
   }
 }
 
-/**
- * Recoverable error — rendering continues with a fallback.
- * Examples: missing glyph, image load failure, kinsoku_unresolved.
- *
- * The optional `context` bag may include reserved keys:
- *   - `stage`: pipeline stage where the error occurred
- *   - `nodeId`: VNode id (or `<Type>` fallback) associated with the error
- */
+/** Recoverable diagnostic emitted after a deterministic fallback succeeds. */
 export class RecoverableError extends Error {
   readonly severity: "recoverable" = "recoverable";
   readonly code: string;
   readonly fallback: string;
-  readonly stage?: PipelineStage;
+  readonly stage: PipelineStage;
   readonly nodeId?: string;
-  readonly context?: Record<string, unknown>;
+  readonly context?: DiagnosticContext;
 
-  constructor(
-    code: string,
-    message: string,
-    options: { fallback: string; context?: Record<string, unknown> },
-  ) {
-    super(message);
+  constructor(code: string, message: string, options: RecoverableErrorOptions) {
+    const validatedCode = requireDiagnosticCode(code);
+    const validatedMessage = requireNonEmptyDiagnosticString(message, "message");
+    const parsedOptions = parseRecoverableOptions(options);
+    super(validatedMessage);
     this.name = "RecoverableError";
-    this.code = code;
-    this.fallback = options.fallback;
-    const context = options.context;
-    if (context) {
-      if (isPipelineStage(context.stage)) {
-        this.stage = context.stage;
-      }
-      if (typeof context.nodeId === "string") {
-        this.nodeId = context.nodeId;
-      }
-    }
-    this.context = context;
+    this.code = validatedCode;
+    this.fallback = parsedOptions.fallback;
+    this.stage = parsedOptions.stage;
+    this.nodeId = parsedOptions.nodeId;
+    this.context = parsedOptions.context;
   }
 
-  toJSON(): StructuredError {
+  /** Return whether a value exactly matches the serialized recoverable contract. */
+  static isSerialized(value: unknown): value is SerializedRecoverableError {
+    try {
+      parseSerializedRecoverable(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Rehydrate an exact serialized recoverable diagnostic. */
+  static fromSerialized(value: unknown): RecoverableError {
+    const parsed = parseSerializedRecoverable(value);
+    return new RecoverableError(parsed.code, parsed.message, {
+      fallback: parsed.fallback,
+      stage: parsed.stage,
+      ...(parsed.nodeId !== undefined && { nodeId: parsed.nodeId }),
+      ...(parsed.context !== undefined && { context: parsed.context }),
+    });
+  }
+
+  /** Serialize the current mutable context into a fresh detached value. */
+  toJSON(): SerializedRecoverableError {
+    const context = this.context === undefined ? undefined : cloneDiagnosticContext(this.context);
     return {
       severity: this.severity,
       code: this.code,
       message: this.message,
       fallback: this.fallback,
-      ...(this.stage != null && { stage: this.stage }),
-      ...(this.nodeId != null && { nodeId: this.nodeId }),
-      ...(this.context != null && { context: this.context }),
+      stage: this.stage,
+      ...(this.nodeId !== undefined && { nodeId: this.nodeId }),
+      ...(context !== undefined && { context }),
     };
   }
 }
 
-type InternalRecoverableOptions = {
-  fallback: string;
-  context?: Record<string, unknown>;
-};
+type InternalRecoverableOptions = RecoverableErrorOptions;
 
 /**
  * Construct a warning at a TS-side fallback-owner site.
@@ -268,7 +765,7 @@ export function createInternalRecoverableError(
   if (!policy) {
     throw new TypeError(`Internal recoverable ${code} has no policy adjudication`);
   }
-  if (!/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/.test(code)) {
+  if (!DIAGNOSTIC_CODE_PATTERN.test(code)) {
     throw new TypeError(`Internal recoverable code is not stable SCREAMING_SNAKE_CASE: ${code}`);
   }
   if (message.trim().length === 0) {
@@ -277,11 +774,8 @@ export function createInternalRecoverableError(
   if (options.fallback.trim().length === 0) {
     throw new TypeError(`Internal recoverable ${code} requires a non-empty fallback`);
   }
-  if (options.context?.stage !== undefined && !isPipelineStage(options.context.stage)) {
+  if (!isPipelineStage(options.stage)) {
     throw new TypeError(`Internal recoverable ${code} has an invalid pipeline stage`);
-  }
-  if (options.context?.nodeId !== undefined && typeof options.context.nodeId !== "string") {
-    throw new TypeError(`Internal recoverable ${code} has a non-string nodeId`);
   }
   if (policy.adjudication === "approved") {
     if (

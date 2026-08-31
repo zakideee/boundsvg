@@ -66,7 +66,11 @@ function assertOpaqueColor(context: CanvasContext["context"], background: string
     throw new FatalError(
       "VIDEO_INVALID_OPTION",
       `background is not a colour this runtime can paint: ${background}`,
-      { background },
+      {
+        context: {
+          background,
+        },
+      },
     );
   }
   const alpha = serializedAlpha(context.fillStyle);
@@ -74,7 +78,11 @@ function assertOpaqueColor(context: CanvasContext["context"], background: string
     throw new FatalError(
       "VIDEO_INVALID_OPTION",
       `background must be opaque because H.264 has no alpha channel; ${background} would be painted as black`,
-      { background },
+      {
+        context: {
+          background,
+        },
+      },
     );
   }
 }

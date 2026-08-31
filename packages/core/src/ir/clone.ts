@@ -284,33 +284,8 @@ export function cloneIRForLayeredTransform(node: IRNode): IRNode {
   }
 }
 
-function cloneWarningContextValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(cloneWarningContextValue);
-  }
-  if (value !== null && typeof value === "object") {
-    const clonedValue: Record<string, unknown> = {};
-    for (const [key, nestedValue] of Object.entries(value)) {
-      clonedValue[key] = cloneWarningContextValue(nestedValue);
-    }
-    return clonedValue;
-  }
-  return value;
-}
-
-function cloneWarningContext(context: Record<string, unknown>): Record<string, unknown> {
-  const clonedContext: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(context)) {
-    clonedContext[key] = cloneWarningContextValue(value);
-  }
-  return clonedContext;
-}
-
 export function cloneRecoverableError(warning: RecoverableError): RecoverableError {
-  return new RecoverableError(warning.code, warning.message, {
-    fallback: warning.fallback,
-    ...(warning.context === undefined ? {} : { context: cloneWarningContext(warning.context) }),
-  });
+  return RecoverableError.fromSerialized(warning.toJSON());
 }
 
 /**

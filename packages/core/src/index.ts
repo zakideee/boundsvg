@@ -53,7 +53,16 @@ export type {
 } from "./engine.js";
 export { createEngine, createEngineAsync, Engine } from "./engine.js";
 // Errors
-export type { ErrorSeverity, PipelineStage, StructuredError } from "./errors.js";
+export type {
+  DiagnosticContext,
+  DiagnosticContextValue,
+  ErrorSeverity,
+  FatalErrorOptions,
+  PipelineStage,
+  RecoverableErrorOptions,
+  SerializedFatalError,
+  SerializedRecoverableError,
+} from "./errors.js";
 export { FatalError, RecoverableError } from "./errors.js";
 // Font
 export { createFontRegistry, type FontRegistry } from "./font/registry.js";

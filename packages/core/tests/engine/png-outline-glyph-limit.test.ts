@@ -166,8 +166,6 @@ function expectOutlineGlyphLimitError(run: () => unknown): void {
   expect(error.stage).toBe("emit");
   expect(error.nodeId).toBe("subject");
   expect(error.context).toEqual({
-    stage: "emit",
-    nodeId: "subject",
     maxGlyphs: MAX_OUTLINE_GLYPHS,
     actualGlyphs: MAX_OUTLINE_GLYPHS + 1,
   });

@@ -1,5 +1,5 @@
-import type { StructuredError } from "../errors.js";
-import { FatalError } from "../errors.js";
+import type { SerializedRecoverableError } from "../errors.js";
+import { FatalError, isPipelineStage } from "../errors.js";
 import { DEFAULT_FONT_WEIGHT } from "../font/types.js";
 import type { LayeredCompositionValidationResult } from "../layered-svg.js";
 import type { ComputeLayoutTransportFn } from "../layout/backend.js";
@@ -163,7 +163,7 @@ function wrapWasmStructuredTextError(error: unknown): FatalError {
       const stage = getStringProperty(parsed, "stage");
       if (code !== undefined && message !== undefined) {
         return new FatalError(code, message, {
-          stage: stage ?? "text",
+          stage: isPipelineStage(stage) ? stage : "text",
         });
       }
     }
@@ -2040,7 +2040,7 @@ export type TextFlowLine = {
 export type TextFlowResult = {
   lines: TextFlowLine[];
   exhausted: boolean;
-  warnings?: StructuredError[];
+  warnings?: SerializedRecoverableError[];
 };
 
 // ---------------------------------------------------------------------------
@@ -2220,7 +2220,7 @@ export type TextFlowWithExclusionsResult = {
   usedLineCount: number;
   overflowReason?: FlowOverflowReason;
   chosenFontSizePx?: number;
-  warnings?: StructuredError[];
+  warnings?: SerializedRecoverableError[];
   /** Over-side ruby annotation extent (font size + gap); never add it to measured height. */
   topRubyOverflowPx: number;
   /** Under-side ruby annotation extent (font size + gap); never add it to measured height. */
@@ -2458,7 +2458,7 @@ export type IntrinsicInlineSizeInput = {
 export type IntrinsicInlineSizeResult = {
   minContentInlineSize: number;
   maxContentInlineSize: number;
-  warnings?: StructuredError[];
+  warnings?: SerializedRecoverableError[];
 };
 
 // Re-export types

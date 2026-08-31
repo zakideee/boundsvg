@@ -133,8 +133,6 @@ describe("layout transition semantic-ID diagnostic parity", () => {
       stage: "validate",
       nodeId: invalidId,
       context: {
-        stage: "validate",
-        nodeId: invalidId,
         reason: "lone UTF-16 surrogate",
       },
     });
