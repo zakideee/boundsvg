@@ -94,7 +94,8 @@ export function usePngObjectUrl(png: Uint8Array | null): string | null {
 }
 
 /**
- * Compile a VNode with the Provider engine so multiple assets can share one IR.
+ * Compile a VNode with the Provider engine so multiple assets can share one
+ * opaque, immutable compiled artifact.
  */
 export function useCompiledScene(
   vnode: VNode | null,

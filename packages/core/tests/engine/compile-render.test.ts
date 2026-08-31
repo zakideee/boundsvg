@@ -41,19 +41,21 @@ const simpleSceneNode: CanvasSceneNode = {
 };
 
 describe("Engine.compile()", () => {
-  it("returns CompiledScene with ir, width, height", () => {
+  it("returns an opaque CompiledScene with authoritative metadata", () => {
     const engine = createTestEngine();
     const compiled = engine.compile(simpleVNode);
-    expect(compiled.ir).toBeDefined();
-    expect(compiled.ir.root).toBeDefined();
+    const snapshot = engine.snapshotCompiledIR(compiled);
+    expect(snapshot.root).toBeDefined();
     expect(compiled.width).toBe(200);
     expect(compiled.height).toBe(100);
+    expect(compiled.width).toBe(snapshot.width);
+    expect(compiled.height).toBe(snapshot.height);
   });
 
   it("accepts SceneNode input", () => {
     const engine = createTestEngine();
     const compiled = engine.compile(simpleSceneNode);
-    expect(compiled.ir).toBeDefined();
+    expect(engine.snapshotCompiledIR(compiled).root).toBeDefined();
     expect(compiled.width).toBe(200);
     expect(compiled.height).toBe(100);
   });
@@ -64,7 +66,7 @@ describe("Engine.compile()", () => {
     // (skipValidation bypasses the Canvas-root check)
     const boxNode = createElement("Box", { width: 100, height: 100 });
     const compiled = engine.compile(boxNode, { skipValidation: true });
-    expect(compiled.ir).toBeDefined();
+    expect(engine.snapshotCompiledIR(compiled).root).toBeDefined();
   });
 });
 
@@ -119,12 +121,12 @@ describe("Engine.renderCompiledToPng()", () => {
       svgToPngFn: () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
     });
     const compiled = engine.compile(simpleVNode);
-    const warningsBefore = compiled.ir.warnings.length;
+    const warningsBefore = engine.snapshotCompiledIR(compiled).warnings.length;
 
     // Render PNG twice — warnings must not accumulate in original IR
     engine.renderCompiledToPng(compiled);
     engine.renderCompiledToPng(compiled);
-    expect(compiled.ir.warnings.length).toBe(warningsBefore);
+    expect(engine.snapshotCompiledIR(compiled).warnings.length).toBe(warningsBefore);
 
     // SVG after PNG must produce the same output as SVG before PNG
     const svgBefore = engine.renderCompiledToSvg(compiled);

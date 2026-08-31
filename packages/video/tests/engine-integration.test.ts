@@ -10,7 +10,7 @@ import type {
 } from "@boundsvg/core";
 import { createElement, createEngineAsync } from "@boundsvg/core";
 import { initNodeWasm } from "@boundsvg/core/node";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createPortableLayoutTransitionInput,
   PORTABLE_LAYOUT_TRANSITION_CANVAS,
@@ -162,14 +162,14 @@ function observing(target: Engine): {
   lastOptions: () => RenderFramesOptions | undefined;
 } {
   let seen: RenderFramesOptions | undefined;
-  const observer = {
-    ...target,
-    renderFrames(input: EngineInput, options: RenderFramesOptions): Iterable<Frame> {
+  const renderFrames = target.renderFrames.bind(target);
+  vi.spyOn(target, "renderFrames").mockImplementation(
+    (input: EngineInput, options: RenderFramesOptions): Iterable<Frame> => {
       seen = options;
-      return target.renderFrames(input, options);
+      return renderFrames(input, options);
     },
-  } as unknown as Engine;
-  return { engine: observer, lastOptions: () => seen };
+  );
+  return { engine: target, lastOptions: () => seen };
 }
 
 /** Records and lifecycle-wraps the compiled frame producer used by MP4. */
@@ -180,10 +180,11 @@ function observingCompiled(target: Engine): {
 } {
   let seen: RenderFramesOptions | undefined;
   let cleanups = 0;
-  const observer = {
-    renderCompiledFrames(compiled: CompiledScene, options: RenderFramesOptions): Iterable<Frame> {
+  const renderCompiledFrames = target.renderCompiledFrames.bind(target);
+  vi.spyOn(target, "renderCompiledFrames").mockImplementation(
+    (compiled: CompiledScene, options: RenderFramesOptions): Iterable<Frame> => {
       seen = options;
-      const frames = target.renderCompiledFrames(compiled, options);
+      const frames = renderCompiledFrames(compiled, options);
       return (function* observedFrames() {
         try {
           yield* frames;
@@ -192,8 +193,8 @@ function observingCompiled(target: Engine): {
         }
       })();
     },
-  } as unknown as Engine;
-  return { engine: observer, lastOptions: () => seen, cleanupCount: () => cleanups };
+  );
+  return { engine: target, lastOptions: () => seen, cleanupCount: () => cleanups };
 }
 
 function scene(text: string, animate = false): EngineInput {
@@ -281,6 +282,10 @@ beforeAll(async () => {
 beforeEach(() => {
   state = { canvasSizes: [], decodedSizes: [], frameDigests: [], videoFrameInits: [] };
   installBrowserStubs();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("renderToMp4 against a real engine", () => {
@@ -376,6 +381,27 @@ describe("renderToMp4 against a real engine", () => {
 });
 
 describe("renderCompiledToMp4 against a real engine", () => {
+  it("rejects an artifact created by a different Engine before encoding frames", async () => {
+    const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput());
+    const receivingEngine = await createEngineAsync({});
+
+    try {
+      await expect(
+        renderCompiledToMp4(receivingEngine, compiled, {
+          durationMs: 100,
+          frameRate: 10,
+        }),
+      ).rejects.toMatchObject({
+        code: "COMPILED_SCENE_WRONG_ENGINE",
+        message: "Compiled scene belongs to a different Engine",
+        stage: "engine",
+      });
+      expect(state.decodedSizes).toHaveLength(0);
+    } finally {
+      receivingEngine.dispose();
+    }
+  });
+
   it("preserves schedule order, timestamps, dimensions, and transition checkpoint content", async () => {
     const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput());
     const frameRate = { numerator: 10, denominator: 1 };

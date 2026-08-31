@@ -10,6 +10,15 @@ import {
   resolveAnimationFrameSchedule,
   resolveGifDelaysCs,
 } from "./animation-schedule.js";
+import {
+  authenticateCompiledScene,
+  type CompiledScene,
+  type CompiledSceneOwnerToken,
+  type CompiledSceneRecord,
+  createCompiledScene,
+  createCompiledSceneOwnerToken,
+  snapshotCompiledSceneRecordIR,
+} from "./compiled-scene.js";
 import { invokeMeasurementTransport } from "./engine/measurement-transport.js";
 import {
   assertAnimatedSvgTimelineIrJsonRepresentable,
@@ -89,6 +98,8 @@ import {
 } from "./wasm/protocol-decoders.js";
 import type { WasmIrOutput } from "./wasm/types.js";
 
+export type { CompiledScene } from "./compiled-scene.js";
+
 /** Engine input: either a VNode tree or a typed SceneNode tree */
 export type EngineInput = VNode | SceneNode;
 
@@ -102,11 +113,10 @@ const GIF_TIMING_TOLERANCE = 0.05;
 const DEFAULT_TEXT_PATH_MODE: TextPathMode = "merged";
 
 /**
- * Guard the compiled-scene render entry points against a malformed IR.
- *
- * `CompiledScene` is public and can be persisted, transported, or built by
- * hand, so its canvas dimensions are not known-good the way a freshly
- * validated VNode's are. A non-finite or non-positive size produces a
+ * Guard the compiled-scene render entry points against malformed private IR
+ * returned by a custom backend. Authenticity proves artifact provenance, not
+ * that a third-party transport returned valid canvas dimensions. A non-finite
+ * or non-positive size produces a
  * `viewBox="0 0 NaN 20"` document or an unrasterizable one, both of which
  * fail far from the cause.
  */
@@ -970,15 +980,7 @@ export type ValidateLayeredSvgCompositionMetrics = Pick<
   "differentPixels" | "differenceRatio" | "width" | "height"
 >;
 
-export type CompiledScene = {
-  /** Current public IR; compiled render methods read this object at call time. */
-  readonly ir: IR;
-  /** Snapshot of `ir.width` when compilation completed; not synchronized after IR mutation. */
-  readonly width: number;
-  /** Snapshot of `ir.height` when compilation completed; not synchronized after IR mutation. */
-  readonly height: number;
-  readonly textPathMode: TextPathMode;
-};
+type CompiledSceneSource = Pick<CompiledSceneRecord, "ir" | "textPathMode">;
 
 export type SvgFrame = {
   /** Zero-based position in the requested frame schedule. */
@@ -1240,6 +1242,8 @@ class PreparedFrameIterator implements IterableIterator<Frame> {
 
 export class Engine {
   private readonly options: EngineOptions;
+  private readonly compiledSceneOwnerToken: CompiledSceneOwnerToken =
+    createCompiledSceneOwnerToken();
   private disposed = false;
   /**
    * Aliases of fonts registered through this engine (constructor `fonts` or
@@ -1436,14 +1440,18 @@ export class Engine {
     if (!stableRenderOpts?.skipValidation) {
       validate(vnode);
     }
-    const compiled = this.compileWithWasmBackend(vnode, toCompileOptions(stableRenderOpts), {
-      sampleAnimation: true,
-      timeMs: stableRenderOpts?.timeMs,
-      showMissingGlyphs: stableRenderOpts?.showMissingGlyphs,
-    });
+    const compiledSource = this.compileSourceWithWasmBackend(
+      vnode,
+      toCompileOptions(stableRenderOpts),
+      {
+        sampleAnimation: true,
+        timeMs: stableRenderOpts?.timeMs,
+        showMissingGlyphs: stableRenderOpts?.showMissingGlyphs,
+      },
+    );
     const irMetadataSnapshot: IR = {
-      ...compiled.ir,
-      warnings: [...compiled.ir.warnings],
+      ...compiledSource.ir,
+      warnings: [...compiledSource.ir.warnings],
     };
     assertRenderableCanvas(irMetadataSnapshot);
     const layoutRoot = computeLayout(vnode, {
@@ -1468,9 +1476,9 @@ export class Engine {
       scaleError = error;
     }
     const rasterScene = this.preflightRasterScene(
-      JSON.stringify({ ...compiled.ir, warnings: [] }),
+      JSON.stringify({ ...compiledSource.ir, warnings: [] }),
       JSON.stringify({
-        textPathMode: compiled.textPathMode,
+        textPathMode: compiledSource.textPathMode,
         showMissingGlyphs: stableRenderOpts?.showMissingGlyphs,
         preserveResolvedUnitOutlines: true,
       }),
@@ -1601,8 +1609,8 @@ export class Engine {
   }
 
   /**
-   * Render a call-time snapshot of an already compiled animation to animated
-   * lossless WebP. Compilation choices are fixed by `compiled`; scheduling,
+   * Render an already compiled immutable animation to animated lossless WebP.
+   * Compilation choices are fixed by `compiled`; scheduling,
    * rasterization, warnings, and encoding are shared with
    * `renderToAnimatedWebp`.
    */
@@ -1610,13 +1618,15 @@ export class Engine {
     compiled: CompiledScene,
     renderOpts: RenderCompiledAnimatedWebpOptions,
   ): Uint8Array {
+    this.ensureNotDisposed();
+    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
     assertOwnOptionKeys(
       renderOpts,
       COMPILED_ANIMATED_RASTER_OPTION_KEYS,
       "renderCompiledToAnimatedWebp",
     );
     return this.renderAnimatedWebpWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
-      this.renderFramesWithCompiledScene(compiled, frameOptions, rasterPlan),
+      this.renderFramesWithCompiledRecord(compiledRecord, frameOptions, rasterPlan),
     );
   }
 
@@ -1689,8 +1699,8 @@ export class Engine {
   }
 
   /**
-   * Render a call-time snapshot of an already compiled animation to animated
-   * GIF. Compilation choices are fixed by `compiled`; scheduling,
+   * Render an already compiled immutable animation to animated GIF.
+   * Compilation choices are fixed by `compiled`; scheduling,
    * rasterization, warnings, and encoding are shared with
    * `renderToAnimatedGif`.
    */
@@ -1698,13 +1708,15 @@ export class Engine {
     compiled: CompiledScene,
     renderOpts: RenderCompiledAnimatedGifOptions,
   ): Uint8Array {
+    this.ensureNotDisposed();
+    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
     assertOwnOptionKeys(
       renderOpts,
       COMPILED_ANIMATED_RASTER_OPTION_KEYS,
       "renderCompiledToAnimatedGif",
     );
     return this.renderAnimatedGifWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
-      this.renderFramesWithCompiledScene(compiled, frameOptions, rasterPlan),
+      this.renderFramesWithCompiledRecord(compiledRecord, frameOptions, rasterPlan),
     );
   }
 
@@ -1958,7 +1970,7 @@ export class Engine {
     if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
-    const ir = this.compileWithWasmBackend(vnode, toCompileOptions(renderOpts), {
+    const ir = this.compileSourceWithWasmBackend(vnode, toCompileOptions(renderOpts), {
       sampleAnimation: true,
       timeMs: renderOpts?.timeMs,
       showMissingGlyphs: renderOpts?.showMissingGlyphs,
@@ -1984,7 +1996,7 @@ export class Engine {
     validate(vnode);
     // Compile without sampling so the raw animation track survives; the
     // export samples it itself.
-    const { ir } = this.compileWithWasmBackend(vnode, undefined, {
+    const { ir } = this.compileSourceWithWasmBackend(vnode, undefined, {
       sampleAnimation: false,
     });
     const sampleFn = this.requireWasmBackendFn(
@@ -2013,7 +2025,23 @@ export class Engine {
       validate(vnode);
     }
 
-    return this.compileWithWasmBackend(vnode, compileOpts);
+    const compiledSource = this.compileSourceWithWasmBackend(vnode, compileOpts);
+    return createCompiledScene(
+      this.compiledSceneOwnerToken,
+      compiledSource.ir,
+      compiledSource.textPathMode,
+    );
+  }
+
+  /**
+   * Return a detached, editable inspection copy of a compiled scene's IR.
+   *
+   * Mutating the returned graph or its warnings cannot affect the artifact.
+   */
+  snapshotCompiledIR(compiled: CompiledScene): IR {
+    this.ensureNotDisposed();
+    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
+    return snapshotCompiledSceneRecordIR(compiledRecord);
   }
 
   /**
@@ -2065,12 +2093,11 @@ export class Engine {
     const textNodeIds = collectIrTextNodeIds(ir.root);
     this.assertWasmTextContracts(referenceVNode, textNodeIds);
     this.assertWasmTextContracts(targetVNode, textNodeIds);
-    return {
+    return createCompiledScene(
+      this.compiledSceneOwnerToken,
       ir,
-      width: ir.width,
-      height: ir.height,
-      textPathMode: compileOpts?.textPathMode ?? DEFAULT_TEXT_PATH_MODE,
-    };
+      compileOpts?.textPathMode ?? DEFAULT_TEXT_PATH_MODE,
+    );
   }
 
   /**
@@ -2089,32 +2116,35 @@ export class Engine {
   /**
    * Render deterministic frames from an already compiled scene.
    *
-   * The current public IR is snapshotted when this method is called; later IR
-   * mutations do not affect the returned frames. The returned iterator is
-   * single-use and shares the prepared-scene cleanup guarantees of
-   * `renderFrames`.
+   * The artifact's private immutable IR is prepared when this method is
+   * called. The returned iterator is single-use and shares the prepared-scene
+   * cleanup guarantees of `renderFrames`.
    */
   renderCompiledFrames(
     compiled: CompiledScene,
     options: RenderCompiledFramesOptions,
   ): Iterable<Frame> {
+    this.ensureNotDisposed();
+    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
     assertFrameOptionKeys(options, "renderCompiledFrames", true);
-    return this.renderFramesWithCompiledScene(compiled, options as LegacyRenderFramesOptions);
+    return this.renderFramesWithCompiledRecord(
+      compiledRecord,
+      options as LegacyRenderFramesOptions,
+    );
   }
 
   /** Compiled-scene frame entry plus the raster plan used by animated containers. */
-  private renderFramesWithCompiledScene(
-    compiled: CompiledScene,
+  private renderFramesWithCompiledRecord(
+    compiledRecord: CompiledSceneRecord,
     options: LegacyRenderFramesOptions,
     animationRasterPlan?: AnimationRasterPlan,
   ): Iterable<Frame> {
-    this.ensureNotDisposed();
     this.prunePreparedFrameScenes();
     const plan = this.createFrameRenderPlan(options, animationRasterPlan);
     if (plan.rasterPlan !== undefined) {
       this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
     }
-    return this.renderFramesFromCompiledScene(compiled, plan);
+    return this.renderFramesFromCompiledRecord(compiledRecord, plan);
   }
 
   /** `renderFrames` plus the raster plan used by animated containers. */
@@ -2134,7 +2164,8 @@ export class Engine {
       skipValidation: plan.stableOptions.skipValidation,
       textPathMode: plan.stableOptions.textPathMode,
     });
-    return this.renderFramesFromCompiledScene(compiled, plan);
+    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
+    return this.renderFramesFromCompiledRecord(compiledRecord, plan);
   }
 
   private createFrameRenderPlan(
@@ -2179,21 +2210,21 @@ export class Engine {
     return { stableOptions, timesMs, format, frameEncoder, rasterPlan, pngOptions };
   }
 
-  private renderFramesFromCompiledScene(
-    compiled: CompiledScene,
+  private renderFramesFromCompiledRecord(
+    compiledRecord: CompiledSceneRecord,
     plan: FrameRenderPlan,
   ): Iterable<Frame> {
     const { stableOptions, timesMs, format, frameEncoder, rasterPlan, pngOptions } = plan;
     const irMetadataSnapshot: IR = {
-      ...compiled.ir,
-      warnings: [...compiled.ir.warnings],
+      ...compiledRecord.ir,
+      warnings: [...compiledRecord.ir.warnings],
     };
     assertRenderableCanvas(irMetadataSnapshot);
     const irSnapshotJson = JSON.stringify({ ...irMetadataSnapshot, warnings: [] });
 
     const { prepared, rasterScene } = this.prepareFrameScene({
       irSnapshotJson,
-      textPathMode: compiled.textPathMode,
+      textPathMode: compiledRecord.textPathMode,
       options: stableOptions,
       raster: rasterPlan !== undefined,
     });
@@ -2441,7 +2472,7 @@ export class Engine {
     visit(vnode, { depth: 0, siblingIndex: 0 });
   }
 
-  private compileWithWasmBackend(
+  private compileSourceWithWasmBackend(
     vnode: VNode,
     compileOpts?: CompileOptions,
     animationOptions?: {
@@ -2449,7 +2480,7 @@ export class Engine {
       timeMs?: number;
       showMissingGlyphs?: boolean;
     },
-  ): CompiledScene {
+  ): CompiledSceneSource {
     const renderToIrFn = this.requireWasmBackendFn(this.options.renderToIrFn, "renderToIrFn");
     this.assertVNodeFontAliasesRegistered(vnode);
     let envelopeJson: string;
@@ -2469,12 +2500,8 @@ export class Engine {
     const envelope = decodeRenderToIrEnvelope(envelopeJson);
     const ir = rehydrateWasmIr(envelope.ir, envelope.warnings);
     this.assertWasmTextContracts(vnode, collectIrTextNodeIds(ir.root));
-    // These outer dimensions are compile-time convenience snapshots. Compiled
-    // render methods intentionally use the current public IR instead.
     return {
       ir,
-      width: ir.width,
-      height: ir.height,
       textPathMode: compileOpts?.textPathMode ?? DEFAULT_TEXT_PATH_MODE,
     };
   }
@@ -2881,11 +2908,12 @@ export class Engine {
   }
 
   renderCompiledToSvg(compiled: CompiledScene, emitOpts?: EmitSvgOptions): string {
+    this.ensureNotDisposed();
+    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
     assertOwnOptionKeys(emitOpts, EMIT_STATIC_SVG_OPTION_KEYS, "renderCompiledToSvg");
     assertSvgEmissionOptionValues(emitOpts);
     assertValidAnimationRenderOptions(emitOpts);
-    this.ensureNotDisposed();
-    assertRenderableCanvas(compiled.ir);
+    assertRenderableCanvas(compiledRecord.ir);
     const requestedScale = emitOpts?.scale ?? 1;
     if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
       throw new FatalError(
@@ -2894,11 +2922,11 @@ export class Engine {
         { stage: "emit" },
       );
     }
-    deliverIrWarnings(compiled.ir, emitOpts?.onWarning);
-    return this.resolveAndEmitIrViaWasm(compiled.ir, compiled.textPathMode, {
+    deliverIrWarnings(compiledRecord.ir, emitOpts?.onWarning);
+    return this.resolveAndEmitIrViaWasm(compiledRecord.ir, compiledRecord.textPathMode, {
       emitOptions: {
         scale: emitOpts?.scale,
-        debug: emitOpts?.debug ?? compiled.ir.debug,
+        debug: emitOpts?.debug ?? compiledRecord.ir.debug,
         resourceIdPrefix: emitOpts?.resourceIdPrefix,
         nodeIdMetadata: emitOpts?.nodeIdMetadata,
         showMissingGlyphs: emitOpts?.showMissingGlyphs,
@@ -2911,14 +2939,15 @@ export class Engine {
   }
 
   renderCompiledToAnimatedSvg(compiled: CompiledScene, emitOpts: EmitAnimatedSvgOptions): string {
+    this.ensureNotDisposed();
+    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
     assertOwnOptionKeys(emitOpts, EMIT_ANIMATED_SVG_OPTION_KEYS, "renderCompiledToAnimatedSvg");
     assertSvgEmissionOptionValues(emitOpts);
     assertAnimatedSvgPlayback(emitOpts?.playback, emitOpts?.timeMs);
     assertValidAnimationRenderOptions(emitOpts);
-    this.ensureNotDisposed();
-    assertRenderableCanvas(compiled.ir);
+    assertRenderableCanvas(compiledRecord.ir);
     if (emitOpts.playback.mode === "timeline") {
-      assertAnimatedSvgTimelineIrJsonRepresentable(compiled.ir);
+      assertAnimatedSvgTimelineIrJsonRepresentable(compiledRecord.ir);
     }
     const requestedScale = emitOpts?.scale ?? 1;
     if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
@@ -2928,11 +2957,11 @@ export class Engine {
         { stage: "emit" },
       );
     }
-    deliverIrWarnings(compiled.ir, emitOpts?.onWarning);
-    return this.resolveAndEmitIrViaWasm(compiled.ir, compiled.textPathMode, {
+    deliverIrWarnings(compiledRecord.ir, emitOpts?.onWarning);
+    return this.resolveAndEmitIrViaWasm(compiledRecord.ir, compiledRecord.textPathMode, {
       emitOptions: {
         scale: emitOpts?.scale,
-        debug: emitOpts?.debug ?? compiled.ir.debug,
+        debug: emitOpts?.debug ?? compiledRecord.ir.debug,
         resourceIdPrefix: emitOpts?.resourceIdPrefix,
         nodeIdMetadata: emitOpts?.nodeIdMetadata,
         showMissingGlyphs: emitOpts?.showMissingGlyphs,
@@ -2950,14 +2979,15 @@ export class Engine {
     compiled: CompiledScene,
     options?: EmitTextOutlinesOptions,
   ): TextOutlineNode[] {
+    this.ensureNotDisposed();
+    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
     assertOwnOptionKeys(
       options,
       new Set(["showMissingGlyphs", "onWarning"]),
       "renderCompiledToTextOutlines",
     );
-    this.ensureNotDisposed();
-    deliverIrWarnings(compiled.ir, options?.onWarning);
-    const resolvedIr = this.resolveIrViaWasm(compiled.ir, compiled.textPathMode, {
+    deliverIrWarnings(compiledRecord.ir, options?.onWarning);
+    const resolvedIr = this.resolveIrViaWasm(compiledRecord.ir, compiledRecord.textPathMode, {
       showMissingGlyphs: options?.showMissingGlyphs,
       preserveResolvedUnitOutlines: !options?.showMissingGlyphs,
     });
@@ -2965,13 +2995,14 @@ export class Engine {
   }
 
   renderCompiledToPng(compiled: CompiledScene, emitOpts?: EmitPngOptions): Uint8Array {
-    assertOwnOptionKeys(emitOpts, EMIT_RASTER_OPTION_KEYS, "renderCompiledToPng");
     this.ensureNotDisposed();
+    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
+    assertOwnOptionKeys(emitOpts, EMIT_RASTER_OPTION_KEYS, "renderCompiledToPng");
     const stableEmitOpts = emitOpts === undefined ? undefined : snapshotRasterOptions(emitOpts);
     assertValidAnimationRenderOptions(stableEmitOpts);
     const requestedScale = stableEmitOpts?.scale ?? 1;
     assertPngScale(requestedScale);
-    assertRenderableCanvas(compiled.ir);
+    assertRenderableCanvas(compiledRecord.ir);
     const rasterize = this.requireRasterEncoder(this.options.svgToPngFn, {
       code: "PNG_NO_RASTERIZER",
       message: "svgToPngFn is required for PNG rendering",
@@ -2979,10 +3010,9 @@ export class Engine {
 
     this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
     const behavior = stableEmitOpts?.rasterOversizeBehavior ?? "auto-adjust";
-    // The current mutable IR is the authoritative source for this render.
     const irMetadataSnapshot: IR = {
-      ...compiled.ir,
-      warnings: [...compiled.ir.warnings],
+      ...compiledRecord.ir,
+      warnings: [...compiledRecord.ir.warnings],
     };
     let scaleResolution: ResolvedRasterScale | undefined;
     let scaleError: FatalError | undefined;
@@ -2998,7 +3028,7 @@ export class Engine {
       }
       scaleError = error;
     }
-    const irSnapshotJson = JSON.stringify({ ...compiled.ir, warnings: [] });
+    const irSnapshotJson = JSON.stringify({ ...compiledRecord.ir, warnings: [] });
     const pngOptions: PngRenderOptions = {
       oversizeBehavior: behavior === "error" ? "error" : "autoAdjust",
     };
@@ -3016,7 +3046,7 @@ export class Engine {
       JSON.stringify({
         scale: scaleResolution?.appliedScale ?? requestedScale,
         debug: stableEmitOpts?.debug ?? irMetadataSnapshot.debug,
-        textPathMode: compiled.textPathMode,
+        textPathMode: compiledRecord.textPathMode,
         showMissingGlyphs: stableEmitOpts?.showMissingGlyphs,
         preserveResolvedUnitOutlines: !stableEmitOpts?.showMissingGlyphs,
         rasterizerCompat: true,
@@ -3081,31 +3111,31 @@ export class Engine {
       validate(vnode);
     }
 
-    const compiled = this.compileWithWasmBackend(vnode, toCompileOptions(renderOpts), {
+    const compiledSource = this.compileSourceWithWasmBackend(vnode, toCompileOptions(renderOpts), {
       sampleAnimation: true,
       timeMs: renderOpts?.timeMs,
       showMissingGlyphs: renderOpts?.showMissingGlyphs,
     });
-    if (renderOpts?.timeMs === undefined && hasAnimatedNode(compiled.ir.root)) {
+    if (renderOpts?.timeMs === undefined && hasAnimatedNode(compiledSource.ir.root)) {
       throw new FatalError(
         "STATIC_ANIMATION_TIME_REQUIRED",
         "Static SVG output requires an explicit timeMs when the scene contains animation.",
         { stage: "emit" },
       );
     }
-    const irSnapshotJson = JSON.stringify({ ...compiled.ir, warnings: [] });
+    const irSnapshotJson = JSON.stringify({ ...compiledSource.ir, warnings: [] });
     const layoutRoot = computeLayout(vnode, {
       computeLayoutFn: this.options.computeLayoutFn,
       fonts: this.options.fonts,
       shapeRegistry: this.shapeRegistry(),
     }).root;
     const sourceNodeMap = snapshotLayerSourceMetadata(layoutRoot);
-    const ir = this.resolveIrViaWasm(compiled.ir, compiled.textPathMode, {
+    const ir = this.resolveIrViaWasm(compiledSource.ir, compiledSource.textPathMode, {
       showMissingGlyphs: renderOpts?.showMissingGlyphs,
       preserveResolvedUnitOutlines: true,
       irSnapshotJson,
     });
-    deliverIrWarnings(compiled.ir, renderOpts?.onWarning);
+    deliverIrWarnings(compiledSource.ir, renderOpts?.onWarning);
     const layeredResult = renderLayeredSvg({
       ir,
       sourceNodeMap,

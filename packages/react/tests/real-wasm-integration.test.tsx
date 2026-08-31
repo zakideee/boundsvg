@@ -196,7 +196,7 @@ describe("React hooks against a real WASM engine", () => {
     container.remove();
   });
 
-  it("useCompiledScene returns the same real IR as core compile", () => {
+  it("useCompiledScene returns an artifact owned by the Provider engine", () => {
     const vnode = scene();
     let hookCompiled: ReturnType<typeof useCompiledScene>["compiled"] = null;
 
@@ -214,7 +214,11 @@ describe("React hooks against a real WASM engine", () => {
       </BoundSvgContext.Provider>,
     );
 
-    expect(hookCompiled).toEqual(engine.compile(vnode, { textPathMode: "merged" }));
+    expect(hookCompiled).not.toBeNull();
+    if (hookCompiled) {
+      expect(engine.snapshotCompiledIR(hookCompiled).width).toBe(240);
+      expect(engine.renderCompiledToSvg(hookCompiled)).toContain("<svg");
+    }
   });
 
   it("useRenderAsset matches real compiled SVG and PNG bytes", () => {

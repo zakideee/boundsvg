@@ -522,7 +522,7 @@ describe("WASM protocol decoders", () => {
     });
 
     const compiled = engine.compile(scene);
-    const compiledText = (compiled.ir.root as IRGroupNode).children?.find(
+    const compiledText = (engine.snapshotCompiledIR(compiled).root as IRGroupNode).children?.find(
       (node): node is IRTextNode => node.type === "text",
     );
     expect(compiledText?.lines[0]?.fragments?.[0]).not.toHaveProperty("style");

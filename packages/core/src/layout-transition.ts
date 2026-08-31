@@ -319,10 +319,10 @@ export function resolveLayoutTransitionInput(
 }
 
 /**
- * Meta keys the compiler stamps on the generated wrapper Groups it injects
- * into a transition's compiled IR. Consumers that map a wrapper back to its
- * authored source node — layered export does, and downstream track
- * extraction may — match these keys instead of copying the strings.
+ * Meta keys the compiler stamps on generated wrapper Groups in a transition's
+ * private compiled state. Consumers inspecting a detached IR snapshot can map
+ * a wrapper back to its authored source node by matching these keys instead of
+ * copying the strings.
  */
 export const LAYOUT_TRANSITION_WRAPPER_META = {
   /** Meta key marking a Group as compiler-generated. */

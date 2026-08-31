@@ -1,10 +1,17 @@
-import type { CompiledScene, Engine, Frame, RenderFramesOptions } from "@boundsvg/core";
+import {
+  type CompiledScene,
+  createElement,
+  Engine,
+  type Frame,
+  type RenderFramesOptions,
+} from "@boundsvg/core";
 import { describe, expect, it, vi } from "vitest";
 import { videoSampleTimeMs } from "../src/frame-rate.js";
 import { encodePngFramesToMp4, renderCompiledToMp4, renderToMp4 } from "../src/mp4.js";
 
 type StubEngine = {
   engine: Engine;
+  compiled: CompiledScene;
   lastOptions: () => RenderFramesOptions | undefined;
 };
 
@@ -16,17 +23,39 @@ type StubEngine = {
  */
 function createStubEngine(frames: Frame[] = []): StubEngine {
   let seen: RenderFramesOptions | undefined;
-  const engine = {
-    renderFrames(_input: unknown, options: RenderFramesOptions): Iterable<Frame> {
+  const engine = new Engine({
+    computeLayoutFn: () => "{}",
+    renderToIrFn: () =>
+      JSON.stringify({
+        ir: {
+          root: {
+            type: "group",
+            nodeId: "auto:0",
+            bbox: { x: 0, y: 0, w: 64, h: 32 },
+            children: [],
+          },
+          drawOrder: [],
+          width: 64,
+          height: 32,
+          warnings: [],
+        },
+        warnings: [],
+      }),
+  });
+  const compiled = engine.compile(createElement("Canvas", { width: 64, height: 32 }));
+  vi.spyOn(engine, "renderFrames").mockImplementation(
+    (_input, options: RenderFramesOptions): Iterable<Frame> => {
       seen = options;
       return frames;
     },
-    renderCompiledFrames(_compiled: CompiledScene, options: RenderFramesOptions): Iterable<Frame> {
+  );
+  vi.spyOn(engine, "renderCompiledFrames").mockImplementation(
+    (_compiled, options: RenderFramesOptions): Iterable<Frame> => {
       seen = options;
       return frames;
     },
-  } as unknown as Engine;
-  return { engine, lastOptions: () => seen };
+  );
+  return { engine, compiled, lastOptions: () => seen };
 }
 
 function pngFrame(index: number): Frame {
@@ -36,7 +65,6 @@ function pngFrame(index: number): Frame {
 const SCENE = { type: "canvas", props: { width: 64, height: 32 } } as unknown as Parameters<
   typeof renderToMp4
 >[1];
-const COMPILED = {} as CompiledScene;
 
 describe("renderToMp4 schedule", () => {
   it("rejects hidden or freeform generator values before sampling frames", async () => {
@@ -220,7 +248,7 @@ describe("renderCompiledToMp4 schedule", () => {
   it("uses the compiled frame sibling with the same deterministic schedule and options", async () => {
     const stub = createStubEngine();
     const onWarning = vi.fn();
-    await renderCompiledToMp4(stub.engine, COMPILED, {
+    await renderCompiledToMp4(stub.engine, stub.compiled, {
       durationMs: 100,
       frameRate: 30,
       scale: 2,
@@ -245,7 +273,7 @@ describe("renderCompiledToMp4 schedule", () => {
     const stub = createStubEngine([pngFrame(0), pngFrame(1)]);
 
     await expect(
-      renderCompiledToMp4(stub.engine, COMPILED, {
+      renderCompiledToMp4(stub.engine, stub.compiled, {
         durationMs: 100,
         signal: controller.signal,
       }),

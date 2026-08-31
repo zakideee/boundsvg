@@ -144,7 +144,7 @@ export async function runPipeline(
       return;
     }
     cliState.cachedSvgString = renderedSvg;
-    cliState.cachedIR = displayCompiled.ir;
+    cliState.cachedIR = engine.snapshotCompiledIR(displayCompiled);
 
     const defaultFont =
       (document.getElementById("opt-default-font") as HTMLInputElement).value || FONT_ALIAS;

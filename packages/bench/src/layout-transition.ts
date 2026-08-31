@@ -300,9 +300,12 @@ function scenarioCounts(
   }
 }
 
-function summarizeCompiled(result: unknown): { checksum: string; outputBytes: number } {
+function summarizeCompiled(
+  engine: Engine,
+  result: unknown,
+): { checksum: string; outputBytes: number } {
   const compiled = result as CompiledScene;
-  const serialized = JSON.stringify(compiled.ir);
+  const serialized = JSON.stringify(engine.snapshotCompiledIR(compiled));
   return { checksum: checksumString(serialized), outputBytes: byteLength(serialized) };
 }
 
@@ -409,6 +412,7 @@ function collectOutputMetrics(
   timesMs: readonly number[],
 ): SizeMetrics {
   const compiled = engine.compileLayoutTransition(input);
+  const compiledIr = engine.snapshotCompiledIR(compiled);
   const declarativeSvg = engine.renderCompiledToSvg(compiled);
   const svgFrames = [
     ...engine.renderCompiledFrames(compiled, { timesMs: [...timesMs], format: "svg" }),
@@ -418,8 +422,8 @@ function collectOutputMetrics(
   ];
   const sourceDepths = collectSceneNodeDepths(input.states.A as SceneNode);
   return {
-    ...wrapperMetrics(compiled.ir, sourceDepths),
-    compiledIrJsonBytes: byteLength(JSON.stringify(compiled.ir)),
+    ...wrapperMetrics(compiledIr, sourceDepths),
+    compiledIrJsonBytes: byteLength(JSON.stringify(compiledIr)),
     declarativeSvgBytes: byteLength(declarativeSvg),
     sampledSvgBytes: summarizeFrames(svgFrames).outputBytes,
     sampledPngBytes: summarizeFrames(pngFrames).outputBytes,
@@ -529,6 +533,9 @@ function measureErrors(engine: Engine, input: LayoutTransitionInput): ErrorMetri
   const reference = engine.compile(referenceInput);
   const target = engine.compile(targetInput);
   const transition = engine.compileLayoutTransition(input);
+  const referenceIr = engine.snapshotCompiledIR(reference);
+  const targetIr = engine.snapshotCompiledIR(target);
+  const transitionIr = engine.snapshotCompiledIR(transition);
   const sourceNodeIds = [...collectSceneNodeDepths(referenceInput).keys()];
   let endpointMaxErrorPx = 0;
   let holdMaxErrorPx = 0;
@@ -536,11 +543,11 @@ function measureErrors(engine: Engine, input: LayoutTransitionInput): ErrorMetri
 
   const checkpointExpectations = LAYOUT_TRANSITION_CHECKPOINTS.map((checkpoint) => ({
     timeMs: checkpoint.timeMs,
-    expectedIr: checkpoint.state === "A" ? reference.ir : target.ir,
+    expectedIr: checkpoint.state === "A" ? referenceIr : targetIr,
     isTargetCheckpoint: checkpoint.state === "B",
   }));
   for (const { timeMs, expectedIr, isTargetCheckpoint } of checkpointExpectations) {
-    const sampled = sampleGeneratedBBoxes(transition.ir, timeMs);
+    const sampled = sampleGeneratedBBoxes(transitionIr, timeMs);
     for (const nodeId of sourceNodeIds) {
       const observed = sampled.get(nodeId);
       if (!observed) {
@@ -561,15 +568,15 @@ function measureErrors(engine: Engine, input: LayoutTransitionInput): ErrorMetri
       : [];
   });
   for (const timeMs of midFlightTimesMs) {
-    const sampled = sampleGeneratedBBoxes(transition.ir, timeMs);
+    const sampled = sampleGeneratedBBoxes(transitionIr, timeMs);
     for (const nodeId of sourceNodeIds) {
       const observed = sampled.get(nodeId);
       if (!observed) {
         throw new RangeError(`Missing sampled flight bbox ${nodeId} at ${timeMs}`);
       }
       const ideal = midpointBBox(
-        bboxFromIr(findIrNode(reference.ir.root, nodeId)),
-        bboxFromIr(findIrNode(target.ir.root, nodeId)),
+        bboxFromIr(findIrNode(referenceIr.root, nodeId)),
+        bboxFromIr(findIrNode(targetIr.root, nodeId)),
       );
       midFlightErrorsPx.push(bboxError(observed, ideal));
     }
@@ -598,7 +605,7 @@ function addPortableScenarios(scenarios: TimedScenario[], engine: Engine, profil
         engine.compile(
           createPortableLayoutTransitionState(PORTABLE_LAYOUT_TRANSITION_SLOT_HEIGHTS.A),
         ),
-      summarize: summarizeCompiled,
+      summarize: (result) => summarizeCompiled(engine, result),
       ...normal,
     },
     {
@@ -607,13 +614,13 @@ function addPortableScenarios(scenarios: TimedScenario[], engine: Engine, profil
         engine.compile(
           createPortableLayoutTransitionState(PORTABLE_LAYOUT_TRANSITION_SLOT_HEIGHTS.B),
         ),
-      summarize: summarizeCompiled,
+      summarize: (result) => summarizeCompiled(engine, result),
       ...normal,
     },
     {
       name: "portable:transition-compile-inclusive",
       run: () => engine.compileLayoutTransition(input),
-      summarize: summarizeCompiled,
+      summarize: (result) => summarizeCompiled(engine, result),
       ...normal,
     },
     {
@@ -674,7 +681,7 @@ function addFanOutScenarios(
     {
       name: `${topology}-${nodeCount}:transition-compile-inclusive`,
       run: () => engine.compileLayoutTransition(input),
-      summarize: summarizeCompiled,
+      summarize: (result) => summarizeCompiled(engine, result),
       ...normal,
     },
     {

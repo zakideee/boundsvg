@@ -272,33 +272,6 @@ function buildHiddenTextUnitDomainScene(delayStepMs: number, text = "AB"): VNode
   );
 }
 
-function findAuthoredAnimation(node: IRNode, ownerId: string): AnimationSpec {
-  const find = (currentNode: IRNode): AnimationSpec | undefined => {
-    if (currentNode.nodeId === ownerId) {
-      if (currentNode.type === "group" && currentNode.animation !== undefined) {
-        return currentNode.animation;
-      }
-      if (currentNode.type === "text" && currentNode.unitAnimation !== undefined) {
-        return currentNode.unitAnimation.animation;
-      }
-    }
-    if (currentNode.type === "group") {
-      for (const child of currentNode.children ?? []) {
-        const animation = find(child);
-        if (animation !== undefined) {
-          return animation;
-        }
-      }
-    }
-    return undefined;
-  };
-  const animation = find(node);
-  if (animation !== undefined) {
-    return animation;
-  }
-  throw new TypeError(`Missing animation owner ${ownerId}`);
-}
-
 function findTextUnitNode(node: IRNode, ownerId: string): Extract<IRNode, { type: "text" }> {
   const find = (currentNode: IRNode): Extract<IRNode, { type: "text" }> | undefined => {
     if (
@@ -1123,25 +1096,24 @@ describe("nodejs/web WASM public parity", () => {
     }
   });
 
-  it("reports the first effective-delay domain failure before a later overflow in every WASM artifact", () => {
+  it("reports the first effective-delay domain failure before a later overflow on source paths in every WASM artifact", () => {
     const options = {
       playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
     };
     const outsideScene = buildHiddenTextUnitDomainScene(Number.MAX_VALUE, "ABC");
 
     for (const engine of timelineEngines) {
-      const compiled = engine.compile(buildHiddenTextUnitDomainScene(0, "ABC"));
-      const compiledOwner = findTextUnitNode(compiled.ir.root, "hidden-domain-units");
+      const compiledOwner = findTextUnitNode(
+        engine.renderToIR(buildHiddenTextUnitDomainScene(0, "ABC")).root,
+        "hidden-domain-units",
+      );
       const expectedUnitId = compiledOwner.unitMap?.units[1]?.unitId;
       if (expectedUnitId === undefined || compiledOwner.unitAnimation === undefined) {
         throw new TypeError("Expected a three-unit compiled text animation");
       }
-      compiledOwner.unitAnimation.delayStepMs = Number.MAX_VALUE;
-
       for (const render of [
         () => engine.renderToAnimatedSvg(outsideScene, options),
         () => engine.renderToAnimatedSvgAndIR(outsideScene, options),
-        () => engine.renderCompiledToAnimatedSvg(compiled, options),
       ]) {
         const thrown = captureThrown(render);
         expect(thrown).toMatchObject({
@@ -1167,20 +1139,16 @@ describe("nodejs/web WASM public parity", () => {
     ["delayMs", Number.POSITIVE_INFINITY],
     ["delayMs", Number.NEGATIVE_INFINITY],
     ["iterations", -0],
-  ] as const)("routes authored %s=%s through every owner, public path, and WASM artifact", (authoredField, received) => {
+  ] as const)("routes authored %s=%s through every owner, source path, and WASM artifact", (authoredField, received) => {
     const options = {
       playback: { mode: "timeline" as const, durationMs: 1, iterations: "infinite" as const },
     };
     for (const owner of ["node", "textUnit"] as const) {
       const invalid = buildAuthoredDomainProbeScene(owner, authoredField, received);
       for (const engine of timelineEngines) {
-        const valid = buildAuthoredDomainProbeScene(owner);
-        const compiled = engine.compile(valid.scene);
-        findAuthoredAnimation(compiled.ir.root, valid.ownerId)[authoredField] = received;
         for (const render of [
           () => engine.renderToAnimatedSvg(invalid.scene, options),
           () => engine.renderToAnimatedSvgAndIR(invalid.scene, options),
-          () => engine.renderCompiledToAnimatedSvg(compiled, options),
         ]) {
           const thrown = captureThrown(render);
           expect(thrown).toMatchObject({

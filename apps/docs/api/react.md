@@ -581,8 +581,15 @@ const objectUrl = usePngObjectUrl(png);
 | API                | Description                                                                   |
 | ------------------ | ----------------------------------------------------------------------------- |
 | `usePngObjectUrl`  | Creates and revokes a PNG object URL for `<img>` previews or download buttons |
-| `useCompiledScene` | Compiles a VNode once so callers can render multiple assets from the same IR  |
+| `useCompiledScene` | Compiles a VNode once into an opaque artifact owned by the Provider engine    |
 | `useRenderAsset`   | Returns compiled scene, SVG string, PNG bytes, and PNG data URL in one hook   |
+
+The returned `CompiledScene` exposes readonly `width`, `height`, and
+`textPathMode` metadata only. Render it with the same Provider `Engine` that
+created it. It is not a serializable transport value and must not be cloned or
+rebuilt as a plain object. For an editable inspection copy, call
+`engine.snapshotCompiledIR(compiled)`; that detached `IR` cannot be passed to a
+compiled render method.
 
 ## Public Exports
 

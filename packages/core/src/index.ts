@@ -139,6 +139,7 @@ export {
   renderToSvgAndIR,
   renderToTextOutlines,
   renderToWebp,
+  snapshotCompiledIR,
 } from "./render.js";
 // Render capability contract
 export type { RasterScaleOptions, ResolvedRasterScale } from "./render-capabilities.js";

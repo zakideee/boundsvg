@@ -20,17 +20,16 @@ full layout at every sampled time.
 ## Quick start
 
 ```ts
-import {
-  compileLayoutTransition,
-  renderCompiledToAnimatedSvg,
-} from "@boundsvg/core";
+import { createEngineAsync } from "@boundsvg/core";
+
+const engine = await createEngineAsync({ fonts: [] });
 
 // Both states must give every node an explicit unique id — matching between
 // the states happens by id, and a node without one fails the compile.
 const collapsed = scene(120); // your function returning a SceneNode
 const expanded = scene(180); // same scene, different panel height
 
-const compiled = compileLayoutTransition({
+const compiled = engine.compileLayoutTransition({
   states: { collapsed, expanded },
   checkpoints: [
     { timeMs: 0, state: "collapsed" },
@@ -41,7 +40,7 @@ const compiled = compileLayoutTransition({
   easing: "ease-in-out",
 });
 
-const svg = renderCompiledToAnimatedSvg(compiled, {
+const svg = engine.renderCompiledToAnimatedSvg(compiled, {
   playback: { mode: "independent" },
 });
 ```
@@ -111,28 +110,23 @@ A transition compiles to an ordinary `CompiledScene`, so every compiled entry
 accepts it:
 
 ```ts
-import {
-  renderCompiledFrames,
-  renderCompiledToAnimatedGif,
-  renderCompiledToAnimatedSvg,
-  renderCompiledToAnimatedWebp,
-  renderCompiledToPng,
-  renderCompiledToSvg,
-} from "@boundsvg/core";
 import { renderCompiledToMp4 } from "@boundsvg/video";
 
-renderCompiledToSvg(compiled, { timeMs: 300 }); // a static poster SVG
-renderCompiledToAnimatedSvg(compiled, {
+engine.renderCompiledToSvg(compiled, { timeMs: 300 }); // a static poster SVG
+engine.renderCompiledToAnimatedSvg(compiled, {
   playback: { mode: "independent" },
 });
-renderCompiledToPng(compiled, { timeMs: 300 }); // a poster PNG
-renderCompiledFrames(compiled, { timesMs: [0, 100, 200], format: "png" });
-renderCompiledToAnimatedWebp(compiled, {
+engine.renderCompiledToPng(compiled, { timeMs: 300 }); // a poster PNG
+engine.renderCompiledFrames(compiled, {
+  timesMs: [0, 100, 200],
+  format: "png",
+});
+engine.renderCompiledToAnimatedWebp(compiled, {
   durationMs: 1000,
   fps: 30,
   iterations: "infinite",
 });
-renderCompiledToAnimatedGif(compiled, {
+engine.renderCompiledToAnimatedGif(compiled, {
   durationMs: 1000,
   fps: 25,
   iterations: 1,
@@ -143,16 +137,21 @@ await renderCompiledToMp4(engine, compiled, {
 });
 ```
 
-The compiled IR carries the generated wrapper groups the compiler injects;
-each is marked with the meta keys published as
-`LAYOUT_TRANSITION_WRAPPER_META`, whose `sourceNodeIdKey` names the authored
-node a wrapper moves. Consumers that need to map generated motion back to
-authored nodes match those constants rather than copying the strings.
+The detached IR returned by `engine.snapshotCompiledIR(compiled)` carries the
+generated wrapper groups the compiler injects; each is marked with the meta
+keys published as `LAYOUT_TRANSITION_WRAPPER_META`, whose `sourceNodeIdKey`
+names the authored node a wrapper moves. Consumers that need to map generated
+motion back to authored nodes match those constants rather than copying the
+strings. This snapshot is editable inspection data and cannot be rendered as a
+compiled artifact.
 
 The compiled option types drop `skipValidation` and `textPathMode`: both are
 compile-time choices that are already fixed inside the `CompiledScene`.
-`renderCompiledFrames` snapshots the scene when called and returns a
-single-use iterator; dispose semantics match `renderFrames`.
+The artifact is opaque, immutable, and bound to the exact `Engine` that created
+it. This includes `renderCompiledToMp4(engine, compiled, ...)`: passing an
+artifact from another Engine fails with `COMPILED_SCENE_WRONG_ENGINE`.
+`renderCompiledFrames` prepares the artifact's private state when called and
+returns a single-use iterator; dispose semantics match `renderFrames`.
 
 ## Workers
 

@@ -295,7 +295,13 @@ describe("portable layout transition fixture", () => {
 
   beforeAll(async () => {
     handle = await createFontedWasmHandle();
-    engine = createEngineFromHandle(handle, { svgToPngFn: handle.createSvgToPngFn() });
+    const encodeAnimatedWebp = handle.createSvgsToAnimatedWebpFn();
+    const encodeAnimatedGif = handle.createSvgsToAnimatedGifFn();
+    engine = createEngineFromHandle(handle, {
+      svgToPngFn: handle.createSvgToPngFn(),
+      ...(encodeAnimatedWebp ? { svgsToAnimatedWebpFn: encodeAnimatedWebp } : {}),
+      ...(encodeAnimatedGif ? { svgsToAnimatedGifFn: encodeAnimatedGif } : {}),
+    });
   });
 
   afterAll(() => {
@@ -394,12 +400,14 @@ describe("portable layout transition fixture", () => {
     ]);
   });
 
-  it("returns an ordinary CompiledScene accepted by compiled SVG and PNG entries", () => {
+  it("returns an ordinary CompiledScene accepted by every compiled output family", () => {
     const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput(), {
       textPathMode: "merged",
     });
 
-    expect(Object.keys(compiled).sort()).toEqual(["height", "ir", "textPathMode", "width"]);
+    expect(Object.keys(compiled).sort()).toEqual(["height", "textPathMode", "width"]);
+    expect(Object.isFrozen(compiled)).toBe(true);
+    expect(engine.snapshotCompiledIR(compiled).root).toBeDefined();
     expect(compiled.width).toBe(PORTABLE_LAYOUT_TRANSITION_CANVAS.width);
     expect(compiled.height).toBe(PORTABLE_LAYOUT_TRANSITION_CANVAS.height);
     expect(engine.renderCompiledToSvg(compiled, { timeMs: 0 })).toContain(
@@ -408,6 +416,21 @@ describe("portable layout transition fixture", () => {
     expect(Array.from(engine.renderCompiledToPng(compiled, { timeMs: 0 }).slice(0, 8))).toEqual([
       137, 80, 78, 71, 13, 10, 26, 10,
     ]);
+    expect(engine.renderCompiledToTextOutlines(compiled).length).toBeGreaterThan(0);
+    expect(
+      engine.renderCompiledToAnimatedWebp(compiled, {
+        durationMs: 1000,
+        fps: 2,
+        iterations: 1,
+      }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      engine.renderCompiledToAnimatedGif(compiled, {
+        durationMs: 1000,
+        fps: 2,
+        iterations: 1,
+      }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("renders transition CompiledScene checkpoints through compiled SVG and PNG frames", () => {
@@ -487,12 +510,14 @@ describe("portable layout transition fixture", () => {
       createPortableLayoutTransitionState(PORTABLE_LAYOUT_TRANSITION_SLOT_HEIGHTS.A),
     );
     const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput());
-    const slotWrapper = findIrNode(compiled.ir.root, "__boundsvg:layout-transition-wrapper:4:slot");
+    const referenceIr = engine.snapshotCompiledIR(reference);
+    const compiledIr = engine.snapshotCompiledIR(compiled);
+    const slotWrapper = findIrNode(compiledIr.root, "__boundsvg:layout-transition-wrapper:4:slot");
     const slotContentWrapper = findIrNode(
-      compiled.ir.root,
+      compiledIr.root,
       "__boundsvg:layout-transition-wrapper:5:slot-content",
     );
-    const tailWrapper = findIrNode(compiled.ir.root, "__boundsvg:layout-transition-wrapper:7:tail");
+    const tailWrapper = findIrNode(compiledIr.root, "__boundsvg:layout-transition-wrapper:7:tail");
 
     for (const [wrapper, sourceNodeId] of [
       [slotWrapper, "slot"],
@@ -528,14 +553,14 @@ describe("portable layout transition fixture", () => {
       );
     }
 
-    expect(findIrNode(compiled.ir.root, "tail")).toEqual(findIrNode(reference.ir.root, "tail"));
-    expect(findIrNode(compiled.ir.root, "message-1")).toEqual(
-      findIrNode(reference.ir.root, "message-1"),
+    expect(findIrNode(compiledIr.root, "tail")).toEqual(findIrNode(referenceIr.root, "tail"));
+    expect(findIrNode(compiledIr.root, "message-1")).toEqual(
+      findIrNode(referenceIr.root, "message-1"),
     );
     expect(() =>
-      findIrNode(compiled.ir.root, "__boundsvg:layout-transition-wrapper:8:message-1"),
+      findIrNode(compiledIr.root, "__boundsvg:layout-transition-wrapper:8:message-1"),
     ).toThrow(RangeError);
-    expect(compiled.ir.drawOrder).toEqual(reference.ir.drawOrder);
+    expect(compiledIr.drawOrder).toEqual(referenceIr.drawOrder);
   });
 
   it("emits generated outer and authored inner animations in declarative SVG", () => {
@@ -573,7 +598,7 @@ describe("portable layout transition fixture", () => {
       engine.renderToLayoutTree(referenceState, { skipValidation: true }).root,
     );
     const layered = renderLayeredSvg({
-      ir: compiled.ir,
+      ir: engine.snapshotCompiledIR(compiled),
       sourceNodeMap,
       emitLayerSvg: (layerIr) => JSON.stringify(layerIr),
     });
@@ -621,7 +646,7 @@ describe("portable layout transition fixture", () => {
       engine.renderToLayoutTree(referenceState).root,
     );
     const layered = renderLayeredSvg({
-      ir: compiled.ir,
+      ir: engine.snapshotCompiledIR(compiled),
       sourceNodeMap,
       emitLayerSvg: (layerIr) => JSON.stringify(layerIr),
     });
@@ -648,8 +673,9 @@ describe("portable layout transition fixture", () => {
       tail.onClick = "select-tail";
     }
     const compiled = engine.compileLayoutTransition(input);
-    const wrapper = findIrNode(compiled.ir.root, "__boundsvg:layout-transition-wrapper:7:tail");
-    const authoredTail = findIrNode(compiled.ir.root, "tail");
+    const compiledIr = engine.snapshotCompiledIR(compiled);
+    const wrapper = findIrNode(compiledIr.root, "__boundsvg:layout-transition-wrapper:7:tail");
+    const authoredTail = findIrNode(compiledIr.root, "tail");
     expect(wrapper.type === "group" ? wrapper.meta : undefined).toMatchObject({
       "boundsvg.generated": "layout-transition-wrapper",
       "boundsvg.sourceNodeId": "tail",
@@ -658,10 +684,10 @@ describe("portable layout transition fixture", () => {
     expect(authoredTail.type === "group" ? authoredTail.on : undefined).toEqual({
       onClick: "select-tail",
     });
-    expect(hitTest(compiled.ir, 40, 158)).toBe("tail");
-    expect(compiled.ir.drawOrder.some((nodeId) => nodeId.startsWith("__boundsvg:"))).toBe(false);
+    expect(hitTest(compiledIr, 40, 158)).toBe("tail");
+    expect(compiledIr.drawOrder.some((nodeId) => nodeId.startsWith("__boundsvg:"))).toBe(false);
     const inspectCandidates = inspectHitTestCandidates(
-      buildInspectHitTestIndex(compiled.ir),
+      buildInspectHitTestIndex(compiledIr),
       40,
       158,
     );
@@ -669,7 +695,7 @@ describe("portable layout transition fixture", () => {
     expect(inspectCandidates).toContain("__boundsvg:layout-transition-wrapper:7:tail");
 
     const internalSamples = JSON.parse(
-      handle.sampleAnimationState(JSON.stringify(compiled.ir), 150),
+      handle.sampleAnimationState(JSON.stringify(compiledIr), 150),
     ) as RawAnimationStateSample[];
     expect(
       internalSamples.some((sample) =>
@@ -681,13 +707,18 @@ describe("portable layout transition fixture", () => {
   it("matches every independent full-layout bbox at A/B/hold/A checkpoints", () => {
     const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput());
     const independent = {
-      A: engine.compile(
-        createPortableLayoutTransitionState(PORTABLE_LAYOUT_TRANSITION_SLOT_HEIGHTS.A),
+      A: engine.snapshotCompiledIR(
+        engine.compile(
+          createPortableLayoutTransitionState(PORTABLE_LAYOUT_TRANSITION_SLOT_HEIGHTS.A),
+        ),
       ),
-      B: engine.compile(
-        createPortableLayoutTransitionState(PORTABLE_LAYOUT_TRANSITION_SLOT_HEIGHTS.B),
+      B: engine.snapshotCompiledIR(
+        engine.compile(
+          createPortableLayoutTransitionState(PORTABLE_LAYOUT_TRANSITION_SLOT_HEIGHTS.B),
+        ),
       ),
     };
+    const compiledIr = engine.snapshotCompiledIR(compiled);
 
     for (const [timeMs, state] of [
       [0, "A"],
@@ -695,10 +726,10 @@ describe("portable layout transition fixture", () => {
       [700, "B"],
       [1_000, "A"],
     ] as const) {
-      const sampledBBoxes = sampleGeneratedBBoxes(handle, compiled.ir, timeMs);
+      const sampledBBoxes = sampleGeneratedBBoxes(handle, compiledIr, timeMs);
       let checkpointMaxErrorPx = 0;
       for (const nodeId of Object.keys(PORTABLE_LAYOUT_TRANSITION_GOLDEN_BBOXES[state])) {
-        const expectedBBox = findIrNode(independent[state].ir.root, nodeId).bbox;
+        const expectedBBox = findIrNode(independent[state].root, nodeId).bbox;
         const observedBBox = sampledBBoxes.get(nodeId);
         expect(observedBBox, `${nodeId} at ${timeMs}ms`).toBeDefined();
         expect(
@@ -777,7 +808,7 @@ describe("portable layout transition fixture", () => {
       };
     }
     const opacityCompiled = engine.compileLayoutTransition(scaleWithOpacityOnly);
-    const opacitySlot = findIrNode(opacityCompiled.ir.root, "slot");
+    const opacitySlot = findIrNode(engine.snapshotCompiledIR(opacityCompiled).root, "slot");
     expect(opacitySlot.type === "group" ? opacitySlot.animation?.keyframes : undefined).toEqual([
       { at: 0, opacity: 0.5 },
       { at: 1, opacity: 1 },
@@ -786,7 +817,10 @@ describe("portable layout transition fixture", () => {
     const translationWithAuthoredTransform = engine.compileLayoutTransition(
       createPortableLayoutTransitionInput(),
     );
-    const translatedTail = findIrNode(translationWithAuthoredTransform.ir.root, "tail");
+    const translatedTail = findIrNode(
+      engine.snapshotCompiledIR(translationWithAuthoredTransform).root,
+      "tail",
+    );
     expect(translatedTail.type === "group" ? translatedTail.animation : undefined).toBeDefined();
   });
 
@@ -828,8 +862,9 @@ describe("portable layout transition fixture", () => {
         canvasStroke: false,
       }),
     );
+    const cancelledWorldScaleIr = engine.snapshotCompiledIR(cancelledWorldScale);
     const cancelledChildWrapper = findIrNode(
-      cancelledWorldScale.ir.root,
+      cancelledWorldScaleIr.root,
       "__boundsvg:layout-transition-wrapper:2:residual-child",
     );
     expect(
@@ -837,7 +872,7 @@ describe("portable layout transition fixture", () => {
         ? cancelledChildWrapper.animation?.keyframes[1]?.transform
         : undefined,
     ).toMatchObject({ scaleX: 0.5, scaleY: 2 / 3 });
-    const authoredChild = findIrNode(cancelledWorldScale.ir.root, "residual-child");
+    const authoredChild = findIrNode(cancelledWorldScaleIr.root, "residual-child");
     expect(authoredChild.type === "group" ? authoredChild.transform : undefined).toMatchObject({
       translateX: 3,
     });
@@ -881,30 +916,33 @@ describe("portable layout transition fixture", () => {
     const independentB = engine.compile(
       createPortableLayoutTransitionState(PORTABLE_LAYOUT_TRANSITION_SLOT_HEIGHTS.B),
     );
+    const compiledIr = engine.snapshotCompiledIR(compiled);
+    const independentAIr = engine.snapshotCompiledIR(independentA);
+    const independentBIr = engine.snapshotCompiledIR(independentB);
 
     for (const timeMs of [150, 850]) {
-      const sampled = sampleGeneratedBBoxes(handle, compiled.ir, timeMs);
+      const sampled = sampleGeneratedBBoxes(handle, compiledIr, timeMs);
       const slotContent = sampled.get("slot-content");
       if (!slotContent) {
         throw new RangeError("Missing sampled slot-content bbox");
       }
       const ideal = interpolateIrBBox(
-        findIrNode(independentA.ir.root, "slot-content").bbox,
-        findIrNode(independentB.ir.root, "slot-content").bbox,
+        findIrNode(independentAIr.root, "slot-content").bbox,
+        findIrNode(independentBIr.root, "slot-content").bbox,
         0.5,
       );
       expect(maxBBoxComponentError(slotContent, ideal)).toBeCloseTo(3.4247273279833337, 9);
       expect(slotContent.y - ideal.y).toBeCloseTo(1.1415757759944511, 9);
     }
 
-    const holdSample = sampleGeneratedBBoxes(handle, compiled.ir, 500);
+    const holdSample = sampleGeneratedBBoxes(handle, compiledIr, 500);
     let maxHoldDriftPx = 0;
     for (const nodeId of Object.keys(PORTABLE_LAYOUT_TRANSITION_GOLDEN_BBOXES.B)) {
       const observed = holdSample.get(nodeId);
       if (!observed) {
         throw new RangeError(`Missing hold sample for ${nodeId}`);
       }
-      const target = findIrNode(independentB.ir.root, nodeId).bbox;
+      const target = findIrNode(independentBIr.root, nodeId).bbox;
       const holdDriftPx = maxBBoxComponentError(observed, {
         x: target.x,
         y: target.y,

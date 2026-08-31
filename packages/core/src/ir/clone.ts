@@ -1,3 +1,4 @@
+import { RecoverableError } from "../errors.js";
 import type {
   BBox,
   BorderRadii,
@@ -281,6 +282,52 @@ export function cloneIRForLayeredTransform(node: IRNode): IRNode {
     case "shape":
       return cloneIRShapeForLayeredTransform(node);
   }
+}
+
+function cloneWarningContextValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(cloneWarningContextValue);
+  }
+  if (value !== null && typeof value === "object") {
+    const clonedValue: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+      clonedValue[key] = cloneWarningContextValue(nestedValue);
+    }
+    return clonedValue;
+  }
+  return value;
+}
+
+function cloneWarningContext(context: Record<string, unknown>): Record<string, unknown> {
+  const clonedContext: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(context)) {
+    clonedContext[key] = cloneWarningContextValue(value);
+  }
+  return clonedContext;
+}
+
+function cloneRecoverableError(warning: RecoverableError): RecoverableError {
+  return new RecoverableError(warning.code, warning.message, {
+    fallback: warning.fallback,
+    ...(warning.context === undefined ? {} : { context: cloneWarningContext(warning.context) }),
+  });
+}
+
+/**
+ * Deep-clone a complete public IR for detached inspection.
+ *
+ * Every mutable node field, draw-order entry, warning instance, and nested
+ * warning context belongs exclusively to the returned snapshot.
+ */
+export function cloneIR(ir: IR): IR {
+  return {
+    root: cloneIRForLayeredTransform(ir.root),
+    drawOrder: [...ir.drawOrder],
+    width: ir.width,
+    height: ir.height,
+    ...(ir.debug === undefined ? {} : { debug: ir.debug }),
+    warnings: ir.warnings.map(cloneRecoverableError),
+  };
 }
 
 function cloneRenderMutableNode(node: IRNode): IRNode {

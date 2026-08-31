@@ -1,14 +1,13 @@
 // @vitest-environment happy-dom
 /** @jsxImportSource react */
 
-import type {
-  CompiledScene,
-  CompileOptions,
+import {
+  type CompileOptions,
   Engine,
-  IR,
-  LayoutResult,
-  RenderIrOptions,
-  VNode,
+  type IR,
+  type LayoutResult,
+  type RenderIrOptions,
+  type VNode,
 } from "@boundsvg/core";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -69,14 +68,20 @@ function makeLayout(vnode: VNode): LayoutResult {
 }
 
 function makeEngine() {
-  const compile = vi.fn((vnode: VNode, options?: CompileOptions) => {
-    const compiled: CompiledScene = {
-      ir: makeIr(vnode),
-      width: vnodeWidth(vnode),
-      height: 80,
-      textPathMode: options?.textPathMode ?? "merged",
+  let compileVNode = STABLE_VNODE;
+  const engine = new Engine({
+    computeLayoutFn: () => "{}",
+    renderToIrFn: () => JSON.stringify({ ir: makeIr(compileVNode), warnings: [] }),
+  });
+  const originalCompile = engine.compile.bind(engine);
+  const compile = vi.spyOn(engine, "compile").mockImplementation((input, options) => {
+    compileVNode = input as VNode;
+    const artifactInput: VNode = {
+      type: "Canvas",
+      props: { width: vnodeWidth(compileVNode), height: 80 },
+      children: [],
     };
-    return compiled;
+    return originalCompile(artifactInput, options);
   });
   const renderToLayoutTree = vi.fn((vnode: VNode) => makeLayout(vnode));
   const renderToIR = vi.fn((vnode: VNode, options?: RenderIrOptions) => {
@@ -85,11 +90,8 @@ function makeEngine() {
     );
     return makeIr(vnode);
   });
-  const engine = {
-    compile,
-    renderToLayoutTree,
-    renderToIR,
-  } as unknown as Engine;
+  vi.spyOn(engine, "renderToLayoutTree").mockImplementation(renderToLayoutTree);
+  vi.spyOn(engine, "renderToIR").mockImplementation(renderToIR);
   return { engine, compile, renderToLayoutTree, renderToIR };
 }
 
@@ -136,11 +138,15 @@ afterEach(() => {
 describe("compiled-scene and inspection render-input stability", () => {
   it("does not recompile a fresh equal VNode for unrelated parent state", async () => {
     const { engine, compile } = makeEngine();
+    let firstCompiled: ReturnType<typeof useCompiledScene>["compiled"] = null;
+    let latestCompiled: ReturnType<typeof useCompiledScene>["compiled"] = null;
     let setLabel!: (label: string) => void;
     function Probe() {
       const [label, setValue] = useState("first");
       setLabel = setValue;
-      useCompiledScene(makeVNode(), STABLE_COMPILE_OPTIONS);
+      const { compiled } = useCompiledScene(makeVNode(), STABLE_COMPILE_OPTIONS);
+      firstCompiled ??= compiled;
+      latestCompiled = compiled;
       return <div data-label={label} />;
     }
     const mounted = mount(<Probe />, engine);
@@ -149,6 +155,11 @@ describe("compiled-scene and inspection render-input stability", () => {
     await flush();
 
     expect(compile).toHaveBeenCalledTimes(1);
+    expect(firstCompiled).not.toBeNull();
+    expect(latestCompiled).toBe(firstCompiled);
+    if (latestCompiled) {
+      expect(() => engine.snapshotCompiledIR(latestCompiled)).not.toThrow();
+    }
     mounted.unmount();
   });
 

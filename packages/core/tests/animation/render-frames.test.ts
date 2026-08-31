@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Frame, RenderFramesOptions } from "../../src/engine.js";
-import { FatalError, RecoverableError } from "../../src/errors.js";
+import { FatalError } from "../../src/errors.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { VNode } from "../../src/vnode/types.js";
 import { createWasmEngineInstance, getWasm, type WasmEngineHandle } from "../../src/wasm/index.js";
@@ -270,26 +270,18 @@ describe("Engine.renderFrames", () => {
     expect(frames[0]?.data).toBe(engine.renderToSvg(scene, { timeMs: 0, scale: 1, debug: false }));
   });
 
-  it("snapshots the current compiled IR before iteration", () => {
+  it("keeps detached snapshot mutations out of compiled iteration", () => {
     const compiled = engine.compile(createMultipleTrackScene());
-    compiled.ir.debug = false;
-    compiled.ir.warnings.push(
-      new RecoverableError("TEST_SNAPSHOT_WARNING", "snapshot warning", {
-        fallback: "none",
-        context: { stage: "ir" },
-      }),
-    );
+    const detachedSnapshot = engine.snapshotCompiledIR(compiled);
+    detachedSnapshot.debug = false;
     const expected = engine.renderCompiledToSvg(compiled, { timeMs: 0 });
     const iterable = engine.renderCompiledFrames(compiled, {
       timesMs: [0],
       format: "svg",
-      onWarning: () => {
-        compiled.ir.debug = true;
-        compiled.ir.width = 998;
-      },
     });
-    compiled.ir.width = 999;
-    compiled.ir.root.bbox.w = 999;
+    detachedSnapshot.debug = true;
+    detachedSnapshot.width = 999;
+    detachedSnapshot.root.bbox.w = 999;
 
     expect([...iterable]).toEqual([{ index: 0, timeMs: 0, format: "svg", data: expected }]);
   });
@@ -526,7 +518,7 @@ describe("Engine.renderFrames", () => {
     }
   });
 
-  it("validates current compiled IR before native frame preparation", () => {
+  it("authenticates compiled artifacts before native frame preparation", () => {
     let prepareCount = 0;
     let rasterPreflightCount = 0;
     const validationEngine = createEngineFromHandle(handle, {
@@ -541,19 +533,27 @@ describe("Engine.renderFrames", () => {
       },
     });
     try {
-      const invalidSvg = validationEngine.compile(createAnimationFreeScene());
-      invalidSvg.ir.width = Number.NaN;
+      const authentic = validationEngine.compile(createAnimationFreeScene());
+      const forged = { ...authentic };
       expectFatalCode(
-        () => validationEngine.renderCompiledFrames(invalidSvg, { timesMs: [0], format: "svg" }),
-        "INVALID_CANVAS_SIZE",
+        () =>
+          Reflect.apply(validationEngine.renderCompiledFrames, validationEngine, [
+            forged,
+            { timesMs: [Number.NaN], format: "svg" },
+          ]),
+        "COMPILED_SCENE_INVALID",
       );
 
-      const invalidPng = validationEngine.compile(createAnimationFreeScene());
-      invalidPng.ir.height = 0;
+      const otherEngine = createEngineFromHandle(handle);
       expectFatalCode(
-        () => validationEngine.renderCompiledFrames(invalidPng, { timesMs: [0], format: "png" }),
-        "INVALID_CANVAS_SIZE",
+        () =>
+          otherEngine.renderCompiledFrames(authentic, {
+            timesMs: [Number.NaN],
+            format: "png",
+          }),
+        "COMPILED_SCENE_WRONG_ENGINE",
       );
+      otherEngine.dispose();
       expect(prepareCount).toBe(0);
       expect(rasterPreflightCount).toBe(0);
     } finally {
@@ -562,12 +562,16 @@ describe("Engine.renderFrames", () => {
   });
 
   it("delivers compiled warnings once and preserves PNG resolution adjustment", () => {
-    const compiled = engine.compile(createAnimationFreeScene());
-    compiled.ir.warnings.push(
-      new RecoverableError("TEST_COMPILED_WARNING", "compiled warning", {
-        fallback: "none",
-        context: { stage: "ir", nodeId: compiled.ir.root.nodeId },
-      }),
+    const compiled = engine.compile(
+      createElement(
+        "Canvas",
+        { width: 240, height: 140 },
+        createElement("Image", {
+          src: "https://example.test/frame-warning.png",
+          width: 20,
+          height: 20,
+        }),
+      ),
     );
     const warningCodes: string[] = [];
     const adjustments: Array<{ requestedScale: number; appliedScale: number }> = [];
@@ -583,13 +587,13 @@ describe("Engine.renderFrames", () => {
     ];
 
     expect(frames).toHaveLength(2);
-    expect(warningCodes).toEqual(["TEST_COMPILED_WARNING"]);
+    expect(warningCodes).toEqual(["IMAGE_SRC_NOT_EMBEDDED"]);
     expect(adjustments).toEqual([]);
 
     const oversized = engine.compile(
       createElement("Canvas", { width: 4_000, height: 4_000, background: "#000" }),
     );
-    const originalWarnings = [...oversized.ir.warnings];
+    const originalWarnings = engine.snapshotCompiledIR(oversized).warnings;
     const oversizedWarningCodes: string[] = [];
     for (let renderIndex = 0; renderIndex < 2; renderIndex += 1) {
       expect([
@@ -602,7 +606,7 @@ describe("Engine.renderFrames", () => {
             adjustments.push({ requestedScale, appliedScale }),
         }),
       ]).toEqual([]);
-      expect(oversized.ir.warnings).toEqual(originalWarnings);
+      expect(engine.snapshotCompiledIR(oversized).warnings).toEqual(originalWarnings);
     }
     expect(oversizedWarningCodes).toEqual(["PNG_RESOLUTION_ADJUSTED", "PNG_RESOLUTION_ADJUSTED"]);
     expect(adjustments).toHaveLength(2);
@@ -787,7 +791,7 @@ describe("WASM prepared scene ownership", () => {
     const ownerEngine = createEngineFromHandle(handle);
     try {
       const compiled = ownerEngine.compile(createMultipleTrackScene());
-      return JSON.stringify({ ...compiled.ir, warnings: [] });
+      return JSON.stringify({ ...ownerEngine.snapshotCompiledIR(compiled), warnings: [] });
     } finally {
       ownerEngine.dispose();
     }
