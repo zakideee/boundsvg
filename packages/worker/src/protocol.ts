@@ -685,6 +685,99 @@ function snapshotRecoverableWarnings(value: unknown): SerializedRecoverableError
   return warnings;
 }
 
+function snapshotObjectDescriptors(value: unknown): PropertyDescriptorMap | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  try {
+    if (Array.isArray(value)) {
+      return undefined;
+    }
+    return Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function defineObjectSnapshot(
+  descriptors: PropertyDescriptorMap,
+): Record<string, unknown> | undefined {
+  try {
+    const snapshot: Record<string, unknown> = {};
+    Object.defineProperties(snapshot, descriptors);
+    return snapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+function detachOptionalWarnings(descriptors: PropertyDescriptorMap): boolean {
+  const warningDescriptor = descriptors.warnings;
+  if (warningDescriptor === undefined) {
+    return true;
+  }
+  if (!warningDescriptor.enumerable || !("value" in warningDescriptor)) {
+    return false;
+  }
+  if (warningDescriptor.value === undefined) {
+    return true;
+  }
+  const warnings = snapshotRecoverableWarnings(warningDescriptor.value);
+  if (warnings === undefined) {
+    return false;
+  }
+  descriptors.warnings = { ...warningDescriptor, value: warnings };
+  return true;
+}
+
+function snapshotMeasurementResult(value: Record<string, unknown>, type: string): boolean {
+  switch (type) {
+    case "layout-text-flow-ok":
+    case "layout-text-flow-with-exclusions-ok":
+    case "measure-intrinsic-inline-size-ok": {
+      const resultDescriptors = snapshotObjectDescriptors(value.result);
+      if (resultDescriptors === undefined || !detachOptionalWarnings(resultDescriptors)) {
+        return false;
+      }
+      const resultSnapshot = defineObjectSnapshot(resultDescriptors);
+      if (resultSnapshot === undefined) {
+        return false;
+      }
+      value.result = resultSnapshot;
+      return true;
+    }
+    case "shrinkwrap-flow-ok": {
+      const resultDescriptors = snapshotObjectDescriptors(value.result);
+      const layoutDescriptor = resultDescriptors?.layout;
+      if (
+        resultDescriptors === undefined ||
+        layoutDescriptor === undefined ||
+        !layoutDescriptor.enumerable ||
+        !("value" in layoutDescriptor)
+      ) {
+        return false;
+      }
+      const layoutDescriptors = snapshotObjectDescriptors(layoutDescriptor.value);
+      if (layoutDescriptors === undefined || !detachOptionalWarnings(layoutDescriptors)) {
+        return false;
+      }
+      const layoutSnapshot = defineObjectSnapshot(layoutDescriptors);
+      if (layoutSnapshot === undefined) {
+        return false;
+      }
+      resultDescriptors.layout = { ...layoutDescriptor, value: layoutSnapshot };
+      const resultSnapshot = defineObjectSnapshot(resultDescriptors);
+      if (resultSnapshot === undefined) {
+        return false;
+      }
+      value.result = resultSnapshot;
+      return true;
+    }
+    default:
+      return true;
+  }
+}
+
 function requestArrayKeys(type: string): readonly string[] {
   switch (type) {
     case "init":
@@ -727,6 +820,10 @@ function snapshotResponseDiagnostics(value: Record<string, unknown>, type: strin
       return false;
     }
     value[key] = warnings;
+  }
+
+  if (!snapshotMeasurementResult(value, type)) {
+    return false;
   }
 
   if (type === "error" && value.error !== undefined) {

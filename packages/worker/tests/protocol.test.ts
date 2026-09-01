@@ -971,6 +971,105 @@ describe("isWorkerResponse", () => {
     expect(decoded.warnings[0]?.context).toEqual({ owner: { id: "original" } });
   });
 
+  it("detaches intrinsic measurement warnings from the validated result", () => {
+    const warning = {
+      severity: "recoverable" as const,
+      code: "INTRINSIC_WARN",
+      message: "original intrinsic warning",
+      fallback: "continued",
+      stage: "text" as const,
+      context: { owner: { id: "original" } },
+    };
+    const decoded = decodeWorkerResponse({
+      id: 1,
+      type: "measure-intrinsic-inline-size-ok",
+      result: {
+        minContentInlineSize: 10,
+        maxContentInlineSize: 20,
+        warnings: [warning],
+      },
+    });
+
+    expect(decoded?.type).toBe("measure-intrinsic-inline-size-ok");
+    if (decoded?.type !== "measure-intrinsic-inline-size-ok") {
+      throw new TypeError("expected a decoded intrinsic measurement response");
+    }
+    expect(decoded.result.warnings?.[0]).toEqual(warning);
+    expect(decoded.result.warnings?.[0]).not.toBe(warning);
+    expect(decoded.result.warnings?.[0]?.context).not.toBe(warning.context);
+
+    warning.message = "mutated intrinsic warning";
+    warning.context.owner.id = "mutated";
+    expect(decoded.result.warnings?.[0]?.message).toBe("original intrinsic warning");
+    expect(decoded.result.warnings?.[0]?.context).toEqual({ owner: { id: "original" } });
+  });
+
+  it("rejects a measurement warning accessor without invoking it", () => {
+    let getterCalls = 0;
+    const result = {
+      minContentInlineSize: 10,
+      maxContentInlineSize: 20,
+    };
+    Object.defineProperty(result, "warnings", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return [];
+      },
+    });
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result,
+      }),
+    ).toBeUndefined();
+    expect(getterCalls).toBe(0);
+  });
+
+  it("detaches nested shrinkwrap-flow warnings from the validated result", () => {
+    const warning = {
+      severity: "recoverable" as const,
+      code: "FLOW_WARN",
+      message: "original flow warning",
+      fallback: "continued",
+      stage: "text" as const,
+      context: { owner: { id: "original" } },
+    };
+    const decoded = decodeWorkerResponse({
+      id: 1,
+      type: "shrinkwrap-flow-ok",
+      result: {
+        status: "satisfied",
+        chosenWidthPx: 10,
+        usedLineCount: 0,
+        usedHeight: 0,
+        layout: {
+          lines: [],
+          exhausted: false,
+          usedLineCount: 0,
+          warnings: [warning],
+          topRubyOverflowPx: 0,
+          bottomRubyOverflowPx: 0,
+        },
+      },
+    });
+
+    expect(decoded?.type).toBe("shrinkwrap-flow-ok");
+    if (decoded?.type !== "shrinkwrap-flow-ok") {
+      throw new TypeError("expected a decoded shrinkwrap-flow response");
+    }
+    expect(decoded.result.layout.warnings?.[0]).toEqual(warning);
+    expect(decoded.result.layout.warnings?.[0]).not.toBe(warning);
+    expect(decoded.result.layout.warnings?.[0]?.context).not.toBe(warning.context);
+
+    warning.message = "mutated flow warning";
+    warning.context.owner.id = "mutated";
+    expect(decoded.result.layout.warnings?.[0]?.message).toBe("original flow warning");
+    expect(decoded.result.layout.warnings?.[0]?.context).toEqual({ owner: { id: "original" } });
+  });
+
   it("returns false for render-png-ok with malformed recoverable warnings", () => {
     expect(
       isWorkerResponse({

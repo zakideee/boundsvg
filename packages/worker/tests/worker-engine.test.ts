@@ -1381,6 +1381,46 @@ describe("WorkerEngine", () => {
       });
       engine.dispose();
     });
+
+    it("retains a detached intrinsic warning snapshot after message delivery", async () => {
+      const engine = await createEngine(mockWorker);
+      const warning = {
+        severity: "recoverable" as const,
+        code: "INTRINSIC_WARN",
+        message: "stable intrinsic warning",
+        fallback: "continued",
+        stage: "text" as const,
+        context: { owner: { id: "stable" } },
+      };
+      const sourceWarnings = [warning];
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "measure-intrinsic-inline-size") {
+          mockWorker.respondUnknown({
+            id: request.id,
+            type: "measure-intrinsic-inline-size-ok",
+            result: {
+              minContentInlineSize: 10,
+              maxContentInlineSize: 20,
+              warnings: sourceWarnings,
+            },
+          });
+          warning.message = "mutated after delivery";
+          warning.context.owner.id = "mutated";
+          sourceWarnings.length = 0;
+        }
+      });
+
+      const result = await engine.measureIntrinsicInlineSize({} as never);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings?.[0]).toMatchObject({
+        code: "INTRINSIC_WARN",
+        message: "stable intrinsic warning",
+        context: { owner: { id: "stable" } },
+      });
+      expect(result.warnings?.[0]).not.toBe(warning);
+      expect(result.warnings?.[0]?.context).not.toBe(warning.context);
+      engine.dispose();
+    });
   });
 
   // -----------------------------------------------------------------------
