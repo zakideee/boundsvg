@@ -1421,6 +1421,26 @@ describe("WorkerEngine", () => {
       expect(result.warnings?.[0]?.context).not.toBe(warning.context);
       engine.dispose();
     });
+
+    it("retains a detached measure-text-block result after message delivery", async () => {
+      const engine = await createEngine(mockWorker);
+      const sourceResult = { lineCount: 1, usedWidth: 10, usedHeight: 20 };
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "measure-text-block") {
+          mockWorker.respondUnknown({
+            id: request.id,
+            type: "measure-text-block-ok",
+            result: sourceResult,
+          });
+          sourceResult.lineCount = 99;
+        }
+      });
+
+      const result = await engine.measureTextBlock({} as never);
+      expect(result).not.toBe(sourceResult);
+      expect(result.lineCount).toBe(1);
+      engine.dispose();
+    });
   });
 
   // -----------------------------------------------------------------------

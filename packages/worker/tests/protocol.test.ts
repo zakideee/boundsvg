@@ -1028,6 +1028,82 @@ describe("isWorkerResponse", () => {
     expect(getterCalls).toBe(0);
   });
 
+  it("rejects a required intrinsic measurement accessor without invoking it", () => {
+    let getterCalls = 0;
+    const result = {
+      maxContentInlineSize: 20,
+    };
+    Object.defineProperty(result, "minContentInlineSize", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return getterCalls === 1 ? 10 : 99;
+      },
+    });
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result,
+      }),
+    ).toBeUndefined();
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects a nested text-flow line accessor without invoking it", () => {
+    let getterCalls = 0;
+    const line = {
+      charStart: 0,
+      charEnd: 4,
+      inlineAdvancePx: 10,
+      availableInlineSizePx: 20,
+    };
+    Object.defineProperty(line, "text", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "text";
+      },
+    });
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "layout-text-flow-ok",
+        result: {
+          lines: [line],
+          exhausted: false,
+        },
+      }),
+    ).toBeUndefined();
+    expect(getterCalls).toBe(0);
+  });
+
+  it("accepts an unknown measurement accessor without invoking it", () => {
+    let getterCalls = 0;
+    const result = {
+      minContentInlineSize: 10,
+      maxContentInlineSize: 20,
+    };
+    Object.defineProperty(result, "futureMetric", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return 30;
+      },
+    });
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result,
+      })?.type,
+    ).toBe("measure-intrinsic-inline-size-ok");
+    expect(getterCalls).toBe(0);
+  });
+
   it("detaches nested shrinkwrap-flow warnings from the validated result", () => {
     const warning = {
       severity: "recoverable" as const,

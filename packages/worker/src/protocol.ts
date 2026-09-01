@@ -685,34 +685,110 @@ function snapshotRecoverableWarnings(value: unknown): SerializedRecoverableError
   return warnings;
 }
 
-function snapshotObjectDescriptors(value: unknown): PropertyDescriptorMap | undefined {
-  if (typeof value !== "object" || value === null) {
+// Keep future fields forward-compatible while ensuring any supported field
+// backed by an accessor or unreadable child fails the ordinary value guards.
+const INVALID_SNAPSHOT_VALUE = Symbol("worker-protocol-invalid-snapshot");
+
+type GetterFreeSnapshotResult =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false };
+
+function snapshotOwnDescriptor(value: object, key: PropertyKey): PropertyDescriptor | undefined {
+  try {
+    return Reflect.getOwnPropertyDescriptor(value, key);
+  } catch {
     return undefined;
   }
+}
+
+function snapshotGetterFreeValue(
+  value: unknown,
+  snapshots: WeakMap<object, object>,
+): GetterFreeSnapshotResult {
+  if (typeof value === "function") {
+    return { ok: true, value: INVALID_SNAPSHOT_VALUE };
+  }
+  if (!isObjectLike(value)) {
+    return { ok: true, value };
+  }
+
+  const existingSnapshot = snapshots.get(value);
+  if (existingSnapshot !== undefined) {
+    return { ok: true, value: existingSnapshot };
+  }
+
   try {
-    if (Array.isArray(value)) {
-      return undefined;
+    const isArrayValue = Array.isArray(value);
+    const valueSnapshot: object = isArrayValue ? [] : {};
+    snapshots.set(value, valueSnapshot);
+
+    let arrayLengthDescriptor: PropertyDescriptor | undefined;
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = snapshotOwnDescriptor(value, key);
+      if (descriptor === undefined) {
+        Object.defineProperty(valueSnapshot, key, {
+          configurable: true,
+          enumerable: true,
+          value: INVALID_SNAPSHOT_VALUE,
+          writable: true,
+        });
+        continue;
+      }
+      if (isArrayValue && key === "length") {
+        arrayLengthDescriptor = descriptor;
+        continue;
+      }
+
+      const childSnapshot =
+        "value" in descriptor
+          ? snapshotGetterFreeValue(descriptor.value, snapshots)
+          : ({ ok: true, value: INVALID_SNAPSHOT_VALUE } as const);
+      Object.defineProperty(valueSnapshot, key, {
+        configurable: true,
+        enumerable: descriptor.enumerable,
+        value: childSnapshot.ok ? childSnapshot.value : INVALID_SNAPSHOT_VALUE,
+        writable: true,
+      });
     }
-    return Object.getOwnPropertyDescriptors(value);
+
+    if (isArrayValue) {
+      if (
+        arrayLengthDescriptor === undefined ||
+        !("value" in arrayLengthDescriptor) ||
+        typeof arrayLengthDescriptor.value !== "number" ||
+        !Number.isSafeInteger(arrayLengthDescriptor.value) ||
+        arrayLengthDescriptor.value < 0
+      ) {
+        return { ok: false };
+      }
+      Object.defineProperty(valueSnapshot, "length", {
+        configurable: false,
+        enumerable: false,
+        value: arrayLengthDescriptor.value,
+        writable: true,
+      });
+    }
+
+    return { ok: true, value: valueSnapshot };
   } catch {
-    return undefined;
+    return { ok: false };
   }
 }
 
-function defineObjectSnapshot(
-  descriptors: PropertyDescriptorMap,
-): Record<string, unknown> | undefined {
-  try {
-    const snapshot: Record<string, unknown> = {};
-    Object.defineProperties(snapshot, descriptors);
-    return snapshot;
-  } catch {
+function snapshotGetterFreeObject(value: unknown): Record<string, unknown> | undefined {
+  const snapshotResult = snapshotGetterFreeValue(value, new WeakMap());
+  if (
+    !snapshotResult.ok ||
+    !isObjectLike(snapshotResult.value) ||
+    Array.isArray(snapshotResult.value)
+  ) {
     return undefined;
   }
+  return snapshotResult.value as Record<string, unknown>;
 }
 
-function detachOptionalWarnings(descriptors: PropertyDescriptorMap): boolean {
-  const warningDescriptor = descriptors.warnings;
+function detachOptionalWarnings(value: Record<string, unknown>): boolean {
+  const warningDescriptor = Reflect.getOwnPropertyDescriptor(value, "warnings");
   if (warningDescriptor === undefined) {
     return true;
   }
@@ -726,7 +802,7 @@ function detachOptionalWarnings(descriptors: PropertyDescriptorMap): boolean {
   if (warnings === undefined) {
     return false;
   }
-  descriptors.warnings = { ...warningDescriptor, value: warnings };
+  Object.defineProperty(value, "warnings", { ...warningDescriptor, value: warnings });
   return true;
 }
 
@@ -734,42 +810,34 @@ function snapshotMeasurementResult(value: Record<string, unknown>, type: string)
   switch (type) {
     case "layout-text-flow-ok":
     case "layout-text-flow-with-exclusions-ok":
+    case "measure-text-block-ok":
+    case "shrinkwrap-text-ok":
+    case "shrinkwrap-flow-ok":
     case "measure-intrinsic-inline-size-ok": {
-      const resultDescriptors = snapshotObjectDescriptors(value.result);
-      if (resultDescriptors === undefined || !detachOptionalWarnings(resultDescriptors)) {
-        return false;
-      }
-      const resultSnapshot = defineObjectSnapshot(resultDescriptors);
+      const resultSnapshot = snapshotGetterFreeObject(value.result);
       if (resultSnapshot === undefined) {
         return false;
       }
-      value.result = resultSnapshot;
-      return true;
-    }
-    case "shrinkwrap-flow-ok": {
-      const resultDescriptors = snapshotObjectDescriptors(value.result);
-      const layoutDescriptor = resultDescriptors?.layout;
+
       if (
-        resultDescriptors === undefined ||
-        layoutDescriptor === undefined ||
-        !layoutDescriptor.enumerable ||
-        !("value" in layoutDescriptor)
+        (type === "layout-text-flow-ok" ||
+          type === "layout-text-flow-with-exclusions-ok" ||
+          type === "measure-intrinsic-inline-size-ok") &&
+        !detachOptionalWarnings(resultSnapshot)
       ) {
         return false;
       }
-      const layoutDescriptors = snapshotObjectDescriptors(layoutDescriptor.value);
-      if (layoutDescriptors === undefined || !detachOptionalWarnings(layoutDescriptors)) {
-        return false;
+      if (type === "shrinkwrap-flow-ok") {
+        const layoutSnapshot = getProperty(resultSnapshot, "layout");
+        if (
+          !isObjectLike(layoutSnapshot) ||
+          Array.isArray(layoutSnapshot) ||
+          !detachOptionalWarnings(layoutSnapshot as Record<string, unknown>)
+        ) {
+          return false;
+        }
       }
-      const layoutSnapshot = defineObjectSnapshot(layoutDescriptors);
-      if (layoutSnapshot === undefined) {
-        return false;
-      }
-      resultDescriptors.layout = { ...layoutDescriptor, value: layoutSnapshot };
-      const resultSnapshot = defineObjectSnapshot(resultDescriptors);
-      if (resultSnapshot === undefined) {
-        return false;
-      }
+
       value.result = resultSnapshot;
       return true;
     }
