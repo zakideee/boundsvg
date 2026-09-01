@@ -12,8 +12,7 @@ use crate::text::types::{Language, WrapMode, WritingMode};
 pub(crate) fn measure_intrinsic_inline_size(
     input: &IntrinsicInlineSizeInput,
     registry: &FontRegistry,
-) -> Result<IntrinsicInlineSizeResult, String> {
-    super::validate_rich_text_depth(input.rich_text.as_deref())?;
+) -> Result<IntrinsicInlineSizeResult, boundtext::TextLayoutError> {
     let font_families = super::build_font_families(&input.font_family, input.fallback.as_deref());
     let font_style = match input.font_style.as_deref() {
         Some("italic") => FontStyle::Italic,
@@ -66,8 +65,7 @@ pub(crate) fn measure_intrinsic_inline_size(
         fit_max_probes: None,
     };
 
-    let result = rich::measure_intrinsic_inline_size(&req, &font_ctx)
-        .ok_or_else(|| "Failed to measure intrinsic inline size".to_string())?;
+    let result = rich::measure_intrinsic_inline_size(&req, &font_ctx)?;
 
     Ok(IntrinsicInlineSizeResult {
         min_content_inline_size: result.min_content_inline_size,

@@ -121,7 +121,7 @@ fn measure_intrinsic_inline_sizes(
     text_input: &TextInput,
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
-) -> Option<IntrinsicInlineSizes> {
+) -> Result<IntrinsicInlineSizes, boundtext::TextLayoutError> {
     let font_families = text_input_font_families(text_input);
     let font_ctx = crate::font::FontContext {
         registry: font_registry,
@@ -537,14 +537,13 @@ pub(super) fn measure_text_node(
     // it to a single column clamps multi-column runs and pushes them outside the
     // parent.
     if !is_vertical && (width_is_min_content || width_is_max_content) {
-        if let Some(intrinsic) =
+        let intrinsic =
             measure_intrinsic_inline_sizes(text_input, font_registry, fallback_registry)
-        {
-            if width_is_min_content {
-                max_width = ceil_nonnegative_f32(intrinsic.min_content_inline_size);
-            } else if width_is_max_content && max_width >= f32::MAX {
-                max_width = ceil_nonnegative_f32(intrinsic.max_content_inline_size);
-            }
+                .map_err(render_text_layout_error)?;
+        if width_is_min_content {
+            max_width = ceil_nonnegative_f32(intrinsic.min_content_inline_size);
+        } else if width_is_max_content && max_width >= f32::MAX {
+            max_width = ceil_nonnegative_f32(intrinsic.max_content_inline_size);
         }
     }
     let is_shrink_to_fit_feedback = shrink_to_fit_widths
@@ -583,7 +582,7 @@ pub(super) fn measure_text_node(
             font_registry,
             fallback_registry,
         )
-        .map_err(|error| error.into_engine_error(None))?;
+        .map_err(render_text_layout_error)?;
         let size = Size {
             width: measured_width_px(
                 rust_result.bbox.w,
@@ -877,26 +876,7 @@ pub(super) fn measure_text_node(
         } else {
             crate::text::engine::layout_text(&req, &font_ctx)
         }
-        .map_err(|error| {
-            let code = match &error {
-                boundtext::TextLayoutError::EllipsisCandidateLimit { .. } => {
-                    "TEXT_ELLIPSIS_CANDIDATE_LIMIT"
-                }
-                boundtext::TextLayoutError::InvalidFitStep => "TEXT_FIT_INVALID_STEP",
-                boundtext::TextLayoutError::FitProbeLimit { .. } => "TEXT_FIT_PROBE_LIMIT",
-                boundtext::TextLayoutError::RichTextDepthLimit { .. } => "RICH_TEXT_MAX_DEPTH",
-                boundtext::TextLayoutError::InlineRectLimit { .. } => {
-                    "INLINE_RECT_COMPLEXITY_LIMIT"
-                }
-                boundtext::TextLayoutError::PreparationFailed => "TEXT_NO_LAYOUT",
-            };
-            crate::error::EngineError::Structured {
-                code: code.to_string(),
-                message: error.to_string(),
-                stage: Some(crate::diagnostics::PipelineStage::Text),
-                node_id: None,
-            }
-        })?;
+        .map_err(render_text_layout_error)?;
         let size = Size {
             width: measured_width_px(
                 rust_result.bbox.w,
@@ -921,6 +901,15 @@ pub(super) fn measure_text_node(
         text_results.insert(node_id, rust_result);
         Ok(size)
     }
+}
+
+fn render_text_layout_error(error: boundtext::TextLayoutError) -> crate::error::EngineError {
+    crate::text_diagnostics::classify_text_layout_error(
+        &error,
+        crate::text_diagnostics::TextLayoutOperation::RenderTextLayout,
+        None,
+    )
+    .into_engine_error()
 }
 
 #[cfg(test)]

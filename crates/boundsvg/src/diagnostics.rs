@@ -426,6 +426,7 @@ fn validate_context(context: Option<&Value>) -> Result<(), DiagnosticContractErr
 mod tests {
     use super::*;
     use crate::font::FontStyle;
+    use crate::text_diagnostics::{TextLayoutOperation, classify_text_layout_error};
     use boundtext::{
         FlowRegionError, FlowRegionField, RegionProviderError, RegionQueryError, RegionQueryField,
         TextLayoutError, TextLayoutInvariant, TextPreparationPhase, TextRequestError,

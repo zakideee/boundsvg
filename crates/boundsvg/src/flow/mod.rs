@@ -11,8 +11,6 @@ mod measure;
 mod shrinkwrap;
 mod types;
 
-use crate::text::types::{MAX_RICH_TEXT_DEPTH, RichTextNodeInput, first_excess_rich_text_depth};
-
 fn build_font_families(primary: &str, fallback: Option<&[String]>) -> Vec<String> {
     let mut families = Vec::with_capacity(1 + fallback.map_or(0, <[String]>::len));
     for family in
@@ -26,13 +24,38 @@ fn build_font_families(primary: &str, fallback: Option<&[String]>) -> Vec<String
     families
 }
 
-fn validate_rich_text_depth(rich_text: Option<&[RichTextNodeInput]>) -> Result<(), String> {
-    if let Some(actual_depth) = rich_text.and_then(first_excess_rich_text_depth) {
-        return Err(format!(
-            "Validation error: rich text exceeds max depth ({MAX_RICH_TEXT_DEPTH}); actual depth {actual_depth}"
-        ));
+fn font_or_preparation_error(
+    font_context: &crate::font::FontContext<'_>,
+    run_index: usize,
+    phase: boundtext::TextPreparationPhase,
+) -> boundtext::TextLayoutError {
+    let font_is_available = font_context
+        .registry
+        .resolve_chain(
+            font_context.families,
+            font_context.weight,
+            font_context.style,
+        )
+        .is_some()
+        || font_context.fallback_registry.is_some_and(|fallback| {
+            fallback
+                .resolve_chain(
+                    font_context.families,
+                    font_context.weight,
+                    font_context.style,
+                )
+                .is_some()
+        });
+    if font_is_available {
+        boundtext::TextLayoutError::PreparationFailed { phase }
+    } else {
+        boundtext::TextLayoutError::FontUnavailable {
+            run_index,
+            families: font_context.families.to_vec(),
+            weight: font_context.weight,
+            style: font_context.style.clone(),
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -1279,12 +1279,9 @@ fn exclusion_fit_rejects_an_incomplete_exact_grid_before_layout() {
 
     let error = layout_text_flow_with_exclusions(&input, &registry)
         .expect_err("the complete exact grid exceeds one probe");
-    assert_eq!(error.code(), "TEXT_FIT_PROBE_LIMIT");
     assert!(matches!(
         error,
-        super::adapters::TextFlowLayoutError::Boundtext(
-            boundtext::BoundtextError::FitProbeLimit { .. }
-        )
+        boundtext::TextLayoutError::FitProbeLimit { .. }
     ));
 }
 
@@ -1307,12 +1304,9 @@ fn exclusion_flow_surfaces_the_ellipsis_candidate_limit() {
 
     let error = layout_text_flow_with_exclusions(&input, &registry)
         .expect_err("exact projection must be bounded");
-    assert_eq!(error.code(), "TEXT_ELLIPSIS_CANDIDATE_LIMIT");
     assert!(matches!(
         error,
-        super::adapters::TextFlowLayoutError::Boundtext(
-            boundtext::BoundtextError::EllipsisCandidateLimit { .. }
-        )
+        boundtext::TextLayoutError::EllipsisCandidateLimit { .. }
     ));
 }
 
@@ -1666,21 +1660,23 @@ fn rich_text_depth_49_is_rejected_by_all_typed_consumers() {
 
     let errors = [
         layout_text_flow_with_exclusions(&exclusion, &registry)
-            .expect_err("exclusion flow should reject over-depth rich text")
-            .to_string(),
+            .expect_err("exclusion flow should reject over-depth rich text"),
         shrinkwrap_text(&shrinkwrap_text_input, &registry)
-            .expect_err("text shrinkwrap should reject over-depth rich text")
-            .to_string(),
+            .expect_err("text shrinkwrap should reject over-depth rich text"),
         shrinkwrap_flow(&shrinkwrap_flow_input, &registry)
-            .expect_err("flow shrinkwrap should reject over-depth rich text")
-            .to_string(),
+            .expect_err("flow shrinkwrap should reject over-depth rich text"),
         measure_intrinsic_inline_size(&intrinsic, &registry)
             .expect_err("intrinsic measurement should reject over-depth rich text"),
     ];
 
     for error in errors {
-        assert!(error.contains("rich text exceeds max depth (48)"));
-        assert!(error.contains("actual depth 49"));
+        assert_eq!(
+            error,
+            boundtext::TextLayoutError::RichTextDepthLimit {
+                actual: 49,
+                limit: 48,
+            }
+        );
     }
 }
 
@@ -4358,11 +4354,11 @@ fn shrinkwrap_text_rejects_spans_and_rich_text_together() {
         font_feature_settings: None,
     };
 
-    let result = shrinkwrap_text(&input, &reg);
-    assert!(result.is_err());
     assert_eq!(
-        result.unwrap_err().to_string(),
-        "spans and richText are mutually exclusive"
+        shrinkwrap_text(&input, &reg).expect_err("conflicting text sources must fail"),
+        boundtext::TextLayoutError::InvalidRequest {
+            reason: boundtext::TextRequestError::ConflictingTextSources,
+        }
     );
 }
 

@@ -22,7 +22,7 @@ impl bt_flow::RegionProvider for ExclusionRegionProvider<'_> {
     fn regions(
         &self,
         query: bt_flow::RegionQuery,
-    ) -> Result<Vec<bt_flow::FlowRegion>, boundtext::BoundtextError> {
+    ) -> Result<Vec<bt_flow::FlowRegion>, boundtext::RegionProviderError> {
         let regions = match query.writing_mode {
             crate::text::types::WritingMode::HorizontalTb => {
                 let band_top = self.flow_box.y + query.cross_start_px;

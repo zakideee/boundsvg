@@ -328,7 +328,9 @@ fn inline_rect_wire_input(rich_text: &serde_json::Value) -> LayoutInput {
 fn assert_structured_error_code(error: crate::error::EngineError, expected_code: &str) {
     assert!(matches!(
         error,
-        crate::error::EngineError::Structured { code, .. } if code == expected_code
+        crate::error::EngineError::Structured { code, .. }
+            | crate::error::EngineError::StructuredContext { code, .. }
+            if code == expected_code
     ));
 }
 
@@ -871,7 +873,7 @@ fn text_measurement_fails_before_unit_map_materialization() {
     input.fonts.clear();
     let error = compute_full_layout(&input).expect_err("unit metadata requires resolved text");
     match error {
-        crate::error::EngineError::Structured {
+        crate::error::EngineError::StructuredContext {
             code,
             stage,
             node_id,

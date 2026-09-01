@@ -107,10 +107,14 @@ pub(super) fn compute_layout_core(
             .text_errors
             .remove(&failed_node_id)
             .ok_or_else(|| EngineError::Layout("Text measurement failed".to_string()))?;
-        if let EngineError::Structured { node_id, .. } = &mut error
-            && node_id.is_none()
-        {
-            *node_id = Some(public_id);
+        match &mut error {
+            EngineError::Structured { node_id, .. }
+            | EngineError::StructuredContext { node_id, .. }
+                if node_id.is_none() =>
+            {
+                *node_id = Some(public_id);
+            }
+            _ => {}
         }
         return Err(error);
     }
@@ -1623,12 +1627,17 @@ fn map_text_path_layout_error(
         TextOnPathError::DecorationGeometry => "TEXT_DECORATION_GEOMETRY",
         TextOnPathError::InlineClusterSplit => "TEXT_PATH_INLINE_CLUSTER_SPLIT",
         TextOnPathError::FitUnsatisfiable => "TEXT_PATH_FIT_UNSATISFIABLE",
-        TextOnPathError::LayoutUnavailable => "TEXT_NO_LAYOUT",
+        TextOnPathError::LayoutUnavailable => "TEXT_PATH_LAYOUT_UNAVAILABLE",
         TextOnPathError::UnitMapInvalid => "TEXT_UNIT_MAP_INVALID",
+    };
+    let message = if matches!(error, TextOnPathError::LayoutUnavailable) {
+        "Text-on-path layout is unavailable.".to_string()
+    } else {
+        error.to_string()
     };
     EngineError::Structured {
         code: code.to_string(),
-        message: error.to_string(),
+        message,
         stage: Some(crate::diagnostics::PipelineStage::Text),
         node_id: Some(node_id.to_string()),
     }

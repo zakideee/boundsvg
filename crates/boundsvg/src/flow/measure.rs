@@ -4,7 +4,9 @@ use crate::font::shaping::ShapeOptions;
 use crate::font::{FontContext, FontRegistry, FontStyle};
 use crate::layout::types::{parse_feature_settings_opt, parse_variation_settings_opt};
 use crate::text::paragraph;
-use crate::text::types::{Language, TextLayoutRequest, WrapMode, WritingMode};
+use crate::text::types::{
+    Language, PlainTextMeasurementRequest, TextLayoutRequest, WrapMode, WritingMode,
+};
 
 // ---------------------------------------------------------------------------
 // Measure text block
@@ -13,7 +15,7 @@ use crate::text::types::{Language, TextLayoutRequest, WrapMode, WritingMode};
 pub(crate) fn measure_text_block(
     input: &MeasureTextBlockInput,
     registry: &FontRegistry,
-) -> Result<MeasureTextBlockResult, String> {
+) -> Result<MeasureTextBlockResult, boundtext::TextLayoutError> {
     let font_families = super::build_font_families(&input.font_family, input.fallback.as_deref());
     let font_style = match input.font_style.as_deref() {
         Some("italic") => FontStyle::Italic,
@@ -62,7 +64,11 @@ pub(crate) fn measure_text_block(
     if writing_mode == WritingMode::VerticalRl {
         let max_height = input
             .max_height
-            .ok_or_else(|| "maxHeight is required for vertical measureTextBlock".to_string())?;
+            .ok_or(boundtext::TextLayoutError::InvalidRequest {
+                reason: boundtext::TextRequestError::MissingInlineConstraint {
+                    field: boundtext::TextConstraintField::FlowBounds,
+                },
+            })?;
         let req = TextLayoutRequest {
             text,
             spans: None,
@@ -101,8 +107,7 @@ pub(crate) fn measure_text_block(
             grow_max_iterations: None,
             fit_max_probes: None,
         };
-        let layout_result =
-            crate::text::engine::layout_text(&req, &font_ctx).map_err(|error| error.to_string())?;
+        let layout_result = crate::text::engine::layout_text(&req, &font_ctx)?;
         return Ok(MeasureTextBlockResult {
             line_count: layout_result.lines.len(),
             used_width: layout_result.bbox.w,
@@ -115,35 +120,29 @@ pub(crate) fn measure_text_block(
 
     let max_width = input
         .max_width
-        .ok_or_else(|| "maxWidth is required for horizontal measureTextBlock".to_string())?;
+        .ok_or(boundtext::TextLayoutError::InvalidRequest {
+            reason: boundtext::TextRequestError::MissingInlineConstraint {
+                field: boundtext::TextConstraintField::MaxWidth,
+            },
+        })?;
 
     // The width-independent paragraph fast path cannot represent a fallback
     // chain because its advances are stored in one font's design units. Use
     // the full text engine for multi-font shaping, then derive the same public
     // per-line diagnostics from its authoritative line text.
     if font_families.len() > 1 {
-        let req = TextLayoutRequest {
+        let req = PlainTextMeasurementRequest {
             text,
-            spans: None,
-            rich_text: None,
             font_size_px: input.font_size_px,
             line_height: input.line_height,
             line_height_px: input.line_height_px,
             letter_spacing_px: input.letter_spacing_px.unwrap_or(0.0),
             text_indent: input.text_indent,
             max_width,
-            max_height: None,
             wrap: effective_wrap,
             white_space,
             tab_size: input.tab_size.unwrap_or(4),
-            fit: crate::text::types::FitMode::None,
-            max_lines: None,
-            ellipsis: false,
             language,
-            writing_mode,
-            text_orientation: crate::text::types::TextOrientation::from_option(
-                input.text_orientation.as_deref(),
-            ),
             uax14_breaks: None,
             hanging_punctuation: input.hanging_punctuation.unwrap_or(false),
             font_variation_settings: parse_variation_settings_opt(
@@ -152,16 +151,8 @@ pub(crate) fn measure_text_block(
             font_feature_settings: parse_feature_settings_opt(
                 input.font_feature_settings.as_deref(),
             ),
-            min_font_size_px: None,
-            shrink_epsilon_px: None,
-            shrink_max_iterations: None,
-            max_font_size_px: None,
-            grow_epsilon_px: None,
-            grow_max_iterations: None,
-            fit_max_probes: None,
         };
-        let result = crate::text::engine::measure_text_lines(&req, &font_ctx)
-            .ok_or_else(|| "Failed to layout fallback text for measurement".to_string())?;
+        let result = crate::text::engine::measure_text_lines(&req, &font_ctx)?;
         let lines = result
             .lines
             .iter()
@@ -200,7 +191,13 @@ pub(crate) fn measure_text_block(
         input.letter_spacing_px.unwrap_or(0.0),
         force_newline,
     )
-    .ok_or_else(|| "Failed to shape paragraph for measurement".to_string())?;
+    .ok_or_else(|| {
+        super::font_or_preparation_error(
+            &font_ctx,
+            0,
+            boundtext::TextPreparationPhase::PlainShaping,
+        )
+    })?;
 
     let measurement = paragraph::measure_paragraph_with_lines_and_indent(
         &pp,
@@ -213,24 +210,24 @@ pub(crate) fn measure_text_block(
     // Slice each line's text out of the measured (whitespace-normalized)
     // paragraph via the shaper's grapheme byte offsets — authoritative, no
     // client-side re-segmentation needed.
-    let slice_line = |start: usize, end: usize| -> String {
-        let offsets = &pp.char_byte_offsets;
-        match (offsets.get(start), offsets.get(end)) {
-            (Some(&from), Some(&to)) => pp.text[from as usize..to as usize].to_string(),
-            _ => String::new(),
-        }
-    };
     let lines = measurement
         .lines
         .iter()
-        .map(|line| MeasureTextBlockLineDto {
-            char_start: line.char_start,
-            char_end: line.char_end,
-            text: slice_line(line.char_start, line.char_end),
-            inline_advance_px: line.width,
-            kinsoku_unresolved: line.kinsoku_unresolved,
+        .map(|line| {
+            Ok(MeasureTextBlockLineDto {
+                char_start: line.char_start,
+                char_end: line.char_end,
+                text: slice_measured_line_text(
+                    &pp.text,
+                    &pp.char_byte_offsets,
+                    line.char_start,
+                    line.char_end,
+                )?,
+                inline_advance_px: line.width,
+                kinsoku_unresolved: line.kinsoku_unresolved,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, boundtext::TextLayoutError>>()?;
 
     Ok(MeasureTextBlockResult {
         line_count: measurement.measure.line_count,
@@ -238,6 +235,42 @@ pub(crate) fn measure_text_block(
         used_height: measurement.measure.line_count as f64 * line_height_px,
         lines: Some(lines),
     })
+}
+
+fn slice_measured_line_text(
+    text: &str,
+    byte_offsets: &[u32],
+    start: usize,
+    end: usize,
+) -> Result<String, boundtext::TextLayoutError> {
+    let Some(&start_offset) = byte_offsets.get(start) else {
+        return Err(boundtext::TextLayoutError::InvariantViolation {
+            invariant: boundtext::TextLayoutInvariant::LineRangeMissing,
+        });
+    };
+    let Some(&end_offset) = byte_offsets.get(end) else {
+        return Err(boundtext::TextLayoutError::InvariantViolation {
+            invariant: boundtext::TextLayoutInvariant::LineRangeMissing,
+        });
+    };
+    let start_offset = start_offset as usize;
+    let end_offset = end_offset as usize;
+    if start_offset > end_offset {
+        return Err(boundtext::TextLayoutError::InvariantViolation {
+            invariant: boundtext::TextLayoutInvariant::LineRangeReversed,
+        });
+    }
+    if end_offset > text.len() {
+        return Err(boundtext::TextLayoutError::InvariantViolation {
+            invariant: boundtext::TextLayoutInvariant::LineRangeOutOfBounds,
+        });
+    }
+    if !text.is_char_boundary(start_offset) || !text.is_char_boundary(end_offset) {
+        return Err(boundtext::TextLayoutError::InvariantViolation {
+            invariant: boundtext::TextLayoutInvariant::LineRangeNotUtf8Boundary,
+        });
+    }
+    Ok(text[start_offset..end_offset].to_string())
 }
 
 #[cfg(test)]

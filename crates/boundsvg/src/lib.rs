@@ -31,6 +31,7 @@ pub mod render_backend;
 pub mod render_resvg;
 pub mod scene;
 pub mod svg_emit;
+mod text_diagnostics;
 #[cfg(feature = "resvg-backend")]
 pub mod webp_anim;
 #[cfg(feature = "resvg-backend")]
@@ -1126,6 +1127,15 @@ fn render_error_envelope_with_context(
     JsValue::from_str(&serialized)
 }
 
+fn text_layout_error_to_js(
+    error: boundtext::TextLayoutError,
+    operation: text_diagnostics::TextLayoutOperation,
+) -> JsValue {
+    let engine_error =
+        text_diagnostics::classify_text_layout_error(&error, operation, None).into_engine_error();
+    engine_error_to_render_envelope(&engine_error)
+}
+
 fn transition_compatibility_error_to_js(
     mismatch: &layout_transition::CompatibilityMismatch,
 ) -> JsValue {
@@ -2152,8 +2162,12 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let input: flow::TextFlowInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid flow input: {e}")))?;
-            let result = flow::layout_text_flow(&input, &self.registry)
-                .map_err(|e| JsValue::from_str(&e))?;
+            let result = flow::layout_text_flow(&input, &self.registry).map_err(|error| {
+                text_layout_error_to_js(
+                    error,
+                    text_diagnostics::TextLayoutOperation::LayoutTextFlow,
+                )
+            })?;
             serde_json::to_string(&result)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize flow result: {e}")))
         }))
@@ -2170,11 +2184,9 @@ impl BoundSvgEngine {
                 .map_err(|e| JsValue::from_str(&format!("Invalid exclusion flow input: {e}")))?;
             let flow_layout = flow::layout_text_flow_with_exclusions(&input, &self.registry)
                 .map_err(|error| {
-                    render_error_envelope(
-                        error.code(),
-                        &error.to_string(),
-                        Some(diagnostics::PipelineStage::Text),
-                        None,
+                    text_layout_error_to_js(
+                        error,
+                        text_diagnostics::TextLayoutOperation::LayoutTextFlowWithExclusions,
                     )
                 })?;
             serde_json::to_string(&flow_layout).map_err(|e| {
@@ -2192,8 +2204,12 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let input: flow::MeasureTextBlockInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid measure input: {e}")))?;
-            let result = flow::measure_text_block(&input, &self.registry)
-                .map_err(|e| JsValue::from_str(&e))?;
+            let result = flow::measure_text_block(&input, &self.registry).map_err(|error| {
+                text_layout_error_to_js(
+                    error,
+                    text_diagnostics::TextLayoutOperation::MeasureTextBlock,
+                )
+            })?;
             serde_json::to_string(&result)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize measure result: {e}")))
         }))
@@ -2209,11 +2225,9 @@ impl BoundSvgEngine {
             let input: flow::ShrinkwrapTextInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap input: {e}")))?;
             let shrinkwrap = flow::shrinkwrap_text(&input, &self.registry).map_err(|error| {
-                render_error_envelope(
-                    error.code(),
-                    &error.to_string(),
-                    Some(diagnostics::PipelineStage::Text),
-                    None,
+                text_layout_error_to_js(
+                    error,
+                    text_diagnostics::TextLayoutOperation::ShrinkwrapText,
                 )
             })?;
             serde_json::to_string(&shrinkwrap).map_err(|e| {
@@ -2234,11 +2248,9 @@ impl BoundSvgEngine {
                 .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap flow input: {e}")))?;
             let flow_shrinkwrap =
                 flow::shrinkwrap_flow(&input, &self.registry).map_err(|error| {
-                    render_error_envelope(
-                        error.code(),
-                        &error.to_string(),
-                        Some(diagnostics::PipelineStage::Text),
-                        None,
+                    text_layout_error_to_js(
+                        error,
+                        text_diagnostics::TextLayoutOperation::ShrinkwrapFlow,
                     )
                 })?;
             serde_json::to_string(&flow_shrinkwrap).map_err(|e| {
@@ -2258,8 +2270,13 @@ impl BoundSvgEngine {
                 serde_json::from_str(json_input).map_err(|e| {
                     JsValue::from_str(&format!("Invalid intrinsic inline-size input: {e}"))
                 })?;
-            let result = flow::measure_intrinsic_inline_size(&input, &self.registry)
-                .map_err(|e| JsValue::from_str(&e))?;
+            let result =
+                flow::measure_intrinsic_inline_size(&input, &self.registry).map_err(|error| {
+                    text_layout_error_to_js(
+                        error,
+                        text_diagnostics::TextLayoutOperation::MeasureIntrinsicInlineSize,
+                    )
+                })?;
             serde_json::to_string(&result).map_err(|e| {
                 JsValue::from_str(&format!(
                     "Failed to serialize intrinsic inline-size result: {e}"
