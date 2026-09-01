@@ -26,10 +26,11 @@ import {
   type TextFlowWithExclusionsInput,
 } from "@boundsvg/core";
 import { initWasm } from "@boundsvg/core/wasm";
+import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import {
   collectResponseTransferables,
+  decodeWorkerRequest,
   getWorkerMessageId,
-  isWorkerRequest,
   type WorkerAnimatedGifRenderOptions,
   type WorkerAnimatedWebpRenderOptions,
   type WorkerLayeredPngRenderOptions,
@@ -64,8 +65,9 @@ declare const self: DedicatedWorkerGlobalScope;
 
 self.onmessage = (event: MessageEvent) => {
   const data: unknown = event.data;
+  const request = decodeWorkerRequest(data);
 
-  if (!isWorkerRequest(data)) {
+  if (request === undefined) {
     // Cannot correlate with an ID — best-effort extraction, fallback to -1.
     const fallbackId = getWorkerMessageId(data) ?? -1;
     const response: WorkerResponse = {
@@ -82,7 +84,7 @@ self.onmessage = (event: MessageEvent) => {
     return;
   }
 
-  void handleMessage(data);
+  void handleMessage(request);
 };
 
 async function handleMessage(request: WorkerRequest): Promise<void> {
@@ -245,13 +247,8 @@ function handleRenderSvgAndIr(
     return;
   }
 
-  const warnings: SerializedRecoverableError[] = [];
-  const { svg, ir } = eng.renderToSvgAndIR(scene, {
-    ...options,
-    onWarning: (warning) => warnings.push(warning.toJSON()),
-  });
-  // Strip non-serializable RecoverableError instances from IR.warnings
-  // (warnings are captured separately via onWarning above)
+  const { svg, ir } = eng.renderToSvgAndIR(scene, options);
+  const warnings = ir.warnings.map((warning) => warning.toJSON());
   const { warnings: _irWarnings, ...serializableIr } = ir;
   respond({ id, type: "render-svg-and-ir-ok", svg, ir: serializableIr, warnings });
 }
@@ -266,11 +263,8 @@ function handleRenderAnimatedSvgAndIr(
     return;
   }
 
-  const warnings: SerializedRecoverableError[] = [];
-  const { svg, ir } = eng.renderToAnimatedSvgAndIR(scene, {
-    ...options,
-    onWarning: (warning) => warnings.push(warning.toJSON()),
-  });
+  const { svg, ir } = eng.renderToAnimatedSvgAndIR(scene, options);
+  const warnings = ir.warnings.map((warning) => warning.toJSON());
   const { warnings: _irWarnings, ...serializableIr } = ir;
   respond({ id, type: "render-animated-svg-and-ir-ok", svg, ir: serializableIr, warnings });
 }
@@ -411,10 +405,8 @@ function handleRenderLayeredSvg(
   respond({
     id,
     type: "render-layered-svg-ok",
-    result: {
-      ...result,
-      warnings,
-    },
+    result,
+    warnings,
   });
 }
 
@@ -436,10 +428,8 @@ function handleRenderLayeredPng(
   const response: WorkerResponse = {
     id,
     type: "render-layered-png-ok",
-    result: {
-      ...result,
-      warnings,
-    },
+    result,
+    warnings,
   };
   self.postMessage(response, collectResponseTransferables(response));
 }
@@ -672,23 +662,22 @@ function respond(response: WorkerResponse): void {
 }
 
 function toSerializedFatalError(err: unknown): SerializedFatalError {
-  if (err instanceof FatalError) {
-    return err.toJSON();
+  try {
+    if (err instanceof FatalError) {
+      return err.toJSON();
+    }
+  } catch {
+    // Fall through to the total boundary formatter.
   }
-  const message = err instanceof Error ? err.message : String(err);
   return {
     severity: "fatal",
     code: "WORKER_UNHANDLED_ERROR",
-    message,
+    message: formatUnknownWorkerFailure(err, "Unknown worker failure"),
     stage: "engine",
   };
 }
 
 /** JSON.stringify that never throws (handles circular refs, BigInt, etc.). */
 function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+  return formatUnknownWorkerFailure(value, "unprintable value");
 }

@@ -43,6 +43,40 @@ console.table(
 
 `inspectScene()` returns the layout tree, IR, `textMap`, `handlerMap`, `nodeTypeMap`, bbox list, recoverable warnings, and summary stats. It does not run a TypeScript-side text engine; it reads the result produced by the normal WASM render pipeline.
 
+## Diagnostic fields and ownership
+
+`FatalError` and `RecoverableError` use severity-specific contracts. Fatal
+diagnostics require `code` and `message`; recoverable diagnostics additionally
+require a non-empty `fallback` and a closed `stage`. Optional `nodeId` and
+`context` fields are preserved across Node, browser, and Worker routes.
+
+Construct diagnostics with an explicit options object:
+
+```ts
+new FatalError("ASSET_INVALID", "Asset data is invalid", {
+  stage: "validate",
+  nodeId: "hero",
+  context: { assetKind: "image" },
+});
+
+new RecoverableError("ASSET_PLACEHOLDER", "Asset could not be decoded", {
+  fallback: "rendered a placeholder",
+  stage: "ir",
+  nodeId: "hero",
+  context: { assetKind: "image" },
+});
+```
+
+Do not place `severity`, `code`, `message`, `fallback`, `stage`, or `nodeId` at
+the root of `context`. They are reserved diagnostic fields. The old positional
+constructor form and severity-less serialized objects are not accepted.
+
+Warnings are mutable inspection values, but independently owned consumers do
+not share an object or context identity. A warning callback may annotate its
+value without changing `IR.warnings`, a compiled scene, or another callback.
+Warning order follows production order: native WASM warnings first, followed
+by warnings from later TypeScript-owned phases. Duplicate events are retained.
+
 ## React Overlay
 
 Use `@boundsvg/react/inspect` for structured state and

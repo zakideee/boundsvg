@@ -111,7 +111,7 @@ fn validation_error(detail: &str) -> EngineError {
     EngineError::Structured {
         code: "VALIDATION".to_string(),
         message: format!("Validation error: {detail}"),
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: None,
     }
 }

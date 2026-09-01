@@ -3400,10 +3400,13 @@ fn flow_warns_on_notdef_glyphs() {
     let result = layout_text_flow(&input, &reg).unwrap();
     // Whether warnings appear depends on font subset coverage.
     // If .notdef glyphs exist, warnings must contain MISSING_GLYPH.
-    for w in &result.warnings {
-        assert_eq!(w.code, "MISSING_GLYPH");
-        assert_eq!(w.severity, "recoverable");
-        assert_eq!(w.stage, "text");
+    for warning in &result.warnings {
+        assert_eq!(warning.code, "MISSING_GLYPH");
+        assert_eq!(warning.stage, crate::diagnostics::PipelineStage::Text);
+        assert_eq!(
+            serde_json::to_value(warning).expect("serialize warning")["severity"],
+            "recoverable"
+        );
     }
 }
 

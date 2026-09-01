@@ -285,7 +285,13 @@ export function cloneIRForLayeredTransform(node: IRNode): IRNode {
 }
 
 export function cloneRecoverableError(warning: RecoverableError): RecoverableError {
-  return RecoverableError.fromSerialized(warning.toJSON());
+  const serialized = warning.toJSON();
+  return new RecoverableError(serialized.code, serialized.message, {
+    fallback: serialized.fallback,
+    stage: serialized.stage,
+    ...(serialized.nodeId !== undefined && { nodeId: serialized.nodeId }),
+    ...(serialized.context !== undefined && { context: serialized.context }),
+  });
 }
 
 /**

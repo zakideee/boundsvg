@@ -65,7 +65,7 @@ impl TextFlowLayoutError {
         crate::error::EngineError::Structured {
             code: self.code().to_string(),
             message: self.to_string(),
-            stage: Some("text".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Text),
             node_id,
         }
     }

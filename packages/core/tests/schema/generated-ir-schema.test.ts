@@ -6,9 +6,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine } from "../../src/engine.js";
 import type {
   IrNode as GeneratedIrNode,
-  GeneratedOutputIr,
-} from "../../src/generated/ir/output-ir.js";
-import { validateOutputIr } from "../../src/generated/ir/output-ir-validator.js";
+  GeneratedStructuralIr,
+} from "../../src/generated/ir/structural-ir.js";
+import { validateStructuralIr } from "../../src/generated/ir/structural-ir-validator.js";
+import { validateSerializedIR } from "../../src/ir/output-validator.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import { createConformanceEngine } from "../conformance/conformance-engine.js";
 import { CONFORMANCE_SCENES } from "../conformance/scenes/index.js";
@@ -16,10 +17,10 @@ import { CONFORMANCE_SCENES } from "../conformance/scenes/index.js";
 type SchemaObject = Record<string, unknown>;
 
 const generatedDirectory = fileURLToPath(new URL("../../src/generated/ir/", import.meta.url));
-const outputSchemaPath = `${generatedDirectory}output-ir.schema.json`;
+const outputSchemaPath = `${generatedDirectory}structural-ir.schema.json`;
 const inputSchemaPath = `${generatedDirectory}emit-ir-input.schema.json`;
-const outputTypesPath = `${generatedDirectory}output-ir.ts`;
-const outputValidatorPath = `${generatedDirectory}output-ir-validator.js`;
+const outputTypesPath = `${generatedDirectory}structural-ir.ts`;
+const outputValidatorPath = `${generatedDirectory}structural-ir-validator.js`;
 
 function readSchema(path: string): SchemaObject {
   return JSON.parse(readFileSync(path, "utf8")) as SchemaObject;
@@ -266,6 +267,8 @@ describe("generated directional IR schemas", () => {
   it("models omit-none output separately from defaulted nullable input", () => {
     const outputProperties = properties(outputSchema, "output IR");
     const inputProperties = properties(inputSchema, "emit input");
+    expect(outputProperties.warnings).toBeUndefined();
+    expect(inputProperties.warnings).toBeUndefined();
     expect(requiredFields(outputSchema)).not.toContain("debug");
     expect(schemaAllowsNull(outputProperties.debug)).toBe(false);
     expect(requiredFields(inputSchema)).not.toContain("debug");
@@ -283,6 +286,66 @@ describe("generated directional IR schemas", () => {
     expect(schemaAllowsNull(properties(inputText, "input text").fontStyle)).toBe(true);
     expect(schemaKeywordInventory(outputSchema)).toEqual({ formats: 0, nullable: 0 });
     expect(schemaKeywordInventory(inputSchema).nullable).toBeGreaterThan(0);
+  });
+
+  it("accepts an exact SerializedIR with a non-empty top-level warning list", () => {
+    const serializedIr = {
+      root: {
+        type: "group",
+        nodeId: "root",
+        bbox: { x: 0, y: 0, w: 10, h: 10 },
+        children: [],
+      },
+      drawOrder: ["root"],
+      width: 10,
+      height: 10,
+      warnings: [
+        {
+          severity: "recoverable",
+          code: "SERIALIZED_IR_WARNING",
+          message: "retained warning",
+          fallback: "retained output",
+          stage: "ir",
+          nodeId: "root",
+          context: { owner: { id: "root" } },
+        },
+      ],
+    };
+
+    expect(validateSerializedIR(serializedIr)).toBe(true);
+    expect(validateStructuralIr(serializedIr)).toBe(true);
+    expect(validateSerializedIR({ ...serializedIr, warnings: [] })).toBe(true);
+    expect(
+      validateSerializedIR({
+        ...serializedIr,
+        warnings: [{ ...serializedIr.warnings[0], stage: undefined }],
+      }),
+    ).toBe(false);
+
+    const sparseWarnings = new Array(1);
+    expect(validateSerializedIR({ ...serializedIr, warnings: sparseWarnings })).toBe(false);
+
+    let warningGetterCalls = 0;
+    const accessorWarnings = new Array(1);
+    Object.defineProperty(accessorWarnings, "0", {
+      enumerable: true,
+      get() {
+        warningGetterCalls += 1;
+        return serializedIr.warnings[0];
+      },
+    });
+    expect(validateSerializedIR({ ...serializedIr, warnings: accessorWarnings })).toBe(false);
+    expect(warningGetterCalls).toBe(0);
+
+    let descriptorCalls = 0;
+    const hostileWarnings = new Proxy([serializedIr.warnings[0]], {
+      getOwnPropertyDescriptor() {
+        descriptorCalls += 1;
+        throw new Error("descriptor must be contained");
+      },
+    });
+    expect(validateSerializedIR({ ...serializedIr, warnings: hostileWarnings })).toBe(false);
+    expect(descriptorCalls).toBe(1);
   });
 
   it("preserves untagged easing order and resolves cross-crate schema types", () => {
@@ -339,7 +402,7 @@ describe("generated directional IR schemas", () => {
     visit(sourceFile);
 
     expect(sourceFile.parseDiagnostics).toEqual([]);
-    expect(knownFieldCount).toBe(327);
+    expect(knownFieldCount).toBe(320);
     expect(forbiddenFields).toEqual([]);
   });
 
@@ -371,13 +434,13 @@ describe("generated directional IR schemas", () => {
 
     expect(imports).toEqual([]);
     expect(dynamicEvaluation).toEqual([]);
-    expect(validatorSource).toContain("export const validateOutputIr");
+    expect(validatorSource).toContain("export const validateStructuralIr");
   });
 });
 
 describe("generated IR validator against real WASM output", () => {
   let engine: Engine;
-  let actualCorpus: GeneratedOutputIr[];
+  let actualCorpus: GeneratedStructuralIr[];
   let inputValidator: ValidateFunction;
   const schemaDiagnostics: string[] = [];
 
@@ -412,7 +475,7 @@ describe("generated IR validator against real WASM output", () => {
     const fullGraphIr = engine.renderToSvgAndIR(fullGraphScene(imageBytes), {
       timeMs: 100,
     }).ir;
-    actualCorpus = [...conformanceIr, fullGraphIr] as GeneratedOutputIr[];
+    actualCorpus = [...conformanceIr, fullGraphIr] as GeneratedStructuralIr[];
   });
 
   afterAll(() => {
@@ -422,7 +485,7 @@ describe("generated IR validator against real WASM output", () => {
   it("accepts the real corpus and executes every output node variant", () => {
     const nodeTypes = new Set<string>();
     for (const ir of actualCorpus) {
-      expect(validateOutputIr(ir), validatorMessage(validateOutputIr.errors)).toBe(true);
+      expect(validateStructuralIr(ir), validatorMessage(validateStructuralIr.errors)).toBe(true);
       for (const node of collectNodes(ir.root)) {
         nodeTypes.add(node.type);
       }
@@ -434,15 +497,15 @@ describe("generated IR validator against real WASM output", () => {
   it("rejects required deletion, wrong primitives, discriminants, enums, and output null", () => {
     const requiredDeletion = structuredClone(actualCorpus[0]);
     Reflect.deleteProperty(requiredDeletion, "width");
-    expect(validateOutputIr(requiredDeletion)).toBe(false);
+    expect(validateStructuralIr(requiredDeletion)).toBe(false);
 
     const wrongPrimitive = structuredClone(actualCorpus[0]);
     Reflect.set(wrongPrimitive, "height", "180");
-    expect(validateOutputIr(wrongPrimitive)).toBe(false);
+    expect(validateStructuralIr(wrongPrimitive)).toBe(false);
 
     const unknownDiscriminant = structuredClone(actualCorpus.at(-1));
     Reflect.set(unknownDiscriminant.root, "type", "video");
-    expect(validateOutputIr(unknownDiscriminant)).toBe(false);
+    expect(validateStructuralIr(unknownDiscriminant)).toBe(false);
 
     const closedEnum = structuredClone(actualCorpus.at(-1));
     const textNode = collectNodes(closedEnum.root).find((node) => node.type === "text");
@@ -450,11 +513,11 @@ describe("generated IR validator against real WASM output", () => {
       throw new TypeError("full-graph fixture has no text node");
     }
     Reflect.set(textNode, "fontStyle", "oblique");
-    expect(validateOutputIr(closedEnum)).toBe(false);
+    expect(validateStructuralIr(closedEnum)).toBe(false);
 
     const outputNull = structuredClone(actualCorpus[0]);
     Reflect.set(outputNull, "debug", null);
-    expect(validateOutputIr(outputNull)).toBe(false);
+    expect(validateStructuralIr(outputNull)).toBe(false);
 
     const nestedEffectNull = structuredClone(actualCorpus.at(-1));
     const nestedTextNode = collectNodes(nestedEffectNull.root).find((node) => node.type === "text");
@@ -463,15 +526,21 @@ describe("generated IR validator against real WASM output", () => {
     }
     nestedTextNode.strokes = [{ color: "#ffffff", widthPx: 2, linejoin: "round" }];
     Reflect.set(nestedTextNode.strokes[0] ?? {}, "linejoin", null);
-    expect(validateOutputIr(nestedEffectNull)).toBe(false);
+    expect(validateStructuralIr(nestedEffectNull)).toBe(false);
   });
 
   it("accepts optional omission and only the deserialize contract's permitted null", () => {
     const optionalOutput = structuredClone(actualCorpus[0]);
     Reflect.set(optionalOutput, "debug", true);
-    expect(validateOutputIr(optionalOutput), validatorMessage(validateOutputIr.errors)).toBe(true);
+    expect(
+      validateStructuralIr(optionalOutput),
+      validatorMessage(validateStructuralIr.errors),
+    ).toBe(true);
     Reflect.deleteProperty(optionalOutput, "debug");
-    expect(validateOutputIr(optionalOutput), validatorMessage(validateOutputIr.errors)).toBe(true);
+    expect(
+      validateStructuralIr(optionalOutput),
+      validatorMessage(validateStructuralIr.errors),
+    ).toBe(true);
 
     const emitInput = {
       root: actualCorpus[0]?.root,

@@ -321,7 +321,7 @@ fn spring_to_css_linear(
             return Err(EngineError::Structured {
                 code: "INVALID_NUMBER".to_string(),
                 message: format!("Spring easing produced a non-finite stop at index {index}"),
-                stage: Some("emit".to_string()),
+                stage: Some(crate::diagnostics::PipelineStage::Emit),
                 node_id: None,
             });
         }
@@ -417,7 +417,7 @@ fn emit_independent_animation_rule(
         return Err(EngineError::Structured {
             code: "ANIMATION_INVALID_SPEC".to_string(),
             message: "Invalid animation: keyframes must contain at least two entries".to_string(),
-            stage: Some("emit".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Emit),
             node_id: None,
         });
     };
@@ -425,7 +425,7 @@ fn emit_independent_animation_rule(
         return Err(EngineError::Structured {
             code: "ANIMATION_INVALID_SPEC".to_string(),
             message: "Invalid animation: keyframes must contain at least two entries".to_string(),
-            stage: Some("emit".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Emit),
             node_id: None,
         });
     };
@@ -686,7 +686,7 @@ fn enforce_timeline_css_byte_limit(actual_css_bytes: usize) -> Result<(), Engine
     Err(EngineError::StructuredContext {
         code: "ANIMATED_SVG_TIMELINE_LIMIT".to_string(),
         message: "Animated SVG timeline cssBytes exceeds the supported limit".to_string(),
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: None,
         context: Box::new(serde_json::json!({
             "metric": "cssBytes",
@@ -1652,7 +1652,7 @@ fn emit_filter_def(filter: &FilterDef) -> Result<String, EngineError> {
                 format_js_number(filter.blur),
                 format_js_number(filter.spread)
             ),
-            stage: Some("emit".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Emit),
             node_id: None,
         });
     }

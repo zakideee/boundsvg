@@ -419,6 +419,38 @@ fn accepts_maximum_rich_text_depth() {
 }
 
 #[test]
+fn serializes_text_warnings_as_strict_recoverable_layout_diagnostics() {
+    let mut input = centered_column_text_input();
+    let first_text = input.root.children[0].children[0]
+        .text
+        .as_mut()
+        .expect("first text input");
+    first_text.content = "\u{10ffff}".to_string();
+
+    let output = compute_full_layout(&input).expect("missing glyph layout should remain valid");
+    let warnings = &output
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "t1")
+        .and_then(|node| node.text_layout.as_ref())
+        .expect("first text layout")
+        .warnings;
+    let warning = serde_json::to_value(warnings.first().expect("missing glyph warning"))
+        .expect("serialize warning");
+
+    assert_eq!(warning["severity"], "recoverable");
+    assert_eq!(warning["code"], "MISSING_GLYPH");
+    assert_eq!(warning["fallback"], "blank");
+    assert_eq!(warning["stage"], "text");
+    assert_eq!(warning["nodeId"], "t1");
+    assert!(
+        warning["message"]
+            .as_str()
+            .is_some_and(|message| !message.is_empty())
+    );
+}
+
+#[test]
 fn rejects_rich_text_beyond_maximum_depth_before_layout() {
     let error = compute_full_layout(&rich_text_layout_input(MAX_RICH_TEXT_DEPTH + 1))
         .expect_err("over-depth rich text should be rejected");
@@ -846,7 +878,10 @@ fn text_measurement_fails_before_unit_map_materialization() {
             ..
         } => {
             assert_eq!(code, "TEXT_NO_LAYOUT");
-            assert_eq!(stage.as_deref(), Some("text"));
+            assert_eq!(
+                stage.as_ref(),
+                Some(&crate::diagnostics::PipelineStage::Text)
+            );
             assert_eq!(node_id.as_deref(), Some("unit-text"));
         }
         other => panic!("expected structured unit-map error, got {other:?}"),

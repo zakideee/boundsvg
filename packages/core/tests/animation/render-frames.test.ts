@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Frame, RenderFramesOptions } from "../../src/engine.js";
+import { type Frame, type RenderFramesOptions, serializeIrForWasm } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { VNode } from "../../src/vnode/types.js";
@@ -791,7 +791,7 @@ describe("WASM prepared scene ownership", () => {
     const ownerEngine = createEngineFromHandle(handle);
     try {
       const compiled = ownerEngine.compile(createMultipleTrackScene());
-      return JSON.stringify({ ...ownerEngine.snapshotCompiledIR(compiled), warnings: [] });
+      return serializeIrForWasm(ownerEngine.snapshotCompiledIR(compiled));
     } finally {
       ownerEngine.dispose();
     }

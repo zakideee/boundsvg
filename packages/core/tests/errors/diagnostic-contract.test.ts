@@ -3,6 +3,7 @@ import {
   type DiagnosticContext,
   type DiagnosticContextValue,
   FatalError,
+  formatUnknownDiagnosticValue,
   RecoverableError,
   type SerializedFatalError,
   type SerializedRecoverableError,
@@ -39,6 +40,46 @@ function defineDataProperty(
     value,
   });
 }
+
+describe("diagnostic boundary formatting", () => {
+  it("formats primitives and own message data without invoking object hooks", () => {
+    let hookCalls = 0;
+    const hostile = {
+      get payload() {
+        hookCalls += 1;
+        return "secret";
+      },
+      toJSON() {
+        hookCalls += 1;
+        return "serialized";
+      },
+      toString() {
+        hookCalls += 1;
+        return "coerced";
+      },
+      [Symbol.toPrimitive]() {
+        hookCalls += 1;
+        return "primitive";
+      },
+    };
+    const accessorMessage = Object.defineProperty({}, "message", {
+      enumerable: true,
+      get() {
+        hookCalls += 1;
+        return "accessed";
+      },
+    });
+
+    expect(formatUnknownDiagnosticValue(hostile, "fallback")).toBe("fallback");
+    expect(formatUnknownDiagnosticValue(accessorMessage, "fallback")).toBe("fallback");
+    expect(formatUnknownDiagnosticValue({ message: "owned" }, "fallback")).toBe("owned");
+    expect(formatUnknownDiagnosticValue(Object.create(null), "fallback")).toBe("fallback");
+    expect(formatUnknownDiagnosticValue(null, "fallback")).toBe("null");
+    expect(formatUnknownDiagnosticValue(Symbol("wire"), "fallback")).toBe("Symbol(wire)");
+    expect(formatUnknownDiagnosticValue(7n, "fallback")).toBe("7");
+    expect(hookCalls).toBe(0);
+  });
+});
 
 describe("diagnostic constructor contract", () => {
   it("stores explicit metadata and a detached mutable context", () => {

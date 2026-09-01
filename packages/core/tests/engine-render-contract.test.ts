@@ -92,18 +92,17 @@ describe("wasm render envelopes", () => {
     });
 
     const irEnvelope = JSON.parse(handle.renderToIr(transportJson, "{}")) as {
-      ir: IR;
+      ir: Omit<IR, "warnings">;
       warnings: unknown[];
     };
     expect(irEnvelope.ir.root).toBeDefined();
     expect(irEnvelope.ir.width).toBe(120);
-    // Envelope warnings mirror ir.warnings (single source of truth).
-    expect(irEnvelope.warnings).toEqual(irEnvelope.ir.warnings);
+    expect(Object.hasOwn(irEnvelope.ir, "warnings")).toBe(false);
     expect(irEnvelope.warnings.length).toBeGreaterThan(0);
 
     const svgEnvelope = JSON.parse(handle.renderToSvg(transportJson, JSON.stringify({}))) as {
       svg: string;
-      ir: IR | null;
+      ir: Omit<IR, "warnings"> | null;
       warnings: unknown[];
       textNodeIds: string[];
     };
@@ -116,12 +115,13 @@ describe("wasm render envelopes", () => {
       handle.renderToSvg(transportJson, JSON.stringify({ returnResolvedIr: true })),
     ) as {
       svg: string;
-      ir: IR | null;
+      ir: Omit<IR, "warnings"> | null;
       warnings: unknown[];
       textNodeIds: string[];
     };
     expect(resolvedSvgEnvelope.ir?.root).toBeDefined();
-    expect(resolvedSvgEnvelope.warnings).toEqual(resolvedSvgEnvelope.ir?.warnings);
+    expect(Object.hasOwn(resolvedSvgEnvelope.ir ?? {}, "warnings")).toBe(false);
+    expect(resolvedSvgEnvelope.warnings).toEqual(irEnvelope.warnings);
   });
 
   it("enforces structured TextOnPath spans at the Rust trust boundary", () => {

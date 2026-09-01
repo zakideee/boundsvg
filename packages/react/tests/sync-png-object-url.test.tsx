@@ -41,7 +41,7 @@ function vnodeWidth(vnode: VNode): number {
   return Number(Reflect.get(vnode.props, "width"));
 }
 
-function makeIr(width: number): IR {
+function makeStructuralIr(width: number): Omit<IR, "warnings"> {
   return {
     root: {
       type: "group",
@@ -52,7 +52,6 @@ function makeIr(width: number): IR {
     drawOrder: [],
     width,
     height: 10,
-    warnings: [],
   };
 }
 
@@ -60,7 +59,7 @@ function makeEngine() {
   let compileWidth = vnodeWidth(STABLE_VNODE);
   const engine = new Engine({
     computeLayoutFn: () => "{}",
-    renderToIrFn: () => JSON.stringify({ ir: makeIr(compileWidth), warnings: [] }),
+    renderToIrFn: () => JSON.stringify({ ir: makeStructuralIr(compileWidth), warnings: [] }),
   });
   const originalCompile = engine.compile.bind(engine);
   const compile = vi.spyOn(engine, "compile").mockImplementation((input, options) => {

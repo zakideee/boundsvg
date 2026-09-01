@@ -1,3 +1,5 @@
+import type { SerializedRecoverableError } from "../errors.js";
+
 /** Bounding box */
 export type BBox = {
   x: number;
@@ -391,11 +393,7 @@ export type TextOverflow = {
 };
 
 /** Recoverable text warning bridged from the engine (e.g. MISSING_GLYPH). */
-export type TextLayoutWarning = {
-  code: string;
-  message: string;
-  fallback?: string;
-};
+export type TextLayoutWarning = SerializedRecoverableError;
 
 /**
  * A background / border rectangle for an `Inline` or `InlineBox` decoration,

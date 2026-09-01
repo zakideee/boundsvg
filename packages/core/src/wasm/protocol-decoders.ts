@@ -1,6 +1,6 @@
 import type { SerializedRecoverableError } from "../errors.js";
 import { FatalError, RecoverableError } from "../errors.js";
-import { serializedIRValidationFailure, validateSerializedIR } from "../ir/output-validator.js";
+import { structuralIRValidationFailure, validateStructuralIR } from "../ir/output-validator.js";
 import type {
   IntrinsicInlineSizeResult,
   MeasureTextBlockLine,
@@ -155,10 +155,10 @@ const isSerializedRecoverableError: Guard<SerializedRecoverableError> = (
   RecoverableError.isSerialized(value) || recordFailure(path, value);
 
 const isWasmIrOutput: Guard<WasmIrOutput> = (value, path = "$ir"): value is WasmIrOutput => {
-  if (validateSerializedIR(value)) {
+  if (validateStructuralIR(value)) {
     return true;
   }
-  const failure = serializedIRValidationFailure(path);
+  const failure = structuralIRValidationFailure(path);
   lastFailurePath ??= failure.path;
   lastFailureDescription ??= failure.description;
   return false;
@@ -327,6 +327,45 @@ const isIntrinsicInlineSizeResult = objectGuard<IntrinsicInlineSizeResult>({
   maxContentInlineSize: required(isNumber),
   warnings: optional(arrayOf(isSerializedRecoverableError)),
 } satisfies ObjectShape<IntrinsicInlineSizeResult>);
+
+function testDecodedValue<Value>(value: unknown, guard: Guard<Value>): value is Value {
+  lastFailurePath = undefined;
+  lastFailureDescription = undefined;
+  try {
+    return guard(value, "$");
+  } catch {
+    return false;
+  }
+}
+
+/** Strict value predicates shared by the WASM and Worker trust boundaries. */
+export function isWasmTextFlowResult(value: unknown): value is TextFlowResult {
+  return testDecodedValue(value, isTextFlowResult);
+}
+
+export function isWasmTextFlowWithExclusionsResult(
+  value: unknown,
+): value is TextFlowWithExclusionsResult {
+  return testDecodedValue(value, isTextFlowWithExclusionsResult);
+}
+
+export function isWasmMeasureTextBlockResult(value: unknown): value is MeasureTextBlockResult {
+  return testDecodedValue(value, isMeasureTextBlockResult);
+}
+
+export function isWasmShrinkwrapTextResult(value: unknown): value is ShrinkwrapTextResult {
+  return testDecodedValue(value, isShrinkwrapTextResult);
+}
+
+export function isWasmShrinkwrapFlowResult(value: unknown): value is ShrinkwrapFlowResult {
+  return testDecodedValue(value, isShrinkwrapFlowResult);
+}
+
+export function isWasmIntrinsicInlineSizeResult(
+  value: unknown,
+): value is IntrinsicInlineSizeResult {
+  return testDecodedValue(value, isIntrinsicInlineSizeResult);
+}
 
 export function decodeRenderToIrEnvelope(json: string): RenderToIrEnvelope {
   return decodeJson(json, isRenderToIrEnvelope, {

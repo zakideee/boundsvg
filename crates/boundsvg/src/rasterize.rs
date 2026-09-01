@@ -265,7 +265,7 @@ pub(crate) fn rasterize_svg_to_pixmap(
                 "PNG resolution exceeds 4K-equivalent cap: requested={}x{}, cap(longEdge={PNG_MAX_LONG_EDGE_U32}, pixels={PNG_MAX_PIXELS_U64})",
                 resolution.requested_width, resolution.requested_height
             ),
-            stage: Some("emit".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Emit),
             node_id: None,
         });
     }
@@ -313,7 +313,7 @@ fn invalid_scale_error(requested_scale: f64) -> EngineError {
             "Invalid PNG scale factor: {}",
             crate::svg_emit::num_format::format_js_number(requested_scale)
         ),
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: None,
     }
 }
@@ -332,7 +332,7 @@ fn invalid_canvas_size_error(name: &str, value: f64) -> EngineError {
             "Compiled scene has an invalid canvas {name}: {}",
             crate::svg_emit::num_format::format_js_number(value)
         ),
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: None,
     }
 }
@@ -361,7 +361,7 @@ fn output_dimension_too_small_error(
             crate::svg_emit::num_format::format_js_number(base_width),
             crate::svg_emit::num_format::format_js_number(base_height)
         ),
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: None,
     }
 }

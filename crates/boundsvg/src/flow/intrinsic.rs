@@ -1,4 +1,5 @@
 use super::types::{IntrinsicInlineSizeInput, IntrinsicInlineSizeResult};
+use crate::diagnostics::text_warning_to_recoverable;
 use crate::font::{FontContext, FontRegistry, FontStyle};
 use crate::layout::types::{parse_feature_settings_opt, parse_variation_settings_opt};
 use crate::text::rich;
@@ -71,6 +72,10 @@ pub(crate) fn measure_intrinsic_inline_size(
     Ok(IntrinsicInlineSizeResult {
         min_content_inline_size: result.min_content_inline_size,
         max_content_inline_size: result.max_content_inline_size,
-        warnings: result.warnings,
+        warnings: result
+            .warnings
+            .iter()
+            .map(|warning| text_warning_to_recoverable(warning, None))
+            .collect(),
     })
 }

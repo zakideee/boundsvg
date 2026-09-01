@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::diagnostics::SerializedRecoverableError;
 use crate::flow::geometry::{FlowBox, FlowExclusionShape};
 use crate::text::types::RichTextNodeInput;
 
@@ -40,30 +41,13 @@ pub(crate) struct TextFlowLine {
     pub available_inline_size_px: f64,
 }
 
-// ---------------------------------------------------------------------------
-// Flow warning (structured, TS StructuredError compatible)
-// ---------------------------------------------------------------------------
-
-/// A structured warning emitted during flow layout.
-/// Serialized shape matches the TS `StructuredError` schema.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct FlowWarning {
-    pub severity: String,
-    pub code: String,
-    pub message: String,
-    pub stage: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowResult {
     pub lines: Vec<TextFlowLine>,
     pub exhausted: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<FlowWarning>,
+    pub warnings: Vec<SerializedRecoverableError>,
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +225,7 @@ pub(crate) struct TextFlowWithExclusionsResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chosen_font_size_px: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<FlowWarning>,
+    pub warnings: Vec<SerializedRecoverableError>,
     /// Legacy over-side annotation extent (font size + frame gap) for manual
     /// fragment rendering. Never add this value to a measured height.
     pub top_ruby_overflow_px: f64,
@@ -460,5 +444,5 @@ pub(crate) struct IntrinsicInlineSizeResult {
     pub min_content_inline_size: f64,
     pub max_content_inline_size: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<crate::text::types::TextWarning>,
+    pub warnings: Vec<SerializedRecoverableError>,
 }

@@ -487,7 +487,7 @@ pub struct TextLayoutOutput {
     /// Recoverable text warnings (e.g. `MISSING_GLYPH`). Omitted when empty
     /// so the JSON stays byte-identical for warning-free layouts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<crate::text::types::TextWarning>,
+    pub warnings: Vec<crate::diagnostics::SerializedRecoverableError>,
     /// Background / border rectangles for `Inline` and `InlineBox` decorations,
     /// in text-local coordinates. Omitted when empty so the JSON stays
     /// byte-identical for undecorated text.

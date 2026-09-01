@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut output,
         &serde_json::json!({
             "normalizationVersion": schemas.normalization_version,
-            "outputIr": schemas.output_ir,
+            "structuralIr": schemas.structural_ir,
             "emitIrInput": schemas.emit_ir_input,
         }),
     )?;

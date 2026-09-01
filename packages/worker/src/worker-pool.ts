@@ -14,6 +14,7 @@ import {
   type SerializedRecoverableError,
   type SymbolDefinition,
 } from "@boundsvg/core";
+import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import {
   snapshotWorkerLayoutTransitionInput,
   type WorkerLayoutTransitionInput,
@@ -605,7 +606,7 @@ function validateConcurrency(value: number | undefined): number {
   ) {
     throw new FatalError(
       "WORKER_POOL_INVALID_CONCURRENCY",
-      `Worker pool concurrency must be an integer from 1 to ${MAX_WORKER_POOL_CONCURRENCY}, got ${String(concurrency)}`,
+      `Worker pool concurrency must be an integer from 1 to ${MAX_WORKER_POOL_CONCURRENCY}, got ${formatUnknownWorkerFailure(concurrency, "unprintable value")}`,
       { stage: "engine" },
     );
   }
@@ -643,7 +644,7 @@ function cloneStructuredAsset<Value>(value: Value, name: string): Value {
 function assetSnapshotError(name: string, error: unknown): FatalError {
   return new FatalError(
     "WORKER_POOL_ASSET_SNAPSHOT_FAILED",
-    `Worker pool could not snapshot ${name}: ${error instanceof Error ? error.message : String(error)}`,
+    `Worker pool could not snapshot ${name}: ${formatUnknownWorkerFailure(error, "Unknown asset snapshot failure")}`,
     {
       stage: "engine",
       context: {
@@ -676,7 +677,7 @@ function validateFrameSchedule(options: WorkerPoolRenderFramesOptions | undefine
   if (!options || (receivedFormat !== "svg" && receivedFormat !== "png")) {
     throw new FatalError(
       "ANIMATION_INVALID_FRAME_FORMAT",
-      `Frame format must be "svg" or "png", got ${String(receivedFormat)}`,
+      `Frame format must be "svg" or "png", got ${formatUnknownWorkerFailure(receivedFormat, "unprintable value")}`,
       { stage: "emit" },
     );
   }
@@ -692,7 +693,7 @@ function validateFrameSchedule(options: WorkerPoolRenderFramesOptions | undefine
     if (!Number.isFinite(timeMs) || timeMs < 0) {
       throw new FatalError(
         "ANIMATION_INVALID_TIME",
-        `Animation timeMs must be a non-negative finite number, got ${String(timeMs)}`,
+        `Animation timeMs must be a non-negative finite number, got ${formatUnknownWorkerFailure(timeMs, "unprintable value")}`,
         { stage: "emit" },
       );
     }
@@ -734,7 +735,7 @@ function splitMaterializedFrameOptions(
   if (!options || (receivedFormat !== "svg" && receivedFormat !== "png")) {
     throw new FatalError(
       "ANIMATION_INVALID_FRAME_FORMAT",
-      `Frame format must be "svg" or "png", got ${String(receivedFormat)}`,
+      `Frame format must be "svg" or "png", got ${formatUnknownWorkerFailure(receivedFormat, "unprintable value")}`,
       { stage: "emit" },
     );
   }
@@ -1048,7 +1049,7 @@ function validateMaterializedFrameInput(value: unknown, index: number): Material
   if (typeof timeMs !== "number" || !Number.isFinite(timeMs) || timeMs < 0) {
     throw new FatalError(
       "ANIMATION_INVALID_TIME",
-      `Animation timeMs must be a non-negative finite number, got ${String(timeMs)}`,
+      `Animation timeMs must be a non-negative finite number, got ${formatUnknownWorkerFailure(timeMs, "unprintable value")}`,
       {
         stage: "emit",
         context: {

@@ -1,5 +1,6 @@
 // @boundsvg/core/wasm — Low-level WASM API
 
+export { validateStructuralIR } from "./ir/output-validator.js";
 export type {
   FlowExclusionShape,
   FlowOverflowReason,
@@ -50,6 +51,14 @@ export {
   wasmResolveSymbolGeometry,
   wasmUax14LineBreaks,
 } from "./wasm/index.js";
+export {
+  isWasmIntrinsicInlineSizeResult,
+  isWasmMeasureTextBlockResult,
+  isWasmShrinkwrapFlowResult,
+  isWasmShrinkwrapTextResult,
+  isWasmTextFlowResult,
+  isWasmTextFlowWithExclusionsResult,
+} from "./wasm/protocol-decoders.js";
 export type {
   WasmEngineInstance,
   WasmModule,

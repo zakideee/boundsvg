@@ -84,6 +84,7 @@ export type {
   IRSvgNode,
   IRTextNode,
   IRTextUnitAnimationSample,
+  SerializedIR,
 } from "./ir/types.js";
 export type {
   LayerEntry,

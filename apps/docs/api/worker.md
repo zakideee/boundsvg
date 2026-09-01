@@ -274,8 +274,20 @@ const animatedArtifacts = await workerEngine.renderToAnimatedSvgAndIR(scene, {
 An animated scene sent to a static SVG method requires explicit `timeMs`.
 Worker-safe protocol option types omit callbacks that cannot be cloned;
 `WorkerEngine` accepts the corresponding Core types, returns warnings in the
-response, and invokes callbacks on the caller side. Structured fatal errors and
-unknown/legacy option rejection match the direct Engine.
+response, and invokes callbacks on the caller side. Every warning-bearing
+response carries one top-level serialized recoverable list. SVG-plus-IR
+responses carry warning-free structural IR on the wire; `WorkerEngine`
+rehydrates that list once, retains it in the returned public `IR`, and gives a
+detached copy to each callback. Layered responses also use only the top-level
+list. Structured fatal errors and unknown/legacy option rejection match the
+direct Engine.
+
+The protocol accepts only the severity-specific Core diagnostic shapes. A
+malformed response with a valid pending request ID rejects that request with
+`WORKER_PROTOCOL_INVALID_RESPONSE`. A malformed response whose ID cannot be
+correlated is treated as Worker corruption: the engine is disposed and all
+pending requests reject. A well-formed late response for an unknown ID is
+ignored.
 
 ## Worker error codes
 

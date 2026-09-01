@@ -38,7 +38,7 @@ function expectFatal(run: () => unknown, code: string, message: string): void {
   } catch (error) {
     expect(error).toBeInstanceOf(FatalError);
     expect(error).toMatchObject({ code, message, stage: "engine" });
-    expect((error as FatalError).context).toEqual({ stage: "engine" });
+    expect((error as FatalError).context).toBeUndefined();
     return;
   }
   throw new TypeError(`Expected FatalError ${code}`);
@@ -310,11 +310,7 @@ describe("CompiledScene reuse", () => {
     const mutateWarning = (warning: RecoverableError): void => {
       expect(warning).toBeInstanceOf(RecoverableError);
       expect(warning.toJSON()).toEqual(baselineWarnings[0]);
-      expect(warning.context).toBeDefined();
       warning.message = "callback mutation";
-      if (warning.context) {
-        warning.context.callbackMutation = { labels: ["mutated"] };
-      }
       Object.setPrototypeOf(warning, null);
       deliveredWarnings.push(warning);
     };

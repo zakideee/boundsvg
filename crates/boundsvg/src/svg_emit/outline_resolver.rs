@@ -431,7 +431,7 @@ pub(super) fn extract_text_node_ink_paths(
         let Some(bbox) = filled_path_bbox(&d).map_err(|_| EngineError::Structured {
             code: "TEXT_DECORATION_GEOMETRY".to_string(),
             message: "Glyph ink path geometry could not be evaluated.".to_string(),
-            stage: Some("ir".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Ir),
             node_id: Some(node_id.to_string()),
         })?
         else {
@@ -781,7 +781,7 @@ fn build_node_outline_requests(
                         code: "TEXT_UNIT_INDEX_SPACE_MISMATCH".to_string(),
                         message: "Text unit members require unique positioned glyph indices"
                             .to_string(),
-                        stage: Some("text".to_string()),
+                        stage: Some(crate::diagnostics::PipelineStage::Text),
                         node_id: Some(node_id.to_string()),
                     });
                 }
@@ -929,7 +929,7 @@ fn build_node_outline_requests(
             return Err(EngineError::Structured {
                 code: code.to_string(),
                 message: message.to_string(),
-                stage: Some("text".to_string()),
+                stage: Some(crate::diagnostics::PipelineStage::Text),
                 node_id: Some(node_id.to_string()),
             });
         }

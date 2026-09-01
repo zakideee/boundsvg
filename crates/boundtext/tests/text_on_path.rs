@@ -14,8 +14,8 @@ use boundtext::text::path::{
 };
 use boundtext::text::types::{
     FitMode, Language, TextDecorationInput, TextDecorationLine, TextDecorationSkipInk,
-    TextDecorationStyle, TextLayoutRequest, TextOrientation, TextSpanInput, WhiteSpaceMode,
-    WrapMode, WritingMode,
+    TextDecorationStyle, TextLayoutRequest, TextOrientation, TextSpanInput, TextWarningCode,
+    WhiteSpaceMode, WrapMode, WritingMode,
 };
 use boundtext::text::unit_map::{TextUnitKind, TextUnitRubyMode};
 
@@ -1335,7 +1335,7 @@ fn ellipsis_uses_the_injected_fallback_registry() {
         result
             .warnings
             .iter()
-            .all(|warning| warning.code != "MISSING_GLYPH")
+            .all(|warning| warning.code != TextWarningCode::MissingGlyph)
     );
 }
 

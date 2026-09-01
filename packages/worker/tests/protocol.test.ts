@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { formatUnknownWorkerFailure } from "../src/diagnostic-format.js";
 import type { WorkerLayoutTransitionInput } from "../src/layout-transition-transport.js";
 import {
   collectRequestTransferables,
   collectResponseTransferables,
   type FontTransfer,
+  getWorkerMessageId,
   type InitRequest,
   isWorkerRequest,
   isWorkerResponse,
@@ -31,6 +33,61 @@ const TRANSITION: WorkerLayoutTransitionInput = {
     { timeMs: 300, state: "A" },
   ],
 };
+
+describe("formatUnknownWorkerFailure", () => {
+  it("is total for hostile proxies, symbols, BigInts, and null-prototype values", () => {
+    const hostile = new Proxy(Object.create(null) as object, {
+      get() {
+        throw new Error("hostile get");
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile descriptor");
+      },
+      ownKeys() {
+        throw new Error("hostile ownKeys");
+      },
+    });
+
+    expect(formatUnknownWorkerFailure(hostile, "fallback")).toBe("fallback");
+    expect(formatUnknownWorkerFailure(Object.create(null), "fallback")).toBe("fallback");
+    expect(formatUnknownWorkerFailure(Symbol("wire"), "fallback")).toBe("Symbol(wire)");
+    expect(formatUnknownWorkerFailure(7n, "fallback")).toBe("7");
+  });
+
+  it("does not invoke getters, JSON hooks, or object coercion hooks", () => {
+    let hookCalls = 0;
+    const hostile = {
+      get payload() {
+        hookCalls += 1;
+        return "secret";
+      },
+      toJSON() {
+        hookCalls += 1;
+        return "serialized";
+      },
+      toString() {
+        hookCalls += 1;
+        return "coerced";
+      },
+      [Symbol.toPrimitive]() {
+        hookCalls += 1;
+        return "primitive";
+      },
+    };
+    const accessorMessage = Object.defineProperty({}, "message", {
+      enumerable: true,
+      get() {
+        hookCalls += 1;
+        return "accessed";
+      },
+    });
+
+    expect(formatUnknownWorkerFailure(hostile, "fallback")).toBe("fallback");
+    expect(formatUnknownWorkerFailure(accessorMessage, "fallback")).toBe("fallback");
+    expect(formatUnknownWorkerFailure({ message: "owned" }, "fallback")).toBe("owned");
+    expect(hookCalls).toBe(0);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // isWorkerRequest
@@ -268,6 +325,48 @@ describe("isWorkerRequest", () => {
     expect(isWorkerRequest({ id: "abc", type: "init" })).toBe(false);
   });
 
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    2 ** 53,
+  ])("rejects non-correlatable request id %s", (id) => {
+    expect(isWorkerRequest({ id, type: "init", fonts: [] })).toBe(false);
+    expect(getWorkerMessageId({ id })).toBeUndefined();
+  });
+
+  it("validates a top-level Proxy without invoking its get trap", () => {
+    let getCalls = 0;
+    const request = new Proxy(
+      { id: 1, type: "init", fonts: [] },
+      {
+        get() {
+          getCalls += 1;
+          throw new Error("get trap must not run");
+        },
+      },
+    );
+
+    expect(isWorkerRequest(request)).toBe(true);
+    expect(getCalls).toBe(0);
+  });
+
+  it("keeps unrelated union keys outside the active request shape", () => {
+    expect(
+      isWorkerRequest({
+        id: 1,
+        type: "render-svg",
+        scene: { type: "Canvas", width: 10, height: 10, children: [] },
+        fonts: "ignored unknown field",
+      }),
+    ).toBe(true);
+    expect(
+      isWorkerRequest({ id: 1, type: "init", fonts: [], schedule: "ignored unknown field" }),
+    ).toBe(true);
+  });
+
   it("returns false for object with non-string type", () => {
     expect(isWorkerRequest({ id: 1, type: 42 })).toBe(false);
   });
@@ -280,6 +379,23 @@ describe("isWorkerRequest", () => {
   it("returns false for init without fonts array", () => {
     expect(isWorkerRequest({ id: 1, type: "init" })).toBe(false);
     expect(isWorkerRequest({ id: 1, type: "init", fonts: "not-array" })).toBe(false);
+  });
+
+  it("rejects sparse and accessor-backed request arrays without invoking accessors", () => {
+    const sparseFonts = new Array(1);
+    expect(isWorkerRequest({ id: 1, type: "init", fonts: sparseFonts })).toBe(false);
+
+    let getterCalls = 0;
+    const accessorFonts = new Array(1);
+    Object.defineProperty(accessorFonts, "0", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return { alias: "sans", weight: 400, style: "normal", data: new ArrayBuffer(8) };
+      },
+    });
+    expect(isWorkerRequest({ id: 1, type: "init", fonts: accessorFonts })).toBe(false);
+    expect(getterCalls).toBe(0);
   });
 
   it("returns false for render-svg without scene", () => {
@@ -432,6 +548,21 @@ describe("isWorkerResponse", () => {
     const unknownNestedVariant = structuredClone(response);
     Reflect.set(unknownNestedVariant.ir.root.children[0] ?? {}, "type", "video");
     expect(isWorkerResponse(unknownNestedVariant)).toBe(false);
+
+    const duplicatedNestedWarnings = structuredClone(response);
+    Reflect.set(duplicatedNestedWarnings.ir, "warnings", []);
+    expect(isWorkerResponse(duplicatedNestedWarnings)).toBe(false);
+  });
+
+  it.each([
+    "layout-text-flow-ok",
+    "layout-text-flow-with-exclusions-ok",
+    "measure-text-block-ok",
+    "shrinkwrap-text-ok",
+    "shrinkwrap-flow-ok",
+    "measure-intrinsic-inline-size-ok",
+  ] as const)("rejects a malformed %s measurement result", (type) => {
+    expect(isWorkerResponse({ id: 8, type, result: { marker: type } })).toBe(false);
   });
 
   it("returns true for valid error response", () => {
@@ -450,6 +581,49 @@ describe("isWorkerResponse", () => {
   it("returns false for invalid objects", () => {
     expect(isWorkerResponse({})).toBe(false);
     expect(isWorkerResponse({ id: "abc", type: "ok" })).toBe(false);
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.NEGATIVE_INFINITY,
+    2 ** 53,
+  ])("rejects non-correlatable response id %s", (id) => {
+    expect(isWorkerResponse({ id, type: "dispose-ok" })).toBe(false);
+    expect(getWorkerMessageId({ id })).toBeUndefined();
+  });
+
+  it("validates a top-level Proxy without invoking its get trap", () => {
+    let getCalls = 0;
+    const response = new Proxy(
+      { id: 1, type: "render-svg-ok", svg: "<svg/>", warnings: [] },
+      {
+        get() {
+          getCalls += 1;
+          throw new Error("get trap must not run");
+        },
+      },
+    );
+
+    expect(isWorkerResponse(response)).toBe(true);
+    expect(getCalls).toBe(0);
+  });
+
+  it("keeps unrelated union keys outside the active response shape", () => {
+    expect(isWorkerResponse({ id: 1, type: "dispose-ok", warnings: "ignored unknown field" })).toBe(
+      true,
+    );
+    expect(
+      isWorkerResponse({
+        id: 1,
+        type: "render-svg-ok",
+        svg: "<svg/>",
+        warnings: [],
+        gif: "ignored unknown field",
+      }),
+    ).toBe(true);
   });
 
   it("returns false for unknown type value", () => {
@@ -551,8 +725,8 @@ describe("isWorkerResponse", () => {
             },
           ],
         },
-        warnings: [],
       },
+      warnings: [],
     };
     expect(isWorkerResponse(response)).toBe(true);
   });
@@ -581,8 +755,8 @@ describe("isWorkerResponse", () => {
             height: 100,
             layers: [],
           },
-          warnings: [],
         },
+        warnings: [],
       }),
     ).toBe(false);
   });
@@ -623,8 +797,8 @@ describe("isWorkerResponse", () => {
             },
           ],
         },
-        warnings: [],
       },
+      warnings: [],
     };
     expect(isWorkerResponse(response)).toBe(true);
   });
@@ -694,6 +868,40 @@ describe("isWorkerResponse", () => {
         warnings: [{ severity: "fatal" }],
       }),
     ).toBe(false);
+  });
+
+  it("rejects sparse, accessor-backed, and hostile warning arrays without reading them", () => {
+    const response = { id: 1, type: "render-svg-ok", svg: "<svg/>" };
+    const sparseWarnings = new Array(1);
+    expect(isWorkerResponse({ ...response, warnings: sparseWarnings })).toBe(false);
+
+    let getterCalls = 0;
+    const accessorWarnings = new Array(1);
+    Object.defineProperty(accessorWarnings, "0", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return {
+          severity: "recoverable",
+          code: "WARN",
+          message: "warning",
+          fallback: "continued",
+          stage: "emit",
+        };
+      },
+    });
+    expect(isWorkerResponse({ ...response, warnings: accessorWarnings })).toBe(false);
+    expect(getterCalls).toBe(0);
+
+    let descriptorCalls = 0;
+    const hostileWarnings = new Proxy([], {
+      getOwnPropertyDescriptor() {
+        descriptorCalls += 1;
+        throw new Error("descriptor must be contained");
+      },
+    });
+    expect(isWorkerResponse({ ...response, warnings: hostileWarnings })).toBe(false);
+    expect(descriptorCalls).toBe(1);
   });
 
   it("returns true for render-svg-ok with valid serialized recoverable warnings", () => {
@@ -1067,8 +1275,8 @@ describe("collectResponseTransferables", () => {
             },
           ],
         },
-        warnings: [],
       },
+      warnings: [],
     };
 
     const transferables = collectResponseTransferables(response);
@@ -1122,8 +1330,8 @@ describe("collectResponseTransferables", () => {
             },
           ],
         },
-        warnings: [],
       },
+      warnings: [],
     };
     expect(collectResponseTransferables(response)).toEqual([]);
   });

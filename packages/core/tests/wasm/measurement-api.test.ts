@@ -2686,19 +2686,25 @@ describe("Measurement WASM APIs", () => {
     expect(result.maxContentInlineSize).toBeGreaterThanOrEqual(result.minContentInlineSize);
   });
 
-  it("reproduces intrinsic warning transport validation", () => {
-    expect(() =>
-      engine.measureIntrinsicInlineSize({
-        text: "",
-        fontFamily: "NotoSansJP",
-        fontSizePx: 18,
-        richText: createIntrinsicWarningRichText(),
-      }),
-    ).toThrowError(
-      expect.objectContaining({
-        code: "WASM_INVALID_INTRINSIC_INLINE_SIZE_OUTPUT",
-      }),
-    );
+  it("accepts a valid intrinsic result with strict recoverable warnings", () => {
+    const result = engine.measureIntrinsicInlineSize({
+      text: "",
+      fontFamily: "NotoSansJP",
+      fontSizePx: 18,
+      richText: createIntrinsicWarningRichText(),
+    });
+
+    expect(result.minContentInlineSize).toBeGreaterThan(0);
+    expect(result.maxContentInlineSize).toBeGreaterThanOrEqual(result.minContentInlineSize);
+    expect(result.warnings).toEqual([
+      {
+        severity: "recoverable",
+        code: "INLINE_BOX_MAX_DEPTH",
+        message: expect.stringContaining("InlineBox nesting exceeds max depth"),
+        fallback: "skipped",
+        stage: "text",
+      },
+    ]);
   });
 
   it("bridges real mixed-size crossSize values through WASM", () => {

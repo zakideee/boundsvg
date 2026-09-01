@@ -22,6 +22,7 @@ use super::types::{
     TaffyStyleInput, TextInput, TextLayoutOutput, TextPathInput, parse_feature_settings_opt,
     parse_variation_settings_opt,
 };
+use crate::diagnostics::text_warning_to_recoverable;
 
 pub(super) fn compute_layout_core(
     input: &LayoutInput,
@@ -161,7 +162,7 @@ fn text_path_error(code: &str, node_id: &str, message: impl Into<String>) -> Eng
     EngineError::Structured {
         code: code.to_string(),
         message: message.into(),
-        stage: Some("validate".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Validate),
         node_id: Some(node_id.to_string()),
     }
 }
@@ -440,7 +441,7 @@ fn inline_rect_error(code: &str, node_id: &str, message: impl Into<String>) -> E
     EngineError::Structured {
         code: code.to_string(),
         message: message.into(),
-        stage: Some("validate".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Validate),
         node_id: Some(node_id.to_string()),
     }
 }
@@ -563,7 +564,7 @@ fn text_decoration_error(node_id: &str, message: impl Into<String>) -> EngineErr
     EngineError::Structured {
         code: "TEXT_DECORATION_INVALID".to_string(),
         message: message.into(),
-        stage: Some("validate".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Validate),
         node_id: Some(node_id.to_string()),
     }
 }
@@ -591,7 +592,7 @@ fn validate_text_decorations(
             message: format!(
                 "Text decoration range count {wire_range_count} exceeds the limit {MAX_TEXT_DECORATION_RANGES}."
             ),
-            stage: Some("validate".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Validate),
             node_id: Some(node_id.to_string()),
         });
     }
@@ -603,7 +604,7 @@ fn validate_text_decorations(
         return Err(EngineError::Structured {
             code: "TEXT_DECORATION_UNIT_ANIMATION_UNSUPPORTED".to_string(),
             message: "textDecoration cannot be combined with animateUnits.".to_string(),
-            stage: Some("validate".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Validate),
             node_id: Some(node_id.to_string()),
         });
     }
@@ -850,7 +851,7 @@ fn validate_text_decoration_value(
         return Err(EngineError::Structured {
             code: "TEXT_DECORATION_SKIP_INK_UNSUPPORTED".to_string(),
             message: "textDecoration.skipInk=\"all\" requires underline or overline.".to_string(),
-            stage: Some("validate".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Validate),
             node_id: Some(node_id.to_string()),
         });
     }
@@ -1252,7 +1253,7 @@ fn collect_layout_results(
             message: format!(
                 "Text unit metadata was requested for node \"{string_id}\", but resolved positioned glyphs are unavailable.",
             ),
-            stage: Some("text".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Text),
             node_id: Some(string_id.clone()),
         };
         if text_input.unit_map.is_some() && rust_result.is_none() {
@@ -1359,7 +1360,7 @@ fn collect_layout_results(
                     .map_err(|error| EngineError::Structured {
                         code: "TEXT_UNIT_MAP_INVALID".to_string(),
                         message: error.to_string(),
-                        stage: Some("text".to_string()),
+                        stage: Some(crate::diagnostics::PipelineStage::Text),
                         node_id: Some(string_id.clone()),
                     })?,
                 )
@@ -1400,7 +1401,17 @@ fn collect_layout_results(
                 source_text: rust_result.and_then(|r| r.source_text.clone()),
                 display_text: rust_result.and_then(|r| r.display_text.clone()),
                 unit_map,
-                warnings: rust_result.map(|r| r.warnings.clone()).unwrap_or_default(),
+                warnings: rust_result
+                    .map(|result| {
+                        result
+                            .warnings
+                            .iter()
+                            .map(|warning| {
+                                text_warning_to_recoverable(warning, Some(string_id.clone()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 inline_box_decorations: rust_result
                     .map(|r| r.inline_box_decorations.clone())
                     .unwrap_or_default(),
@@ -1548,6 +1559,11 @@ fn build_text_path_layout_output(
         .map_err(|error| map_text_path_layout_error(error, node_id))?;
     let unit_map = result.unit_map.take();
     let text_decorations = std::mem::take(&mut result.text_decorations);
+    let warnings = result
+        .warnings
+        .iter()
+        .map(|warning| text_warning_to_recoverable(warning, Some(node_id.to_string())))
+        .collect();
     let glyphs = result
         .lines
         .first()
@@ -1576,7 +1592,7 @@ fn build_text_path_layout_output(
         source_text: result.source_text,
         display_text: result.display_text,
         unit_map,
-        warnings: result.warnings,
+        warnings,
         inline_box_decorations: Vec::new(),
         text_decorations,
         inline_rects: Vec::new(),
@@ -1613,7 +1629,7 @@ fn map_text_path_layout_error(
     EngineError::Structured {
         code: code.to_string(),
         message: error.to_string(),
-        stage: Some("text".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Text),
         node_id: Some(node_id.to_string()),
     }
 }

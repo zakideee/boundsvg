@@ -67,7 +67,7 @@ function parseRgbColor(s: string, nodeId?: string): ParsedColor | null {
     if (r > 255 || g > 255 || b > 255) {
       throw new FatalError("COLOR_INVALID", `Invalid color: rgb values must be 0-255, got "${s}"`, {
         stage: "validate",
-        nodeId,
+        ...(nodeId !== undefined && { nodeId }),
       });
     }
     return { r, g, b, a: 1 };
@@ -82,13 +82,13 @@ function parseRgbColor(s: string, nodeId?: string): ParsedColor | null {
     if (r > 255 || g > 255 || b > 255) {
       throw new FatalError("COLOR_INVALID", `Invalid color: rgb values must be 0-255, got "${s}"`, {
         stage: "validate",
-        nodeId,
+        ...(nodeId !== undefined && { nodeId }),
       });
     }
     if (a < 0 || a > 1) {
       throw new FatalError("COLOR_INVALID", `Invalid color: alpha must be 0-1, got "${s}"`, {
         stage: "validate",
-        nodeId,
+        ...(nodeId !== undefined && { nodeId }),
       });
     }
     return { r, g, b, a };
@@ -108,7 +108,7 @@ function parseHslColor(s: string, nodeId?: string): ParsedColor | null {
     if (sat < 0 || sat > 100 || l < 0 || l > 100) {
       throw new FatalError("COLOR_INVALID", `Invalid color: hsl s/l must be 0-100%, got "${s}"`, {
         stage: "validate",
-        nodeId,
+        ...(nodeId !== undefined && { nodeId }),
       });
     }
     const { r, g, b } = hslToRgb(hue, sat, l);
@@ -124,13 +124,13 @@ function parseHslColor(s: string, nodeId?: string): ParsedColor | null {
     if (sat < 0 || sat > 100 || l < 0 || l > 100) {
       throw new FatalError("COLOR_INVALID", `Invalid color: hsl s/l must be 0-100%, got "${s}"`, {
         stage: "validate",
-        nodeId,
+        ...(nodeId !== undefined && { nodeId }),
       });
     }
     if (a < 0 || a > 1) {
       throw new FatalError("COLOR_INVALID", `Invalid color: alpha must be 0-1, got "${s}"`, {
         stage: "validate",
-        nodeId,
+        ...(nodeId !== undefined && { nodeId }),
       });
     }
     const { r, g, b } = hslToRgb(hue, sat, l);
@@ -173,7 +173,7 @@ export function parseColor(value: string, context?: { nodeId?: string }): Parsed
   throw new FatalError(
     "COLOR_INVALID",
     `Invalid color format: "${trimmed}". Accepted: #RGB, #RRGGBB, #RRGGBBAA, rgb(), rgba(), hsl(), hsla(), CSS color names`,
-    { stage: "validate", nodeId },
+    { stage: "validate", ...(nodeId !== undefined && { nodeId }) },
   );
 }
 

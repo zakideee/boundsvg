@@ -54,16 +54,18 @@ import type {
   TextFlowWithExclusionsResult,
 } from "@boundsvg/core";
 import { FatalError, RecoverableError } from "@boundsvg/core";
-import { rehydrateError } from "./error-rehydration.js";
+import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import {
   snapshotWorkerLayoutTransitionInput,
   type WorkerLayoutTransitionInput,
 } from "./layout-transition-transport.js";
 import {
   collectRequestTransferables,
+  decodeWorkerResponse,
   type FontTransfer,
+  getWorkerMessageId,
   type IndexedFrameTime,
-  isWorkerResponse,
+  isWorkerMessageId,
   type WorkerFrameRenderOptions,
   type WorkerLayeredPngRenderOptions,
   type WorkerLayeredSvgRenderOptions,
@@ -124,7 +126,6 @@ export type WorkerRenderLayeredPngResult = LayeredPngResult & {
 export type WorkerRenderSvgAndIrResult = {
   svg: string;
   ir: IR;
-  warnings: SerializedRecoverableError[];
 };
 
 // ---------------------------------------------------------------------------
@@ -138,7 +139,6 @@ type PendingRequest<T> = {
 };
 
 type WarningCallback = NonNullable<OutputCommonOptions["onWarning"]>;
-type RecoverableWarning = Parameters<WarningCallback>[0];
 type PngResolutionAdjustedCallback = NonNullable<RasterEmissionOptions["onPngResolutionAdjusted"]>;
 
 export type WorkerRenderedFrame =
@@ -201,27 +201,30 @@ export class WorkerEngine {
 
     this.handleMessage = (event: MessageEvent) => {
       const data: unknown = event.data;
-      if (!isWorkerResponse(data)) {
-        const responseId = getWorkerResponseId(data);
+      const response = decodeWorkerResponse(data);
+      if (response === undefined) {
+        const responseId = getWorkerMessageId(data);
         if (responseId !== undefined) {
           const entry = this.pending.get(responseId);
           if (entry) {
             clearTimeout(entry.timer);
             this.pending.delete(responseId);
             entry.reject(invalidWorkerResponseError(responseId));
+            return;
           }
         }
+        this.disposeAfterProtocolCorruption();
         return;
       }
 
-      const entry = this.pending.get(data.id);
+      const entry = this.pending.get(response.id);
       if (!entry) {
         return;
       }
 
       clearTimeout(entry.timer);
-      this.pending.delete(data.id);
-      entry.resolve(data);
+      this.pending.delete(response.id);
+      entry.resolve(response);
     };
 
     this.handleError = (event: ErrorEvent) => {
@@ -231,8 +234,9 @@ export class WorkerEngine {
       }
       this.disposed = true;
 
-      const error = workerLifecycleError("WORKER_CRASHED", `Worker error: ${event.message}`, {
-        workerMessage: event.message,
+      const workerMessage = describeWorkerErrorEvent(event);
+      const error = workerLifecycleError("WORKER_CRASHED", `Worker error: ${workerMessage}`, {
+        workerMessage,
       });
       for (const [id, entry] of this.pending) {
         clearTimeout(entry.timer);
@@ -254,7 +258,7 @@ export class WorkerEngine {
     workerPoolEndpoints.set(this, {
       open: async (scene, schedule, options) => {
         this.assertNotDisposed();
-        const streamId = this.nextId++;
+        const streamId = this.nextRequestId();
         let response: WorkerResponse;
         try {
           response = await this.send({
@@ -270,7 +274,7 @@ export class WorkerEngine {
         }
         if (response.type === "error") {
           this.closeFrameStreamBestEffort(streamId);
-          throw rehydrateError(response.error);
+          throw FatalError.fromSerialized(response.error);
         }
         if (response.type !== "open-frame-stream-ok") {
           this.closeFrameStreamBestEffort(streamId);
@@ -280,7 +284,7 @@ export class WorkerEngine {
       },
       openLayoutTransition: async (transition, schedule, options) => {
         this.assertNotDisposed();
-        const streamId = this.nextId++;
+        const streamId = this.nextRequestId();
         let response: WorkerResponse;
         try {
           response = await this.send({
@@ -296,7 +300,7 @@ export class WorkerEngine {
         }
         if (response.type === "error") {
           this.closeFrameStreamBestEffort(streamId);
-          throw rehydrateError(response.error);
+          throw FatalError.fromSerialized(response.error);
         }
         if (response.type !== "open-frame-stream-ok") {
           this.closeFrameStreamBestEffort(streamId);
@@ -307,12 +311,12 @@ export class WorkerEngine {
       next: async (streamId) => {
         this.assertNotDisposed();
         const response = await this.send({
-          id: this.nextId++,
+          id: this.nextRequestId(),
           type: "next-frame-stream",
           streamId,
         });
         if (response.type === "error") {
-          throw rehydrateError(response.error);
+          throw FatalError.fromSerialized(response.error);
         }
         if (response.type !== "next-frame-stream-ok") {
           throw unexpectedWorkerResponseError(response.type, "next-frame-stream-ok");
@@ -322,12 +326,12 @@ export class WorkerEngine {
       close: async (streamId) => {
         this.assertNotDisposed();
         const response = await this.send({
-          id: this.nextId++,
+          id: this.nextRequestId(),
           type: "close-frame-stream",
           streamId,
         });
         if (response.type === "error") {
-          throw rehydrateError(response.error);
+          throw FatalError.fromSerialized(response.error);
         }
         if (response.type !== "close-frame-stream-ok") {
           throw unexpectedWorkerResponseError(response.type, "close-frame-stream-ok");
@@ -338,20 +342,20 @@ export class WorkerEngine {
         const response = await this.send(
           format === "svg"
             ? {
-                id: this.nextId++,
+                id: this.nextRequestId(),
                 type: "render-svg",
                 scene,
                 options: options as WorkerRenderSvgOptions,
               }
             : {
-                id: this.nextId++,
+                id: this.nextRequestId(),
                 type: "render-png",
                 scene,
                 options: options as WorkerRenderPngOptions,
               },
         );
         if (response.type === "error") {
-          throw rehydrateError(response.error);
+          throw FatalError.fromSerialized(response.error);
         }
         if (format === "svg" && response.type === "render-svg-ok") {
           return { format, data: response.svg, warnings: response.warnings };
@@ -400,7 +404,7 @@ export class WorkerEngine {
     let response: WorkerResponse;
     try {
       response = await engine.send({
-        id: engine.nextId++,
+        id: engine.nextRequestId(),
         type: "init",
         fonts: options.fonts,
         ...(options.geometries ? { geometries: options.geometries } : {}),
@@ -413,7 +417,7 @@ export class WorkerEngine {
 
     if (response.type === "error") {
       engine.dispose();
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "init-ok") {
       engine.dispose();
@@ -435,7 +439,7 @@ export class WorkerEngine {
     const { workerOptions, onWarning } = splitOptions(options);
 
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-svg",
       scene,
       ...(workerOptions && { options: workerOptions }),
@@ -444,7 +448,7 @@ export class WorkerEngine {
     const response = await this.send(request);
 
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-svg-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-svg-ok");
@@ -460,14 +464,14 @@ export class WorkerEngine {
 
     const { workerOptions, onWarning } = splitOptions(options);
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-animated-svg",
       scene,
       options: workerOptions as WorkerRenderAnimatedSvgOptions,
     };
     const response = await this.send(request);
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-animated-svg-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-animated-svg-ok");
@@ -486,13 +490,13 @@ export class WorkerEngine {
   async renderToSvgAndIR(
     scene: SceneNode,
     options?: RenderSvgOptions,
-  ): Promise<{ svg: string; ir: IR }> {
+  ): Promise<WorkerRenderSvgAndIrResult> {
     this.assertNotDisposed();
 
     const { workerOptions, onWarning } = splitOptions(options);
 
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-svg-and-ir",
       scene,
       ...(workerOptions && { options: workerOptions }),
@@ -501,16 +505,20 @@ export class WorkerEngine {
     const response = await this.send(request);
 
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-svg-and-ir-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-svg-and-ir-ok");
     }
 
-    forwardWorkerWarnings(response.warnings, onWarning);
-    // Rehydrate IR with empty warnings (originals were non-serializable;
-    // warnings already forwarded above via onWarning callback)
-    const ir: IR = { ...response.ir, warnings: [] };
+    const warnings = rehydrateWorkerWarnings(response.warnings);
+    forwardRehydratedWorkerWarnings({
+      warnings,
+      onWarning,
+      onPngResolutionAdjusted: undefined,
+      detachForRetainedIr: true,
+    });
+    const ir: IR = { ...response.ir, warnings };
     return { svg: response.svg, ir };
   }
 
@@ -523,20 +531,26 @@ export class WorkerEngine {
 
     const { workerOptions, onWarning } = splitOptions(options);
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-animated-svg-and-ir",
       scene,
       options: workerOptions as WorkerRenderAnimatedSvgOptions,
     };
     const response = await this.send(request);
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-animated-svg-and-ir-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-animated-svg-and-ir-ok");
     }
-    forwardWorkerWarnings(response.warnings, onWarning);
-    const ir: IR = { ...response.ir, warnings: [] };
+    const warnings = rehydrateWorkerWarnings(response.warnings);
+    forwardRehydratedWorkerWarnings({
+      warnings,
+      onWarning,
+      onPngResolutionAdjusted: undefined,
+      detachForRetainedIr: true,
+    });
+    const ir: IR = { ...response.ir, warnings };
     return { svg: response.svg, ir };
   }
 
@@ -552,7 +566,7 @@ export class WorkerEngine {
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
 
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-png",
       scene,
       ...(workerOptions && { options: workerOptions }),
@@ -561,7 +575,7 @@ export class WorkerEngine {
     const response = await this.send(request);
 
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-png-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-png-ok");
@@ -583,7 +597,7 @@ export class WorkerEngine {
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
 
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-webp",
       scene,
       ...(workerOptions && { options: workerOptions }),
@@ -592,7 +606,7 @@ export class WorkerEngine {
     const response = await this.send(request);
 
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-webp-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-webp-ok");
@@ -615,7 +629,7 @@ export class WorkerEngine {
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
 
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-animated-webp",
       scene,
       options: { ...workerOptions, iterations: options.iterations },
@@ -624,7 +638,7 @@ export class WorkerEngine {
     const response = await this.send(request);
 
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-animated-webp-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-animated-webp-ok");
@@ -646,14 +660,14 @@ export class WorkerEngine {
     const transition = snapshotWorkerLayoutTransitionInput(input);
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-layout-transition-animated-webp",
       transition,
       options: { ...workerOptions, iterations: options.iterations },
     };
     const response = await this.send(request);
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-animated-webp-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-animated-webp-ok");
@@ -675,7 +689,7 @@ export class WorkerEngine {
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
 
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-animated-gif",
       scene,
       options: { ...workerOptions, iterations: options.iterations },
@@ -684,7 +698,7 @@ export class WorkerEngine {
     const response = await this.send(request);
 
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-animated-gif-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-animated-gif-ok");
@@ -706,14 +720,14 @@ export class WorkerEngine {
     const transition = snapshotWorkerLayoutTransitionInput(input);
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-layout-transition-animated-gif",
       transition,
       options: { ...workerOptions, iterations: options.iterations },
     };
     const response = await this.send(request);
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-animated-gif-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-animated-gif-ok");
@@ -731,7 +745,7 @@ export class WorkerEngine {
     const { workerOptions, onWarning } = splitLayeredSvgOptions(options);
 
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-layered-svg",
       scene,
       ...(workerOptions ? { options: workerOptions } : {}),
@@ -740,15 +754,14 @@ export class WorkerEngine {
     const response = await this.send(request);
 
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-layered-svg-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-layered-svg-ok");
     }
 
-    forwardWorkerWarnings(response.result.warnings, onWarning);
-    const { warnings: _warnings, ...result } = response.result;
-    return result;
+    forwardWorkerWarnings(response.warnings, onWarning);
+    return response.result;
   }
 
   async renderToLayeredPng(
@@ -760,7 +773,7 @@ export class WorkerEngine {
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitLayeredPngOptions(options);
 
     const request: WorkerRequest = {
-      id: this.nextId++,
+      id: this.nextRequestId(),
       type: "render-layered-png",
       scene,
       ...(workerOptions ? { options: workerOptions } : {}),
@@ -769,21 +782,20 @@ export class WorkerEngine {
     const response = await this.send(request);
 
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "render-layered-png-ok") {
       throw unexpectedWorkerResponseError(response.type, "render-layered-png-ok");
     }
 
-    forwardWorkerWarnings(response.result.warnings, onWarning, onPngResolutionAdjusted);
-    const { warnings: _warnings, ...result } = response.result;
-    return result;
+    forwardWorkerWarnings(response.warnings, onWarning, onPngResolutionAdjusted);
+    return response.result;
   }
 
   async layoutTextFlow(input: TextFlowInput): Promise<TextFlowResult> {
     const response = await this.send({ id: this.nextRequestId(), type: "layout-text-flow", input });
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "layout-text-flow-ok") {
       throw unexpectedWorkerResponseError(response.type, "layout-text-flow-ok");
@@ -800,7 +812,7 @@ export class WorkerEngine {
       input,
     });
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "layout-text-flow-with-exclusions-ok") {
       throw unexpectedWorkerResponseError(response.type, "layout-text-flow-with-exclusions-ok");
@@ -815,7 +827,7 @@ export class WorkerEngine {
       input,
     });
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "measure-text-block-ok") {
       throw unexpectedWorkerResponseError(response.type, "measure-text-block-ok");
@@ -826,7 +838,7 @@ export class WorkerEngine {
   async shrinkwrapText(input: ShrinkwrapTextInput): Promise<ShrinkwrapTextResult> {
     const response = await this.send({ id: this.nextRequestId(), type: "shrinkwrap-text", input });
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "shrinkwrap-text-ok") {
       throw unexpectedWorkerResponseError(response.type, "shrinkwrap-text-ok");
@@ -837,7 +849,7 @@ export class WorkerEngine {
   async shrinkwrapFlow(input: ShrinkwrapFlowInput): Promise<ShrinkwrapFlowResult> {
     const response = await this.send({ id: this.nextRequestId(), type: "shrinkwrap-flow", input });
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "shrinkwrap-flow-ok") {
       throw unexpectedWorkerResponseError(response.type, "shrinkwrap-flow-ok");
@@ -854,7 +866,7 @@ export class WorkerEngine {
       input,
     });
     if (response.type === "error") {
-      throw rehydrateError(response.error);
+      throw FatalError.fromSerialized(response.error);
     }
     if (response.type !== "measure-intrinsic-inline-size-ok") {
       throw unexpectedWorkerResponseError(response.type, "measure-intrinsic-inline-size-ok");
@@ -872,13 +884,21 @@ export class WorkerEngine {
     if (this.disposed) {
       return;
     }
+    let disposeRequestId: number | undefined;
+    try {
+      disposeRequestId = this.nextRequestId();
+    } catch {
+      // ID exhaustion must not prevent local cleanup.
+    }
     this.disposed = true;
 
     // Best-effort dispose message — must not prevent cleanup
     try {
-      const request: WorkerRequest = { id: this.nextId++, type: "dispose" };
-      const transferables = collectRequestTransferables(request);
-      this.worker.postMessage(request, transferables);
+      if (disposeRequestId !== undefined) {
+        const request: WorkerRequest = { id: disposeRequestId, type: "dispose" };
+        const transferables = collectRequestTransferables(request);
+        this.worker.postMessage(request, transferables);
+      }
     } catch {
       // Swallow — Worker may already be in a broken state
     }
@@ -924,9 +944,34 @@ export class WorkerEngine {
     });
   }
 
+  private disposeAfterProtocolCorruption(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    for (const [id, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      this.pending.delete(id);
+      entry.reject(invalidWorkerResponseError(id));
+    }
+    this.worker.removeEventListener("message", this.handleMessage);
+    this.worker.removeEventListener("error", this.handleError as EventListener);
+    if (this.ownsWorker) {
+      this.worker.terminate();
+    }
+  }
+
   private nextRequestId(): number {
     this.assertNotDisposed();
-    return this.nextId++;
+    if (!isWorkerMessageId(this.nextId)) {
+      throw workerLifecycleError(
+        "WORKER_REQUEST_ID_EXHAUSTED",
+        "Worker request ID space has been exhausted",
+      );
+    }
+    const requestId = this.nextId;
+    this.nextId += 1;
+    return requestId;
   }
 
   /**
@@ -938,8 +983,14 @@ export class WorkerEngine {
     if (this.disposed) {
       return;
     }
+    let requestId: number;
+    try {
+      requestId = this.nextRequestId();
+    } catch {
+      return;
+    }
     void this.send({
-      id: this.nextId++,
+      id: requestId,
       type: "close-frame-stream",
       streamId,
     }).catch(() => {
@@ -973,14 +1024,6 @@ function workerLifecycleError(
 
 function workerEngineDisposedError(): FatalError {
   return workerLifecycleError("WORKER_ENGINE_DISPOSED", "WorkerEngine has been disposed");
-}
-
-function getWorkerResponseId(value: unknown): number | undefined {
-  if (typeof value !== "object" || value === null) {
-    return undefined;
-  }
-  const id = Reflect.get(value, "id");
-  return typeof id === "number" && Number.isSafeInteger(id) ? id : undefined;
 }
 
 function invalidWorkerResponseError(requestId: number): FatalError {
@@ -1021,7 +1064,24 @@ function workerTransportError(request: WorkerRequest, error: unknown): FatalErro
 }
 
 function describeWorkerFailure(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return formatUnknownWorkerFailure(error, "Unknown Worker transport failure");
+}
+
+function describeWorkerErrorEvent(event: ErrorEvent): string {
+  const fallback = "Unknown Worker error";
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(event, "message");
+    if (!descriptor || !("value" in descriptor)) {
+      return fallback;
+    }
+    const message = descriptor.value;
+    if (message === undefined || message === null || message === "") {
+      return fallback;
+    }
+    return formatUnknownWorkerFailure(message, fallback);
+  } catch {
+    return fallback;
+  }
 }
 
 /**
@@ -1121,7 +1181,7 @@ function splitLayeredPngOptions(options?: LayeredPngOptions): SplitLayeredPngCal
  * required fields.
  */
 function extractPngResolutionWarning(
-  warning: SerializedRecoverableError,
+  warning: SerializedRecoverableError | RecoverableError,
 ): PngResolutionAdjustedWarning | undefined {
   if (warning.code !== "PNG_RESOLUTION_ADJUSTED" || !warning.context) {
     return undefined;
@@ -1176,8 +1236,42 @@ function getNumericContextValue(
   return typeof value === "number" ? value : undefined;
 }
 
-function rehydrateRecoverableWarning(warning: SerializedRecoverableError): RecoverableWarning {
-  return RecoverableError.fromSerialized(warning);
+function rehydrateWorkerWarnings(
+  warnings: readonly SerializedRecoverableError[],
+): RecoverableError[] {
+  return warnings.map((warning) => RecoverableError.fromSerialized(warning));
+}
+
+function forwardRehydratedWorkerWarnings(options: {
+  warnings: readonly RecoverableError[];
+  onWarning: WarningCallback | undefined;
+  onPngResolutionAdjusted: PngResolutionAdjustedCallback | undefined;
+  detachForRetainedIr: boolean;
+}): void {
+  const { warnings, onWarning, onPngResolutionAdjusted, detachForRetainedIr } = options;
+  for (const warning of warnings) {
+    if (onPngResolutionAdjusted) {
+      const pngWarning = extractPngResolutionWarning(warning);
+      if (pngWarning) {
+        onPngResolutionAdjusted(pngWarning);
+      }
+    }
+    if (onWarning) {
+      if (!detachForRetainedIr) {
+        onWarning(warning);
+        continue;
+      }
+      const serialized = warning.toJSON();
+      onWarning(
+        new RecoverableError(serialized.code, serialized.message, {
+          fallback: serialized.fallback,
+          stage: serialized.stage,
+          ...(serialized.nodeId !== undefined && { nodeId: serialized.nodeId }),
+          ...(serialized.context !== undefined && { context: serialized.context }),
+        }),
+      );
+    }
+  }
 }
 
 /**
@@ -1187,20 +1281,14 @@ function rehydrateRecoverableWarning(warning: SerializedRecoverableError): Recov
  * `onPngResolutionAdjusted` when provided.
  */
 export function forwardWorkerWarnings(
-  warnings: SerializedRecoverableError[],
+  warnings: readonly SerializedRecoverableError[],
   onWarning: WarningCallback | undefined,
   onPngResolutionAdjusted?: PngResolutionAdjustedCallback | undefined,
 ): void {
-  if (warnings.length === 0) {
-    return;
-  }
-  for (const warning of warnings) {
-    if (onPngResolutionAdjusted) {
-      const pngWarning = extractPngResolutionWarning(warning);
-      if (pngWarning) {
-        onPngResolutionAdjusted(pngWarning);
-      }
-    }
-    onWarning?.(rehydrateRecoverableWarning(warning));
-  }
+  forwardRehydratedWorkerWarnings({
+    warnings: rehydrateWorkerWarnings(warnings),
+    onWarning,
+    onPngResolutionAdjusted,
+    detachForRetainedIr: false,
+  });
 }

@@ -84,12 +84,51 @@ const RESERVED_CONTEXT_KEYS = new Set([
 ]);
 
 /** Return whether a value belongs to the closed diagnostic pipeline stage set. */
-export function isPipelineStage(value: unknown): value is PipelineStage {
+function isPipelineStage(value: unknown): value is PipelineStage {
   return typeof value === "string" && PIPELINE_STAGES.has(value);
 }
 
 function diagnosticTypeError(description: string): TypeError {
   return new TypeError(`Invalid diagnostic ${description}`);
+}
+
+/**
+ * Format an arbitrary boundary failure without invoking an unchecked accessor
+ * or allowing a hostile value to replace the original failure with a second
+ * exception. This helper is internal to Core's boundary adapters.
+ */
+export function formatUnknownDiagnosticValue(value: unknown, fallback: string): string {
+  if (typeof value === "string") {
+    return value.length > 0 ? value : fallback;
+  }
+
+  if (value === null) {
+    return "null";
+  }
+
+  if ((typeof value === "object" && value !== null) || typeof value === "function") {
+    try {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, "message");
+      if (
+        descriptor !== undefined &&
+        "value" in descriptor &&
+        typeof descriptor.value === "string" &&
+        descriptor.value.length > 0
+      ) {
+        return descriptor.value;
+      }
+    } catch {
+      return fallback;
+    }
+    return fallback;
+  }
+
+  try {
+    const text = String(value);
+    return text.length > 0 ? text : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function readObjectPrototype(value: object, description: string): object | null {

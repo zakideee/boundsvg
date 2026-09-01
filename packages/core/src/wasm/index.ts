@@ -1,5 +1,5 @@
 import type { SerializedRecoverableError } from "../errors.js";
-import { FatalError, isPipelineStage } from "../errors.js";
+import { FatalError, formatUnknownDiagnosticValue } from "../errors.js";
 import { DEFAULT_FONT_WEIGHT } from "../font/types.js";
 import type { LayeredCompositionValidationResult } from "../layered-svg.js";
 import type { ComputeLayoutTransportFn } from "../layout/backend.js";
@@ -47,7 +47,7 @@ let wasmModule: WasmModule | null = null;
  * `crates/boundsvg/src/lib.rs`; both sides change in the same commit.
  * Bump whenever a WASM-boundary DTO shape or export signature changes.
  */
-export const EXPECTED_WASM_SCHEMA_VERSION = 28;
+export const EXPECTED_WASM_SCHEMA_VERSION = 29;
 
 function assertWasmSchemaVersion(preloaded: WasmModule): void {
   const readSchemaVersion = preloaded.wasm_schema_version;
@@ -150,25 +150,21 @@ function parseWasmJson<T>(
 }
 
 function wrapWasmStructuredTextError(error: unknown): FatalError {
-  if (error instanceof FatalError) {
-    return error;
-  }
-  const text =
-    typeof error === "string" ? error : String((error as { message?: unknown })?.message ?? error);
   try {
-    const parsed = JSON.parse(text) as unknown;
-    if (isObjectLike(parsed)) {
-      const code = getStringProperty(parsed, "code");
-      const message = getStringProperty(parsed, "message");
-      const stage = getStringProperty(parsed, "stage");
-      if (code !== undefined && message !== undefined) {
-        return new FatalError(code, message, {
-          stage: isPipelineStage(stage) ? stage : "text",
-        });
-      }
+    if (error instanceof FatalError) {
+      return error;
     }
   } catch {
-    // Preserve legacy unstructured WASM failures under one stable fatal code.
+    // A hostile proxy may make instanceof itself throw.
+  }
+  const text = formatUnknownDiagnosticValue(error, "Unknown WASM text failure");
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (FatalError.isSerialized(parsed)) {
+      return FatalError.fromSerialized(parsed);
+    }
+  } catch {
+    // Preserve unstructured and malformed failures under one stable fatal code.
   }
   return new FatalError("TEXT_LAYOUT_FAILED", text, { stage: "text" });
 }

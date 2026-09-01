@@ -4621,7 +4621,7 @@ fn language_to_str(language: Language) -> &'static str {
 mod tests {
     use super::*;
     use crate::font::FontRegistry;
-    use crate::text::types::{InlineRectBlockSizeInput, WritingMode};
+    use crate::text::types::{InlineRectBlockSizeInput, TextWarningCode, WritingMode};
 
     fn test_request() -> TextLayoutRequest<'static> {
         TextLayoutRequest {
@@ -6260,7 +6260,7 @@ mod tests {
             result
                 .warnings
                 .iter()
-                .any(|warning| warning.code == "RUBY_INTER_CHARACTER_FALLBACK")
+                .any(|warning| warning.code == TextWarningCode::RubyInterCharacterFallback)
         );
         let (base, rt) = find_glyph_pair(&result, "案", "あ");
         assert!(rt.origin_y < base.origin_y);
@@ -8663,10 +8663,7 @@ mod tests {
 
         let result = layout_rich_text(&req, &font_ctx).expect("decorated ruby layout");
         assert!(
-            result
-                .warnings
-                .iter()
-                .all(|warning| warning.code != "UNSUPPORTED_DECORATED_SPAN_CHILD"),
+            result.warnings.is_empty(),
             "decorated span ruby child should not be rejected: {:?}",
             result.warnings
         );
@@ -8732,10 +8729,7 @@ mod tests {
 
         let result = layout_rich_text(&req, &font_ctx).expect("vertical decorated inline box");
         assert!(
-            result
-                .warnings
-                .iter()
-                .all(|warning| warning.code != "UNSUPPORTED_DECORATED_SPAN_CHILD"),
+            result.warnings.is_empty(),
             "decorated span inline-box child should not be rejected: {:?}",
             result.warnings
         );
@@ -8812,10 +8806,7 @@ mod tests {
 
         let result = layout_rich_text(&req, &font_ctx).expect("inline-box decorated span layout");
         assert!(
-            result
-                .warnings
-                .iter()
-                .all(|warning| warning.code != "UNSUPPORTED_INLINE_BOX_CHILD"),
+            result.warnings.is_empty(),
             "inline box decorated-span child should not be rejected: {:?}",
             result.warnings
         );
@@ -8882,10 +8873,7 @@ mod tests {
 
         let result = layout_rich_text(&req, &font_ctx).expect("nested decorated span layout");
         assert!(
-            result
-                .warnings
-                .iter()
-                .all(|warning| warning.code != "UNSUPPORTED_DECORATED_SPAN_CHILD"),
+            result.warnings.is_empty(),
             "nested decorated span should not be rejected: {:?}",
             result.warnings
         );
@@ -9095,7 +9083,7 @@ mod tests {
 
         // depth 0 (root) → depth 1 (level2) → depth 2 (level3) → depth 3 (deepest) → rejected
         assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].code, "INLINE_BOX_MAX_DEPTH");
+        assert_eq!(warnings[0].code, TextWarningCode::InlineBoxMaxDepth);
     }
 
     #[test]

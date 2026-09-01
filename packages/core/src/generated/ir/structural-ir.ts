@@ -184,33 +184,16 @@ export type TextDecorationStyle = "solid" | "double" | "dotted" | "dashed" | "wa
  * Fill rule for paths.
  */
 export type IrFillRule = "nonzero" | "evenodd";
-/**
- * Error severity — matches TS `ErrorSeverity` in `packages/core/src/errors.ts`.
- */
-export type ErrorSeverity = "fatal" | "recoverable";
-/**
- * Pipeline stages for structured warning/error reporting.
- * Matches TS `PipelineStage` in `packages/core/src/errors.ts`.
- */
-export type PipelineStage = "validate" | "layout" | "text" | "ir" | "emit" | "wasm" | "font" | "engine" | "analyzer";
 
 /**
- * Complete intermediate representation for a rendered tree.
- * Serializes as the TS `IR` shape (camelCase, `debug` omitted unless true).
+ * Borrowed structural projection used at every IR wire boundary.
  */
-export interface GeneratedOutputIr {
+export interface GeneratedStructuralIr {
   root: IrNode;
-  /**
-   * Node IDs in z-ascending order (back-to-front).
-   */
   drawOrder: string[];
   width: number;
   height: number;
-  /**
-   * Declarative Canvas debug overlay default; omitted unless enabled.
-   */
   debug?: boolean;
-  warnings: RenderWarning[];
 }
 /**
  * Axis-aligned bounding box.
@@ -598,21 +581,4 @@ export interface ShapePartPaint {
   strokeLinejoin?: string;
   strokeDasharray?: string;
   strokeMiterlimit?: number;
-}
-/**
- * A structured warning emitted during IR build or SVG emission.
- *
- * Matches the TS `StructuredError` schema
- * (`{ severity, code, message, stage?, nodeId?, fallback? }`).
- */
-export interface RenderWarning {
-  severity: ErrorSeverity;
-  code: string;
-  message: string;
-  stage: PipelineStage;
-  nodeId?: string;
-  /**
-   * Description of the fallback action taken (e.g. "`placeholder_rect`").
-   */
-  fallback?: string;
 }

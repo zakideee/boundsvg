@@ -673,7 +673,10 @@ Use the same fallback when consuming text IR instead of reading
 The structural fields behind `IR`, `IRNode`, and all seven public node aliases
 are generated from Rust's serialize-direction contract. `IR.warnings` remains
 the curated semantic projection: the Engine returns `RecoverableError`
-instances rather than raw warning objects.
+instances rather than raw warning objects. Structural IR crossing the WASM or
+Worker boundary never contains a nested `warnings` field; the operation
+envelope carries the serialized warning list, and Core attaches one
+rehydrated list when it constructs a public `IR`.
 
 Use `validateSerializedIR(value)` at a JSON, cache, or Worker boundary. It
 validates the JSON-safe Rust output shape, including every nested node; it does
@@ -1374,11 +1377,35 @@ const embedded = withNodeIdPrefix(localized, "invoice-preview:");
 - Structural constraint violations (non-Canvas root, nested Canvas, non-string Text children)
 - Duplicate `id` in the same tree
 
+Fatal diagnostics use `new FatalError(code, message, options?)`. The options
+object may contain `stage`, `nodeId`, and `context`; the old positional context
+form is not accepted. Serialized fatal values have the exact shape
+`{ severity: "fatal", code, message, stage?, nodeId?, context? }` and never
+contain `fallback`.
+
 ### Recoverable Errors (warning + fallback)
 
 - Font not found → try fallback chain → substitute with replacement glyph (□)
 - Image load failure → render placeholder rectangle
 - `fit="shrink"` cannot fit → `overflow.type="cannot_fit"`, render at minimum font size
+
+Recoverable diagnostics use
+`new RecoverableError(code, message, { fallback, stage, nodeId?, context? })`.
+Both `fallback` and the closed pipeline `stage` are required. Serialized
+recoverable values have severity `"recoverable"` and the same required fields;
+missing, empty, `null`, explicitly `undefined`, wrong-severity, or extra
+top-level fields are rejected at trust boundaries.
+
+`context` must be a JSON-safe plain object and must not use the reserved root
+keys `severity`, `code`, `message`, `fallback`, `stage`, or `nodeId`. Diagnostic
+instances remain mutable, but constructors, `toJSON()`, returned IR, retained
+compiled state, and callbacks receive detached context values where ownership
+fans out. Mutating a callback warning therefore cannot alter a returned IR or
+a later callback.
+
+Each operation preserves native warning order and then appends warnings owned
+by later analyzer, GIF, PNG, or layered-composition phases. Duplicate events
+are preserved; boundsvg does not sort or deduplicate them.
 
 ## WASM Initialization
 

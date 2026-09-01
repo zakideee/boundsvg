@@ -1,14 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "GeneratedOutputIr",
-  "description": "Complete intermediate representation for a rendered tree.\nSerializes as the TS `IR` shape (camelCase, `debug` omitted unless true).",
+  "title": "GeneratedStructuralIr",
+  "description": "Borrowed structural projection used at every IR wire boundary.",
   "type": "object",
   "properties": {
     "root": {
       "$ref": "#/$defs/IrNode"
     },
     "drawOrder": {
-      "description": "Node IDs in z-ascending order (back-to-front).",
       "type": "array",
       "items": {
         "type": "string"
@@ -21,22 +20,14 @@
       "type": "number"
     },
     "debug": {
-      "description": "Declarative Canvas debug overlay default; omitted unless enabled.",
       "type": "boolean"
-    },
-    "warnings": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/RenderWarning"
-      }
     }
   },
   "required": [
     "root",
     "drawOrder",
     "width",
-    "height",
-    "warnings"
+    "height"
   ],
   "$defs": {
     "IrNode": {
@@ -1979,61 +1970,7 @@
           "type": "number"
         }
       }
-    },
-    "RenderWarning": {
-      "description": "A structured warning emitted during IR build or SVG emission.\n\nMatches the TS `StructuredError` schema\n(`{ severity, code, message, stage?, nodeId?, fallback? }`).",
-      "type": "object",
-      "properties": {
-        "severity": {
-          "$ref": "#/$defs/ErrorSeverity"
-        },
-        "code": {
-          "type": "string"
-        },
-        "message": {
-          "type": "string"
-        },
-        "stage": {
-          "$ref": "#/$defs/PipelineStage"
-        },
-        "nodeId": {
-          "type": "string"
-        },
-        "fallback": {
-          "description": "Description of the fallback action taken (e.g. \"`placeholder_rect`\").",
-          "type": "string"
-        }
-      },
-      "required": [
-        "severity",
-        "code",
-        "message",
-        "stage"
-      ]
-    },
-    "ErrorSeverity": {
-      "description": "Error severity — matches TS `ErrorSeverity` in `packages/core/src/errors.ts`.",
-      "type": "string",
-      "enum": [
-        "fatal",
-        "recoverable"
-      ]
-    },
-    "PipelineStage": {
-      "description": "Pipeline stages for structured warning/error reporting.\nMatches TS `PipelineStage` in `packages/core/src/errors.ts`.",
-      "type": "string",
-      "enum": [
-        "validate",
-        "layout",
-        "text",
-        "ir",
-        "emit",
-        "wasm",
-        "font",
-        "engine",
-        "analyzer"
-      ]
     }
   },
-  "$id": "https://github.com/zakideee/boundsvg/schemas/output-ir-v1.json"
+  "$id": "https://github.com/zakideee/boundsvg/schemas/structural-ir-v1.json"
 }

@@ -53,9 +53,14 @@ class MockWorker {
   }
 
   /** Simulate a Worker error */
-  emitError(message: string): void {
+  emitError(message?: string): void {
+    this.emitErrorEvent(message === undefined ? {} : { message });
+  }
+
+  /** Simulate an arbitrary Worker error event boundary value. */
+  emitErrorEvent(event: unknown): void {
     for (const listener of this.listeners.get("error") ?? []) {
-      listener({ message } as ErrorEvent);
+      listener(event as ErrorEvent);
     }
   }
 
@@ -240,7 +245,7 @@ describe("WorkerEngine", () => {
           mockWorker.respond({
             id: request.id,
             type: "measure-text-block-ok",
-            result: {} as never,
+            result: { lineCount: 0, usedWidth: 0, usedHeight: 0 },
           });
         }
       });
@@ -500,6 +505,7 @@ describe("WorkerEngine", () => {
 
     it("renders animated SVG + IR through its dedicated request family", async () => {
       const engine = await createEngine(mockWorker);
+      const delivered: RecoverableError[] = [];
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
         if (request.type === "render-animated-svg-and-ir") {
           mockWorker.respond({
@@ -507,7 +513,16 @@ describe("WorkerEngine", () => {
             type: "render-animated-svg-and-ir-ok",
             svg: '<svg data-animated="true"/>',
             ir: WORKER_IR,
-            warnings: [],
+            warnings: [
+              {
+                severity: "recoverable",
+                code: "TEST_WARNING",
+                message: "retained warning",
+                fallback: "retained fallback",
+                stage: "emit",
+                context: { owner: { id: "scene" } },
+              },
+            ],
           });
         }
       });
@@ -515,10 +530,23 @@ describe("WorkerEngine", () => {
       const result = await engine.renderToAnimatedSvgAndIR(SCENE, {
         playback: { mode: "independent" },
         nodeIdMetadata: "include",
+        onWarning: (warning) => {
+          delivered.push(warning);
+          warning.message = "callback mutation";
+          if (warning.context) {
+            warning.context.owner = { id: "callback" };
+          }
+        },
       });
 
       expect(result.svg).toContain("data-animated");
-      expect(result.ir).toEqual({ ...WORKER_IR, warnings: [] });
+      expect(result.ir.warnings).toHaveLength(1);
+      expect(result.ir.warnings[0]).toBeInstanceOf(RecoverableError);
+      expect(result.ir.warnings[0]?.message).toBe("retained warning");
+      expect(result.ir.warnings[0]?.context).toEqual({ owner: { id: "scene" } });
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]).not.toBe(result.ir.warnings[0]);
+      expect(delivered[0]?.context).not.toBe(result.ir.warnings[0]?.context);
       expect(mockWorker.lastRequest()).toMatchObject({
         type: "render-animated-svg-and-ir",
         options: { playback: { mode: "independent" }, nodeIdMetadata: "include" },
@@ -612,16 +640,16 @@ describe("WorkerEngine", () => {
                   },
                 ],
               },
-              warnings: [
-                {
-                  severity: "recoverable",
-                  code: "W1",
-                  message: "warn1",
-                  fallback: "fb",
-                  stage: "emit",
-                },
-              ],
             },
+            warnings: [
+              {
+                severity: "recoverable",
+                code: "W1",
+                message: "warn1",
+                fallback: "fb",
+                stage: "emit",
+              },
+            ],
           });
         }
       });
@@ -683,28 +711,28 @@ describe("WorkerEngine", () => {
                   },
                 ],
               },
-              warnings: [
-                {
-                  severity: "recoverable",
-                  code: "PNG_RESOLUTION_ADJUSTED",
-                  message: "adjusted",
-                  fallback: "adjusted scale",
-                  stage: "emit",
-                  context: {
-                    requestedScale: 2,
-                    appliedScale: 1.5,
-                    baseWidth: 100,
-                    baseHeight: 100,
-                    requestedWidth: 200,
-                    requestedHeight: 200,
-                    outputWidth: 150,
-                    outputHeight: 150,
-                    maxLongEdge: 3840,
-                    maxPixels: 8294400,
-                  },
-                },
-              ],
             },
+            warnings: [
+              {
+                severity: "recoverable",
+                code: "PNG_RESOLUTION_ADJUSTED",
+                message: "adjusted",
+                fallback: "adjusted scale",
+                stage: "emit",
+                context: {
+                  requestedScale: 2,
+                  appliedScale: 1.5,
+                  baseWidth: 100,
+                  baseHeight: 100,
+                  requestedWidth: 200,
+                  requestedHeight: 200,
+                  outputWidth: 150,
+                  outputHeight: 150,
+                  maxLongEdge: 3840,
+                  maxPixels: 8294400,
+                },
+              },
+            ],
           });
         }
       });
@@ -799,6 +827,37 @@ describe("WorkerEngine", () => {
       // Reset mock so dispose's postMessage doesn't throw
       mockWorker.postMessage.mockImplementation(() => {});
       // No lingering timers or pending entries — a subsequent dispose should be clean
+      engine.dispose();
+    });
+
+    it("keeps a hostile thrown transport value inside the stable Fatal boundary", async () => {
+      const engine = await createEngine(mockWorker);
+      const hostile = new Proxy(Object.create(null) as object, {
+        get() {
+          throw new Error("hostile get");
+        },
+        getOwnPropertyDescriptor() {
+          throw new Error("hostile descriptor");
+        },
+        ownKeys() {
+          throw new Error("hostile ownKeys");
+        },
+      });
+
+      mockWorker.postMessage.mockImplementation(() => {
+        throw hostile;
+      });
+
+      await expect(engine.renderToSvg(SCENE)).rejects.toMatchObject({
+        name: "FatalError",
+        code: "WORKER_TRANSPORT_FAILED",
+        stage: "engine",
+        context: expect.objectContaining({
+          requestType: "render-svg",
+          causeMessage: "Unknown Worker transport failure",
+        }),
+      });
+      mockWorker.postMessage.mockImplementation(() => {});
       engine.dispose();
     });
   });
@@ -1235,42 +1294,66 @@ describe("WorkerEngine", () => {
             mockWorker.respond({
               id: request.id,
               type: "layout-text-flow-ok",
-              result: { marker: request.type } as never,
+              result: { lines: [], exhausted: false },
             });
             break;
           case "layout-text-flow-with-exclusions":
             mockWorker.respond({
               id: request.id,
               type: "layout-text-flow-with-exclusions-ok",
-              result: { marker: request.type } as never,
+              result: {
+                lines: [],
+                exhausted: false,
+                usedLineCount: 0,
+                topRubyOverflowPx: 0,
+                bottomRubyOverflowPx: 0,
+              },
             });
             break;
           case "measure-text-block":
             mockWorker.respond({
               id: request.id,
               type: "measure-text-block-ok",
-              result: { marker: request.type } as never,
+              result: { lineCount: 0, usedWidth: 0, usedHeight: 0 },
             });
             break;
           case "shrinkwrap-text":
             mockWorker.respond({
               id: request.id,
               type: "shrinkwrap-text-ok",
-              result: { marker: request.type } as never,
+              result: {
+                status: "satisfied",
+                chosenWidthPx: 0,
+                maxLineWidth: 0,
+                lineCount: 0,
+                usedHeight: 0,
+              },
             });
             break;
           case "shrinkwrap-flow":
             mockWorker.respond({
               id: request.id,
               type: "shrinkwrap-flow-ok",
-              result: { marker: request.type } as never,
+              result: {
+                status: "satisfied",
+                chosenWidthPx: 0,
+                usedLineCount: 0,
+                usedHeight: 0,
+                layout: {
+                  lines: [],
+                  exhausted: false,
+                  usedLineCount: 0,
+                  topRubyOverflowPx: 0,
+                  bottomRubyOverflowPx: 0,
+                },
+              },
             });
             break;
           case "measure-intrinsic-inline-size":
             mockWorker.respond({
               id: request.id,
               type: "measure-intrinsic-inline-size-ok",
-              result: { marker: request.type } as never,
+              result: { minContentInlineSize: 0, maxContentInlineSize: 0 },
             });
             break;
           default:
@@ -1279,22 +1362,22 @@ describe("WorkerEngine", () => {
       });
 
       await expect(engine.layoutTextFlow({} as never)).resolves.toMatchObject({
-        marker: "layout-text-flow",
+        lines: [],
+        exhausted: false,
       });
       await expect(engine.layoutTextFlowWithExclusions({} as never)).resolves.toMatchObject({
-        marker: "layout-text-flow-with-exclusions",
+        lines: [],
+        usedLineCount: 0,
       });
-      await expect(engine.measureTextBlock({} as never)).resolves.toMatchObject({
-        marker: "measure-text-block",
-      });
+      await expect(engine.measureTextBlock({} as never)).resolves.toMatchObject({ lineCount: 0 });
       await expect(engine.shrinkwrapText({} as never)).resolves.toMatchObject({
-        marker: "shrinkwrap-text",
+        status: "satisfied",
       });
       await expect(engine.shrinkwrapFlow({} as never)).resolves.toMatchObject({
-        marker: "shrinkwrap-flow",
+        status: "satisfied",
       });
       await expect(engine.measureIntrinsicInlineSize({} as never)).resolves.toMatchObject({
-        marker: "measure-intrinsic-inline-size",
+        minContentInlineSize: 0,
       });
       engine.dispose();
     });
@@ -1370,6 +1453,48 @@ describe("WorkerEngine", () => {
   // -----------------------------------------------------------------------
 
   describe("Worker error event", () => {
+    it("uses a stable fallback when the browser error event omits its message", async () => {
+      const creating = WorkerEngine.create({
+        worker: mockWorker,
+        fonts: [],
+        timeout: 1000,
+      });
+
+      mockWorker.emitError();
+
+      await expect(creating).rejects.toMatchObject({
+        name: "FatalError",
+        code: "WORKER_CRASHED",
+        message: "Worker error: Unknown Worker error",
+        stage: "engine",
+        context: expect.objectContaining({ workerMessage: "Unknown Worker error" }),
+      });
+    });
+
+    it("does not invoke an ErrorEvent message accessor", async () => {
+      let getterCalls = 0;
+      const event = Object.defineProperty({}, "message", {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return "must not be read";
+        },
+      });
+      const creating = WorkerEngine.create({
+        worker: mockWorker,
+        fonts: [],
+        timeout: 1000,
+      });
+
+      mockWorker.emitErrorEvent(event);
+
+      await expect(creating).rejects.toMatchObject({
+        code: "WORKER_CRASHED",
+        message: "Worker error: Unknown Worker error",
+      });
+      expect(getterCalls).toBe(0);
+    });
+
     it("rejects all pending requests on Worker error", async () => {
       const engine = await createEngine(mockWorker);
 
@@ -1429,6 +1554,34 @@ describe("WorkerEngine", () => {
   // -----------------------------------------------------------------------
 
   describe("request/response ID correlation", () => {
+    it("uses the validated response snapshot instead of re-reading a Proxy", async () => {
+      const engine = await createEngine(mockWorker);
+      let getCalls = 0;
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg") {
+          const response = new Proxy(
+            {
+              id: request.id,
+              type: "render-svg-ok",
+              svg: '<svg data-snapshot="true"/>',
+              warnings: [],
+            },
+            {
+              get() {
+                getCalls += 1;
+                throw new Error("get trap must not run");
+              },
+            },
+          );
+          mockWorker.respondUnknown(response);
+        }
+      });
+
+      await expect(engine.renderToSvg(SCENE)).resolves.toContain("data-snapshot");
+      expect(getCalls).toBe(0);
+      engine.dispose();
+    });
+
     it("rejects a correlated malformed response as a protocol FatalError", async () => {
       const engine = await createEngine(mockWorker);
 
@@ -1449,6 +1602,108 @@ describe("WorkerEngine", () => {
         stage: "engine",
         context: expect.objectContaining({ requestId: 2 }),
       });
+
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg") {
+          mockWorker.respond({
+            id: request.id,
+            type: "render-svg-ok",
+            svg: '<svg data-recovered="true"/>',
+            warnings: [],
+          });
+        }
+      });
+      await expect(engine.renderToSvg(SCENE)).resolves.toContain("data-recovered");
+      engine.dispose();
+    });
+
+    it("rejects sparse warnings without forwarding an undefined callback value", async () => {
+      const engine = await createEngine(mockWorker);
+      const onWarning = vi.fn();
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg") {
+          mockWorker.respondUnknown({
+            id: request.id,
+            type: "render-svg-ok",
+            svg: "<svg/>",
+            warnings: new Array(1),
+          });
+        }
+      });
+
+      await expect(engine.renderToSvg(SCENE, { onWarning })).rejects.toMatchObject({
+        code: "WORKER_PROTOCOL_INVALID_RESPONSE",
+      });
+      expect(onWarning).not.toHaveBeenCalled();
+      engine.dispose();
+    });
+
+    it("disposes and rejects every pending request after an uncorrelatable malformed response", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.postMessage.mockImplementation(() => undefined);
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+
+      try {
+        const first = engine.renderToSvg(SCENE);
+        const second = engine.renderToSvg(SCENE);
+        mockWorker.respondUnknown({ id: Number.NaN, type: "render-svg-ok", svg: 42, warnings: [] });
+
+        const results = await Promise.allSettled([first, second]);
+        expect(results).toHaveLength(2);
+        for (const result of results) {
+          expect(result.status).toBe("rejected");
+          if (result.status === "rejected") {
+            expect(result.reason).toMatchObject({
+              name: "FatalError",
+              code: "WORKER_PROTOCOL_INVALID_RESPONSE",
+              stage: "engine",
+            });
+          }
+        }
+        expect(clearTimeoutSpy).toHaveBeenCalledTimes(2);
+        expect(mockWorker.hasListeners("message")).toBe(false);
+        await expect(engine.renderToSvg(SCENE)).rejects.toMatchObject({
+          code: "WORKER_ENGINE_DISPOSED",
+        });
+      } finally {
+        clearTimeoutSpy.mockRestore();
+      }
+    });
+
+    it("rejects an exhausted request ID before posting", async () => {
+      const engine = await createEngine(mockWorker);
+      const postedBefore = mockWorker.postMessage.mock.calls.length;
+      Reflect.set(engine, "nextId", Number.MAX_SAFE_INTEGER + 1);
+
+      await expect(engine.renderToSvg(SCENE)).rejects.toMatchObject({
+        name: "FatalError",
+        code: "WORKER_REQUEST_ID_EXHAUSTED",
+        stage: "engine",
+      });
+      expect(mockWorker.postMessage).toHaveBeenCalledTimes(postedBefore);
+      engine.dispose();
+    });
+
+    it("ignores a valid late response with an unknown id", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.respond({
+        id: 999,
+        type: "render-svg-ok",
+        svg: '<svg data-late="true"/>',
+        warnings: [],
+      });
+
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg") {
+          mockWorker.respond({
+            id: request.id,
+            type: "render-svg-ok",
+            svg: '<svg data-current="true"/>',
+            warnings: [],
+          });
+        }
+      });
+      await expect(engine.renderToSvg(SCENE)).resolves.toContain("data-current");
       engine.dispose();
     });
 

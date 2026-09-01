@@ -1,13 +1,13 @@
-import type { RecoverableError } from "../errors.js";
+import type { RecoverableError, SerializedRecoverableError } from "../errors.js";
 import type {
   BBox as GeneratedBBox,
   BorderRadii as GeneratedBorderRadii,
   HandlersRef as GeneratedHandlersRef,
   IrNode as GeneratedIrNode,
-  GeneratedOutputIr,
   ShapePathPart as GeneratedShapePathPart,
+  GeneratedStructuralIr,
   TextUnitAnimationSample as GeneratedTextUnitAnimationSample,
-} from "../generated/ir/output-ir.js";
+} from "../generated/ir/structural-ir.js";
 
 /** Axis-aligned bounding box in the generated public output contract. */
 export type BBox = GeneratedBBox;
@@ -59,6 +59,11 @@ export type IRTextUnitAnimationSample = GeneratedTextUnitAnimationSample;
  * `RecoverableError` instances before returning IR to callers.
  */
 // biome-ignore lint/style/useNamingConvention: IR is a well-known abbreviation for Intermediate Representation
-export type IR = Omit<GeneratedOutputIr, "warnings"> & {
+export type IR = GeneratedStructuralIr & {
   warnings: RecoverableError[];
+};
+
+/** JSON-safe public IR with serialized recoverable diagnostics. */
+export type SerializedIR = GeneratedStructuralIr & {
+  warnings: SerializedRecoverableError[];
 };

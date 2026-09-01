@@ -155,7 +155,6 @@ describe("layout transition public API", () => {
             drawOrder: [],
             width: 100,
             height: 100,
-            warnings: [],
           },
           warnings: [],
         });
@@ -191,7 +190,6 @@ describe("layout transition public API", () => {
             drawOrder: [],
             width: 100,
             height: 100,
-            warnings: [],
           },
           warnings: [
             {

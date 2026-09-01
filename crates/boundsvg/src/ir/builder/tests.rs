@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use boundshape::MAX_GEOMETRY_TREE_DEPTH;
 
 use super::{build_ir, parse_svg_content};
+use crate::diagnostics::text_warning_to_recoverable;
 use crate::error::EngineError;
 use crate::layout::types::{LayoutNodeInput, LayoutNodeOutput, TextLayoutOutput};
 use crate::text::types::{
@@ -54,7 +55,19 @@ fn outputs_map(entries: Vec<LayoutNodeOutput>) -> HashMap<String, LayoutNodeOutp
 fn build_json(root: Value, outputs: Vec<LayoutNodeOutput>) -> Value {
     let root_input = parse_node(root);
     let ir = build_ir(&root_input, &outputs_map(outputs)).expect("build_ir should succeed");
-    serde_json::to_value(&ir).expect("IR should serialize")
+    public_ir_json(&ir)
+}
+
+fn public_ir_json(ir: &crate::ir::types::Ir) -> Value {
+    let mut value = serde_json::to_value(ir.structural()).expect("structural IR should serialize");
+    value
+        .as_object_mut()
+        .expect("structural IR should be an object")
+        .insert(
+            "warnings".to_string(),
+            serde_json::to_value(&ir.warnings).expect("IR warnings should serialize"),
+        );
+    value
 }
 
 fn simple_text_layout(text: &str, w: f64, h: f64) -> TextLayoutOutput {
@@ -348,7 +361,7 @@ fn rejects_gradient_preludes_that_cannot_be_honored() {
             ..
         } => {
             assert_eq!(code, "VALIDATION");
-            assert_eq!(stage.as_deref(), Some("ir"));
+            assert_eq!(stage.as_ref(), Some(&crate::diagnostics::PipelineStage::Ir));
             assert_eq!(node_id.as_deref(), Some("invalid-gradient"));
         }
         other => panic!("expected structured validation error, got {other:?}"),
@@ -1111,11 +1124,14 @@ fn vertical_text_aligns_from_the_right_edge() {
 fn propagates_bridged_text_warnings_and_kinsoku_overflow() {
     let mut text_output = output("txt", 5.0, 5.0, 100.0, 20.0);
     let mut layout = simple_text_layout("hello", 60.0, 18.0);
-    layout.warnings = vec![crate::text::types::TextWarning {
-        code: "MISSING_GLYPH".to_string(),
-        message: "Font \"Main\" is missing glyphs for: ☃".to_string(),
-        fallback: None,
-    }];
+    layout.warnings = vec![text_warning_to_recoverable(
+        &crate::text::types::TextWarning {
+            code: crate::text::types::TextWarningCode::MissingGlyph,
+            message: "Font \"Main\" is missing glyphs for: ☃".to_string(),
+            fallback: "blank".to_string(),
+        },
+        Some("txt".to_string()),
+    )];
     layout.overflow = Some(TextOverflow {
         overflow_type: "kinsoku_unresolved".to_string(),
         reason: Some("no break opportunity".to_string()),
@@ -1299,7 +1315,7 @@ fn reports_content_id_prefix_rewrite_errors_with_ir_node_context() {
         error,
         EngineError::Structured { code, stage, node_id, .. }
             if code == "CONTENT_ID_PREFIX_UNSUPPORTED_REFERENCE"
-                && stage.as_deref() == Some("ir")
+                && stage.as_ref() == Some(&crate::diagnostics::PipelineStage::Ir)
                 && node_id.as_deref() == Some("nested")
     ));
 }
@@ -1383,7 +1399,7 @@ fn build_shape_ir(visual: &Value) -> Result<Value, crate::error::EngineError> {
             output("shp", 0.0, 0.0, 20.0, 20.0),
         ]),
     )?;
-    Ok(serde_json::to_value(&ir).expect("IR should serialize"))
+    Ok(public_ir_json(&ir))
 }
 
 fn nested_geometry(depth: usize, leaf_id: Option<&str>) -> Value {
@@ -1425,7 +1441,7 @@ fn build_symbol_ir(symbol_definition: &Value) -> Result<Value, EngineError> {
             output("sym", 0.0, 0.0, 20.0, 10.0),
         ]),
     )?;
-    Ok(serde_json::to_value(&ir).expect("IR should serialize"))
+    Ok(public_ir_json(&ir))
 }
 
 #[test]
@@ -1438,7 +1454,7 @@ fn reports_geometry_depth_errors_before_shape_compilation() {
         error,
         EngineError::Structured { code, stage, node_id, .. }
             if code == "SHAPE_GEOMETRY_MAX_DEPTH"
-                && stage.as_deref() == Some("validate")
+                && stage.as_ref() == Some(&crate::diagnostics::PipelineStage::Validate)
                 && node_id.as_deref() == Some("shp")
     ));
 }
@@ -1459,7 +1475,7 @@ fn reports_depth_added_while_resolving_elastic_symbols() {
         error,
         EngineError::Structured { code, stage, node_id, .. }
             if code == "SHAPE_GEOMETRY_MAX_DEPTH"
-                && stage.as_deref() == Some("validate")
+                && stage.as_ref() == Some(&crate::diagnostics::PipelineStage::Validate)
                 && node_id.as_deref() == Some("sym")
     ));
 }
@@ -1552,7 +1568,7 @@ fn keeps_unknown_part_paint_warnings_in_authored_order() {
         &outputs_map(vec![output("shp", 0.0, 0.0, 20.0, 20.0)]),
     )
     .expect("shape builds");
-    let ir = serde_json::to_value(&ir).expect("IR serializes");
+    let ir = public_ir_json(&ir);
     let messages: Vec<&str> = ir["warnings"]
         .as_array()
         .expect("warnings")

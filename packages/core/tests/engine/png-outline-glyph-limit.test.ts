@@ -103,11 +103,15 @@ function createHarness() {
     } | null;
     if (exceeded) {
       throw JSON.stringify({
+        severity: "fatal",
         code: "PNG_OUTLINE_GLYPH_LIMIT",
         message: `PNG rendering exceeds the outline glyph limit of ${exceeded.maxGlyphs}.`,
         stage: "emit",
         nodeId: exceeded.nodeId,
-        context: { stage: "emit", ...exceeded },
+        context: {
+          maxGlyphs: exceeded.maxGlyphs,
+          actualGlyphs: exceeded.actualGlyphs,
+        },
       });
     }
     return {

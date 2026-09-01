@@ -30,7 +30,7 @@ function sampleVNode(): VNode {
   };
 }
 
-function sampleIr(): IR {
+function sampleStructuralIr(): Omit<IR, "warnings"> {
   return {
     root: {
       type: "group",
@@ -49,8 +49,11 @@ function sampleIr(): IR {
     drawOrder: ["txt"],
     width: 100,
     height: 80,
-    warnings: [],
   };
+}
+
+function sampleIr(): IR {
+  return { ...sampleStructuralIr(), warnings: [] };
 }
 
 function sampleLayout(): LayoutResult {
@@ -79,7 +82,7 @@ function makeAssetEngine(): Engine {
   return new Engine({
     computeLayoutFn: () => "{}",
     renderToIrFn: () => {
-      const ir = sampleIr();
+      const ir = sampleStructuralIr();
       return JSON.stringify({
         ir: { ...ir, root: { ...ir.root, children: [] }, drawOrder: [] },
         warnings: [],

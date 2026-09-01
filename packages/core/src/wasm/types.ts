@@ -1,5 +1,5 @@
 import type { SerializedRecoverableError } from "../errors.js";
-import type { GeneratedOutputIr } from "../generated/ir/output-ir.js";
+import type { GeneratedStructuralIr } from "../generated/ir/structural-ir.js";
 import type { InlineRectFragment, TextDecorationFragment, TextUnitMap } from "../text/types.js";
 
 /**
@@ -384,7 +384,7 @@ export type WasmTextLayoutOutput = {
 };
 
 /** IR decoded from a WASM response before warning DTOs are rehydrated. */
-export type WasmIrOutput = GeneratedOutputIr;
+export type WasmIrOutput = GeneratedStructuralIr;
 
 /** Decoded envelope returned by `render_to_ir`. */
 export type RenderToIrEnvelope = {

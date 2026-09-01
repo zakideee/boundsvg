@@ -9,7 +9,7 @@ use std::fmt;
 use schemars::generate::SchemaSettings;
 
 use crate::EmitIrInput;
-use crate::ir::types::Ir;
+use crate::ir::types::StructuralIr;
 
 /// Version of the deterministic schema normalization applied after Schemars.
 pub const NORMALIZATION_VERSION: u32 = 1;
@@ -42,7 +42,7 @@ struct OmittedOptionField {
 /// Pair of directional IR schemas generated from the actual Rust graph.
 pub struct IrSchemas {
     pub normalization_version: u32,
-    pub output_ir: serde_json::Value,
+    pub structural_ir: serde_json::Value,
     pub emit_ir_input: serde_json::Value,
 }
 
@@ -55,20 +55,20 @@ pub fn generate_ir_schemas() -> Result<IrSchemas, IrSchemaGenerationError> {
     let output_schema = SchemaSettings::draft2020_12()
         .for_serialize()
         .into_generator()
-        .into_root_schema_for::<Ir>();
+        .into_root_schema_for::<StructuralIr<'static>>();
     let emit_input_schema = SchemaSettings::draft2020_12()
         .for_deserialize()
         .into_generator()
         .into_root_schema_for::<EmitIrInput>();
 
-    let mut output_ir = serde_json::to_value(output_schema)?;
+    let mut structural_ir = serde_json::to_value(output_schema)?;
     let mut emit_ir_input = serde_json::to_value(emit_input_schema)?;
-    normalize_output_schema(&mut output_ir)?;
+    normalize_output_schema(&mut structural_ir)?;
     normalize_numeric_formats(&mut emit_ir_input)?;
 
     Ok(IrSchemas {
         normalization_version: NORMALIZATION_VERSION,
-        output_ir,
+        structural_ir,
         emit_ir_input,
     })
 }
@@ -103,8 +103,8 @@ fn normalize_output_schema(schema: &mut serde_json::Value) -> Result<(), IrSchem
 
     normalize_struct_fields(
         schema,
-        "Ir",
-        owners.get("Ir").into_iter().flatten().copied(),
+        "StructuralIr",
+        owners.get("StructuralIr").into_iter().flatten().copied(),
     )?;
 
     let definitions = schema
@@ -116,7 +116,7 @@ fn normalize_output_schema(schema: &mut serde_json::Value) -> Result<(), IrSchem
 
     for (owner, fields) in &owners {
         let Some((base_owner, variant)) = owner.split_once("::") else {
-            if *owner == "Ir" {
+            if *owner == "StructuralIr" {
                 continue;
             }
             if let Some(definition) = definitions.get_mut(*owner) {

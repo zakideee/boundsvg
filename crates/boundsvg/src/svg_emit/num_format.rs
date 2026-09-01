@@ -105,7 +105,7 @@ pub fn round_number(value: f64, precision: u32) -> Result<f64, EngineError> {
                 "Cannot emit non-finite number to SVG: {}",
                 format_js_number(value)
             ),
-            stage: Some("emit".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Emit),
             node_id: None,
         });
     }

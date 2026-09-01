@@ -27,7 +27,7 @@ import {
 import {
   createInternalRecoverableError,
   FatalError,
-  isPipelineStage,
+  formatUnknownDiagnosticValue,
   RecoverableError,
   type SerializedRecoverableError,
 } from "./errors.js";
@@ -130,7 +130,7 @@ function assertRenderableCanvas(ir: IR): void {
     if (!Number.isFinite(value) || value <= 0 || Number(formatNumber(value)) <= 0) {
       throw new FatalError(
         "INVALID_CANVAS_SIZE",
-        `Compiled scene has an invalid canvas ${name}: ${String(value)}`,
+        `Compiled scene has an invalid canvas ${name}: ${formatUnknownDiagnosticValue(value, "unprintable value")}`,
         { stage: "emit" },
       );
     }
@@ -188,7 +188,7 @@ function assertRasterCanvasInput(input: EngineInput): void {
     ) {
       throw new FatalError(
         "INVALID_CANVAS_SIZE",
-        `Compiled scene has an invalid canvas ${name}: ${String(value)}`,
+        `Compiled scene has an invalid canvas ${name}: ${formatUnknownDiagnosticValue(value, "unprintable value")}`,
         { stage: "emit" },
       );
     }
@@ -199,7 +199,7 @@ function assertPngScale(requestedScale: number): void {
   if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
     throw new FatalError(
       "PNG_INVALID_SCALE",
-      `Invalid PNG scale factor: ${String(requestedScale)}`,
+      `Invalid PNG scale factor: ${formatUnknownDiagnosticValue(requestedScale, "unprintable value")}`,
       { stage: "emit" },
     );
   }
@@ -217,10 +217,17 @@ function deliverIrWarnings(ir: IR, onWarning?: (warning: RecoverableError) => vo
 
 /** Keep callback mutation outside a reusable compiled artifact's warning state. */
 function deliverDetachedIrWarnings(ir: IR, onWarning?: (warning: RecoverableError) => void): void {
+  deliverDetachedWarnings(ir.warnings, onWarning);
+}
+
+function deliverDetachedWarnings(
+  warnings: readonly RecoverableError[],
+  onWarning?: (warning: RecoverableError) => void,
+): void {
   if (!onWarning) {
     return;
   }
-  for (const warning of ir.warnings) {
+  for (const warning of warnings) {
     onWarning(cloneRecoverableError(warning));
   }
 }
@@ -235,6 +242,16 @@ function deliverWarnings(
   for (const warning of warnings) {
     onWarning(warning);
   }
+}
+
+/** Append a TS-owned warning to the canonical operation list before delivery. */
+function appendOperationWarning(
+  ir: IR,
+  warning: RecoverableError,
+  onWarning?: (warning: RecoverableError) => void,
+): void {
+  ir.warnings.push(warning);
+  onWarning?.(warning);
 }
 
 function collectIrTextNodeIds(root: IRNode): Set<string> {
@@ -317,7 +334,7 @@ function assertValidAnimationRenderOptions(
   ) {
     throw new FatalError(
       "ANIMATION_INVALID_REDUCED_MOTION",
-      `Invalid reducedMotion mode: ${String(options.reducedMotion)}`,
+      `Invalid reducedMotion mode: ${formatUnknownDiagnosticValue(options.reducedMotion, "unprintable value")}`,
       { stage: "emit" },
     );
   }
@@ -328,14 +345,14 @@ function assertValidAnimationRenderOptions(
   ) {
     throw new FatalError(
       "ANIMATION_INVALID_MODE",
-      `Invalid animation render mode: ${String(options.animation)}`,
+      `Invalid animation render mode: ${formatUnknownDiagnosticValue(options.animation, "unprintable value")}`,
       { stage: "emit" },
     );
   }
   if (options?.timeMs !== undefined && (!Number.isFinite(options.timeMs) || options.timeMs < 0)) {
     throw new FatalError(
       "ANIMATION_INVALID_TIME",
-      `Animation timeMs must be a non-negative finite number, got ${String(options.timeMs)}`,
+      `Animation timeMs must be a non-negative finite number, got ${formatUnknownDiagnosticValue(options.timeMs, "unprintable value")}`,
       { stage: "emit" },
     );
   }
@@ -446,7 +463,7 @@ function assertSvgEmissionOptionValues(options: SvgEmissionOptions | undefined):
   ) {
     throw new FatalError(
       "UNSUPPORTED_RENDER_OPTION",
-      `nodeIdMetadata must be "include" or "omit", got ${String(options.nodeIdMetadata)}.`,
+      `nodeIdMetadata must be "include" or "omit", got ${formatUnknownDiagnosticValue(options.nodeIdMetadata, "unprintable value")}.`,
       { stage: "validate" },
     );
   }
@@ -458,17 +475,22 @@ const MAX_TIMELINE_TIME_MS = 2 ** 52;
 const MAX_TIMELINE_TIME_RATIO = 2 ** 31;
 
 function timelineReceived(container: object, field: string): string {
-  if (!Object.hasOwn(container, field)) {
-    return "missing";
+  let value: unknown;
+  try {
+    if (!Object.hasOwn(container, field)) {
+      return "missing";
+    }
+    value = Reflect.get(container, field);
+  } catch {
+    return "uninspectable value";
   }
-  const value = Reflect.get(container, field);
   if (value === null || typeof value !== "object") {
     return String(value);
   }
   try {
-    return JSON.stringify(value) ?? String(value);
+    return JSON.stringify(value) ?? formatUnknownDiagnosticValue(value, "unprintable value");
   } catch {
-    return String(value);
+    return formatUnknownDiagnosticValue(value, "unprintable value");
   }
 }
 
@@ -620,7 +642,7 @@ function validateFrameSchedule(options: LegacyRenderFramesOptions | undefined): 
   if (!options || (options.format !== "svg" && options.format !== "png")) {
     throw new FatalError(
       "ANIMATION_INVALID_FRAME_FORMAT",
-      `Frame format must be "svg" or "png", got ${String(options?.format)}`,
+      `Frame format must be "svg" or "png", got ${formatUnknownDiagnosticValue(options?.format, "unprintable value")}`,
       { stage: "emit" },
     );
   }
@@ -636,7 +658,7 @@ function validateFrameSchedule(options: LegacyRenderFramesOptions | undefined): 
     if (!Number.isFinite(timeMs) || timeMs < 0) {
       throw new FatalError(
         "ANIMATION_INVALID_TIME",
-        `Animation timeMs must be a non-negative finite number, got ${String(timeMs)}`,
+        `Animation timeMs must be a non-negative finite number, got ${formatUnknownDiagnosticValue(timeMs, "unprintable value")}`,
         { stage: "emit" },
       );
     }
@@ -659,55 +681,37 @@ function rehydrateWasmIr(ir: WasmIrOutput, warnings: readonly SerializedRecovera
   };
 }
 
+/** Serialize exactly the fields accepted by Rust's `EmitIrInput`. */
+export function serializeIrForWasm(ir: Pick<IR, "root" | "width" | "height" | "debug">): string {
+  return JSON.stringify({
+    root: ir.root,
+    width: ir.width,
+    height: ir.height,
+    ...(ir.debug !== undefined && { debug: ir.debug }),
+  });
+}
+
 /**
  * Rebuild a FatalError from a WASM render export failure. The exports throw
  * a structured JSON envelope (code / message / stage / nodeId); anything
  * else becomes a generic engine-stage failure.
  */
 function wrapWasmRenderError(error: unknown): FatalError {
-  if (error instanceof FatalError) {
-    return error;
-  }
-  const text =
-    typeof error === "string" ? error : String((error as { message?: unknown })?.message ?? error);
   try {
-    const parsed = JSON.parse(text) as unknown;
-    if (typeof parsed === "object" && parsed !== null) {
-      const code = Reflect.get(parsed, "code");
-      const message = Reflect.get(parsed, "message");
-      const stage = Reflect.get(parsed, "stage");
-      const nodeId = Reflect.get(parsed, "nodeId");
-      const context = Reflect.get(parsed, "context");
-      if (typeof code === "string" && typeof message === "string") {
-        const errorContext =
-          typeof context === "object" && context !== null && !Array.isArray(context)
-            ? { ...(context as Record<string, unknown>) }
-            : undefined;
-        if (errorContext) {
-          for (const reservedKey of [
-            "severity",
-            "code",
-            "message",
-            "fallback",
-            "stage",
-            "nodeId",
-          ]) {
-            Reflect.deleteProperty(errorContext, reservedKey);
-          }
-        }
-        return FatalError.fromSerialized({
-          severity: "fatal",
-          code,
-          message,
-          ...(isPipelineStage(stage) && { stage }),
-          ...(typeof nodeId === "string" && { nodeId }),
-          ...(errorContext !== undefined &&
-            Object.keys(errorContext).length > 0 && { context: errorContext }),
-        });
-      }
+    if (error instanceof FatalError) {
+      return error;
     }
   } catch {
-    // Not a structured envelope — fall through to the generic wrapper.
+    // A hostile proxy may make instanceof itself throw.
+  }
+  const text = formatUnknownDiagnosticValue(error, "Unknown WASM render failure");
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (FatalError.isSerialized(parsed)) {
+      return FatalError.fromSerialized(parsed);
+    }
+  } catch {
+    // Non-JSON and malformed structured diagnostics use the stable boundary error.
   }
   return new FatalError("WASM_RENDER_FAILED", text, { stage: "engine" });
 }
@@ -1501,7 +1505,7 @@ export class Engine {
       scaleError = error;
     }
     const rasterScene = this.preflightRasterScene(
-      JSON.stringify({ ...compiledSource.ir, warnings: [] }),
+      serializeIrForWasm(compiledSource.ir),
       JSON.stringify({
         textPathMode: compiledSource.textPathMode,
         showMissingGlyphs: stableRenderOpts?.showMissingGlyphs,
@@ -2000,7 +2004,7 @@ export class Engine {
       timeMs: renderOpts?.timeMs,
       showMissingGlyphs: renderOpts?.showMissingGlyphs,
     }).ir;
-    deliverIrWarnings(ir, renderOpts?.onWarning);
+    deliverDetachedIrWarnings(ir, renderOpts?.onWarning);
     return ir;
   }
 
@@ -2030,7 +2034,7 @@ export class Engine {
     );
     let json: string;
     try {
-      json = sampleFn(JSON.stringify(ir), timeMs);
+      json = sampleFn(serializeIrForWasm(ir), timeMs);
     } catch (error) {
       throw wrapWasmRenderError(error);
     }
@@ -2211,7 +2215,7 @@ export class Engine {
       const code = rasterOutput ? "PNG_INVALID_SCALE" : "SVG_INVALID_SCALE";
       throw new FatalError(
         code,
-        `Invalid ${rasterOutput ? "PNG" : "SVG"} scale factor: ${String(requestedScale)}`,
+        `Invalid ${rasterOutput ? "PNG" : "SVG"} scale factor: ${formatUnknownDiagnosticValue(requestedScale, "unprintable value")}`,
         { stage: "emit" },
       );
     }
@@ -2252,7 +2256,7 @@ export class Engine {
         : [...compiledRecord.ir.warnings],
     };
     assertRenderableCanvas(irMetadataSnapshot);
-    const irSnapshotJson = JSON.stringify({ ...irMetadataSnapshot, warnings: [] });
+    const irSnapshotJson = serializeIrForWasm(irMetadataSnapshot);
 
     const { prepared, rasterScene } = this.prepareFrameScene({
       irSnapshotJson,
@@ -2365,7 +2369,7 @@ export class Engine {
     const { ir, options, rasterPlan, rasterScene } = args;
     deliverIrWarnings(ir, options.onWarning);
     for (const warning of rasterPlan?.deferredWarnings ?? []) {
-      options.onWarning?.(warning);
+      appendOperationWarning(ir, warning, options.onWarning);
     }
     if (!rasterPlan) {
       return options.scale;
@@ -2564,7 +2568,7 @@ export class Engine {
     if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
       throw new FatalError(
         "SVG_INVALID_SCALE",
-        `Invalid SVG scale factor: ${String(requestedScale)}`,
+        `Invalid SVG scale factor: ${formatUnknownDiagnosticValue(requestedScale, "unprintable value")}`,
         { stage: "emit" },
       );
     }
@@ -2595,8 +2599,8 @@ export class Engine {
     const envelope = decodeRenderToSvgEnvelope(envelopeJson);
     this.assertWasmTextContracts(vnode, new Set(envelope.textNodeIds));
     const warnings = rehydrateWasmWarnings(envelope.warnings);
-    deliverWarnings(warnings, renderOpts?.onWarning);
     if (!backendOptions.resolveReturnedIrOutlines) {
+      deliverWarnings(warnings, renderOpts?.onWarning);
       return { svg: envelope.svg };
     }
     if (!envelope.ir) {
@@ -2606,7 +2610,8 @@ export class Engine {
         { stage: "wasm" },
       );
     }
-    const ir = rehydrateWasmIr(envelope.ir, envelope.warnings);
+    const ir: IR = { ...envelope.ir, warnings };
+    deliverDetachedWarnings(warnings, renderOpts?.onWarning);
     return { svg: envelope.svg, ir };
   }
 
@@ -2624,16 +2629,14 @@ export class Engine {
       if (!Number.isFinite(scaled)) {
         throw new FatalError(
           "INVALID_NUMBER",
-          `Cannot emit non-finite number to SVG: ${String(scaled)}`,
+          `Cannot emit non-finite number to SVG: ${formatUnknownDiagnosticValue(scaled, "unprintable value")}`,
           { stage: "emit" },
         );
       }
     }
     try {
       return emitSvgFromIrFn(
-        // The emitter ignores warnings; class instances do not survive
-        // JSON.stringify, so strip them from the transport copy.
-        JSON.stringify({ ...ir, warnings: [] }),
+        serializeIrForWasm(ir),
         JSON.stringify({
           scale: emitOptions.scale,
           debug: emitOptions.debug,
@@ -2667,7 +2670,7 @@ export class Engine {
     let envelopeJson: string;
     try {
       envelopeJson = resolveIrFn(
-        options?.irSnapshotJson ?? JSON.stringify({ ...ir, warnings: [] }),
+        options?.irSnapshotJson ?? serializeIrForWasm(ir),
         JSON.stringify({
           textPathMode,
           showMissingGlyphs: options?.showMissingGlyphs,
@@ -2679,9 +2682,8 @@ export class Engine {
       throw wrapWasmRenderError(error);
     }
     const envelope = decodeRenderToIrEnvelope(envelopeJson);
-    const decodedIr = rehydrateWasmIr(envelope.ir, envelope.warnings);
     const resolvedIr: IR = {
-      ...decodedIr,
+      ...envelope.ir,
       drawOrder: ir.drawOrder,
       warnings: ir.warnings,
     };
@@ -2711,9 +2713,8 @@ export class Engine {
       throw wrapWasmRenderError(error);
     }
     const envelope = decodeRenderToIrEnvelope(envelopeJson);
-    const decodedIr = rehydrateWasmIr(envelope.ir, envelope.warnings);
     return {
-      ...decodedIr,
+      ...envelope.ir,
       drawOrder: sourceIr.drawOrder,
       warnings: sourceIr.warnings,
     };
@@ -2737,14 +2738,14 @@ export class Engine {
       if (!Number.isFinite(scaled)) {
         throw new FatalError(
           "INVALID_NUMBER",
-          `Cannot emit non-finite number to SVG: ${String(scaled)}`,
+          `Cannot emit non-finite number to SVG: ${formatUnknownDiagnosticValue(scaled, "unprintable value")}`,
           { stage: "emit" },
         );
       }
     }
     try {
       return resolveAndEmitSvgFromIrFn(
-        emitOptions.irSnapshotJson ?? JSON.stringify({ ...ir, warnings: [] }),
+        emitOptions.irSnapshotJson ?? serializeIrForWasm(ir),
         JSON.stringify({
           scale: emitOptions.scale,
           debug: emitOptions.debug,
@@ -2881,7 +2882,7 @@ export class Engine {
       }
       scaleError = error;
     }
-    const irSnapshotJson = JSON.stringify({ ...ir, warnings: [] });
+    const irSnapshotJson = serializeIrForWasm(ir);
     const rasterOptions: PngRenderOptions = {
       oversizeBehavior: behavior === "error" ? "error" : "autoAdjust",
     };
@@ -2950,7 +2951,7 @@ export class Engine {
     if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
       throw new FatalError(
         "SVG_INVALID_SCALE",
-        `Invalid SVG scale factor: ${String(requestedScale)}`,
+        `Invalid SVG scale factor: ${formatUnknownDiagnosticValue(requestedScale, "unprintable value")}`,
         { stage: "emit" },
       );
     }
@@ -2985,7 +2986,7 @@ export class Engine {
     if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
       throw new FatalError(
         "SVG_INVALID_SCALE",
-        `Invalid SVG scale factor: ${String(requestedScale)}`,
+        `Invalid SVG scale factor: ${formatUnknownDiagnosticValue(requestedScale, "unprintable value")}`,
         { stage: "emit" },
       );
     }
@@ -3060,7 +3061,7 @@ export class Engine {
       }
       scaleError = error;
     }
-    const irSnapshotJson = JSON.stringify({ ...compiledRecord.ir, warnings: [] });
+    const irSnapshotJson = serializeIrForWasm(compiledRecord.ir);
     const pngOptions: PngRenderOptions = {
       oversizeBehavior: behavior === "error" ? "error" : "autoAdjust",
     };
@@ -3155,7 +3156,7 @@ export class Engine {
         { stage: "emit" },
       );
     }
-    const irSnapshotJson = JSON.stringify({ ...compiledSource.ir, warnings: [] });
+    const irSnapshotJson = serializeIrForWasm(compiledSource.ir);
     const layoutRoot = computeLayout(vnode, {
       computeLayoutFn: this.options.computeLayoutFn,
       fonts: this.options.fonts,
@@ -3228,14 +3229,13 @@ export class Engine {
         },
       });
     }
-    emitOpts?.onPngResolutionAdjusted?.(warning);
     const recoverableWarning = createInternalRecoverableError(
       "PNG_RESOLUTION_ADJUSTED",
       warningMessage,
       { fallback: "auto-adjusted scale", stage: "emit", context: { ...warning } },
     );
-    ir.warnings.push(recoverableWarning);
-    emitOpts?.onWarning?.(recoverableWarning);
+    emitOpts?.onPngResolutionAdjusted?.(warning);
+    appendOperationWarning(ir, recoverableWarning, emitOpts?.onWarning);
   }
 
   private createLayeredPngRenderOptions(
@@ -3412,7 +3412,8 @@ export class Engine {
         thresholdPixels: validationOptions.maxDifferentPixels,
         thresholdRatio: validationOptions.maxDifferenceRatio,
       });
-      renderOpts?.onWarning?.(
+      appendOperationWarning(
+        ir,
         createInternalRecoverableError(
           "LAYERED_COMPOSITION_VALIDATION_UNAVAILABLE",
           "Layered composition validation is not available in this engine.",
@@ -3428,6 +3429,7 @@ export class Engine {
             },
           },
         ),
+        renderOpts?.onWarning,
       );
       return skippedResult;
     }
@@ -3466,7 +3468,8 @@ export class Engine {
         height: metrics.height,
       };
       if (mismatched) {
-        renderOpts?.onWarning?.(
+        appendOperationWarning(
+          ir,
           createInternalRecoverableError(
             "LAYERED_COMPOSITION_MISMATCH",
             `Layered composition validation detected ${metrics.differentPixels} differing pixels (${metrics.differenceRatio}).`,
@@ -3484,18 +3487,23 @@ export class Engine {
               },
             },
           ),
+          renderOpts?.onWarning,
         );
       }
       return result;
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatUnknownDiagnosticValue(
+        error,
+        "Unknown layered composition validation failure",
+      );
       const skippedResult = createSkippedCompositionValidationResult({
         width: layeredResult.width,
         height: layeredResult.height,
         thresholdPixels: validationOptions.maxDifferentPixels,
         thresholdRatio: validationOptions.maxDifferenceRatio,
       });
-      renderOpts?.onWarning?.(
+      appendOperationWarning(
+        ir,
         createInternalRecoverableError(
           "LAYERED_COMPOSITION_VALIDATION_UNAVAILABLE",
           `Layered composition validation could not run: ${message}`,
@@ -3512,6 +3520,7 @@ export class Engine {
             },
           },
         ),
+        renderOpts?.onWarning,
       );
       return skippedResult;
     }

@@ -847,6 +847,36 @@ describe("Engine.renderToLayeredSvg()", () => {
     expect(result.compositionValidation?.status).toBe("skipped");
     expect(warnings).toEqual(["LAYERED_COMPOSITION_VALIDATION_UNAVAILABLE"]);
   });
+
+  it("keeps a hostile validator failure inside the recoverable warning boundary", () => {
+    const warningMessages: string[] = [];
+    const hostile = new Proxy(Object.create(null) as object, {
+      get() {
+        throw new Error("hostile get");
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile descriptor");
+      },
+      ownKeys() {
+        throw new Error("hostile ownKeys");
+      },
+    });
+    const engine = createEngineFromHandle(handle, {
+      validateLayeredSvgCompositionFn: () => {
+        throw hostile;
+      },
+    });
+
+    const result = engine.renderToLayeredSvg(createTestScene(), {
+      validateComposition: { enabled: true },
+      onWarning: (warning) => warningMessages.push(warning.message),
+    });
+
+    expect(result.compositionValidation?.status).toBe("skipped");
+    expect(warningMessages).toEqual([
+      "Layered composition validation could not run: Unknown layered composition validation failure",
+    ]);
+  });
 });
 
 describe("Engine.renderToLayeredPng()", () => {

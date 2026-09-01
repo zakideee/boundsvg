@@ -2,11 +2,9 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 use super::*;
+use crate::diagnostics::{PipelineStage, SerializedRecoverableError};
 use crate::font::{FontRegistry, FontStyle};
-use crate::ir::types::{
-    AnimationKeyframe, AnimationSpec, BBox, ErrorSeverity, IrNode, IrNodeKind, PipelineStage,
-    RenderWarning,
-};
+use crate::ir::types::{AnimationKeyframe, AnimationSpec, BBox, IrNode, IrNodeKind};
 
 fn group(node_id: &str, children: Vec<IrNode>) -> IrNode {
     IrNode {
@@ -129,15 +127,14 @@ fn text_transport(width: u32) -> String {
     .to_string()
 }
 
-fn warning(code: &str) -> RenderWarning {
-    RenderWarning {
-        severity: ErrorSeverity::Recoverable,
-        code: code.to_string(),
-        message: format!("warning {code}"),
-        stage: PipelineStage::Ir,
-        node_id: Some("scene".to_string()),
-        fallback: Some("none".to_string()),
-    }
+fn warning(code: &str) -> SerializedRecoverableError {
+    SerializedRecoverableError::for_test(
+        code,
+        format!("warning {code}"),
+        PipelineStage::Ir,
+        Some("scene".to_string()),
+        "none",
+    )
 }
 
 fn transition_plan() -> LayoutTransitionPlanInput {
@@ -935,22 +932,24 @@ fn manifest_stays_private_and_ignores_internal_paint_groups() {
     })
     .to_string();
     let mut compiled_ir = ir(group("scene", vec![group("inline-fragment", Vec::new())]));
-    compiled_ir.warnings.push(RenderWarning {
-        severity: ErrorSeverity::Recoverable,
-        code: "SPIKE_WARNING".to_string(),
-        message: "warning remains owned by the compiled IR".to_string(),
-        stage: PipelineStage::Ir,
-        node_id: Some("scene".to_string()),
-        fallback: Some("none".to_string()),
-    });
+    compiled_ir
+        .warnings
+        .push(SerializedRecoverableError::for_test(
+            "SPIKE_WARNING",
+            "warning remains owned by the compiled IR",
+            PipelineStage::Ir,
+            Some("scene".to_string()),
+            "none",
+        ));
     let state = compiled_state(&transport, compiled_ir);
 
     assert_eq!(state.semantic_node_count(), 1);
+    assert_eq!(state.ir().warnings[0].code, "SPIKE_WARNING");
     let serialized_ir = serde_json::to_string(state.ir()).expect("IR should serialize");
     assert!(!serialized_ir.contains("semanticManifest"));
     assert!(!serialized_ir.contains("authoredId"));
     assert!(serialized_ir.contains("inline-fragment"));
-    assert!(serialized_ir.contains("SPIKE_WARNING"));
+    assert!(!serialized_ir.contains("SPIKE_WARNING"));
 }
 
 #[test]
@@ -1506,7 +1505,7 @@ fn zero_dimension_is_allowed_only_when_that_axis_does_not_change_size() {
 }
 
 #[test]
-fn warning_merge_is_reference_first_and_deduplicates_exact_matches() {
+fn warning_merge_is_reference_first_and_preserves_duplicate_events() {
     let transport = json!({
         "root": {
             "nodeId": "scene",
@@ -1532,7 +1531,7 @@ fn warning_merge_is_reference_first_and_deduplicates_exact_matches() {
             .iter()
             .map(|entry| entry.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["REFERENCE", "SHARED", "TARGET"]
+        vec!["REFERENCE", "SHARED", "SHARED", "TARGET"]
     );
 }
 

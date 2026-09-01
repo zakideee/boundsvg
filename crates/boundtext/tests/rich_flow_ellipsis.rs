@@ -9,7 +9,8 @@ use boundtext::text::flow::{
     layout_flow_with_regions, layout_resolved_flow_with_regions,
 };
 use boundtext::text::types::{
-    Language, RichTextNodeInput, RichTextStyleInput, WhiteSpaceMode, WrapMode, WritingMode,
+    Language, RichTextNodeInput, RichTextStyleInput, TextWarningCode, WhiteSpaceMode, WrapMode,
+    WritingMode,
 };
 
 struct RectRegions {
@@ -228,7 +229,7 @@ fn rich_flow_ellipsis_commits_only_retained_authored_node_warnings() {
         flow_layout
             .warnings
             .iter()
-            .any(|warning| warning.code == "LONG_RUBY_ANNOTATION"),
+            .any(|warning| warning.code == TextWarningCode::LongRubyAnnotation),
         "retained atomic warning must survive flow projection: {:?}",
         flow_layout.warnings
     );
@@ -293,7 +294,7 @@ fn zero_line_rich_flow_discards_omitted_missing_glyph_warnings() {
         flow_layout
             .warnings
             .iter()
-            .all(|warning| warning.code != "MISSING_GLYPH"),
+            .all(|warning| warning.code != TextWarningCode::MissingGlyph),
         "warnings from fully omitted authored content must be discarded: {:?}",
         flow_layout.warnings
     );

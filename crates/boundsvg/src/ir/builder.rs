@@ -20,11 +20,12 @@ use super::svg_id_rewrite::rewrite_svg_ids;
 use super::svg_security::unsafe_svg_reason;
 use super::types::{
     BBox, BorderRadii, BorderRadius, BorderRadiusInput, HandlersRef, Ir, IrFillRule, IrNode,
-    IrNodeKind, IrTextAlign, PipelineStage, RenderWarning, ShapePartBounds, ShapePartPaint,
-    ShapePathPart, StrokeLinecap, StrokeLinejoin, TEXT_ANIMATION_FRAGMENT_WARNING_THRESHOLD,
+    IrNodeKind, IrTextAlign, ShapePartBounds, ShapePartPaint, ShapePathPart, StrokeLinecap,
+    StrokeLinejoin, TEXT_ANIMATION_FRAGMENT_WARNING_THRESHOLD,
     TEXT_ANIMATION_UNIT_WARNING_THRESHOLD, TextShadowLayer, TextStrokeLayer, parse_box_shadow,
     resolve_border_radius,
 };
+use crate::diagnostics::{PipelineStage, RecoverableCode, SerializedRecoverableError};
 use crate::error::EngineError;
 use crate::layout::types::{
     BorderRadiusInputValue, HandlersInput, LayoutNodeInput, LayoutNodeOutput, PartPaintMap,
@@ -47,7 +48,7 @@ pub fn build_ir<S: std::hash::BuildHasher>(
     outputs: &HashMap<String, LayoutNodeOutput, S>,
 ) -> Result<Ir, EngineError> {
     let mut draw_order: Vec<String> = Vec::new();
-    let mut warnings: Vec<RenderWarning> = Vec::new();
+    let mut warnings: Vec<SerializedRecoverableError> = Vec::new();
 
     let root = build_node(input_root, outputs, &mut draw_order, &mut warnings)?;
     let root_bbox = node_bbox(input_root, outputs);
@@ -73,13 +74,13 @@ pub fn build_ir<S: std::hash::BuildHasher>(
 
 fn append_text_animation_budget_warnings(
     root: &IrNode,
-    warnings: &mut Vec<RenderWarning>,
+    warnings: &mut Vec<SerializedRecoverableError>,
 ) -> Result<(), EngineError> {
     let (unit_count, fragment_count) = super::animation::text_animation_budget_counts(root);
     super::animation::validate_text_animation_budget_counts(unit_count, fragment_count)?;
     if unit_count > TEXT_ANIMATION_UNIT_WARNING_THRESHOLD {
-        warnings.push(RenderWarning::recoverable(
-            "TEXT_ANIMATION_UNIT_COUNT_HIGH",
+        warnings.push(SerializedRecoverableError::recoverable(
+            RecoverableCode::TextAnimationUnitCountHigh,
             format!("Text animation unit count is {unit_count}"),
             PipelineStage::Layout,
             None,
@@ -87,8 +88,8 @@ fn append_text_animation_budget_warnings(
         ));
     }
     if fragment_count > TEXT_ANIMATION_FRAGMENT_WARNING_THRESHOLD {
-        warnings.push(RenderWarning::recoverable(
-            "TEXT_ANIMATION_FRAGMENT_COUNT_HIGH",
+        warnings.push(SerializedRecoverableError::recoverable(
+            RecoverableCode::TextAnimationFragmentCountHigh,
             format!("Text animation fragment estimate is {fragment_count}"),
             PipelineStage::Emit,
             None,
@@ -188,7 +189,7 @@ fn build_node<S: std::hash::BuildHasher>(
     input: &LayoutNodeInput,
     outputs: &HashMap<String, LayoutNodeOutput, S>,
     draw_order: &mut Vec<String>,
-    warnings: &mut Vec<RenderWarning>,
+    warnings: &mut Vec<SerializedRecoverableError>,
 ) -> Result<IrNode, EngineError> {
     let node_id = &input.node_id;
     let bbox = node_bbox(input, outputs);
@@ -382,7 +383,7 @@ fn build_background_rect(
             message: format!(
                 "Validation error: unsupported or invalid gradient syntax: {background}"
             ),
-            stage: Some("ir".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Ir),
             node_id: Some(node_id.to_string()),
         });
     }
@@ -453,7 +454,7 @@ struct TextChildContext<'a> {
     handlers: Option<HandlersRef>,
     children: &'a mut Vec<IrNode>,
     draw_order: &'a mut Vec<String>,
-    warnings: &'a mut Vec<RenderWarning>,
+    warnings: &'a mut Vec<SerializedRecoverableError>,
 }
 
 /// Collect characters rendered with .notdef (`glyph_id` 0), excluding control
@@ -527,30 +528,21 @@ fn append_text_warnings(context: &mut TextChildContext, layout: &TextLayoutOutpu
                 })
                 .filter(|name| !name.is_empty())
                 .map_or("unknown font", |name| name.as_str());
-            context.warnings.push(RenderWarning::recoverable(
-                "MISSING_GLYPH",
-                format!(
-                    "Font \"{font_name}\" is missing glyphs for: {}",
-                    notdef_chars.join(", ")
-                ),
-                PipelineStage::Text,
-                Some(context.node_id.to_string()),
-                "blank",
-            ));
+            context
+                .warnings
+                .push(SerializedRecoverableError::recoverable(
+                    RecoverableCode::MissingGlyph,
+                    format!(
+                        "Font \"{font_name}\" is missing glyphs for: {}",
+                        notdef_chars.join(", ")
+                    ),
+                    PipelineStage::Text,
+                    Some(context.node_id.to_string()),
+                    "blank",
+                ));
         }
     } else {
-        for warning in &layout.warnings {
-            context.warnings.push(RenderWarning::recoverable(
-                warning.code.clone(),
-                warning.message.clone(),
-                PipelineStage::Text,
-                Some(context.node_id.to_string()),
-                warning
-                    .fallback
-                    .clone()
-                    .unwrap_or_else(|| "blank".to_string()),
-            ));
-        }
+        context.warnings.extend(layout.warnings.iter().cloned());
     }
 
     if let Some(overflow) = &layout.overflow {
@@ -561,8 +553,8 @@ fn append_text_warnings(context: &mut TextChildContext, layout: &TextLayoutOutpu
                 .as_deref()
                 .map(|reason| format!(" ({reason})"))
                 .unwrap_or_default();
-            context.warnings.push(RenderWarning::recoverable(
-                "KINSOKU_UNRESOLVED",
+            context.warnings.push(SerializedRecoverableError::recoverable(
+                RecoverableCode::KinsokuUnresolved,
                 format!(
                     "Kinsoku line breaking could not be fully resolved for text node \"{node_id}\"; a forced break was used{reason_suffix}.",
                 ),
@@ -732,7 +724,7 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
             message: format!(
                 "computeLayoutFn returned textLayout for node \"{node_id}\" without required resolved fields (lines, bbox, chosenFontSizePx). Custom computeLayoutFn implementations must include full text layout data.",
             ),
-            stage: Some("layout".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Layout),
             node_id: Some(node_id.clone()),
         });
     };
@@ -852,7 +844,7 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
         return Err(EngineError::Structured {
             code: code.to_string(),
             message: message.to_string(),
-            stage: Some("ir".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Ir),
             node_id: Some(node_id.clone()),
         });
     }
@@ -880,7 +872,7 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
                 "Resolved text decoration path count {text_decoration_path_count} exceeds the limit {}.",
                 crate::text::decoration::MAX_TEXT_DECORATION_PATHS
             ),
-            stage: Some("ir".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Ir),
             node_id: Some(node_id.clone()),
         });
     }
@@ -893,7 +885,7 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
             message: format!(
                 "Text decoration pattern complexity {text_decoration_contour_count} contours / {text_decoration_pattern_segment_count} segments exceeds the deterministic limit."
             ),
-            stage: Some("ir".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Ir),
             node_id: Some(node_id.clone()),
         });
     }
@@ -1066,14 +1058,14 @@ fn build_image_child(
     handlers: Option<HandlersRef>,
     children: &mut Vec<IrNode>,
     draw_order: &mut Vec<String>,
-    warnings: &mut Vec<RenderWarning>,
+    warnings: &mut Vec<SerializedRecoverableError>,
 ) {
     // The serializer already embedded byte sources as data URIs. A string
     // reference passes through unchanged; absence means embedding failed.
     if let Some(src) = visual.src.as_deref() {
         if !src.starts_with("data:") {
-            warnings.push(RenderWarning::recoverable(
-                "IMAGE_SRC_NOT_EMBEDDED",
+            warnings.push(SerializedRecoverableError::recoverable(
+                RecoverableCode::ImageSrcNotEmbedded,
                 format!(
                     "Image src for node \"{node_id}\" is a reference, not embedded data. SVG keeps the reference; PNG rasterization omits the image. Pass a Uint8Array or a data: URI to embed it.",
                 ),
@@ -1087,8 +1079,8 @@ fn build_image_child(
     let data_uri = match visual.src.as_deref() {
         Some(uri) if !uri.is_empty() => uri.to_string(),
         _ => {
-            warnings.push(RenderWarning::recoverable(
-                "IMAGE_LOAD_FAILED",
+            warnings.push(SerializedRecoverableError::recoverable(
+                RecoverableCode::ImageLoadFailed,
                 format!("Image load failed for node \"{node_id}\""),
                 PipelineStage::Ir,
                 Some(node_id.to_string()),
@@ -1182,7 +1174,7 @@ struct ShapeChildContext<'a> {
     handlers: Option<HandlersRef>,
     children: &'a mut Vec<IrNode>,
     draw_order: &'a mut Vec<String>,
-    warnings: &'a mut Vec<RenderWarning>,
+    warnings: &'a mut Vec<SerializedRecoverableError>,
 }
 
 /// Diagnostic label for shape errors: the authored id, or a type placeholder
@@ -1233,7 +1225,7 @@ fn validate_shape_geometry(geometry: &GeometryDoc, node_label: &str) -> Result<(
         EngineError::Structured {
             code: "SHAPE_GEOMETRY_MAX_DEPTH".to_string(),
             message: error.to_string(),
-            stage: Some("validate".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Validate),
             node_id: Some(node_label.to_string()),
         }
     })?;
@@ -1244,7 +1236,7 @@ fn validate_shape_geometry(geometry: &GeometryDoc, node_label: &str) -> Result<(
         return Err(EngineError::Structured {
             code: "SHAPE_DUPLICATE_PART_ID".to_string(),
             message: format!("Shape contains duplicate addressable part id \"{part_id}\"."),
-            stage: Some("validate".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Validate),
             node_id: Some(node_label.to_string()),
         });
     }
@@ -1260,13 +1252,13 @@ fn resolve_shape_geometry(context: &ShapeChildContext) -> Result<GeometryDoc, En
                 Some(symbol_id) => EngineError::Structured {
                     code: "SHAPE_SYMBOL_NOT_FOUND".to_string(),
                     message: format!("Symbol references unknown symbolId \"{symbol_id}\"."),
-                    stage: Some("validate".to_string()),
+                    stage: Some(crate::diagnostics::PipelineStage::Validate),
                     node_id: Some(label.clone()),
                 },
                 None => EngineError::Structured {
                     code: "SHAPE_SYMBOL_MISSING".to_string(),
                     message: "Symbol requires either a symbol definition or symbolId.".to_string(),
-                    stage: Some("validate".to_string()),
+                    stage: Some(crate::diagnostics::PipelineStage::Validate),
                     node_id: Some(label.clone()),
                 },
             });
@@ -1281,14 +1273,14 @@ fn resolve_shape_geometry(context: &ShapeChildContext) -> Result<GeometryDoc, En
         )
         .map_err(|error| {
             let (code, stage) = if error == ShapeError::GeometryDepthLimit {
-                ("SHAPE_GEOMETRY_MAX_DEPTH", "validate")
+                ("SHAPE_GEOMETRY_MAX_DEPTH", PipelineStage::Validate)
             } else {
-                ("SHAPE_COMPILE_FAILED", "ir")
+                ("SHAPE_COMPILE_FAILED", PipelineStage::Ir)
             };
             EngineError::Structured {
                 code: code.to_string(),
                 message: error.to_string(),
-                stage: Some(stage.to_string()),
+                stage: Some(stage),
                 node_id: Some(label),
             }
         })
@@ -1298,13 +1290,13 @@ fn resolve_shape_geometry(context: &ShapeChildContext) -> Result<GeometryDoc, En
                 Some(geometry_id) => EngineError::Structured {
                     code: "SHAPE_GEOMETRY_NOT_FOUND".to_string(),
                     message: format!("Shape references unknown geometryId \"{geometry_id}\"."),
-                    stage: Some("validate".to_string()),
+                    stage: Some(crate::diagnostics::PipelineStage::Validate),
                     node_id: Some(label.clone()),
                 },
                 None => EngineError::Structured {
                     code: "SHAPE_GEOMETRY_MISSING".to_string(),
                     message: "Shape requires either a geometry object or geometryId.".to_string(),
-                    stage: Some("validate".to_string()),
+                    stage: Some(crate::diagnostics::PipelineStage::Validate),
                     node_id: Some(label.clone()),
                 },
             });
@@ -1391,7 +1383,7 @@ fn build_shape_child(context: ShapeChildContext) -> Result<(), EngineError> {
             EngineError::Structured {
                 code: "SHAPE_COMPILE_FAILED".to_string(),
                 message: error.to_string(),
-                stage: Some("ir".to_string()),
+                stage: Some(crate::diagnostics::PipelineStage::Ir),
                 node_id: Some(node_id.to_string()),
             }
         })?;
@@ -1404,13 +1396,17 @@ fn build_shape_child(context: ShapeChildContext) -> Result<(), EngineError> {
             .collect();
         for (part_id, _) in &overrides.0 {
             if !known.contains(&Some(part_id.as_str())) {
-                context.warnings.push(RenderWarning::recoverable(
-                    "SHAPE_PART_PAINT_UNKNOWN_PART",
-                    format!("partPaint references unknown partId \"{part_id}\"; entry ignored."),
-                    PipelineStage::Ir,
-                    Some(node_id.to_string()),
-                    "ignored",
-                ));
+                context
+                    .warnings
+                    .push(SerializedRecoverableError::recoverable(
+                        RecoverableCode::ShapePartPaintUnknownPart,
+                        format!(
+                            "partPaint references unknown partId \"{part_id}\"; entry ignored."
+                        ),
+                        PipelineStage::Ir,
+                        Some(node_id.to_string()),
+                        "ignored",
+                    ));
             }
         }
     }
@@ -1480,7 +1476,7 @@ fn build_svg_child(
     handlers: Option<HandlersRef>,
     children: &mut Vec<IrNode>,
     draw_order: &mut Vec<String>,
-    warnings: &mut Vec<RenderWarning>,
+    warnings: &mut Vec<SerializedRecoverableError>,
 ) -> Result<(), EngineError> {
     let Some(content) = visual.svg_content.as_deref() else {
         return Ok(());
@@ -1491,7 +1487,7 @@ fn build_svg_child(
         return Err(EngineError::Structured {
             code: "VALIDATION".to_string(),
             message: format!("Validation error: Svg content contains disallowed markup ({reason})"),
-            stage: Some("ir".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Ir),
             node_id: Some(node_id.to_string()),
         });
     }
@@ -1503,15 +1499,15 @@ fn build_svg_child(
                 "Embedded SVG ID rewrite failed for node \"{node_id}\": {}",
                 error.detail
             ),
-            stage: Some("ir".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Ir),
             node_id: Some(node_id.to_string()),
         })?;
 
     if contains_embedded_text_element(&inner_content) {
         // Embedded <text> is re-shaped by the viewer / rasterizer fonts,
         // which is outside the determinism contract.
-        warnings.push(RenderWarning::recoverable(
-            "SVG_EMBEDDED_TEXT",
+        warnings.push(SerializedRecoverableError::recoverable(
+            RecoverableCode::SvgEmbeddedText,
             "Embedded Svg content contains <text>; it is re-shaped by the viewer/rasterizer and is not covered by the determinism contract. Convert it to paths for reproducible output.",
             PipelineStage::Ir,
             Some(node_id.to_string()),
