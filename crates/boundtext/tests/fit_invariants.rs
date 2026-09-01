@@ -33,7 +33,10 @@ struct RectRegions {
 }
 
 impl RegionProvider for RectRegions {
-    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, boundtext::BoundtextError> {
+    fn regions(
+        &self,
+        query: RegionQuery,
+    ) -> Result<Vec<FlowRegion>, boundtext::RegionProviderError> {
         if query.cross_start_px >= 0.0
             && query.cross_end_px <= self.height
             && self.width >= query.min_inline_size_px

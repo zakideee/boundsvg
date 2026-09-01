@@ -1,4 +1,4 @@
-use crate::BoundtextError;
+use crate::TextLayoutError;
 use crate::font::FontContext;
 use crate::text::kinsoku::{
     add_bounded_intentional_overflow_px, get_hanging_chars, get_kinsoku_profile,
@@ -28,8 +28,8 @@ use crate::text::flow::FLOW_BOTTOM_EPSILON;
 pub(crate) fn layout_rich_flow_with_regions(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl text_flow::RegionProvider,
-) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
+    region_provider: &impl text_flow::LayoutRegionProvider,
+) -> Result<text_flow::FlowLayoutResult, TextLayoutError> {
     let content_search_kind = if req.letter_spacing_px < 0.0
         || req.line_height.is_some_and(|value| value < 0.0)
         || !is_rich_text_fit_certified_monotone(req.rich_text)
@@ -104,16 +104,13 @@ pub(crate) fn layout_rich_flow_with_regions(
 fn layout_rich_flow_at_font_size(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl text_flow::RegionProvider,
+    region_provider: &impl text_flow::LayoutRegionProvider,
     chosen_font_size_px: f64,
     should_apply_ellipsis_projection: bool,
-) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
+) -> Result<text_flow::FlowLayoutResult, TextLayoutError> {
     let text_req = text_layout_request_for_flow(req);
 
-    let prepared =
-        prepare_rich_text(&text_req, font_ctx, chosen_font_size_px).ok_or_else(|| {
-            BoundtextError::FlowLayout("Failed to prepare rich-text flow layout".to_string())
-        })?;
+    let prepared = prepare_rich_text(&text_req, font_ctx, chosen_font_size_px)?;
     let min_region = req.min_region_width.unwrap_or(chosen_font_size_px);
     let flow_layout = layout_prepared_rich_flow(
         req,
@@ -194,13 +191,13 @@ pub(crate) fn source_text_for_flow_projection(
 fn layout_prepared_rich_flow(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl text_flow::RegionProvider,
+    region_provider: &impl text_flow::LayoutRegionProvider,
     tokens: &[super::LayoutToken],
     decoration_spans: &[super::DecorationSpanMeta],
     warnings: &[TextWarning],
     min_region: f64,
     chosen_font_size_px: f64,
-) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
+) -> Result<text_flow::FlowLayoutResult, TextLayoutError> {
     if req.writing_mode == crate::text::types::WritingMode::VerticalRl {
         layout_rich_flow_vertical(
             req,
@@ -230,11 +227,11 @@ fn apply_rich_flow_ellipsis(
     req: &text_flow::FlowLayoutRequest<'_>,
     text_req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl text_flow::RegionProvider,
+    region_provider: &impl text_flow::LayoutRegionProvider,
     min_region: f64,
     chosen_font_size_px: f64,
     overflow_reason: Option<text_flow::FlowOverflowReason>,
-) -> Result<Option<text_flow::FlowLayoutResult>, BoundtextError> {
+) -> Result<Option<text_flow::FlowLayoutResult>, TextLayoutError> {
     let (inline_nodes, default_style, _) =
         super::build_inline_nodes(text_req, font_ctx, chosen_font_size_px);
     let total = super::count_inline_graphemes(&inline_nodes);
@@ -242,7 +239,7 @@ fn apply_rich_flow_ellipsis(
         return Ok(None);
     }
 
-    let probe = |keep: usize| -> Result<Option<text_flow::FlowLayoutResult>, BoundtextError> {
+    let probe = |keep: usize| -> Result<Option<text_flow::FlowLayoutResult>, TextLayoutError> {
         #[cfg(any(test, feature = "phase-trace"))]
         crate::phase_trace::record_ellipsis_candidate();
         let ellipsis_style = super::first_omitted_style(&inline_nodes, keep)
@@ -252,6 +249,7 @@ fn apply_rich_flow_ellipsis(
             &inline_nodes,
             keep,
             super::RichSegment {
+                run_index: 0,
                 text: "\u{2026}".to_string(),
                 style: ellipsis_style,
                 combine: false,
@@ -265,10 +263,7 @@ fn apply_rich_flow_ellipsis(
             font_ctx.registry,
             font_ctx.fallback_registry,
             &default_style,
-        )
-        .ok_or_else(|| {
-            BoundtextError::FlowLayout("Failed to prepare ellipsis candidate".to_string())
-        })?;
+        )?;
         super::mark_last_token_as_synthetic_ellipsis(&mut tokens);
         let mut candidate_warnings = super::collect_notdef_warnings_from_tokens(&tokens);
         candidate_warnings.extend(super::collect_owned_warnings(&truncated));
@@ -315,7 +310,7 @@ fn apply_rich_flow_ellipsis(
     let required = legal_prefixes.len().saturating_add(1);
     let limit = crate::text::ellipsis_plan::ELLIPSIS_CANDIDATES_MAX;
     if required > limit {
-        return Err(BoundtextError::EllipsisCandidateLimit { required, limit });
+        return Err(TextLayoutError::EllipsisCandidateLimit { required, limit });
     }
     let selected = crate::text::ellipsis_plan::try_select_longest_fitting(
         legal_prefixes.into_iter(),
@@ -325,8 +320,8 @@ fn apply_rich_flow_ellipsis(
     let mut projected_layout = if let Some((_, selected)) = selected {
         selected
     } else {
-        let mut empty = probe(0)?.ok_or_else(|| {
-            BoundtextError::FlowLayout("Failed to prepare empty ellipsis candidate".to_string())
+        let mut empty = probe(0)?.ok_or(TextLayoutError::PreparationFailed {
+            phase: crate::TextPreparationPhase::RichPreparation,
         })?;
         empty.lines.clear();
         empty.inline_box_decorations.clear();
@@ -510,13 +505,13 @@ fn materialize_vertical_flow_decorations(
 fn layout_rich_flow_horizontal(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl text_flow::RegionProvider,
+    region_provider: &impl text_flow::LayoutRegionProvider,
     tokens: &[super::LayoutToken],
     decoration_spans: &[super::DecorationSpanMeta],
     warnings: &[TextWarning],
     min_region_width: f64,
     chosen_font_size_px: f64,
-) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
+) -> Result<text_flow::FlowLayoutResult, TextLayoutError> {
     let line_height_px = text_flow::resolve_flow_line_height_px(
         font_ctx,
         chosen_font_size_px,
@@ -679,13 +674,13 @@ fn layout_rich_flow_horizontal(
 fn layout_rich_flow_vertical(
     req: &text_flow::FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl text_flow::RegionProvider,
+    region_provider: &impl text_flow::LayoutRegionProvider,
     tokens: &[super::LayoutToken],
     decoration_spans: &[super::DecorationSpanMeta],
     warnings: &[TextWarning],
     min_region_height: f64,
     chosen_font_size_px: f64,
-) -> Result<text_flow::FlowLayoutResult, BoundtextError> {
+) -> Result<text_flow::FlowLayoutResult, TextLayoutError> {
     let column_width = text_flow::resolve_flow_line_height_px(
         font_ctx,
         chosen_font_size_px,

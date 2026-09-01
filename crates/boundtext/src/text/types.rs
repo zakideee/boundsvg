@@ -628,6 +628,45 @@ pub struct IntrinsicInlineSizes {
 // Text layout request (internal — not deserialized from JSON)
 // ---------------------------------------------------------------------------
 
+/// Narrow request for plain horizontal block measurement.
+///
+/// Rich text, spans, fit, ellipsis, and vertical writing are intentionally
+/// absent so unsupported modes cannot be represented as a successful absence.
+#[derive(Clone)]
+pub struct PlainTextMeasurementRequest<'a> {
+    pub text: &'a str,
+    pub font_size_px: f64,
+    pub line_height: Option<f64>,
+    pub line_height_px: Option<f64>,
+    pub letter_spacing_px: f64,
+    pub text_indent: Option<f64>,
+    pub max_width: f64,
+    pub wrap: WrapMode,
+    pub white_space: WhiteSpaceMode,
+    pub tab_size: u32,
+    pub language: Language,
+    pub uax14_breaks: Option<&'a [usize]>,
+    pub hanging_punctuation: bool,
+    pub font_variation_settings: Vec<VariationSetting>,
+    pub font_feature_settings: Vec<FeatureSetting>,
+}
+
+impl PlainTextMeasurementRequest<'_> {
+    #[must_use]
+    pub fn effective_wrap(&self) -> WrapMode {
+        if self.white_space == WhiteSpaceMode::NoWrap {
+            WrapMode::None
+        } else {
+            self.wrap
+        }
+    }
+
+    #[must_use]
+    pub fn has_forced_newline_breaks(&self) -> bool {
+        self.white_space == WhiteSpaceMode::PreWrap
+    }
+}
+
 #[derive(Clone)]
 pub struct TextLayoutRequest<'a> {
     pub text: &'a str,

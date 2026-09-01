@@ -138,6 +138,25 @@ pub enum TextOnPathError {
     UnitMapInvalid,
 }
 
+fn map_text_layout_error_to_path_error(error: crate::TextLayoutError) -> TextOnPathError {
+    match error {
+        crate::TextLayoutError::InvalidRequest { .. }
+        | crate::TextLayoutError::FontUnavailable { .. }
+        | crate::TextLayoutError::PreparationFailed { .. }
+        | crate::TextLayoutError::InvalidFitStep
+        | crate::TextLayoutError::FitProbeLimit { .. }
+        | crate::TextLayoutError::EllipsisCandidateLimit { .. }
+        | crate::TextLayoutError::RichTextDepthLimit { .. }
+        | crate::TextLayoutError::InlineRectLimit { .. }
+        | crate::TextLayoutError::InvalidRegionQuery { .. }
+        | crate::TextLayoutError::RegionProviderFailure { .. }
+        | crate::TextLayoutError::InvalidFlowRegion { .. }
+        | crate::TextLayoutError::RegionQueryLimit { .. }
+        | crate::TextLayoutError::RegionIntervalLimit { .. }
+        | crate::TextLayoutError::InvariantViolation { .. } => TextOnPathError::LayoutUnavailable,
+    }
+}
+
 #[must_use]
 fn map_shape_error(error: &ShapeError) -> TextOnPathError {
     match error {
@@ -568,7 +587,7 @@ pub fn layout_text_on_path(
         ..request.text.clone()
     };
     let mut layout = layout_text_inner_with_prepared_spans(&path_text_request, font_context, true)
-        .ok_or(TextOnPathError::LayoutUnavailable)?;
+        .map_err(map_text_layout_error_to_path_error)?;
     apply_text_path_span_metadata(
         &mut layout.lines,
         path_text_request.spans,
@@ -1094,7 +1113,7 @@ fn shape_path_ellipsis(
         ..path_text_request.clone()
     };
     let mut layout = layout_text_inner_with_prepared_spans(&ellipsis_request, font_context, true)
-        .ok_or(TextOnPathError::LayoutUnavailable)?;
+        .map_err(map_text_layout_error_to_path_error)?;
     apply_text_path_span_metadata(
         &mut layout.lines,
         ellipsis_request.spans,

@@ -22,14 +22,17 @@ use crate::font::shaping::ShapeOptions;
 /// 3. Binary search `[min_font_size, font_size_px]` with invariant
 ///    `lo=fit, hi=overflow`.
 /// 4. Build final layout once at the best found size.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns the first font, shaping, fit-probe, or ellipsis failure.
 pub fn fit_shrink(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     min_font_size_px: Option<f64>,
     shrink_epsilon_px: Option<f64>,
     shrink_max_iterations: Option<usize>,
-) -> Option<crate::text::types::TextLayoutResult> {
+) -> Result<crate::text::types::TextLayoutResult, crate::TextLayoutError> {
     fit_shrink_internal(
         req,
         font_ctx,
@@ -46,7 +49,7 @@ pub(crate) fn fit_shrink_with_unit_metadata(
     min_font_size_px: Option<f64>,
     shrink_epsilon_px: Option<f64>,
     shrink_max_iterations: Option<usize>,
-) -> Option<crate::text::types::TextLayoutResult> {
+) -> Result<crate::text::types::TextLayoutResult, crate::TextLayoutError> {
     fit_shrink_internal(
         req,
         font_ctx,
@@ -64,7 +67,7 @@ fn fit_shrink_internal(
     shrink_epsilon_px: Option<f64>,
     shrink_max_iterations: Option<usize>,
     should_include_unit_metadata: bool,
-) -> Option<crate::text::types::TextLayoutResult> {
+) -> Result<crate::text::types::TextLayoutResult, crate::TextLayoutError> {
     let min_size = min_font_size_px
         .unwrap_or(DEFAULT_MIN_FONT_SIZE)
         .max(f64::EPSILON)
@@ -96,7 +99,7 @@ fn fit_shrink_internal(
             req.uax14_breaks,
             req.letter_spacing_px,
         ) {
-            return Some(fit_shrink_shaped(
+            return fit_shrink_shaped(
                 req,
                 font_ctx,
                 &pp,
@@ -104,7 +107,7 @@ fn fit_shrink_internal(
                 epsilon,
                 max_iter,
                 should_include_unit_metadata,
-            ));
+            );
         }
     }
 
@@ -143,7 +146,7 @@ fn fit_shrink_internal(
             TextOverflow::none()
         };
         let warnings = collect_warnings_from_lines(&lines, primary_alias);
-        return Some(build_result(
+        return Ok(build_result(
             lines,
             req.font_size_px,
             lh,
@@ -163,12 +166,8 @@ fn fit_shrink_internal(
     )?;
     if !min_fits {
         // Try ellipsis fallback at min size when enabled
-        if req.ellipsis
-            && req.max_lines.is_some()
-            && let Some(result) =
-                layout_ellipsis_at_size(req, font_ctx, min_size, should_include_unit_metadata)
-        {
-            return Some(result);
+        if req.ellipsis && req.max_lines.is_some() {
+            return layout_ellipsis_at_size(req, font_ctx, min_size, should_include_unit_metadata);
         }
         // Cannot fit even at min size
         let (lines, lh, _) = layout_at_size(
@@ -181,7 +180,7 @@ fn fit_shrink_internal(
         )?;
         let overflow = TextOverflow::cannot_fit();
         let warnings = collect_warnings_from_lines(&lines, primary_alias);
-        return Some(build_result(lines, min_size, lh, overflow, warnings));
+        return Ok(build_result(lines, min_size, lh, overflow, warnings));
     }
 
     // Step 3: binary search — invariant: lo fits, hi overflows
@@ -225,7 +224,7 @@ fn fit_shrink_internal(
         TextOverflow::none()
     };
     let warnings = collect_warnings_from_lines(&lines, primary_alias);
-    Some(build_result(lines, best_size, lh, overflow, warnings))
+    Ok(build_result(lines, best_size, lh, overflow, warnings))
 }
 
 fn layout_ellipsis_at_size(
@@ -233,7 +232,7 @@ fn layout_ellipsis_at_size(
     font_ctx: &FontContext<'_>,
     font_size_px: f64,
     should_include_unit_metadata: bool,
-) -> Option<crate::text::types::TextLayoutResult> {
+) -> Result<crate::text::types::TextLayoutResult, crate::TextLayoutError> {
     let final_request = TextLayoutRequest {
         font_size_px,
         letter_spacing_px: scaled_letter_spacing(req, font_size_px),
@@ -247,14 +246,14 @@ fn layout_ellipsis_at_size(
         ..req.clone()
     };
     let mut layout_result = if should_include_unit_metadata {
-        super::super::engine::layout_text_with_unit_metadata(&final_request, font_ctx).ok()?
+        super::super::engine::layout_text_with_unit_metadata(&final_request, font_ctx)?
     } else {
-        super::super::engine::layout_text(&final_request, font_ctx).ok()?
+        super::super::engine::layout_text(&final_request, font_ctx)?
     };
     if layout_result.lines.is_empty() {
         layout_result.overflow = TextOverflow::cannot_fit();
     }
-    Some(layout_result)
+    Ok(layout_result)
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +270,7 @@ fn fit_shrink_shaped(
     epsilon: f64,
     max_iter: usize,
     should_include_unit_metadata: bool,
-) -> crate::text::types::TextLayoutResult {
+) -> Result<crate::text::types::TextLayoutResult, crate::TextLayoutError> {
     // Step 1: does original size already fit?
     let lh = resolve_line_height(req, font_ctx, req.font_size_px);
     let measurement = paragraph::measure_paragraph(
@@ -283,13 +282,13 @@ fn fit_shrink_shaped(
         req.has_forced_newline_breaks(),
     );
     if measurement.fits(req.max_width, req.max_lines, req.max_height, lh) {
-        return fit_build_shaped(
+        return Ok(fit_build_shaped(
             req,
             font_ctx,
             pp,
             req.font_size_px,
             measurement.kinsoku_unresolved,
-        );
+        ));
     }
 
     // Step 2: does min size fit?
@@ -304,16 +303,14 @@ fn fit_shrink_shaped(
     );
     if !m_min.fits(req.max_width, req.max_lines, req.max_height, lh_min) {
         // Ellipsis fallback still needs re-shaping (truncated text) — use existing path.
-        if req.ellipsis
-            && req.max_lines.is_some()
-            && let Some(result) =
-                layout_ellipsis_at_size(req, font_ctx, min_size, should_include_unit_metadata)
-        {
-            return result;
+        if req.ellipsis && req.max_lines.is_some() {
+            return layout_ellipsis_at_size(req, font_ctx, min_size, should_include_unit_metadata);
         }
         // Cannot fit even at min size — return all lines without truncation.
         let overflow = TextOverflow::cannot_fit();
-        return fit_build_shaped_failure(pp, req, font_ctx, min_size, overflow);
+        return Ok(fit_build_shaped_failure(
+            pp, req, font_ctx, min_size, overflow,
+        ));
     }
 
     // Step 3: binary search — measure_paragraph only (no shaping)
@@ -353,5 +350,11 @@ fn fit_shrink_shaped(
         req.effective_wrap(),
         req.has_forced_newline_breaks(),
     );
-    fit_build_shaped(req, font_ctx, pp, best_size, m_best.kinsoku_unresolved)
+    Ok(fit_build_shaped(
+        req,
+        font_ctx,
+        pp,
+        best_size,
+        m_best.kinsoku_unresolved,
+    ))
 }

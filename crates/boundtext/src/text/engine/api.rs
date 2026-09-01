@@ -2,9 +2,9 @@ use super::super::fit;
 use super::super::inline_runs;
 use super::super::rich;
 use super::super::types::{
-    FitMode, Language, LineFragment, PositionedGlyph, RichTextResourceViolation, TextLayoutRequest,
-    TextLayoutResult, TextOrientation, TextRunStyle, TextSpanInput, is_text_fit_certified_monotone,
-    validate_rich_text_resources,
+    FitMode, Language, LineFragment, PlainTextMeasurementRequest, PositionedGlyph,
+    RichTextResourceViolation, TextLayoutRequest, TextLayoutResult, TextOrientation, TextRunStyle,
+    TextSpanInput, is_text_fit_certified_monotone, validate_rich_text_resources,
 };
 use super::super::vertical;
 use super::line_breaking::{BreakResult, break_lines_internal_with_options};
@@ -45,18 +45,9 @@ pub struct MeasuredTextBlock {
 /// retaining authoritative per-line grapheme ranges and kinsoku diagnostics.
 #[must_use]
 pub fn measure_text_lines(
-    req: &TextLayoutRequest,
+    req: &PlainTextMeasurementRequest<'_>,
     font_ctx: &FontContext<'_>,
-) -> Option<MeasuredTextBlock> {
-    if req.is_vertical()
-        || req.spans.is_some_and(|spans| !spans.is_empty())
-        || req.has_rich_text()
-        || req.fit != FitMode::None
-        || req.ellipsis
-    {
-        return None;
-    }
-
+) -> Result<MeasuredTextBlock, crate::TextLayoutError> {
     let measured_text = super::super::types::preprocess_text_for_white_space(
         req.text,
         req.white_space,
@@ -70,12 +61,14 @@ pub fn measure_text_lines(
         font_variation_settings: req.font_variation_settings.clone(),
         font_feature_settings: req.font_feature_settings.clone(),
     };
-    let glyphs = shape_text_for_layout(
+    let glyphs = shape_text_for_layout_result(
         font_ctx,
         &measured_text,
         req.font_size_px,
         req.letter_spacing_px,
         &shape_options,
+        0,
+        crate::TextPreparationPhase::PlainShaping,
     )?;
     let line_metrics = resolve_line_metrics_for_style(
         font_ctx.registry,
@@ -117,7 +110,7 @@ pub fn measure_text_lines(
         .iter()
         .map(|line| line.inline_advance_px)
         .fold(0.0_f64, f64::max);
-    Some(MeasuredTextBlock {
+    Ok(MeasuredTextBlock {
         used_width,
         used_height: lines.len() as f64 * line_metrics.line_height_px,
         lines,
@@ -461,8 +454,8 @@ fn layout_text_inner_authoritative(
             ellipsis: false,
             ..req.clone()
         };
-        let complete = layout_text_inner(&complete_request, font_ctx, should_include_unit_metadata)
-            .ok_or(crate::TextLayoutError::PreparationFailed)?;
+        let complete =
+            layout_text_inner(&complete_request, font_ctx, should_include_unit_metadata)?;
         if is_complete_text_plan_fit(req, &complete) {
             return Ok(complete);
         }
@@ -475,8 +468,7 @@ fn layout_text_inner_authoritative(
                 req,
                 font_ctx,
                 chosen_font_size_px,
-            )
-            .ok_or(crate::TextLayoutError::PreparationFailed);
+            );
         }
         let canonical_nodes = promote_request_to_rich_nodes(req);
         let canonical_request = TextLayoutRequest {
@@ -490,12 +482,10 @@ fn layout_text_inner_authoritative(
             &canonical_request,
             font_ctx,
             chosen_font_size_px,
-        )
-        .ok_or(crate::TextLayoutError::PreparationFailed);
+        );
     }
 
     layout_text_inner(req, font_ctx, should_include_unit_metadata)
-        .ok_or(crate::TextLayoutError::PreparationFailed)
 }
 
 fn ensure_text_fit_budget(req: &TextLayoutRequest<'_>) -> Result<(), crate::TextLayoutError> {
@@ -522,15 +512,7 @@ fn ensure_text_fit_budget(req: &TextLayoutRequest<'_>) -> Result<(), crate::Text
         ),
         FitMode::None => return Ok(()),
     };
-    super::super::flow::ensure_grid_budget(lower, upper, step, req.fit_max_probes).map_err(
-        |error| match error {
-            crate::BoundtextError::InvalidFitStep => crate::TextLayoutError::InvalidFitStep,
-            crate::BoundtextError::FitProbeLimit { required, limit } => {
-                crate::TextLayoutError::FitProbeLimit { required, limit }
-            }
-            _ => crate::TextLayoutError::PreparationFailed,
-        },
-    )?;
+    super::super::flow::ensure_grid_budget(lower, upper, step, req.fit_max_probes)?;
     Ok(())
 }
 
@@ -550,7 +532,7 @@ pub(crate) fn layout_text_inner(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     should_include_unit_metadata: bool,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     layout_text_inner_with_span_promotion(req, font_ctx, should_include_unit_metadata, true)
 }
 
@@ -561,7 +543,7 @@ pub(crate) fn layout_text_inner_with_prepared_spans(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     should_include_unit_metadata: bool,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     layout_text_inner_with_span_promotion(req, font_ctx, should_include_unit_metadata, false)
 }
 
@@ -570,7 +552,7 @@ fn layout_text_inner_with_span_promotion(
     font_ctx: &FontContext<'_>,
     should_include_unit_metadata: bool,
     should_promote_spans: bool,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     if should_promote_spans
         && !req.has_rich_text()
         && let Some(spans) = req.spans.filter(|spans| !spans.is_empty())
@@ -736,7 +718,7 @@ fn layout_text_inner_with_span_promotion(
             apply_variation_settings_to_lines(&mut truncated_lines, &req.font_variation_settings);
             apply_feature_settings_to_lines(&mut truncated_lines, &req.font_feature_settings);
 
-            return Some(build_horizontal_result_with_constraints(
+            return Ok(build_horizontal_result_with_constraints(
                 truncated_lines,
                 total_line_count,
                 line_height_px,
@@ -764,15 +746,17 @@ fn layout_text_inner_with_span_promotion(
 
     // Shape text — use inline runs if spans exist, otherwise single shaping
     let (glyphs, run_segments) = if let Some(spans) = spans_with_runs {
-        let (g, s) = inline_runs::shape_inline_runs(spans, font_ctx, req.letter_spacing_px);
+        let (g, s) = inline_runs::shape_inline_runs(spans, font_ctx, req.letter_spacing_px)?;
         (g, Some(s))
     } else {
-        let shaped = shape_text_for_layout(
+        let shaped = shape_text_for_layout_result(
             font_ctx,
             req.text,
             req.font_size_px,
             req.letter_spacing_px,
             &shape_options,
+            0,
+            crate::TextPreparationPhase::PlainShaping,
         )?;
         (shaped, None)
     };
@@ -824,10 +808,10 @@ fn layout_text_inner_with_span_promotion(
             segments,
             font_ctx.registry,
             font_ctx.fallback_registry,
-        );
+        )?;
     }
 
-    Some(build_horizontal_result_with_constraints(
+    Ok(build_horizontal_result_with_constraints(
         truncated_lines,
         total_line_count,
         line_height_px,
@@ -895,7 +879,7 @@ fn fit_shrink_for_request(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     should_include_unit_metadata: bool,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     if should_include_unit_metadata {
         fit::fit_shrink_with_unit_metadata(
             req,
@@ -919,67 +903,64 @@ fn fit_shrink_for_request(
 // Shaping helper
 // ---------------------------------------------------------------------------
 
-fn shape_text_for_layout(
+fn shape_text_for_layout_result(
     font_ctx: &crate::font::FontContext<'_>,
     text: &str,
     font_size_px: f64,
     letter_spacing_px: f64,
     shape_options: &ShapeOptions,
-) -> Option<Vec<GlyphInfo>> {
+    run_index: usize,
+    phase: crate::TextPreparationPhase,
+) -> Result<Vec<GlyphInfo>, crate::TextLayoutError> {
     if text.is_empty() {
-        return Some(Vec::new());
+        return Ok(Vec::new());
     }
 
-    // Try fallback chain shaping if multiple families
     if font_ctx.families.len() > 1 {
-        let result = shaping::shape_with_fallback_and_options(
+        let result = shaping::shape_with_fallback_and_options_checked(
             font_ctx,
             text,
             font_size_px,
             letter_spacing_px,
             shape_options,
-        );
+        )
+        .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
+            run_index,
+            families: font_ctx.families.to_vec(),
+            weight: font_ctx.weight,
+            style: font_ctx.style.clone(),
+        })?;
         if !result.glyphs.is_empty() {
-            return Some(result.glyphs);
+            return Ok(result.glyphs);
         }
-        // Try fallback registry
-        if let Some(fallback) = font_ctx.fallback_registry {
-            let fallback_ctx = crate::font::FontContext {
-                registry: fallback,
-                fallback_registry: None,
-                families: font_ctx.families,
-                weight: font_ctx.weight,
-                style: font_ctx.style,
-            };
-            let result = shaping::shape_with_fallback_and_options(
-                &fallback_ctx,
-                text,
-                font_size_px,
-                letter_spacing_px,
-                shape_options,
-            );
-            if !result.glyphs.is_empty() {
-                return Some(result.glyphs);
-            }
-        }
+        return Err(crate::TextLayoutError::PreparationFailed { phase });
     }
 
-    // Single font resolution
     let font_entry = resolve_font(
         font_ctx.registry,
         font_ctx.fallback_registry,
         font_ctx.families,
         font_ctx.weight,
         font_ctx.style,
-    )?;
-    Some(shaping::shape_text_with_options(
+    )
+    .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
+        run_index,
+        families: font_ctx.families.to_vec(),
+        weight: font_ctx.weight,
+        style: font_ctx.style.clone(),
+    })?;
+    let glyphs = shaping::shape_text_with_options(
         font_ctx.registry,
         font_entry,
         text,
         font_size_px,
         letter_spacing_px,
         shape_options,
-    ))
+    );
+    if glyphs.is_empty() {
+        return Err(crate::TextLayoutError::PreparationFailed { phase });
+    }
+    Ok(glyphs)
 }
 
 fn resolve_font<'a>(

@@ -28,10 +28,10 @@ pub fn prepare_inline_runs(
     hanging_punctuation: bool,
     ruby_info: &[Option<SpanRubyInfo>],
     vertical: bool,
-) -> ShapedInlineRuns {
+) -> Result<ShapedInlineRuns, crate::TextLayoutError> {
     let writing_mode = if vertical { Some("vertical-rl") } else { None };
     let (glyphs, segments) =
-        shape_inline_runs_with_mode(spans, font_ctx, default_letter_spacing_px, writing_mode);
+        shape_inline_runs_with_mode(spans, font_ctx, default_letter_spacing_px, writing_mode)?;
 
     // Concatenate span texts
     let text: String = spans.iter().map(|s| s.text.as_str()).collect();
@@ -108,7 +108,7 @@ pub fn prepare_inline_runs(
     // Detect .notdef glyphs (glyph_id=0) and map back to characters
     let notdef_infos = collect_inline_notdef(&glyphs, &text);
 
-    ShapedInlineRuns {
+    Ok(ShapedInlineRuns {
         text,
         grapheme_advances_px,
         segments,
@@ -120,7 +120,7 @@ pub fn prepare_inline_runs(
         non_breakable,
         ruby_annotations,
         notdef_infos,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ pub(crate) fn shape_inline_runs(
     spans: &[TextSpanInput],
     font_ctx: &FontContext<'_>,
     default_letter_spacing_px: f64,
-) -> (Vec<GlyphInfo>, Vec<RunSegment>) {
+) -> Result<(Vec<GlyphInfo>, Vec<RunSegment>), crate::TextLayoutError> {
     shape_inline_runs_with_mode(spans, font_ctx, default_letter_spacing_px, None)
 }
 
@@ -149,11 +149,12 @@ pub(crate) fn shape_inline_runs_with_mode(
     font_ctx: &FontContext<'_>,
     default_letter_spacing_px: f64,
     writing_mode: Option<&str>,
-) -> (Vec<GlyphInfo>, Vec<RunSegment>) {
+) -> Result<(Vec<GlyphInfo>, Vec<RunSegment>), crate::TextLayoutError> {
     let mut all_glyphs: Vec<GlyphInfo> = Vec::new();
     let mut segments: Vec<RunSegment> = Vec::new();
     let mut byte_offset: u32 = 0;
     let mut grapheme_offset: usize = 0;
+    let mut run_index = 0_usize;
     let last_shaped_span = spans.iter().rposition(|s| !s.text.is_empty());
 
     for (span_idx, span) in spans.iter().enumerate() {
@@ -201,7 +202,8 @@ pub(crate) fn shape_inline_runs_with_mode(
             font_size_px,
             letter_spacing_px,
             &shape_options,
-        );
+            run_index,
+        )?;
 
         // Keep total letterSpacing compatible with whole-string shaping by
         // adding one boundary spacing at each non-final run (mirrors the
@@ -239,6 +241,7 @@ pub(crate) fn shape_inline_runs_with_mode(
         }
 
         segments.push(RunSegment {
+            run_index,
             span: SpanRef {
                 font_families,
                 font_weight,
@@ -261,9 +264,10 @@ pub(crate) fn shape_inline_runs_with_mode(
 
         grapheme_offset = end;
         byte_offset += span.text.len() as u32;
+        run_index = run_index.saturating_add(1);
     }
 
-    (all_glyphs, segments)
+    Ok((all_glyphs, segments))
 }
 
 /// After line breaking, split each line into fragments matching the original run boundaries.
@@ -274,9 +278,9 @@ pub(crate) fn apply_inline_fragments(
     segments: &[RunSegment],
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
-) {
+) -> Result<(), crate::TextLayoutError> {
     if segments.is_empty() {
-        return;
+        return Ok(());
     }
 
     let mut line_start: usize = 0;
@@ -337,7 +341,8 @@ pub(crate) fn apply_inline_fragments(
                 segment.span.font_size_px,
                 segment.span.letter_spacing_px,
                 &shape_options,
-            );
+                segment.run_index,
+            )?;
 
             let width: f64 = fragment_glyphs.iter().map(|g| g.x_advance).sum();
 
@@ -375,6 +380,7 @@ pub(crate) fn apply_inline_fragments(
 
         line_start = line_end;
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -425,41 +431,32 @@ fn shape_text_for_run(
     font_size_px: f64,
     letter_spacing_px: f64,
     shape_options: &ShapeOptions,
-) -> Vec<GlyphInfo> {
+    run_index: usize,
+) -> Result<Vec<GlyphInfo>, crate::TextLayoutError> {
     if text.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     if font_ctx.families.len() > 1 {
-        let result = shaping::shape_with_fallback_and_options(
+        let result = shaping::shape_with_fallback_and_options_checked(
             font_ctx,
             text,
             font_size_px,
             letter_spacing_px,
             shape_options,
-        );
+        )
+        .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
+            run_index,
+            families: font_ctx.families.to_vec(),
+            weight: font_ctx.weight,
+            style: font_ctx.style.clone(),
+        })?;
         if !result.glyphs.is_empty() {
-            return result.glyphs;
+            return Ok(result.glyphs);
         }
-        if let Some(fallback) = font_ctx.fallback_registry {
-            let fallback_ctx = FontContext {
-                registry: fallback,
-                fallback_registry: None,
-                families: font_ctx.families,
-                weight: font_ctx.weight,
-                style: font_ctx.style,
-            };
-            let result = shaping::shape_with_fallback_and_options(
-                &fallback_ctx,
-                text,
-                font_size_px,
-                letter_spacing_px,
-                shape_options,
-            );
-            if !result.glyphs.is_empty() {
-                return result.glyphs;
-            }
-        }
+        return Err(crate::TextLayoutError::PreparationFailed {
+            phase: crate::TextPreparationPhase::SpanShaping,
+        });
     }
 
     let font_entry = resolve_font(
@@ -468,18 +465,21 @@ fn shape_text_for_run(
         font_ctx.families,
         font_ctx.weight,
         font_ctx.style,
-    );
-    match font_entry {
-        Some(entry) => shaping::shape_text_with_options(
-            font_ctx.registry,
-            entry,
-            text,
-            font_size_px,
-            letter_spacing_px,
-            shape_options,
-        ),
-        None => Vec::new(),
-    }
+    )
+    .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
+        run_index,
+        families: font_ctx.families.to_vec(),
+        weight: font_ctx.weight,
+        style: font_ctx.style.clone(),
+    })?;
+    Ok(shaping::shape_text_with_options(
+        font_ctx.registry,
+        font_entry,
+        text,
+        font_size_px,
+        letter_spacing_px,
+        shape_options,
+    ))
 }
 
 fn resolve_font<'a>(
