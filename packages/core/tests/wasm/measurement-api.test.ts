@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createEngineAsync, type Engine } from "../../src/engine.js";
+import { FatalError } from "../../src/errors.js";
 import { initNodeWasm } from "../../src/node.js";
 import type { RichTextNode, RichTextStyle } from "../../src/text/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
@@ -18,6 +19,16 @@ const intrinsicWarningStyle: RichTextStyle = {
   fontSizePx: 18,
   letterSpacingPx: 0,
 };
+
+function captureFatal(action: () => unknown): FatalError {
+  try {
+    action();
+  } catch (error) {
+    expect(error).toBeInstanceOf(FatalError);
+    return error as FatalError;
+  }
+  throw new Error("expected FatalError");
+}
 
 function createIntrinsicWarningRichText(): RichTextNode[] {
   let nestedNode: RichTextNode = { kind: "text", text: "省略対象" };
@@ -2549,25 +2560,50 @@ describe("Measurement WASM APIs", () => {
     expect(lines!.map((line) => line.text).join("")).toBe(text);
   });
 
-  it("rejects unregistered font aliases at the measurement entry", () => {
-    expect(() =>
+  it("delegates measurement font acceptance to the first effective Rust run", () => {
+    const measureError = captureFatal(() =>
       engine.measureTextBlock({
         text: "あいうえお",
         fontFamily: "NotoSansJP-typo",
         fontSizePx: 20,
         maxWidth: 100,
       }),
-    ).toThrowError(/FONT_ALIAS_NOT_REGISTERED|unregistered font alias/);
+    );
+    expect(measureError).toMatchObject({
+      code: "TEXT_FONT_UNAVAILABLE",
+      message: "No requested font is available for text layout.",
+      stage: "text",
+      context: {
+        operation: "measureTextBlock",
+        runIndex: 0,
+        requestedAliases: ["NotoSansJP-typo"],
+        omittedAliasCount: 0,
+        fontWeight: 400,
+        fontStyle: "normal",
+      },
+    });
 
-    expect(() =>
+    const flowError = captureFatal(() =>
       engine.layoutTextFlow({
         text: "あいうえお",
         fontFamily: "NotoSansJP-typo",
         fontSizePx: 20,
         lineWidths: [100],
       }),
-    ).toThrowError(/unregistered font alias/);
+    );
+    expect(flowError).toMatchObject({
+      code: "TEXT_FONT_UNAVAILABLE",
+      message: "No requested font is available for text layout.",
+      stage: "text",
+      context: {
+        operation: "layoutTextFlow",
+        runIndex: 0,
+        requestedAliases: ["NotoSansJP-typo"],
+      },
+    });
 
+    // A missing fallback is not itself a failure when an earlier alias
+    // resolves the actual run.
     expect(() =>
       engine.measureTextBlock({
         text: "あいうえお",
@@ -2576,10 +2612,9 @@ describe("Measurement WASM APIs", () => {
         fontSizePx: 20,
         maxWidth: 100,
       }),
-    ).toThrowError(/AlsoMissing/);
+    ).not.toThrowError();
 
-    // Span-level overrides are validated too.
-    expect(() =>
+    const spanError = captureFatal(() =>
       engine.shrinkwrapText({
         text: "あいうえお",
         fontFamily: "NotoSansJP",
@@ -2587,8 +2622,19 @@ describe("Measurement WASM APIs", () => {
         maxWidth: 100,
         spans: [{ text: "あい", fontFamily: "AlsoMissing" }],
       }),
-    ).toThrowError(/AlsoMissing/);
+    );
+    expect(spanError).toMatchObject({
+      code: "TEXT_FONT_UNAVAILABLE",
+      message: "No requested font is available for text layout.",
+      stage: "text",
+      context: {
+        operation: "shrinkwrapText",
+        runIndex: 0,
+        requestedAliases: ["AlsoMissing"],
+      },
+    });
 
+    // An inherited registered primary resolves before this unused fallback.
     expect(() =>
       engine.shrinkwrapFlow({
         text: "",
@@ -2598,7 +2644,7 @@ describe("Measurement WASM APIs", () => {
         exclusions: [],
         spans: [{ text: "あい", fallback: ["AlsoMissing"] }],
       }),
-    ).toThrowError(/AlsoMissing/);
+    ).not.toThrowError();
 
     const nestedStyle = {
       font: "NotoSansJP",
@@ -2622,9 +2668,10 @@ describe("Measurement WASM APIs", () => {
           },
         ],
       }),
-    ).toThrowError(/AlsoMissing/);
+    ).not.toThrowError();
 
-    // Generic CSS families stay exempt (resolved at rasterization time).
+    // A registered primary continues to own the run regardless of unrelated
+    // CSS-generic acceptance in other output layers.
     expect(() =>
       engine.measureIntrinsicInlineSize({
         text: "abc",

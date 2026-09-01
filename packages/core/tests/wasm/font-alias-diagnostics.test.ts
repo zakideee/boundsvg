@@ -31,6 +31,28 @@ function captureFatal(action: () => unknown): FatalError {
   throw new Error("expected operation to throw");
 }
 
+function expectFontUnavailable(
+  error: FatalError,
+  requestedAliases: string[],
+  runIndex = 0,
+  nodeId = "txt-alias",
+): void {
+  expect(error).toMatchObject({
+    code: "TEXT_FONT_UNAVAILABLE",
+    message: "No requested font is available for text layout.",
+    stage: "text",
+    nodeId,
+    context: {
+      operation: "renderTextLayout",
+      runIndex,
+      requestedAliases,
+      omittedAliasCount: 0,
+      fontWeight: 400,
+      fontStyle: "normal",
+    },
+  });
+}
+
 describe("font alias diagnostics", () => {
   let engine: Engine;
 
@@ -50,16 +72,13 @@ describe("font alias diagnostics", () => {
     });
   });
 
-  it("throws FONT_ALIAS_NOT_REGISTERED for an unregistered alias", () => {
+  it("reports an unresolvable primary alias from the Rust owner", () => {
     const error = renderError(engine, textCanvas("NotoSansJP-typo"));
-    expect(error.code).toBe("FONT_ALIAS_NOT_REGISTERED");
-    expect(error.message).toContain("NotoSansJP-typo");
-    expect(error.message).toContain("NotoSansJP");
-    expect(error.stage).toBe("text");
-    expect(error.nodeId).toBe("txt-alias");
+    expectFontUnavailable(error, ["NotoSansJP-typo"]);
+    expect(error.message).not.toContain("NotoSansJP-typo");
   });
 
-  it("preflights aliases on layout, raster, and layout-transition routes", () => {
+  it("uses the same Rust diagnosis on layout, raster, and layout-transition routes", () => {
     const missingFontScene = textCanvas("RouteMissing");
     const transition = {
       states: { reference: missingFontScene, target: missingFontScene },
@@ -78,25 +97,17 @@ describe("font alias diagnostics", () => {
     ];
 
     for (const action of actions) {
-      expect(captureFatal(action)).toMatchObject({
-        code: "FONT_ALIAS_NOT_REGISTERED",
-        stage: "text",
-        nodeId: "txt-alias",
-      });
+      expectFontUnavailable(captureFatal(action), ["RouteMissing"]);
     }
   });
 
   it("reports unregistered aliases from the fallback chain", () => {
     const error = renderError(engine, textCanvas("NotoSansJP-typo", ["AlsoMissing"]));
-    expect(error.code).toBe("FONT_ALIAS_NOT_REGISTERED");
-    expect(error.message).toContain("NotoSansJP-typo");
-    expect(error.message).toContain("AlsoMissing");
+    expectFontUnavailable(error, ["NotoSansJP-typo", "AlsoMissing"]);
   });
 
-  it("rejects an unregistered fallback even when the primary font covers the text", () => {
-    const error = renderError(engine, textCanvas("NotoSansJP", ["FallbackMissing"]));
-    expect(error.code).toBe("FONT_ALIAS_NOT_REGISTERED");
-    expect(error.message).toContain("FallbackMissing");
+  it("does not preflight an unused missing fallback when the primary resolves", () => {
+    expect(engine.renderToSvg(textCanvas("NotoSansJP", ["FallbackMissing"]))).toContain("<svg");
   });
 
   it("allows generic CSS families in a fallback chain", () => {
@@ -119,7 +130,7 @@ describe("font alias diagnostics", () => {
       child: createElement("Ruby", {}, "本", createElement("Rt", { font: "RtMissing" }, "ほん")),
       missingAlias: "RtMissing",
     },
-  ])("throws FONT_ALIAS_NOT_REGISTERED for $name font overrides", ({ child, missingAlias }) => {
+  ])("reports the first failing $name effective run", ({ child, missingAlias, name }) => {
     const vnode = createElement(
       "Canvas",
       { width: 400, height: 200 },
@@ -127,9 +138,7 @@ describe("font alias diagnostics", () => {
     );
 
     const error = renderError(engine, vnode);
-    expect(error.code).toBe("FONT_ALIAS_NOT_REGISTERED");
-    expect(error.message).toContain(missingAlias);
-    expect(error.nodeId).toBe("rich-alias");
+    expectFontUnavailable(error, [missingAlias], name === "Rt" ? 1 : 0, "rich-alias");
   });
 
   it("does not reject unused or fully overridden nested aliases", () => {
@@ -173,14 +182,26 @@ describe("font alias diagnostics", () => {
     expect(svg).toContain("<svg");
   });
 
-  it("skips generic CSS families and keeps the generic TEXT_NO_LAYOUT error", () => {
+  it("reports a generic-only chain through the Rust font authority", () => {
     const error = renderError(engine, textCanvas("sans-serif"));
-    expect(error.code).toBe("TEXT_NO_LAYOUT");
+    expect(error).toMatchObject({
+      code: "TEXT_FONT_UNAVAILABLE",
+      message: "No requested font is available for text layout.",
+      stage: "text",
+      context: {
+        operation: "renderTextLayout",
+        runIndex: 0,
+        requestedAliases: ["sans-serif"],
+        omittedAliasCount: 0,
+        fontWeight: 400,
+        fontStyle: "normal",
+      },
+    });
   });
 
   it("accepts aliases added later via registerFonts", () => {
     const error = renderError(engine, textCanvas("NotoSansJP-late"));
-    expect(error.code).toBe("FONT_ALIAS_NOT_REGISTERED");
+    expectFontUnavailable(error, ["NotoSansJP-late"]);
 
     engine.registerFonts([{ alias: "NotoSansJP-late", weight: 400, data: loadSubsetFont() }]);
     const svg = engine.renderToSvg(textCanvas("NotoSansJP-late"));

@@ -322,7 +322,7 @@ describe("engine render contract", () => {
     expect(fatal.message).toBe('Shape references unknown geometryId "missing-geometry".');
   });
 
-  it("rejects non-finite scales and unregistered font aliases", () => {
+  it("rejects non-finite scales and reports unavailable fonts from Rust", () => {
     const scene = createElement(
       "Canvas",
       { width: 100, height: 50 },
@@ -340,8 +340,19 @@ describe("engine render contract", () => {
       createElement("Text", { font: "UnknownAlias", fontSizePx: 16 }, "abc"),
     );
     const aliasError = captureFatal(() => engine.renderToSvg(unknownAlias));
-    expect(aliasError.code).toBe("FONT_ALIAS_NOT_REGISTERED");
-    expect(aliasError.message).toContain("references unregistered font alias(es): UnknownAlias");
+    expect(aliasError).toMatchObject({
+      code: "TEXT_FONT_UNAVAILABLE",
+      message: "No requested font is available for text layout.",
+      stage: "text",
+      context: {
+        operation: "renderTextLayout",
+        runIndex: 0,
+        requestedAliases: ["UnknownAlias"],
+        omittedAliasCount: 0,
+        fontWeight: 400,
+        fontStyle: "normal",
+      },
+    });
   });
 
   it("handles PNG oversize per rasterOversizeBehavior", () => {

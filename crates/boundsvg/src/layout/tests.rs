@@ -877,7 +877,7 @@ fn text_measurement_fails_before_unit_map_materialization() {
             node_id,
             ..
         } => {
-            assert_eq!(code, "TEXT_NO_LAYOUT");
+            assert_eq!(code, "TEXT_FONT_UNAVAILABLE");
             assert_eq!(
                 stage.as_ref(),
                 Some(&crate::diagnostics::PipelineStage::Text)
@@ -2438,5 +2438,15 @@ fn test_grid_with_gap() {
     assert!(
         (gap_x - 20.0).abs() < 1.0,
         "Column gap should be ~20px, got {gap_x}"
+    );
+}
+
+#[test]
+fn taffy_intrinsic_failure_is_not_an_optional_bbox_fallback() {
+    let source = include_str!("measure.rs");
+    assert!(source.contains(") -> Result<IntrinsicInlineSizes, boundtext::TextLayoutError>"));
+    assert!(source.contains("measure_intrinsic_inline_sizes(text_input"));
+    assert!(
+        !source.contains("if let Some(intrinsic) =\n            measure_intrinsic_inline_sizes")
     );
 }

@@ -24,7 +24,7 @@ function createNestedInlineScene(depth: number) {
   return createElement(
     "Canvas",
     { width: 120, height: 60 },
-    createElement("Text", { font: "NotoSansJP", fontSizePx: 12 }, child),
+    createElement("Text", { id: "depth-text", font: "NotoSansJP", fontSizePx: 12 }, child),
   );
 }
 
@@ -63,7 +63,11 @@ function createNestedRubyLevelRichText(depth: number): RichTextNode[] {
   return [node];
 }
 
-function expectRichTextDepthError(callback: () => unknown, nodeId: string): void {
+function expectRichTextDepthError(
+  callback: () => unknown,
+  nodeId: string | undefined,
+  operation = "renderTextLayout",
+): void {
   try {
     callback();
     throw new Error("expected rich-text depth rejection");
@@ -72,8 +76,12 @@ function expectRichTextDepthError(callback: () => unknown, nodeId: string): void
     expect((error as FatalError).code).toBe("RICH_TEXT_MAX_DEPTH");
     expect((error as FatalError).stage).toBe("validate");
     expect((error as FatalError).nodeId).toBe(nodeId);
-    expect((error as FatalError).context?.maxDepth).toBe(MAX_RICH_TEXT_DEPTH);
-    expect((error as FatalError).context?.actualDepth).toBe(MAX_RICH_TEXT_DEPTH + 1);
+    expect((error as FatalError).message).toBe("Rich text depth limit was exceeded.");
+    expect((error as FatalError).context).toEqual({
+      operation,
+      actual: MAX_RICH_TEXT_DEPTH + 1,
+      limit: MAX_RICH_TEXT_DEPTH,
+    });
   }
 }
 
@@ -86,7 +94,7 @@ describe("rich-text depth boundary", () => {
   it("rejects JSX depth 49 with a structured validation error", () => {
     expectRichTextDepthError(
       () => validate(createNestedInlineScene(MAX_RICH_TEXT_DEPTH + 1)),
-      "<Inline>",
+      "depth-text",
     );
   });
 
@@ -101,7 +109,7 @@ describe("rich-text depth boundary", () => {
         engine.renderToLayoutTree(createNestedInlineScene(MAX_RICH_TEXT_DEPTH + 1), {
           skipValidation: true,
         }),
-      "<Inline>",
+      "depth-text",
     );
     expect(computeLayoutFn).not.toHaveBeenCalled();
   });
@@ -127,32 +135,41 @@ describe("rich-text depth boundary", () => {
       wrap: "char" as const,
     };
     const calls = [
-      () =>
-        engine.layoutTextFlowWithExclusions({
-          ...common,
-          flowBox: { x: 0, y: 0, width: 120, height: 60 },
-          exclusions: [],
-        }),
-      () => engine.shrinkwrapText({ ...common, maxWidth: 120 }),
-      () =>
-        engine.shrinkwrapFlow({
-          ...common,
-          flowBox: { x: 0, y: 0, width: 120, height: 60 },
-          exclusions: [],
-        }),
-      () => engine.measureIntrinsicInlineSize(common),
-    ];
+      [
+        "layoutTextFlowWithExclusions",
+        () =>
+          engine.layoutTextFlowWithExclusions({
+            ...common,
+            flowBox: { x: 0, y: 0, width: 120, height: 60 },
+            exclusions: [],
+          }),
+      ],
+      ["shrinkwrapText", () => engine.shrinkwrapText({ ...common, maxWidth: 120 })],
+      [
+        "shrinkwrapFlow",
+        () =>
+          engine.shrinkwrapFlow({
+            ...common,
+            flowBox: { x: 0, y: 0, width: 120, height: 60 },
+            exclusions: [],
+          }),
+      ],
+      ["measureIntrinsicInlineSize", () => engine.measureIntrinsicInlineSize(common)],
+    ] as const;
 
-    for (const call of calls) {
+    for (const [operation, call] of calls) {
       expect(() => call()).toThrowError(
         expect.objectContaining({
           name: "FatalError",
           code: "RICH_TEXT_MAX_DEPTH",
+          message: "Rich text depth limit was exceeded.",
           stage: "validate",
-          context: expect.objectContaining({
-            maxDepth: MAX_RICH_TEXT_DEPTH,
-            actualDepth: MAX_RICH_TEXT_DEPTH + 1,
-          }),
+          nodeId: undefined,
+          context: {
+            operation,
+            actual: MAX_RICH_TEXT_DEPTH + 1,
+            limit: MAX_RICH_TEXT_DEPTH,
+          },
         }),
       );
     }
@@ -168,11 +185,11 @@ describe("rich-text depth boundary", () => {
     ).not.toThrow();
     expectRichTextDepthError(
       () => assertRichTextNodeDepth(createNestedInlineBoxRichText(MAX_RICH_TEXT_DEPTH + 1)),
-      "<inlineBox>",
+      undefined,
     );
     expectRichTextDepthError(
       () => assertRichTextNodeDepth(createNestedRubyLevelRichText(MAX_RICH_TEXT_DEPTH + 1)),
-      "<ruby>",
+      undefined,
     );
   });
 });
