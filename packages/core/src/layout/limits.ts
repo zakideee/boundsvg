@@ -26,8 +26,10 @@ export function assertLayoutTreeDepth(vnode: VNode, depth: number): void {
     {
       stage: "validate",
       nodeId,
-      maxDepth: MAX_LAYOUT_TREE_DEPTH,
-      actualDepth: depth,
+      context: {
+        maxDepth: MAX_LAYOUT_TREE_DEPTH,
+        actualDepth: depth,
+      },
     },
   );
 }

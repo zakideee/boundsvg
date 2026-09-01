@@ -131,7 +131,7 @@ fn timeline_error(
     EngineError::StructuredContext {
         code: code.to_string(),
         message: message.into(),
-        stage: Some("validate".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Validate),
         node_id: None,
         context: Box::new(context),
     }
@@ -390,7 +390,7 @@ fn timeline_unrepresentable(
             source.owner_kind.as_str(),
             source.owner_id
         ),
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: Some(source.owner_id.clone()),
         context: Box::new(context),
     }
@@ -419,7 +419,7 @@ fn authored_timeline_value_out_of_domain(
             identity.owner_kind.as_str(),
             identity.owner_id
         ),
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: Some(identity.owner_id.to_string()),
         context: Box::new(context),
     }
@@ -474,7 +474,7 @@ fn timeline_precision_error(kind: &str, left_time_ms: f64, right_time_ms: f64) -
     EngineError::StructuredContext {
         code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS".to_string(),
         message: format!("Animated SVG timeline keyframe precision check failed: {kind}"),
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: None,
         context: Box::new(json!({
             "kind": kind,
@@ -489,7 +489,7 @@ fn timeline_limit_error(metric: &str, actual: f64, limit: usize) -> EngineError 
     EngineError::StructuredContext {
         code: "ANIMATED_SVG_TIMELINE_LIMIT".to_string(),
         message: format!("Animated SVG timeline {metric} exceeds the supported limit"),
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: None,
         context: Box::new(json!({
             "metric": metric,
@@ -3203,7 +3203,10 @@ mod tests {
         let EngineError::StructuredContext { context, stage, .. } = error else {
             panic!("duration should produce timeline context");
         };
-        assert_eq!(stage.as_deref(), Some("validate"));
+        assert_eq!(
+            stage.as_ref(),
+            Some(&crate::diagnostics::PipelineStage::Validate)
+        );
         assert_eq!(
             *context,
             json!({
@@ -3286,7 +3289,10 @@ mod tests {
             panic!("node domain failure should carry structured context");
         };
         assert_eq!(code, "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
-        assert_eq!(stage.as_deref(), Some("emit"));
+        assert_eq!(
+            stage.as_ref(),
+            Some(&crate::diagnostics::PipelineStage::Emit)
+        );
         assert_eq!(node_id.as_deref(), Some("animated-node"));
         assert_eq!(
             *context,
@@ -5060,7 +5066,10 @@ mod tests {
         let EngineError::StructuredContext { context, stage, .. } = error else {
             panic!("separation should produce timeline context");
         };
-        assert_eq!(stage.as_deref(), Some("emit"));
+        assert_eq!(
+            stage.as_ref(),
+            Some(&crate::diagnostics::PipelineStage::Emit)
+        );
         assert_eq!(
             *context,
             json!({

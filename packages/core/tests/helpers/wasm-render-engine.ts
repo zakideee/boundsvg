@@ -11,7 +11,7 @@
  * Prerequisite: built WASM package — run `pnpm build:wasm` first.
  */
 
-import { Engine, type EngineOptions } from "../../src/engine.js";
+import { Engine, type EngineOptions, serializeIrForWasm } from "../../src/engine.js";
 import type { IR } from "../../src/ir/types.js";
 import { initNodeWasm } from "../../src/node.js";
 import { createWasmEngineInstance, type WasmEngineHandle } from "../../src/wasm/index.js";
@@ -105,15 +105,14 @@ export function createEngineFromHandle(
 
 /**
  * Emits a hand-built IR through the WASM emitter. Mirrors the engine's
- * transport framing: warnings are not read by emission and class instances
- * do not survive JSON.stringify, so they are stripped from the payload.
+ * transport framing through the exact warning-free `EmitIrInput` serializer.
  */
 export function emitSvgFromIrViaHandle(
   handle: WasmEngineHandle,
   ir: IR,
   options: WasmEmitOptions = {},
 ): string {
-  return handle.emitSvgFromIr(JSON.stringify({ ...ir, warnings: [] }), JSON.stringify(options));
+  return handle.emitSvgFromIr(serializeIrForWasm(ir), JSON.stringify(options));
 }
 
 /** Emits declarative animated SVG from hand-built IR through its dedicated export. */
@@ -122,8 +121,5 @@ export function emitAnimatedSvgFromIrViaHandle(
   ir: IR,
   options: WasmAnimatedEmitOptions,
 ): string {
-  return handle.emitAnimatedSvgFromIr(
-    JSON.stringify({ ...ir, warnings: [] }),
-    JSON.stringify(options),
-  );
+  return handle.emitAnimatedSvgFromIr(serializeIrForWasm(ir), JSON.stringify(options));
 }

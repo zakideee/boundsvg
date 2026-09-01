@@ -28,8 +28,10 @@ function throwRichTextDepthError(nodeId: string, actualDepth: number): never {
     {
       stage: "validate",
       nodeId,
-      maxDepth: MAX_RICH_TEXT_DEPTH,
-      actualDepth,
+      context: {
+        maxDepth: MAX_RICH_TEXT_DEPTH,
+        actualDepth,
+      },
     },
   );
 }

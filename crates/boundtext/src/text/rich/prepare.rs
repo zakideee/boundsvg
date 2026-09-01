@@ -2,7 +2,7 @@ use crate::font::FontStyle;
 use crate::font::shaping::{format_css_font_feature_settings, format_css_font_variation_settings};
 use crate::text::fit::selected_font_size_scale;
 use crate::text::grapheme::grapheme_split;
-use crate::text::types::{RichTextNodeInput, RichTextStyleInput, TextWarning};
+use crate::text::types::{RichTextNodeInput, RichTextStyleInput, TextWarning, TextWarningCode};
 
 use super::{
     LayoutToken, PreparedRichText, ResolvedStyle, RichDecoratedSpan, RichInlineBox, RichInlineNode,
@@ -735,7 +735,7 @@ fn flatten_inline_box_children(
             } => {
                 if depth >= super::MAX_INLINE_BOX_DEPTH {
                     warnings.push(TextWarning::recoverable(
-                        "INLINE_BOX_MAX_DEPTH",
+                        TextWarningCode::InlineBoxMaxDepth,
                         format!(
                             "InlineBox nesting exceeds max depth ({}) and was skipped",
                             super::MAX_INLINE_BOX_DEPTH
@@ -943,7 +943,7 @@ fn push_long_ruby_annotation_warning(
         .collect();
 
     warnings.push(TextWarning::recoverable(
-        "LONG_RUBY_ANNOTATION",
+        TextWarningCode::LongRubyAnnotation,
         format!(
             "Ruby annotation \"{rt_text}\" is wider than base text \"{base_text}\"; long ruby overhang is experimental"
         ),
@@ -953,7 +953,7 @@ fn push_long_ruby_annotation_warning(
 
 fn push_inter_character_fallback_warning(warnings: &mut Vec<TextWarning>) {
     warnings.push(TextWarning::recoverable(
-        "RUBY_INTER_CHARACTER_FALLBACK",
+        TextWarningCode::RubyInterCharacterFallback,
         "rubyPosition=\"inter-character\" is not implemented yet; rendering as over ruby",
         "ruby-position-over",
     ));

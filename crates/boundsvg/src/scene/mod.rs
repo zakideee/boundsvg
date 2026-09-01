@@ -1077,7 +1077,7 @@ fn canvas_stroke_transform_error(owner_node_id: &str, owner: CanvasStrokeOwner) 
     EngineError::Structured {
         code: "CANVAS_STROKE_UNSUPPORTED_TRANSFORM".to_string(),
         message,
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: Some(owner_node_id.to_string()),
     }
 }
@@ -1094,7 +1094,7 @@ fn canvas_stroke_dash_error(owner_node_id: &str, owner: CanvasStrokeOwner) -> En
     EngineError::Structured {
         code: "CANVAS_STROKE_DASH_UNSUPPORTED".to_string(),
         message,
-        stage: Some("emit".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: Some(owner_node_id.to_string()),
     }
 }
@@ -1171,7 +1171,7 @@ fn resolve_canvas_stroke(
         return Err(EngineError::Structured {
             code: "INVALID_NUMBER".to_string(),
             message,
-            stage: Some("emit".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Emit),
             node_id: Some(request.owner_node_id.to_string()),
         });
     }

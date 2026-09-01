@@ -1,4 +1,4 @@
-import { FatalError, type SceneNode, type StructuredError } from "@boundsvg/core";
+import { FatalError, type SceneNode, type SerializedRecoverableError } from "@boundsvg/core";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkerLayoutTransitionInput } from "../src/layout-transition-transport.js";
 import type {
@@ -36,11 +36,11 @@ class PoolMockWorker {
   initErrorCode: string | undefined;
   failIndex: number | undefined;
   openResponseDelay = 0;
-  warnings: StructuredError[] = [];
+  warnings: SerializedRecoverableError[] = [];
   delayForIndex: (index: number) => number = () => 0;
   returnedIndex: (index: number) => number = (index) => index;
   renderDelayForTime: (timeMs: number) => number = () => 0;
-  warningsForTime: (timeMs: number) => StructuredError[] = () => this.warnings;
+  warningsForTime: (timeMs: number) => SerializedRecoverableError[] = () => this.warnings;
   failRenderTime: number | undefined;
 
   private readonly listeners = new Map<string, Set<MockEventListener>>();
@@ -543,7 +543,7 @@ describe("WorkerPool", () => {
   });
 
   it("forwards identical preparation warnings only once", async () => {
-    const warning: StructuredError = {
+    const warning: SerializedRecoverableError = {
       severity: "recoverable",
       code: "TEST_WARNING",
       message: "one warning",
@@ -577,6 +577,7 @@ describe("WorkerPool", () => {
         code: "FIRST_WARNING",
         message: "first",
         fallback: "none",
+        stage: "text",
       },
     ];
     workers[1]!.warnings = [
@@ -585,6 +586,7 @@ describe("WorkerPool", () => {
         code: "SECOND_WARNING",
         message: "second",
         fallback: "none",
+        stage: "text",
       },
     ];
     const pool = await createPool(workers);
@@ -739,6 +741,8 @@ describe("WorkerPool", () => {
         severity: "recoverable",
         code: "EMPTY_SCHEDULE_WARNING",
         message: "warning from scene preparation",
+        fallback: "none",
+        stage: "text",
       },
     ];
     const delivered: string[] = [];
@@ -926,6 +930,7 @@ describe("WorkerPool materialized frames", () => {
           code: `WARNING_${timeMs}`,
           message: `warning at ${timeMs}`,
           fallback: "none",
+          stage: "text",
         },
       ];
     }

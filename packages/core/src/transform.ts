@@ -95,8 +95,10 @@ export function assertValidTransform2D(
         {
           stage: options.stage,
           nodeId: options.nodeId,
-          key,
-          value,
+          context: {
+            key,
+            received: typeof value === "number" ? String(value) : typeof value,
+          },
         },
       );
     }

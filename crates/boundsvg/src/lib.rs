@@ -7,6 +7,7 @@
     reason = "layout/style mapping and text measurement encode many independent SVG/CSS compatibility branches"
 )]
 
+pub mod diagnostics;
 pub mod error;
 pub mod flow;
 pub mod font;
@@ -381,8 +382,8 @@ const PNG_MAX_OUTLINE_GLYPHS: usize = 16_384;
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RenderToIrOutput<'a> {
-    ir: &'a ir::types::Ir,
-    warnings: &'a [ir::types::RenderWarning],
+    ir: ir::types::StructuralIr<'a>,
+    warnings: &'a [diagnostics::SerializedRecoverableError],
 }
 
 #[derive(serde::Serialize)]
@@ -391,7 +392,7 @@ struct RenderToSvgOutput<'a> {
     svg: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     ir: Option<&'a serde_json::value::RawValue>,
-    warnings: &'a [ir::types::RenderWarning],
+    warnings: &'a [diagnostics::SerializedRecoverableError],
     text_node_ids: Vec<&'a str>,
 }
 
@@ -481,7 +482,7 @@ fn parse_static_svg_options(options_json: &str) -> Result<StaticSvgOptionsInput,
         render_error_envelope(
             "UNSUPPORTED_RENDER_OPTION",
             &format!("Invalid static SVG render options: {error}"),
-            Some("validate"),
+            Some(diagnostics::PipelineStage::Validate),
             None,
         )
     })
@@ -491,7 +492,7 @@ fn animated_timeline_wire_error(field: &str, received: impl Into<String>) -> err
     error::EngineError::StructuredContext {
         code: "ANIMATED_SVG_INVALID_TIMELINE".to_string(),
         message: format!("Animated SVG timeline {field} has an invalid value"),
-        stage: Some("validate".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Validate),
         node_id: None,
         context: Box::new(serde_json::json!({
             "field": field,
@@ -524,7 +525,7 @@ fn validate_animated_timeline_wire_options(
                 code: "UNSUPPORTED_RENDER_OPTION".to_string(),
                 message: "Animated SVG independent playback only accepts the mode property."
                     .to_string(),
-                stage: Some("validate".to_string()),
+                stage: Some(crate::diagnostics::PipelineStage::Validate),
                 node_id: None,
             });
         }
@@ -569,7 +570,7 @@ fn parse_animated_svg_options(options_json: &str) -> Result<AnimatedSvgOptionsIn
         render_error_envelope(
             "UNSUPPORTED_RENDER_OPTION",
             &format!("Invalid animated SVG render options: {error}"),
-            Some("validate"),
+            Some(diagnostics::PipelineStage::Validate),
             None,
         )
     })?;
@@ -580,7 +581,7 @@ fn parse_animated_svg_options(options_json: &str) -> Result<AnimatedSvgOptionsIn
             render_error_envelope(
                 "UNSUPPORTED_RENDER_OPTION",
                 &format!("Invalid animated SVG render options: {error}"),
-                Some("validate"),
+                Some(diagnostics::PipelineStage::Validate),
                 None,
             )
         })?;
@@ -602,7 +603,7 @@ fn text_decoration_wire_error(
     error::EngineError::Structured {
         code: "TEXT_DECORATION_INVALID".to_string(),
         message: message.into(),
-        stage: Some("validate".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Validate),
         node_id: node_id.map(str::to_string),
     }
 }
@@ -611,7 +612,7 @@ fn text_decoration_skip_ink_unsupported(node_id: Option<&str>) -> error::EngineE
     error::EngineError::Structured {
         code: "TEXT_DECORATION_SKIP_INK_UNSUPPORTED".to_string(),
         message: "textDecoration.skipInk=\"all\" requires underline or overline.".to_string(),
-        stage: Some("validate".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Validate),
         node_id: node_id.map(str::to_string),
     }
 }
@@ -915,7 +916,7 @@ fn assert_static_animation_time(
         return Err(render_error_envelope(
             "STATIC_ANIMATION_TIME_REQUIRED",
             "Static SVG output requires an explicit timeMs when the scene contains animation.",
-            Some("emit"),
+            Some(diagnostics::PipelineStage::Emit),
             None,
         ));
     }
@@ -1041,7 +1042,7 @@ fn render_layout_to_svg(
 
     let resolved_ir_raw = if options.return_resolved_ir.unwrap_or(false) {
         Some(
-            serde_json::value::to_raw_value(&sampled_ir).map_err(|error| {
+            serde_json::value::to_raw_value(&sampled_ir.structural()).map_err(|error| {
                 JsValue::from_str(&format!("Failed to serialize IR output: {error}"))
             })?,
         )
@@ -1065,33 +1066,64 @@ fn render_layout_to_svg(
 fn render_error_envelope(
     code: &str,
     message: &str,
-    stage: Option<&str>,
+    stage: Option<diagnostics::PipelineStage>,
     node_id: Option<&str>,
 ) -> JsValue {
-    let envelope = serde_json::json!({
-        "code": code,
-        "message": message,
-        "stage": stage,
-        "nodeId": node_id,
-    });
-    JsValue::from_str(&envelope.to_string())
+    let diagnostic_result = diagnostics::SerializedFatalError::new(
+        code,
+        message,
+        stage,
+        node_id.map(str::to_string),
+        None,
+    );
+    assert!(
+        diagnostic_result.is_ok(),
+        "internal fatal diagnostic must satisfy the wire contract"
+    );
+    let Ok(diagnostic) = diagnostic_result else {
+        return JsValue::from_str("internal fatal diagnostic contract violation");
+    };
+    let serialized_result = serde_json::to_string(&diagnostic);
+    assert!(
+        serialized_result.is_ok(),
+        "fatal diagnostic serialization must succeed"
+    );
+    let Ok(serialized) = serialized_result else {
+        return JsValue::from_str("internal fatal diagnostic serialization failed");
+    };
+    JsValue::from_str(&serialized)
 }
 
 fn render_error_envelope_with_context(
     code: &str,
     message: &str,
-    stage: Option<&str>,
+    stage: Option<diagnostics::PipelineStage>,
     node_id: Option<&str>,
     context: &serde_json::Value,
 ) -> JsValue {
-    let envelope = serde_json::json!({
-        "code": code,
-        "message": message,
-        "stage": stage,
-        "nodeId": node_id,
-        "context": context,
-    });
-    JsValue::from_str(&envelope.to_string())
+    let diagnostic_result = diagnostics::SerializedFatalError::new(
+        code,
+        message,
+        stage,
+        node_id.map(str::to_string),
+        Some(context.clone()),
+    );
+    assert!(
+        diagnostic_result.is_ok(),
+        "internal fatal diagnostic must satisfy the wire contract"
+    );
+    let Ok(diagnostic) = diagnostic_result else {
+        return JsValue::from_str("internal fatal diagnostic contract violation");
+    };
+    let serialized_result = serde_json::to_string(&diagnostic);
+    assert!(
+        serialized_result.is_ok(),
+        "fatal diagnostic serialization must succeed"
+    );
+    let Ok(serialized) = serialized_result else {
+        return JsValue::from_str("internal fatal diagnostic serialization failed");
+    };
+    JsValue::from_str(&serialized)
 }
 
 fn transition_compatibility_error_to_js(
@@ -1099,29 +1131,32 @@ fn transition_compatibility_error_to_js(
 ) -> JsValue {
     let category = mismatch.category.as_str();
     let (code, stage) = if mismatch.category == layout_transition::CompatibilityCategory::Schedule {
-        ("LAYOUT_TRANSITION_INVALID_SCHEDULE", "validate")
+        (
+            "LAYOUT_TRANSITION_INVALID_SCHEDULE",
+            diagnostics::PipelineStage::Validate,
+        )
     } else {
-        ("LAYOUT_TRANSITION_INCOMPATIBLE", "layout")
+        (
+            "LAYOUT_TRANSITION_INCOMPATIBLE",
+            diagnostics::PipelineStage::Layout,
+        )
     };
     let quoted_node_id = serde_json::Value::String(mismatch.node_id.clone()).to_string();
     let message = format!(
         "Layout transition {category} mismatch for node {quoted_node_id}: expected {}, observed {}",
         mismatch.expected, mismatch.observed
     );
-    let envelope = serde_json::json!({
-        "code": code,
-        "message": message,
-        "stage": stage,
-        "nodeId": mismatch.node_id,
-        "context": {
-            "stage": stage,
-            "nodeId": mismatch.node_id,
+    render_error_envelope_with_context(
+        code,
+        &message,
+        Some(stage),
+        Some(&mismatch.node_id),
+        &serde_json::json!({
             "category": category,
             "expected": mismatch.expected,
             "observed": mismatch.observed,
-        },
-    });
-    JsValue::from_str(&envelope.to_string())
+        }),
+    )
 }
 
 /// Map an [`error::EngineError`] onto the structured envelope, preserving
@@ -1134,20 +1169,14 @@ fn engine_error_to_render_envelope(error: &error::EngineError) -> JsValue {
             message,
             stage,
             node_id,
-        } => render_error_envelope(code, message, stage.as_deref(), node_id.as_deref()),
+        } => render_error_envelope(code, message, *stage, node_id.as_deref()),
         error::EngineError::StructuredContext {
             code,
             message,
             stage,
             node_id,
             context,
-        } => render_error_envelope_with_context(
-            code,
-            message,
-            stage.as_deref(),
-            node_id.as_deref(),
-            context,
-        ),
+        } => render_error_envelope_with_context(code, message, *stage, node_id.as_deref(), context),
         other => render_error_envelope("WASM_RENDER_FAILED", &other.to_string(), None, None),
     }
 }
@@ -1173,19 +1202,16 @@ fn assert_png_outline_glyph_limit(ir: &ir::types::Ir) -> Result<(), JsValue> {
         "PNG rendering exceeds the outline glyph limit of {}.",
         exceeded.max_glyphs
     );
-    let envelope = serde_json::json!({
-        "code": "PNG_OUTLINE_GLYPH_LIMIT",
-        "message": message,
-        "stage": "emit",
-        "nodeId": exceeded.node_id,
-        "context": {
-            "stage": "emit",
-            "nodeId": exceeded.node_id,
+    Err(render_error_envelope_with_context(
+        "PNG_OUTLINE_GLYPH_LIMIT",
+        &message,
+        Some(diagnostics::PipelineStage::Emit),
+        Some(&exceeded.node_id),
+        &serde_json::json!({
             "maxGlyphs": exceeded.max_glyphs,
             "actualGlyphs": exceeded.actual_glyphs,
-        },
-    });
-    Err(JsValue::from_str(&envelope.to_string()))
+        }),
+    ))
 }
 
 fn resolve_emit_ir(
@@ -1225,7 +1251,7 @@ fn assert_raster_scene_owner(scene: &BoundSvgRasterScene, owner: &Arc<()>) -> Re
     Err(render_error_envelope(
         "RASTER_SCENE_WRONG_ENGINE",
         "Raster scene belongs to a different engine instance",
-        Some("engine"),
+        Some(diagnostics::PipelineStage::Engine),
         None,
     ))
 }
@@ -1258,7 +1284,7 @@ fn assert_ir_svg_content_safe(node: &ir::types::IrNode) -> Result<(), JsValue> {
             return Err(render_error_envelope(
                 "VALIDATION",
                 &format!("Validation error: Svg content contains disallowed markup ({reason})"),
-                Some("ir"),
+                Some(diagnostics::PipelineStage::Ir),
                 Some(&node.node_id),
             ));
         }
@@ -1280,7 +1306,7 @@ fn assert_renderable_canvas(ir: &ir::types::Ir) -> Result<(), JsValue> {
             return Err(render_error_envelope(
                 "INVALID_CANVAS_SIZE",
                 &format!("Compiled scene has an invalid canvas {name}: {value_text}"),
-                Some("emit"),
+                Some(diagnostics::PipelineStage::Emit),
                 None,
             ));
         }
@@ -1312,7 +1338,7 @@ fn compile_layout_input_to_ir(
         return Err(render_error_envelope(
             "SVG_INVALID_SCALE",
             &format!("Invalid SVG scale factor: {scale_text}"),
-            Some("emit"),
+            Some(diagnostics::PipelineStage::Emit),
             None,
         ));
     }
@@ -1460,7 +1486,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 28;
+pub const WASM_SCHEMA_VERSION: u32 = 29;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -1731,7 +1757,7 @@ impl BoundSvgEngine {
             let options = parse_render_svg_options(options_json)?;
             let sampled_ir = compile_layout_input_to_ir(&input, &options, &self.registry)?;
             serde_json::to_string(&RenderToIrOutput {
-                ir: &sampled_ir,
+                ir: sampled_ir.structural(),
                 warnings: &sampled_ir.warnings,
             })
             .map_err(|error| JsValue::from_str(&format!("Failed to serialize IR output: {error}")))
@@ -1782,7 +1808,7 @@ impl BoundSvgEngine {
                 |input| compile_layout_input_to_ir(input, &options, &self.registry),
             )?;
             serde_json::to_string(&RenderToIrOutput {
-                ir: &transition_ir,
+                ir: transition_ir.structural(),
                 warnings: &transition_ir.warnings,
             })
             .map_err(|error| JsValue::from_str(&format!("Failed to serialize IR output: {error}")))
@@ -1879,7 +1905,7 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let (parsed_ir, _) = resolve_emit_ir(ir_json, options_json, &self.registry)?;
             serde_json::to_string(&RenderToIrOutput {
-                ir: &parsed_ir,
+                ir: parsed_ir.structural(),
                 warnings: &parsed_ir.warnings,
             })
             .map_err(|error| {
@@ -1965,7 +1991,7 @@ impl BoundSvgEngine {
             assert_raster_scene_owner(scene, &self.owner)?;
             resolve_raster_scene_outlines(scene, &self.registry)?;
             serde_json::to_string(&RenderToIrOutput {
-                ir: &scene.ir,
+                ir: scene.ir.structural(),
                 warnings: &scene.ir.warnings,
             })
             .map_err(|error| {
@@ -2004,7 +2030,7 @@ impl BoundSvgEngine {
                 return Err(render_error_envelope(
                     "RASTER_SCENE_NOT_RESOLVED",
                     "Raster scene must be resolved before frame emission",
-                    Some("engine"),
+                    Some(diagnostics::PipelineStage::Engine),
                     None,
                 ));
             }
@@ -2108,7 +2134,7 @@ impl BoundSvgEngine {
                 return Err(render_error_envelope(
                     "PREPARED_SCENE_WRONG_ENGINE",
                     "Prepared scene belongs to a different engine instance",
-                    Some("engine"),
+                    Some(diagnostics::PipelineStage::Engine),
                     None,
                 ));
             }
@@ -2144,7 +2170,12 @@ impl BoundSvgEngine {
                 .map_err(|e| JsValue::from_str(&format!("Invalid exclusion flow input: {e}")))?;
             let flow_layout = flow::layout_text_flow_with_exclusions(&input, &self.registry)
                 .map_err(|error| {
-                    render_error_envelope(error.code(), &error.to_string(), Some("text"), None)
+                    render_error_envelope(
+                        error.code(),
+                        &error.to_string(),
+                        Some(diagnostics::PipelineStage::Text),
+                        None,
+                    )
                 })?;
             serde_json::to_string(&flow_layout).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize exclusion flow result: {e}"))
@@ -2178,7 +2209,12 @@ impl BoundSvgEngine {
             let input: flow::ShrinkwrapTextInput = serde_json::from_str(json_input)
                 .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap input: {e}")))?;
             let shrinkwrap = flow::shrinkwrap_text(&input, &self.registry).map_err(|error| {
-                render_error_envelope(error.code(), &error.to_string(), Some("text"), None)
+                render_error_envelope(
+                    error.code(),
+                    &error.to_string(),
+                    Some(diagnostics::PipelineStage::Text),
+                    None,
+                )
             })?;
             serde_json::to_string(&shrinkwrap).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize shrinkwrap result: {e}"))
@@ -2198,7 +2234,12 @@ impl BoundSvgEngine {
                 .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap flow input: {e}")))?;
             let flow_shrinkwrap =
                 flow::shrinkwrap_flow(&input, &self.registry).map_err(|error| {
-                    render_error_envelope(error.code(), &error.to_string(), Some("text"), None)
+                    render_error_envelope(
+                        error.code(),
+                        &error.to_string(),
+                        Some(diagnostics::PipelineStage::Text),
+                        None,
+                    )
                 })?;
             serde_json::to_string(&flow_shrinkwrap).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize shrinkwrap flow result: {e}"))
@@ -3590,7 +3631,10 @@ mod tests {
                 panic!("timeline wire validation should return structured context");
             };
             assert_eq!(code, "ANIMATED_SVG_INVALID_TIMELINE");
-            assert_eq!(stage.as_deref(), Some("validate"));
+            assert_eq!(
+                stage.as_ref(),
+                Some(&crate::diagnostics::PipelineStage::Validate)
+            );
             assert_eq!(node_id, None);
             assert_eq!(
                 *context,
@@ -3628,7 +3672,10 @@ mod tests {
             panic!("independent wire validation should return a structured error");
         };
         assert_eq!(code, "UNSUPPORTED_RENDER_OPTION");
-        assert_eq!(stage.as_deref(), Some("validate"));
+        assert_eq!(
+            stage.as_ref(),
+            Some(&crate::diagnostics::PipelineStage::Validate)
+        );
         assert_eq!(node_id, None);
     }
 

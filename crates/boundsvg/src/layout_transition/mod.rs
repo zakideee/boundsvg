@@ -13,11 +13,10 @@ mod wrapper;
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeSet;
-
 use serde_json::Value;
 
-use crate::ir::types::{Ir, RenderWarning};
+use crate::diagnostics::SerializedRecoverableError;
+use crate::ir::types::Ir;
 use crate::layout::LayoutInput;
 
 use manifest::SemanticManifest;
@@ -157,24 +156,9 @@ impl CompiledTransitionState {
     }
 }
 
-fn merge_transition_warnings(reference: &mut Vec<RenderWarning>, target: Vec<RenderWarning>) {
-    let mut seen = reference
-        .iter()
-        .map(warning_key)
-        .collect::<BTreeSet<String>>();
-    for warning in target {
-        let key = warning_key(&warning);
-        if seen.insert(key) {
-            reference.push(warning);
-        }
-    }
-}
-
-fn warning_key(warning: &RenderWarning) -> String {
-    serde_json::to_string(warning).unwrap_or_else(|_| {
-        format!(
-            "{:?}|{}|{}|{:?}|{:?}",
-            warning.stage, warning.code, warning.message, warning.node_id, warning.fallback
-        )
-    })
+fn merge_transition_warnings(
+    reference: &mut Vec<SerializedRecoverableError>,
+    target: Vec<SerializedRecoverableError>,
+) {
+    reference.extend(target);
 }

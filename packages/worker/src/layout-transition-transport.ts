@@ -1,5 +1,6 @@
-import type { LayoutTransitionInput, SceneNode } from "@boundsvg/core";
+import type { DiagnosticContext, LayoutTransitionInput, SceneNode } from "@boundsvg/core";
 import { assertSerializableSceneTransport, FatalError, isSceneNode } from "@boundsvg/core";
+import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 
 /**
  * Strict UTF-8 safety cap for one two-state Worker transition request.
@@ -99,11 +100,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function transitionTransportError(
   code: string,
   message: string,
-  context: Record<string, unknown> = {},
+  context: DiagnosticContext = {},
 ): FatalError {
-  return new FatalError(code, message, { stage: "engine", ...context });
+  return new FatalError(code, message, {
+    stage: "engine",
+    context: {
+      ...context,
+    },
+  });
 }
 
 function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return formatUnknownWorkerFailure(error, "Unknown layout transition transport failure");
 }

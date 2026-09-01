@@ -1273,56 +1273,74 @@ pub fn first_excess_rich_text_depth(nodes: &[RichTextNodeInput]) -> Option<usize
 ///
 /// Used by both `TextLayoutResult` and flow results so that consumers
 /// (IR builder, SVG emitter) receive warnings without re-scanning glyphs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TextWarningCode {
+    InlineBoxMaxDepth,
+    LongRubyAnnotation,
+    MissingGlyph,
+    RubyInterCharacterFallback,
+}
+
+impl TextWarningCode {
+    fn validate_policy(self) {
+        let (normative_fallback, user_action) = match self {
+            Self::InlineBoxMaxDepth => (
+                "Skip the inline box above the supported nesting depth.",
+                "Reduce inline-box nesting depth.",
+            ),
+            Self::LongRubyAnnotation => (
+                "Render without JLREQ overhang adjustment.",
+                "Shorten the annotation or adjust the base text.",
+            ),
+            Self::MissingGlyph => (
+                "Render the missing glyph as blank.",
+                "Provide a font containing the missing glyph.",
+            ),
+            Self::RubyInterCharacterFallback => (
+                "Render inter-character ruby in the over position.",
+                "Use a supported ruby position.",
+            ),
+        };
+        assert!(
+            !normative_fallback.trim().is_empty() && !user_action.trim().is_empty(),
+            "recoverable text warning policy must be complete"
+        );
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextWarning {
     /// Warning code (e.g. `"MISSING_GLYPH"`).
-    pub code: String,
+    pub code: TextWarningCode,
     /// Human-readable description.
     pub message: String,
     /// Fallback action taken (e.g. `"blank"`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<String>,
+    pub fallback: String,
 }
 
 impl TextWarning {
     pub(crate) fn recoverable(
-        code: impl Into<String>,
+        code: TextWarningCode,
         message: impl Into<String>,
         fallback: impl Into<String>,
     ) -> Self {
-        let code = code.into();
         let message = message.into();
         let fallback = fallback.into();
-        debug_assert!(
-            matches!(
-                code.as_str(),
-                "INLINE_BOX_MAX_DEPTH"
-                    | "LONG_RUBY_ANNOTATION"
-                    | "MISSING_GLYPH"
-                    | "RUBY_INTER_CHARACTER_FALLBACK"
-            ),
-            "recoverable text warning code must have a declared policy"
-        );
-        debug_assert!(
-            code.starts_with(|character: char| character.is_ascii_uppercase())
-                && code.chars().all(|character| character.is_ascii_uppercase()
-                    || character.is_ascii_digit()
-                    || character == '_'),
-            "recoverable warning code must be stable SCREAMING_SNAKE_CASE"
-        );
-        debug_assert!(
+        code.validate_policy();
+        assert!(
             !message.trim().is_empty(),
             "recoverable warning message must not be empty"
         );
-        debug_assert!(
+        assert!(
             !fallback.trim().is_empty(),
             "recoverable warning fallback must not be empty"
         );
         Self {
             code,
             message,
-            fallback: Some(fallback),
+            fallback,
         }
     }
 }
@@ -1455,7 +1473,7 @@ pub fn build_notdef_warnings(infos: &[NotdefInfo]) -> Vec<TextWarning> {
                 })
                 .collect();
             TextWarning::recoverable(
-                "MISSING_GLYPH",
+                TextWarningCode::MissingGlyph,
                 format!(
                     "Font {label} is missing glyphs for: {}",
                     chars_display.join(", ")
@@ -1472,12 +1490,15 @@ mod tests {
 
     #[test]
     fn recoverable_text_warning_constructor_requires_a_fallback() {
-        let warning =
-            TextWarning::recoverable("MISSING_GLYPH", "warning message", "deterministic fallback");
+        let warning = TextWarning::recoverable(
+            TextWarningCode::MissingGlyph,
+            "warning message",
+            "deterministic fallback",
+        );
 
-        assert_eq!(warning.code, "MISSING_GLYPH");
+        assert_eq!(warning.code, TextWarningCode::MissingGlyph);
         assert_eq!(warning.message, "warning message");
-        assert_eq!(warning.fallback.as_deref(), Some("deterministic fallback"));
+        assert_eq!(warning.fallback, "deterministic fallback");
     }
 
     fn rich_text_style() -> RichTextStyleInput {

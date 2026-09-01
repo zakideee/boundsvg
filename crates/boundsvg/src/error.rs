@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::diagnostics::PipelineStage;
+
 #[derive(Debug, Error)]
 pub enum EngineError {
     #[error("Text/font error: {0}")]
@@ -34,7 +36,7 @@ pub enum EngineError {
     Structured {
         code: String,
         message: String,
-        stage: Option<String>,
+        stage: Option<PipelineStage>,
         node_id: Option<String>,
     },
 
@@ -48,7 +50,7 @@ pub enum EngineError {
     StructuredContext {
         code: String,
         message: String,
-        stage: Option<String>,
+        stage: Option<PipelineStage>,
         node_id: Option<String>,
         context: Box<serde_json::Value>,
     },

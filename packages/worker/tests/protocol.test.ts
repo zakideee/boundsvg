@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { formatUnknownWorkerFailure } from "../src/diagnostic-format.js";
 import type { WorkerLayoutTransitionInput } from "../src/layout-transition-transport.js";
 import {
   collectRequestTransferables,
   collectResponseTransferables,
+  decodeWorkerResponse,
   type FontTransfer,
+  getWorkerMessageId,
   type InitRequest,
   isWorkerRequest,
   isWorkerResponse,
@@ -31,6 +34,61 @@ const TRANSITION: WorkerLayoutTransitionInput = {
     { timeMs: 300, state: "A" },
   ],
 };
+
+describe("formatUnknownWorkerFailure", () => {
+  it("is total for hostile proxies, symbols, BigInts, and null-prototype values", () => {
+    const hostile = new Proxy(Object.create(null) as object, {
+      get() {
+        throw new Error("hostile get");
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile descriptor");
+      },
+      ownKeys() {
+        throw new Error("hostile ownKeys");
+      },
+    });
+
+    expect(formatUnknownWorkerFailure(hostile, "fallback")).toBe("fallback");
+    expect(formatUnknownWorkerFailure(Object.create(null), "fallback")).toBe("fallback");
+    expect(formatUnknownWorkerFailure(Symbol("wire"), "fallback")).toBe("Symbol(wire)");
+    expect(formatUnknownWorkerFailure(7n, "fallback")).toBe("7");
+  });
+
+  it("does not invoke getters, JSON hooks, or object coercion hooks", () => {
+    let hookCalls = 0;
+    const hostile = {
+      get payload() {
+        hookCalls += 1;
+        return "secret";
+      },
+      toJSON() {
+        hookCalls += 1;
+        return "serialized";
+      },
+      toString() {
+        hookCalls += 1;
+        return "coerced";
+      },
+      [Symbol.toPrimitive]() {
+        hookCalls += 1;
+        return "primitive";
+      },
+    };
+    const accessorMessage = Object.defineProperty({}, "message", {
+      enumerable: true,
+      get() {
+        hookCalls += 1;
+        return "accessed";
+      },
+    });
+
+    expect(formatUnknownWorkerFailure(hostile, "fallback")).toBe("fallback");
+    expect(formatUnknownWorkerFailure(accessorMessage, "fallback")).toBe("fallback");
+    expect(formatUnknownWorkerFailure({ message: "owned" }, "fallback")).toBe("owned");
+    expect(hookCalls).toBe(0);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // isWorkerRequest
@@ -268,6 +326,48 @@ describe("isWorkerRequest", () => {
     expect(isWorkerRequest({ id: "abc", type: "init" })).toBe(false);
   });
 
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    2 ** 53,
+  ])("rejects non-correlatable request id %s", (id) => {
+    expect(isWorkerRequest({ id, type: "init", fonts: [] })).toBe(false);
+    expect(getWorkerMessageId({ id })).toBeUndefined();
+  });
+
+  it("validates a top-level Proxy without invoking its get trap", () => {
+    let getCalls = 0;
+    const request = new Proxy(
+      { id: 1, type: "init", fonts: [] },
+      {
+        get() {
+          getCalls += 1;
+          throw new Error("get trap must not run");
+        },
+      },
+    );
+
+    expect(isWorkerRequest(request)).toBe(true);
+    expect(getCalls).toBe(0);
+  });
+
+  it("keeps unrelated union keys outside the active request shape", () => {
+    expect(
+      isWorkerRequest({
+        id: 1,
+        type: "render-svg",
+        scene: { type: "Canvas", width: 10, height: 10, children: [] },
+        fonts: "ignored unknown field",
+      }),
+    ).toBe(true);
+    expect(
+      isWorkerRequest({ id: 1, type: "init", fonts: [], schedule: "ignored unknown field" }),
+    ).toBe(true);
+  });
+
   it("returns false for object with non-string type", () => {
     expect(isWorkerRequest({ id: 1, type: 42 })).toBe(false);
   });
@@ -280,6 +380,23 @@ describe("isWorkerRequest", () => {
   it("returns false for init without fonts array", () => {
     expect(isWorkerRequest({ id: 1, type: "init" })).toBe(false);
     expect(isWorkerRequest({ id: 1, type: "init", fonts: "not-array" })).toBe(false);
+  });
+
+  it("rejects sparse and accessor-backed request arrays without invoking accessors", () => {
+    const sparseFonts = new Array(1);
+    expect(isWorkerRequest({ id: 1, type: "init", fonts: sparseFonts })).toBe(false);
+
+    let getterCalls = 0;
+    const accessorFonts = new Array(1);
+    Object.defineProperty(accessorFonts, "0", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return { alias: "sans", weight: 400, style: "normal", data: new ArrayBuffer(8) };
+      },
+    });
+    expect(isWorkerRequest({ id: 1, type: "init", fonts: accessorFonts })).toBe(false);
+    expect(getterCalls).toBe(0);
   });
 
   it("returns false for render-svg without scene", () => {
@@ -432,6 +549,21 @@ describe("isWorkerResponse", () => {
     const unknownNestedVariant = structuredClone(response);
     Reflect.set(unknownNestedVariant.ir.root.children[0] ?? {}, "type", "video");
     expect(isWorkerResponse(unknownNestedVariant)).toBe(false);
+
+    const duplicatedNestedWarnings = structuredClone(response);
+    Reflect.set(duplicatedNestedWarnings.ir, "warnings", []);
+    expect(isWorkerResponse(duplicatedNestedWarnings)).toBe(false);
+  });
+
+  it.each([
+    "layout-text-flow-ok",
+    "layout-text-flow-with-exclusions-ok",
+    "measure-text-block-ok",
+    "shrinkwrap-text-ok",
+    "shrinkwrap-flow-ok",
+    "measure-intrinsic-inline-size-ok",
+  ] as const)("rejects a malformed %s measurement result", (type) => {
+    expect(isWorkerResponse({ id: 8, type, result: { marker: type } })).toBe(false);
   });
 
   it("returns true for valid error response", () => {
@@ -450,6 +582,49 @@ describe("isWorkerResponse", () => {
   it("returns false for invalid objects", () => {
     expect(isWorkerResponse({})).toBe(false);
     expect(isWorkerResponse({ id: "abc", type: "ok" })).toBe(false);
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.NEGATIVE_INFINITY,
+    2 ** 53,
+  ])("rejects non-correlatable response id %s", (id) => {
+    expect(isWorkerResponse({ id, type: "dispose-ok" })).toBe(false);
+    expect(getWorkerMessageId({ id })).toBeUndefined();
+  });
+
+  it("validates a top-level Proxy without invoking its get trap", () => {
+    let getCalls = 0;
+    const response = new Proxy(
+      { id: 1, type: "render-svg-ok", svg: "<svg/>", warnings: [] },
+      {
+        get() {
+          getCalls += 1;
+          throw new Error("get trap must not run");
+        },
+      },
+    );
+
+    expect(isWorkerResponse(response)).toBe(true);
+    expect(getCalls).toBe(0);
+  });
+
+  it("keeps unrelated union keys outside the active response shape", () => {
+    expect(isWorkerResponse({ id: 1, type: "dispose-ok", warnings: "ignored unknown field" })).toBe(
+      true,
+    );
+    expect(
+      isWorkerResponse({
+        id: 1,
+        type: "render-svg-ok",
+        svg: "<svg/>",
+        warnings: [],
+        gif: "ignored unknown field",
+      }),
+    ).toBe(true);
   });
 
   it("returns false for unknown type value", () => {
@@ -551,8 +726,8 @@ describe("isWorkerResponse", () => {
             },
           ],
         },
-        warnings: [],
       },
+      warnings: [],
     };
     expect(isWorkerResponse(response)).toBe(true);
   });
@@ -581,8 +756,8 @@ describe("isWorkerResponse", () => {
             height: 100,
             layers: [],
           },
-          warnings: [],
         },
+        warnings: [],
       }),
     ).toBe(false);
   });
@@ -623,8 +798,8 @@ describe("isWorkerResponse", () => {
             },
           ],
         },
-        warnings: [],
       },
+      warnings: [],
     };
     expect(isWorkerResponse(response)).toBe(true);
   });
@@ -673,13 +848,13 @@ describe("isWorkerResponse", () => {
     expect(isWorkerResponse({ id: 1, type: "error", error: {} })).toBe(false);
   });
 
-  it("returns false for error response with partial StructuredError", () => {
+  it("returns false for a partial serialized fatal diagnostic", () => {
     expect(
       isWorkerResponse({ id: 1, type: "error", error: { severity: "fatal", code: "X" } }),
     ).toBe(false);
   });
 
-  it("returns false for render-svg-ok with non-StructuredError warnings", () => {
+  it("returns false for render-svg-ok with malformed recoverable warnings", () => {
     expect(isWorkerResponse({ id: 1, type: "render-svg-ok", svg: "<svg/>", warnings: [123] })).toBe(
       false,
     );
@@ -696,18 +871,400 @@ describe("isWorkerResponse", () => {
     ).toBe(false);
   });
 
-  it("returns true for render-svg-ok with valid StructuredError warnings", () => {
+  it("rejects sparse, accessor-backed, and hostile warning arrays without reading them", () => {
+    const response = { id: 1, type: "render-svg-ok", svg: "<svg/>" };
+    const sparseWarnings = new Array(1);
+    expect(isWorkerResponse({ ...response, warnings: sparseWarnings })).toBe(false);
+
+    let getterCalls = 0;
+    const accessorWarnings = new Array(1);
+    Object.defineProperty(accessorWarnings, "0", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return {
+          severity: "recoverable",
+          code: "WARN",
+          message: "warning",
+          fallback: "continued",
+          stage: "emit",
+        };
+      },
+    });
+    expect(isWorkerResponse({ ...response, warnings: accessorWarnings })).toBe(false);
+    expect(getterCalls).toBe(0);
+
+    let descriptorCalls = 0;
+    const hostileWarnings = new Proxy([], {
+      getOwnPropertyDescriptor() {
+        descriptorCalls += 1;
+        throw new Error("descriptor must be contained");
+      },
+    });
+    expect(isWorkerResponse({ ...response, warnings: hostileWarnings })).toBe(false);
+    expect(descriptorCalls).toBe(1);
+  });
+
+  it("returns true for render-svg-ok with valid serialized recoverable warnings", () => {
     expect(
       isWorkerResponse({
         id: 1,
         type: "render-svg-ok",
         svg: "<svg/>",
-        warnings: [{ severity: "recoverable", code: "WARN", message: "test" }],
+        warnings: [
+          {
+            severity: "recoverable",
+            code: "WARN",
+            message: "test",
+            fallback: "continued",
+            stage: "emit",
+          },
+        ],
       }),
     ).toBe(true);
   });
 
-  it("returns false for render-png-ok with non-StructuredError warnings", () => {
+  it("snapshots each warning descriptor once and detaches the validated payload", () => {
+    const warning = {
+      severity: "recoverable" as const,
+      code: "WARN",
+      message: "original warning",
+      fallback: "continued",
+      stage: "emit" as const,
+      context: { owner: { id: "original" } },
+    };
+    let entryDescriptorCalls = 0;
+    const warnings = new Proxy([warning] as unknown[], {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "0") {
+          entryDescriptorCalls += 1;
+          return {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: entryDescriptorCalls === 1 ? warning : 0,
+          };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    const decoded = decodeWorkerResponse({
+      id: 1,
+      type: "render-svg-ok",
+      svg: "<svg/>",
+      warnings,
+    });
+
+    expect(decoded?.type).toBe("render-svg-ok");
+    if (decoded?.type !== "render-svg-ok") {
+      throw new TypeError("expected a decoded SVG response");
+    }
+    expect(entryDescriptorCalls).toBe(1);
+    expect(decoded.warnings[0]).toEqual(warning);
+    expect(decoded.warnings[0]).not.toBe(warning);
+    expect(decoded.warnings[0]?.context).not.toBe(warning.context);
+
+    warning.message = "mutated warning";
+    warning.context.owner.id = "mutated";
+    expect(decoded.warnings[0]?.message).toBe("original warning");
+    expect(decoded.warnings[0]?.context).toEqual({ owner: { id: "original" } });
+  });
+
+  it("detaches intrinsic measurement warnings from the validated result", () => {
+    const warning = {
+      severity: "recoverable" as const,
+      code: "INTRINSIC_WARN",
+      message: "original intrinsic warning",
+      fallback: "continued",
+      stage: "text" as const,
+      context: { owner: { id: "original" } },
+    };
+    const decoded = decodeWorkerResponse({
+      id: 1,
+      type: "measure-intrinsic-inline-size-ok",
+      result: {
+        minContentInlineSize: 10,
+        maxContentInlineSize: 20,
+        warnings: [warning],
+      },
+    });
+
+    expect(decoded?.type).toBe("measure-intrinsic-inline-size-ok");
+    if (decoded?.type !== "measure-intrinsic-inline-size-ok") {
+      throw new TypeError("expected a decoded intrinsic measurement response");
+    }
+    expect(decoded.result.warnings?.[0]).toEqual(warning);
+    expect(decoded.result.warnings?.[0]).not.toBe(warning);
+    expect(decoded.result.warnings?.[0]?.context).not.toBe(warning.context);
+
+    warning.message = "mutated intrinsic warning";
+    warning.context.owner.id = "mutated";
+    expect(decoded.result.warnings?.[0]?.message).toBe("original intrinsic warning");
+    expect(decoded.result.warnings?.[0]?.context).toEqual({ owner: { id: "original" } });
+  });
+
+  it("rejects a measurement warning accessor without invoking it", () => {
+    let getterCalls = 0;
+    const result = {
+      minContentInlineSize: 10,
+      maxContentInlineSize: 20,
+    };
+    Object.defineProperty(result, "warnings", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return [];
+      },
+    });
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result,
+      }),
+    ).toBeUndefined();
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects a required intrinsic measurement accessor without invoking it", () => {
+    let getterCalls = 0;
+    const result = {
+      maxContentInlineSize: 20,
+    };
+    Object.defineProperty(result, "minContentInlineSize", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return getterCalls === 1 ? 10 : 99;
+      },
+    });
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result,
+      }),
+    ).toBeUndefined();
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects a nested text-flow line accessor without invoking it", () => {
+    let getterCalls = 0;
+    const line = {
+      charStart: 0,
+      charEnd: 4,
+      inlineAdvancePx: 10,
+      availableInlineSizePx: 20,
+    };
+    Object.defineProperty(line, "text", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "text";
+      },
+    });
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "layout-text-flow-ok",
+        result: {
+          lines: [line],
+          exhausted: false,
+        },
+      }),
+    ).toBeUndefined();
+    expect(getterCalls).toBe(0);
+  });
+
+  it("accepts an unknown measurement accessor without invoking it", () => {
+    let getterCalls = 0;
+    const result = {
+      minContentInlineSize: 10,
+      maxContentInlineSize: 20,
+    };
+    Object.defineProperty(result, "futureMetric", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return 30;
+      },
+    });
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result,
+      })?.type,
+    ).toBe("measure-intrinsic-inline-size-ok");
+    expect(getterCalls).toBe(0);
+  });
+
+  it("rejects a measurement warning with a non-plain diagnostic context", () => {
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result: {
+          minContentInlineSize: 10,
+          maxContentInlineSize: 20,
+          warnings: [
+            {
+              severity: "recoverable",
+              code: "INTRINSIC_WARN",
+              message: "invalid context",
+              fallback: "continued",
+              stage: "text",
+              context: new Date(0),
+            },
+          ],
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not reuse a failed unknown snapshot for supported measurement warnings", () => {
+    let ownKeysCalls = 0;
+    const warnings = new Proxy(
+      [
+        {
+          severity: "recoverable" as const,
+          code: "INTRINSIC_WARN",
+          message: "must not disappear",
+          fallback: "continued",
+          stage: "text" as const,
+        },
+      ],
+      {
+        ownKeys() {
+          ownKeysCalls += 1;
+          throw new TypeError("unreadable warning keys");
+        },
+      },
+    );
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result: {
+          futureWarnings: warnings,
+          minContentInlineSize: 10,
+          maxContentInlineSize: 20,
+          warnings,
+        },
+      }),
+    ).toBeUndefined();
+    expect(ownKeysCalls).toBe(1);
+  });
+
+  it("does not reuse a failed unknown snapshot for supported measurement lines", () => {
+    let ownKeysCalls = 0;
+    const lines = new Proxy(
+      [
+        {
+          text: "text",
+          charStart: 0,
+          charEnd: 4,
+          inlineAdvancePx: 10,
+          availableInlineSizePx: 20,
+        },
+      ],
+      {
+        ownKeys() {
+          ownKeysCalls += 1;
+          throw new TypeError("unreadable line keys");
+        },
+      },
+    );
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "layout-text-flow-ok",
+        result: {
+          futureLines: lines,
+          lines,
+          exhausted: false,
+        },
+      }),
+    ).toBeUndefined();
+    expect(ownKeysCalls).toBe(1);
+  });
+
+  it("keeps an unreadable unknown measurement field accepted in isolation", () => {
+    let ownKeysCalls = 0;
+    const futureValue = new Proxy(
+      {},
+      {
+        ownKeys() {
+          ownKeysCalls += 1;
+          throw new TypeError("unreadable future keys");
+        },
+      },
+    );
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result: {
+          futureValue,
+          minContentInlineSize: 10,
+          maxContentInlineSize: 20,
+        },
+      })?.type,
+    ).toBe("measure-intrinsic-inline-size-ok");
+    expect(ownKeysCalls).toBe(1);
+  });
+
+  it("detaches nested shrinkwrap-flow warnings from the validated result", () => {
+    const warning = {
+      severity: "recoverable" as const,
+      code: "FLOW_WARN",
+      message: "original flow warning",
+      fallback: "continued",
+      stage: "text" as const,
+      context: { owner: { id: "original" } },
+    };
+    const decoded = decodeWorkerResponse({
+      id: 1,
+      type: "shrinkwrap-flow-ok",
+      result: {
+        status: "satisfied",
+        chosenWidthPx: 10,
+        usedLineCount: 0,
+        usedHeight: 0,
+        layout: {
+          lines: [],
+          exhausted: false,
+          usedLineCount: 0,
+          warnings: [warning],
+          topRubyOverflowPx: 0,
+          bottomRubyOverflowPx: 0,
+        },
+      },
+    });
+
+    expect(decoded?.type).toBe("shrinkwrap-flow-ok");
+    if (decoded?.type !== "shrinkwrap-flow-ok") {
+      throw new TypeError("expected a decoded shrinkwrap-flow response");
+    }
+    expect(decoded.result.layout.warnings?.[0]).toEqual(warning);
+    expect(decoded.result.layout.warnings?.[0]).not.toBe(warning);
+    expect(decoded.result.layout.warnings?.[0]?.context).not.toBe(warning.context);
+
+    warning.message = "mutated flow warning";
+    warning.context.owner.id = "mutated";
+    expect(decoded.result.layout.warnings?.[0]?.message).toBe("original flow warning");
+    expect(decoded.result.layout.warnings?.[0]?.context).toEqual({ owner: { id: "original" } });
+  });
+
+  it("returns false for render-png-ok with malformed recoverable warnings", () => {
     expect(
       isWorkerResponse({
         id: 1,
@@ -718,13 +1275,21 @@ describe("isWorkerResponse", () => {
     ).toBe(false);
   });
 
-  it("returns true for render-png-ok with valid StructuredError warnings", () => {
+  it("returns true for render-png-ok with valid serialized recoverable warnings", () => {
     expect(
       isWorkerResponse({
         id: 1,
         type: "render-png-ok",
         png: new Uint8Array([1]),
-        warnings: [{ severity: "recoverable", code: "W", message: "w" }],
+        warnings: [
+          {
+            severity: "recoverable",
+            code: "W",
+            message: "w",
+            fallback: "continued",
+            stage: "emit",
+          },
+        ],
       }),
     ).toBe(true);
   });
@@ -771,6 +1336,31 @@ describe("isWorkerResponse", () => {
         error: { severity: "fatal", code: "X", message: "m", stage: "validate" },
       }),
     ).toBe(true);
+  });
+
+  it("detaches a validated fatal diagnostic from the response payload", () => {
+    const error = {
+      severity: "fatal" as const,
+      code: "WORKER_FAILURE",
+      message: "original failure",
+      stage: "engine" as const,
+      context: { owner: { id: "original" } },
+    };
+
+    const decoded = decodeWorkerResponse({ id: 1, type: "error", error });
+
+    expect(decoded?.type).toBe("error");
+    if (decoded?.type !== "error") {
+      throw new TypeError("expected a decoded error response");
+    }
+    expect(decoded.error).toEqual(error);
+    expect(decoded.error).not.toBe(error);
+    expect(decoded.error.context).not.toBe(error.context);
+
+    error.message = "mutated failure";
+    error.context.owner.id = "mutated";
+    expect(decoded.error.message).toBe("original failure");
+    expect(decoded.error.context).toEqual({ owner: { id: "original" } });
   });
 
   it("returns false for warning with invalid severity", () => {
@@ -821,7 +1411,7 @@ describe("isWorkerResponse", () => {
     ).toBe(false);
   });
 
-  it("returns true for error with all valid optional fields", () => {
+  it("returns true for a fatal error with all permitted optional fields", () => {
     expect(
       isWorkerResponse({
         id: 1,
@@ -832,7 +1422,6 @@ describe("isWorkerResponse", () => {
           message: "m",
           stage: "emit",
           nodeId: "node-1",
-          fallback: "used default",
           context: { key: "value" },
         },
       }),
@@ -1052,8 +1641,8 @@ describe("collectResponseTransferables", () => {
             },
           ],
         },
-        warnings: [],
       },
+      warnings: [],
     };
 
     const transferables = collectResponseTransferables(response);
@@ -1107,8 +1696,8 @@ describe("collectResponseTransferables", () => {
             },
           ],
         },
-        warnings: [],
       },
+      warnings: [],
     };
     expect(collectResponseTransferables(response)).toEqual([]);
   });

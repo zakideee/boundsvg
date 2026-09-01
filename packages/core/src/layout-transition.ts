@@ -74,10 +74,12 @@ type NormalizedCheckpoints = readonly [
 function invalidTransitionSchedule(details: InvalidTransitionSchedule): never {
   throw new FatalError("LAYOUT_TRANSITION_INVALID_SCHEDULE", details.message, {
     stage: "validate",
-    category: "schedule",
-    expected: details.expected,
-    observed: describeTransitionValue(details.observed),
-    ...(details.reason === undefined ? {} : { reason: details.reason }),
+    context: {
+      category: "schedule",
+      expected: details.expected,
+      observed: describeTransitionValue(details.observed),
+      ...(details.reason === undefined ? {} : { reason: details.reason }),
+    },
   });
 }
 

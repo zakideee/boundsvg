@@ -85,7 +85,23 @@ function isRateTerm(value: number): boolean {
 }
 
 function invalidFrameRate(message: string, frameRate: number | VideoFrameRate): FatalError {
-  return new FatalError("VIDEO_INVALID_FRAME_RATE", message, { frameRate });
+  return new FatalError("VIDEO_INVALID_FRAME_RATE", message, {
+    context: {
+      frameRate:
+        typeof frameRate === "number"
+          ? Number.isFinite(frameRate)
+            ? frameRate
+            : String(frameRate)
+          : {
+              numerator: Number.isFinite(frameRate.numerator)
+                ? frameRate.numerator
+                : String(frameRate.numerator),
+              denominator: Number.isFinite(frameRate.denominator)
+                ? frameRate.denominator
+                : String(frameRate.denominator),
+            },
+    },
+  });
 }
 
 /**

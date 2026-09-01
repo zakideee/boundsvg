@@ -7,6 +7,7 @@
  */
 
 import {
+  FatalError,
   type Frame,
   type GeometryDoc,
   type IntrinsicInlineSizeInput,
@@ -19,6 +20,7 @@ import {
   type LayeredSvgResult,
   type MeasureTextBlockInput,
   type MeasureTextBlockResult,
+  RecoverableError,
   type RenderAnimatedGifOptions,
   type RenderAnimatedSvgOptions,
   type RenderAnimatedWebpOptions,
@@ -28,18 +30,27 @@ import {
   type RenderSvgOptions,
   type RenderWebpOptions,
   type SceneNode,
+  type SerializedFatalError,
+  type SerializedRecoverableError,
   type ShrinkwrapFlowInput,
   type ShrinkwrapFlowResult,
   type ShrinkwrapTextInput,
   type ShrinkwrapTextResult,
-  type StructuredError,
   type SymbolDefinition,
   type TextFlowInput,
   type TextFlowResult,
   type TextFlowWithExclusionsInput,
   type TextFlowWithExclusionsResult,
-  validateSerializedIR,
 } from "@boundsvg/core";
+import {
+  isWasmIntrinsicInlineSizeResult,
+  isWasmMeasureTextBlockResult,
+  isWasmShrinkwrapFlowResult,
+  isWasmShrinkwrapTextResult,
+  isWasmTextFlowResult,
+  isWasmTextFlowWithExclusionsResult,
+  validateStructuralIR,
+} from "@boundsvg/core/wasm";
 import {
   isWorkerLayoutTransitionInput,
   type WorkerLayoutTransitionInput,
@@ -305,14 +316,14 @@ export type RenderSvgOkResponse = {
   id: number;
   type: "render-svg-ok";
   svg: string;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderAnimatedSvgOkResponse = {
   id: number;
   type: "render-animated-svg-ok";
   svg: string;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderPngOkResponse = {
@@ -320,7 +331,7 @@ export type RenderPngOkResponse = {
   type: "render-png-ok";
   /** PNG bytes. Transferred (not copied) back to the main thread. */
   png: Uint8Array;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderAnimatedWebpOkResponse = {
@@ -328,7 +339,7 @@ export type RenderAnimatedWebpOkResponse = {
   type: "render-animated-webp-ok";
   /** Animated WebP bytes. Transferred (not copied) back to the main thread. */
   webp: Uint8Array;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderAnimatedGifOkResponse = {
@@ -336,7 +347,7 @@ export type RenderAnimatedGifOkResponse = {
   type: "render-animated-gif-ok";
   /** Animated GIF bytes. Transferred (not copied) back to the main thread. */
   gif: Uint8Array;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderWebpOkResponse = {
@@ -344,33 +355,33 @@ export type RenderWebpOkResponse = {
   type: "render-webp-ok";
   /** Lossless WebP bytes. Transferred (not copied) back to the main thread. */
   webp: Uint8Array;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 type WorkerLayerSvgEntry = LayeredSvgResult["layers"][number];
 
 export type WorkerLayeredSvgResult = Omit<LayeredSvgResult, "layers"> & {
   layers: WorkerLayerSvgEntry[];
-  warnings: StructuredError[];
 };
 
 export type RenderLayeredSvgOkResponse = {
   id: number;
   type: "render-layered-svg-ok";
   result: WorkerLayeredSvgResult;
+  warnings: SerializedRecoverableError[];
 };
 
 type WorkerLayerPngEntry = LayeredPngResult["layers"][number];
 
 export type WorkerLayeredPngResult = Omit<LayeredPngResult, "layers"> & {
   layers: WorkerLayerPngEntry[];
-  warnings: StructuredError[];
 };
 
 export type RenderLayeredPngOkResponse = {
   id: number;
   type: "render-layered-png-ok";
   result: WorkerLayeredPngResult;
+  warnings: SerializedRecoverableError[];
 };
 
 /**
@@ -388,7 +399,7 @@ export type RenderSvgAndIrOkResponse = {
   svg: string;
   /** IR with `warnings` stripped (see `WorkerIR`). */
   ir: WorkerIR;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type RenderAnimatedSvgAndIrOkResponse = {
@@ -397,14 +408,14 @@ export type RenderAnimatedSvgAndIrOkResponse = {
   svg: string;
   /** IR with `warnings` stripped (see `WorkerIR`). */
   ir: WorkerIR;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type OpenFrameStreamOkResponse = {
   id: number;
   type: "open-frame-stream-ok";
   streamId: number;
-  warnings: StructuredError[];
+  warnings: SerializedRecoverableError[];
 };
 
 export type NextFrameStreamOkResponse =
@@ -467,7 +478,7 @@ export type MeasureIntrinsicInlineSizeOkResponse = {
 export type ErrorResponse = {
   id: number;
   type: "error";
-  error: StructuredError;
+  error: SerializedFatalError;
 };
 
 export type DisposeOkResponse = {
@@ -503,26 +514,47 @@ export type WorkerResponse =
 // Type guards
 // ---------------------------------------------------------------------------
 
-const VALID_SEVERITIES: ReadonlySet<string> = new Set(["fatal", "recoverable"]);
-
-const VALID_STAGES: ReadonlySet<string> = new Set([
-  "validate",
-  "layout",
-  "text",
-  "ir",
-  "emit",
-  "wasm",
-  "font",
-  "engine",
-  "analyzer",
-]);
-
 function isObjectLike(value: unknown): value is object {
   return typeof value === "object" && value !== null;
 }
 
+const WORKER_REQUEST_KEYS = [
+  "id",
+  "type",
+  "fonts",
+  "geometries",
+  "symbols",
+  "scene",
+  "options",
+  "transition",
+  "schedule",
+  "streamId",
+  "input",
+] as const;
+
+const WORKER_RESPONSE_KEYS = [
+  "id",
+  "type",
+  "error",
+  "svg",
+  "png",
+  "webp",
+  "gif",
+  "result",
+  "ir",
+  "warnings",
+  "streamId",
+  "done",
+  "frame",
+] as const;
+
 function getProperty(value: object, key: string): unknown {
-  return Reflect.get(value, key);
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function getNumberProperty(value: object, key: string): number | undefined {
@@ -540,47 +572,445 @@ function getBooleanProperty(value: object, key: string): boolean | undefined {
   return typeof prop === "boolean" ? prop : undefined;
 }
 
-export function getWorkerMessageId(value: unknown): number | undefined {
+function snapshotDenseOwnDataArray(value: unknown): unknown[] | undefined {
+  let arrayValue: unknown[];
+  try {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+    arrayValue = value;
+  } catch {
+    return undefined;
+  }
+
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    lengthDescriptor = Reflect.getOwnPropertyDescriptor(arrayValue, "length");
+  } catch {
+    return undefined;
+  }
+  if (
+    lengthDescriptor === undefined ||
+    !("value" in lengthDescriptor) ||
+    typeof lengthDescriptor.value !== "number" ||
+    !Number.isSafeInteger(lengthDescriptor.value) ||
+    lengthDescriptor.value < 0
+  ) {
+    return undefined;
+  }
+
+  const snapshot: unknown[] = [];
+  for (let index = 0; index < lengthDescriptor.value; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Reflect.getOwnPropertyDescriptor(arrayValue, String(index));
+    } catch {
+      return undefined;
+    }
+    if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+      return undefined;
+    }
+    snapshot.push(descriptor.value);
+  }
+  return snapshot;
+}
+
+function isDenseArrayOf<T>(
+  value: unknown,
+  predicate: (entry: unknown) => entry is T,
+): value is T[] {
+  const snapshot = snapshotDenseOwnDataArray(value);
+  if (snapshot === undefined) {
+    return false;
+  }
+  return snapshot.every(predicate);
+}
+
+function snapshotKnownProperties(
+  value: unknown,
+  keys: readonly string[],
+): Record<string, unknown> | undefined {
   if (!isObjectLike(value)) {
     return undefined;
   }
-  return getNumberProperty(value, "id");
+  const snapshot: Record<string, unknown> = {};
+  try {
+    for (const key of keys) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+        continue;
+      }
+      Object.defineProperty(snapshot, key, {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: descriptor.value,
+      });
+    }
+  } catch {
+    return undefined;
+  }
+  return snapshot;
 }
 
-function isStructuredError(value: unknown): value is StructuredError {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  const severity = getStringProperty(value, "severity");
-  if (severity === undefined || !VALID_SEVERITIES.has(severity)) {
-    return false;
-  }
-  const code = getStringProperty(value, "code");
-  const message = getStringProperty(value, "message");
-  if (code === undefined || message === undefined) {
-    return false;
-  }
-  const stage = getProperty(value, "stage");
-  if (stage !== undefined && (typeof stage !== "string" || !VALID_STAGES.has(stage))) {
-    return false;
-  }
-  const nodeId = getProperty(value, "nodeId");
-  if (nodeId !== undefined && typeof nodeId !== "string") {
-    return false;
-  }
-  const fallback = getProperty(value, "fallback");
-  if (fallback !== undefined && typeof fallback !== "string") {
-    return false;
-  }
-  const context = getProperty(value, "context");
-  if (context !== undefined && !isObjectLike(context)) {
-    return false;
+function snapshotArrayProperties(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  for (const key of keys) {
+    const propertyValue = value[key];
+    if (propertyValue === undefined) {
+      continue;
+    }
+    const arraySnapshot = snapshotDenseOwnDataArray(propertyValue);
+    if (arraySnapshot === undefined) {
+      return false;
+    }
+    value[key] = arraySnapshot;
   }
   return true;
 }
 
-function isRecoverableStructuredError(value: unknown): value is StructuredError {
-  return isStructuredError(value) && value.severity === "recoverable";
+function snapshotRecoverableWarnings(value: unknown): SerializedRecoverableError[] | undefined {
+  const entries = snapshotDenseOwnDataArray(value);
+  if (entries === undefined) {
+    return undefined;
+  }
+
+  const warnings: SerializedRecoverableError[] = [];
+  for (const entry of entries) {
+    try {
+      warnings.push(RecoverableError.fromSerialized(entry).toJSON());
+    } catch {
+      return undefined;
+    }
+  }
+  return warnings;
+}
+
+// Keep future fields forward-compatible while ensuring known fields receive
+// only complete, plain, getter-free values. Invalid unknown values become a
+// sentinel and cannot make a later supported alias reuse a partial snapshot.
+const INVALID_SNAPSHOT_VALUE = Symbol("worker-protocol-invalid-snapshot");
+
+type GetterFreeSnapshotResult =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false };
+
+type GetterFreeSnapshotState = {
+  status: "visiting" | "complete" | "failed";
+  value: unknown;
+};
+
+type GetterFreeSnapshotContainer = {
+  readonly isArrayValue: boolean;
+  readonly valueSnapshot: object;
+  readonly snapshotState: GetterFreeSnapshotState;
+};
+
+function snapshotOwnDescriptor(value: object, key: PropertyKey): PropertyDescriptor | undefined {
+  try {
+    return Reflect.getOwnPropertyDescriptor(value, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function invalidGetterFreeSnapshot(
+  value: object,
+  snapshots: WeakMap<object, GetterFreeSnapshotState>,
+): undefined {
+  snapshots.set(value, { status: "complete", value: INVALID_SNAPSHOT_VALUE });
+  return undefined;
+}
+
+function prepareGetterFreeSnapshotContainer(
+  value: object,
+  snapshots: WeakMap<object, GetterFreeSnapshotState>,
+): GetterFreeSnapshotContainer | undefined {
+  let isArrayValue: boolean;
+  let valuePrototype: object | null;
+  try {
+    isArrayValue = Array.isArray(value);
+    valuePrototype = Reflect.getPrototypeOf(value);
+  } catch {
+    return invalidGetterFreeSnapshot(value, snapshots);
+  }
+
+  if (
+    (isArrayValue && valuePrototype !== Array.prototype) ||
+    (!isArrayValue && valuePrototype !== Object.prototype && valuePrototype !== null)
+  ) {
+    return invalidGetterFreeSnapshot(value, snapshots);
+  }
+
+  const valueSnapshot: object = isArrayValue ? [] : Object.create(valuePrototype);
+  const snapshotState: GetterFreeSnapshotState = {
+    status: "visiting",
+    value: valueSnapshot,
+  };
+  snapshots.set(value, snapshotState);
+  return { isArrayValue, valueSnapshot, snapshotState };
+}
+
+function defineGetterFreeSnapshotProperty({
+  valueSnapshot,
+  key,
+  descriptor,
+  snapshots,
+}: {
+  valueSnapshot: object;
+  key: PropertyKey;
+  descriptor: PropertyDescriptor | undefined;
+  snapshots: WeakMap<object, GetterFreeSnapshotState>;
+}): void {
+  const childSnapshot =
+    descriptor !== undefined && "value" in descriptor
+      ? snapshotGetterFreeValue(descriptor.value, snapshots)
+      : ({ ok: true, value: INVALID_SNAPSHOT_VALUE } as const);
+  Object.defineProperty(valueSnapshot, key, {
+    configurable: true,
+    enumerable: descriptor?.enumerable ?? true,
+    value: childSnapshot.ok ? childSnapshot.value : INVALID_SNAPSHOT_VALUE,
+    writable: true,
+  });
+}
+
+function finalizeGetterFreeArraySnapshot(
+  valueSnapshot: object,
+  arrayLengthDescriptor: PropertyDescriptor | undefined,
+): boolean {
+  if (
+    arrayLengthDescriptor === undefined ||
+    !("value" in arrayLengthDescriptor) ||
+    typeof arrayLengthDescriptor.value !== "number" ||
+    !Number.isSafeInteger(arrayLengthDescriptor.value) ||
+    arrayLengthDescriptor.value < 0
+  ) {
+    return false;
+  }
+  Object.defineProperty(valueSnapshot, "length", {
+    configurable: false,
+    enumerable: false,
+    value: arrayLengthDescriptor.value,
+    writable: true,
+  });
+  return true;
+}
+
+function failGetterFreeSnapshot(snapshotState: GetterFreeSnapshotState): GetterFreeSnapshotResult {
+  snapshotState.status = "failed";
+  snapshotState.value = INVALID_SNAPSHOT_VALUE;
+  return { ok: false };
+}
+
+function materializeGetterFreeSnapshot(
+  value: object,
+  container: GetterFreeSnapshotContainer,
+  snapshots: WeakMap<object, GetterFreeSnapshotState>,
+): GetterFreeSnapshotResult {
+  const { isArrayValue, valueSnapshot, snapshotState } = container;
+  try {
+    let arrayLengthDescriptor: PropertyDescriptor | undefined;
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = snapshotOwnDescriptor(value, key);
+      if (isArrayValue && key === "length") {
+        arrayLengthDescriptor = descriptor;
+        continue;
+      }
+      defineGetterFreeSnapshotProperty({ valueSnapshot, key, descriptor, snapshots });
+    }
+
+    if (isArrayValue && !finalizeGetterFreeArraySnapshot(valueSnapshot, arrayLengthDescriptor)) {
+      return failGetterFreeSnapshot(snapshotState);
+    }
+
+    snapshotState.status = "complete";
+    return { ok: true, value: valueSnapshot };
+  } catch {
+    return failGetterFreeSnapshot(snapshotState);
+  }
+}
+
+function snapshotGetterFreeValue(
+  value: unknown,
+  snapshots: WeakMap<object, GetterFreeSnapshotState>,
+): GetterFreeSnapshotResult {
+  if (typeof value === "function") {
+    return { ok: true, value: INVALID_SNAPSHOT_VALUE };
+  }
+  if (!isObjectLike(value)) {
+    return { ok: true, value };
+  }
+
+  const existingSnapshot = snapshots.get(value);
+  if (existingSnapshot !== undefined) {
+    if (existingSnapshot.status === "failed") {
+      return { ok: false };
+    }
+    if (existingSnapshot.status === "visiting") {
+      return { ok: true, value: INVALID_SNAPSHOT_VALUE };
+    }
+    return { ok: true, value: existingSnapshot.value };
+  }
+
+  const container = prepareGetterFreeSnapshotContainer(value, snapshots);
+  if (container === undefined) {
+    return { ok: true, value: INVALID_SNAPSHOT_VALUE };
+  }
+  return materializeGetterFreeSnapshot(value, container, snapshots);
+}
+
+function snapshotGetterFreeObject(value: unknown): Record<string, unknown> | undefined {
+  const snapshotResult = snapshotGetterFreeValue(value, new WeakMap());
+  if (
+    !snapshotResult.ok ||
+    !isObjectLike(snapshotResult.value) ||
+    Array.isArray(snapshotResult.value)
+  ) {
+    return undefined;
+  }
+  return snapshotResult.value as Record<string, unknown>;
+}
+
+function detachOptionalWarnings(value: Record<string, unknown>): boolean {
+  const warningDescriptor = Reflect.getOwnPropertyDescriptor(value, "warnings");
+  if (warningDescriptor === undefined) {
+    return true;
+  }
+  if (!warningDescriptor.enumerable || !("value" in warningDescriptor)) {
+    return false;
+  }
+  if (warningDescriptor.value === undefined) {
+    return true;
+  }
+  const warnings = snapshotRecoverableWarnings(warningDescriptor.value);
+  if (warnings === undefined) {
+    return false;
+  }
+  Object.defineProperty(value, "warnings", { ...warningDescriptor, value: warnings });
+  return true;
+}
+
+function snapshotMeasurementResult(value: Record<string, unknown>, type: string): boolean {
+  switch (type) {
+    case "layout-text-flow-ok":
+    case "layout-text-flow-with-exclusions-ok":
+    case "measure-text-block-ok":
+    case "shrinkwrap-text-ok":
+    case "shrinkwrap-flow-ok":
+    case "measure-intrinsic-inline-size-ok": {
+      const resultSnapshot = snapshotGetterFreeObject(value.result);
+      if (resultSnapshot === undefined) {
+        return false;
+      }
+
+      if (
+        (type === "layout-text-flow-ok" ||
+          type === "layout-text-flow-with-exclusions-ok" ||
+          type === "measure-intrinsic-inline-size-ok") &&
+        !detachOptionalWarnings(resultSnapshot)
+      ) {
+        return false;
+      }
+      if (type === "shrinkwrap-flow-ok") {
+        const layoutSnapshot = getProperty(resultSnapshot, "layout");
+        if (
+          !isObjectLike(layoutSnapshot) ||
+          Array.isArray(layoutSnapshot) ||
+          !detachOptionalWarnings(layoutSnapshot as Record<string, unknown>)
+        ) {
+          return false;
+        }
+      }
+
+      value.result = resultSnapshot;
+      return true;
+    }
+    default:
+      return true;
+  }
+}
+
+function requestArrayKeys(type: string): readonly string[] {
+  switch (type) {
+    case "init":
+      return ["fonts", "geometries", "symbols"];
+    case "open-frame-stream":
+    case "open-layout-transition-frame-stream":
+      return ["schedule"];
+    default:
+      return [];
+  }
+}
+
+function responseArrayKeys(type: string): readonly string[] {
+  switch (type) {
+    case "render-svg-ok":
+    case "render-animated-svg-ok":
+    case "render-png-ok":
+    case "render-webp-ok":
+    case "render-animated-webp-ok":
+    case "render-animated-gif-ok":
+    case "render-layered-svg-ok":
+    case "render-layered-png-ok":
+    case "render-svg-and-ir-ok":
+    case "render-animated-svg-and-ir-ok":
+    case "open-frame-stream-ok":
+      return ["warnings"];
+    default:
+      return [];
+  }
+}
+
+function snapshotResponseDiagnostics(value: Record<string, unknown>, type: string): boolean {
+  for (const key of responseArrayKeys(type)) {
+    const propertyValue = value[key];
+    if (propertyValue === undefined) {
+      continue;
+    }
+    const warnings = snapshotRecoverableWarnings(propertyValue);
+    if (warnings === undefined) {
+      return false;
+    }
+    value[key] = warnings;
+  }
+
+  if (!snapshotMeasurementResult(value, type)) {
+    return false;
+  }
+
+  if (type === "error" && value.error !== undefined) {
+    try {
+      value.error = FatalError.fromSerialized(value.error).toJSON();
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+type WorkerMessageDecodeResult<TMessage> = {
+  readonly id: number | undefined;
+  readonly message: TMessage | undefined;
+};
+
+/** Return whether a protocol ID can be correlated without precision loss. */
+export function isWorkerMessageId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+export function getWorkerMessageId(value: unknown): number | undefined {
+  if (!isObjectLike(value)) {
+    return undefined;
+  }
+  const id = getProperty(value, "id");
+  return isWorkerMessageId(id) ? id : undefined;
+}
+
+function isSerializedFatalError(value: unknown): value is SerializedFatalError {
+  return FatalError.isSerialized(value);
+}
+
+function isSerializedRecoverableError(value: unknown): value is SerializedRecoverableError {
+  return RecoverableError.isSerialized(value);
 }
 
 function isFontTransfer(value: unknown): value is FontTransfer {
@@ -632,16 +1062,13 @@ function isWorkerFrameRenderOptions(value: unknown): value is WorkerFrameRenderO
 
 function isFrameStreamId(value: object): boolean {
   const streamId = getNumberProperty(value, "streamId");
-  return streamId !== undefined && Number.isInteger(streamId) && streamId > 0;
+  return isWorkerMessageId(streamId);
 }
 
-export function isWorkerRequest(value: unknown): value is WorkerRequest {
-  if (!isObjectLike(value)) {
-    return false;
-  }
+function isWorkerRequestSnapshot(value: object): value is WorkerRequest {
   const id = getNumberProperty(value, "id");
   const type = getStringProperty(value, "type");
-  if (id === undefined || type === undefined) {
+  if (!isWorkerMessageId(id) || type === undefined) {
     return false;
   }
 
@@ -651,13 +1078,15 @@ export function isWorkerRequest(value: unknown): value is WorkerRequest {
       const geometries = getProperty(value, "geometries");
       const symbols = getProperty(value, "symbols");
       return (
-        Array.isArray(fonts) &&
-        fonts.every(isFontTransfer) &&
+        isDenseArrayOf(fonts, isFontTransfer) &&
         (geometries === undefined ||
-          (Array.isArray(geometries) &&
-            geometries.every((entry) => isNamedObjectEntry(entry, "doc")))) &&
+          isDenseArrayOf(geometries, (entry): entry is { id: string; doc: GeometryDoc } =>
+            isNamedObjectEntry(entry, "doc"),
+          )) &&
         (symbols === undefined ||
-          (Array.isArray(symbols) && symbols.every((entry) => isNamedObjectEntry(entry, "def"))))
+          isDenseArrayOf(symbols, (entry): entry is { id: string; def: SymbolDefinition } =>
+            isNamedObjectEntry(entry, "def"),
+          ))
       );
     }
     case "render-svg":
@@ -684,8 +1113,7 @@ export function isWorkerRequest(value: unknown): value is WorkerRequest {
       const schedule = getProperty(value, "schedule");
       return (
         isSceneNode(getProperty(value, "scene")) &&
-        Array.isArray(schedule) &&
-        schedule.every(isIndexedFrameTime) &&
+        isDenseArrayOf(schedule, isIndexedFrameTime) &&
         isWorkerFrameRenderOptions(getProperty(value, "options"))
       );
     }
@@ -693,8 +1121,7 @@ export function isWorkerRequest(value: unknown): value is WorkerRequest {
       const schedule = getProperty(value, "schedule");
       return (
         isWorkerLayoutTransitionInput(getProperty(value, "transition")) &&
-        Array.isArray(schedule) &&
-        schedule.every(isIndexedFrameTime) &&
+        isDenseArrayOf(schedule, isIndexedFrameTime) &&
         isWorkerFrameRenderOptions(getProperty(value, "options"))
       );
     }
@@ -715,13 +1142,42 @@ export function isWorkerRequest(value: unknown): value is WorkerRequest {
   }
 }
 
-export function isWorkerResponse(value: unknown): value is WorkerResponse {
-  if (!isObjectLike(value)) {
-    return false;
+/** Decode one request and its correlation ID from the same getter-free snapshot. */
+export function decodeWorkerRequestMessage(
+  value: unknown,
+): WorkerMessageDecodeResult<WorkerRequest> {
+  const snapshot = snapshotKnownProperties(value, WORKER_REQUEST_KEYS);
+  if (snapshot === undefined) {
+    return { id: undefined, message: undefined };
   }
+  const id = getWorkerMessageId(snapshot);
+  try {
+    const type = getStringProperty(snapshot, "type");
+    if (type !== undefined && !snapshotArrayProperties(snapshot, requestArrayKeys(type))) {
+      return { id, message: undefined };
+    }
+    if (!isWorkerRequestSnapshot(snapshot)) {
+      return { id, message: undefined };
+    }
+    return { id, message: snapshot };
+  } catch {
+    return { id, message: undefined };
+  }
+}
+
+/** Decode one request into a getter-free top-level snapshot. */
+function decodeWorkerRequest(value: unknown): WorkerRequest | undefined {
+  return decodeWorkerRequestMessage(value).message;
+}
+
+export function isWorkerRequest(value: unknown): value is WorkerRequest {
+  return decodeWorkerRequest(value) !== undefined;
+}
+
+function isWorkerResponseSnapshot(value: object): value is WorkerResponse {
   const id = getNumberProperty(value, "id");
   const type = getStringProperty(value, "type");
-  if (id === undefined || type === undefined) {
+  if (!isWorkerMessageId(id) || type === undefined) {
     return false;
   }
 
@@ -733,64 +1189,52 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
     case "render-animated-svg-ok": {
       const svg = getStringProperty(value, "svg");
       const warnings = getProperty(value, "warnings");
-      return (
-        svg !== undefined && Array.isArray(warnings) && warnings.every(isRecoverableStructuredError)
-      );
+      return svg !== undefined && isDenseArrayOf(warnings, isSerializedRecoverableError);
     }
     case "render-png-ok": {
       const png = getProperty(value, "png");
       const warnings = getProperty(value, "warnings");
-      return (
-        png instanceof Uint8Array &&
-        Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
-      );
+      return png instanceof Uint8Array && isDenseArrayOf(warnings, isSerializedRecoverableError);
     }
     case "render-animated-gif-ok": {
       const gif = getProperty(value, "gif");
       const warnings = getProperty(value, "warnings");
-      return (
-        gif instanceof Uint8Array &&
-        Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
-      );
+      return gif instanceof Uint8Array && isDenseArrayOf(warnings, isSerializedRecoverableError);
     }
     case "render-animated-webp-ok":
     case "render-webp-ok": {
       const webp = getProperty(value, "webp");
       const warnings = getProperty(value, "warnings");
-      return (
-        webp instanceof Uint8Array &&
-        Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
-      );
+      return webp instanceof Uint8Array && isDenseArrayOf(warnings, isSerializedRecoverableError);
     }
     case "render-layered-svg-ok": {
-      return isWorkerLayeredSvgResult(getProperty(value, "result"));
+      const warnings = getProperty(value, "warnings");
+      return (
+        isWorkerLayeredSvgResult(getProperty(value, "result")) &&
+        isDenseArrayOf(warnings, isSerializedRecoverableError)
+      );
     }
     case "render-layered-png-ok": {
-      return isWorkerLayeredPngResult(getProperty(value, "result"));
+      const warnings = getProperty(value, "warnings");
+      return (
+        isWorkerLayeredPngResult(getProperty(value, "result")) &&
+        isDenseArrayOf(warnings, isSerializedRecoverableError)
+      );
     }
     case "render-svg-and-ir-ok":
     case "render-animated-svg-and-ir-ok": {
       const svg = getStringProperty(value, "svg");
       const ir = getProperty(value, "ir");
       const warnings = getProperty(value, "warnings");
-      const serializedIr = isObjectLike(ir) ? { ...ir, warnings: [] } : ir;
       return (
         svg !== undefined &&
-        validateSerializedIR(serializedIr) &&
-        Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
+        validateStructuralIR(ir) &&
+        isDenseArrayOf(warnings, isSerializedRecoverableError)
       );
     }
     case "open-frame-stream-ok": {
       const warnings = getProperty(value, "warnings");
-      return (
-        isFrameStreamId(value) &&
-        Array.isArray(warnings) &&
-        warnings.every(isRecoverableStructuredError)
-      );
+      return isFrameStreamId(value) && isDenseArrayOf(warnings, isSerializedRecoverableError);
     }
     case "next-frame-stream-ok": {
       if (!isFrameStreamId(value)) {
@@ -805,17 +1249,54 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
     case "close-frame-stream-ok":
       return isFrameStreamId(value);
     case "layout-text-flow-ok":
+      return isWasmTextFlowResult(getProperty(value, "result"));
     case "layout-text-flow-with-exclusions-ok":
+      return isWasmTextFlowWithExclusionsResult(getProperty(value, "result"));
     case "measure-text-block-ok":
+      return isWasmMeasureTextBlockResult(getProperty(value, "result"));
     case "shrinkwrap-text-ok":
+      return isWasmShrinkwrapTextResult(getProperty(value, "result"));
     case "shrinkwrap-flow-ok":
+      return isWasmShrinkwrapFlowResult(getProperty(value, "result"));
     case "measure-intrinsic-inline-size-ok":
-      return isObjectLike(getProperty(value, "result"));
+      return isWasmIntrinsicInlineSizeResult(getProperty(value, "result"));
     case "error":
-      return isStructuredError(getProperty(value, "error"));
+      return isSerializedFatalError(getProperty(value, "error"));
     default:
       return false;
   }
+}
+
+/** Decode one response and its correlation ID from the same getter-free snapshot. */
+export function decodeWorkerResponseMessage(
+  value: unknown,
+): WorkerMessageDecodeResult<WorkerResponse> {
+  const snapshot = snapshotKnownProperties(value, WORKER_RESPONSE_KEYS);
+  if (snapshot === undefined) {
+    return { id: undefined, message: undefined };
+  }
+  const id = getWorkerMessageId(snapshot);
+  try {
+    const type = getStringProperty(snapshot, "type");
+    if (type !== undefined && !snapshotResponseDiagnostics(snapshot, type)) {
+      return { id, message: undefined };
+    }
+    if (!isWorkerResponseSnapshot(snapshot)) {
+      return { id, message: undefined };
+    }
+    return { id, message: snapshot };
+  } catch {
+    return { id, message: undefined };
+  }
+}
+
+/** Decode one response into a getter-free top-level snapshot. */
+export function decodeWorkerResponse(value: unknown): WorkerResponse | undefined {
+  return decodeWorkerResponseMessage(value).message;
+}
+
+export function isWorkerResponse(value: unknown): value is WorkerResponse {
+  return decodeWorkerResponse(value) !== undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -898,10 +1379,8 @@ function isLayerManifestEntry(value: unknown): value is object {
     id !== undefined &&
     (mode === "independent" || mode === "atomic") &&
     paintOrder !== undefined &&
-    Array.isArray(nodeIds) &&
-    nodeIds.every((nodeId) => typeof nodeId === "string") &&
-    Array.isArray(warnings) &&
-    warnings.every(isLayerWarning)
+    isDenseArrayOf(nodeIds, (nodeId): nodeId is string => typeof nodeId === "string") &&
+    isDenseArrayOf(warnings, (warning): warning is object => isLayerWarning(warning))
   );
 }
 
@@ -926,15 +1405,7 @@ function isWorkerLayeredSvgResult(value: unknown): value is WorkerLayeredSvgResu
   const width = getNumberProperty(value, "width");
   const height = getNumberProperty(value, "height");
   const layers = getProperty(value, "layers");
-  const warnings = getProperty(value, "warnings");
-  return (
-    width !== undefined &&
-    height !== undefined &&
-    Array.isArray(layers) &&
-    layers.every(isLayerSvgEntry) &&
-    Array.isArray(warnings) &&
-    warnings.every(isRecoverableStructuredError)
-  );
+  return width !== undefined && height !== undefined && isDenseArrayOf(layers, isLayerSvgEntry);
 }
 
 function isWorkerLayeredPngResult(value: unknown): value is WorkerLayeredPngResult {
@@ -946,15 +1417,11 @@ function isWorkerLayeredPngResult(value: unknown): value is WorkerLayeredPngResu
   const pixelWidth = getNumberProperty(value, "pixelWidth");
   const pixelHeight = getNumberProperty(value, "pixelHeight");
   const layers = getProperty(value, "layers");
-  const warnings = getProperty(value, "warnings");
   return (
     width !== undefined &&
     height !== undefined &&
     pixelWidth !== undefined &&
     pixelHeight !== undefined &&
-    Array.isArray(layers) &&
-    layers.every(isLayerPngEntry) &&
-    Array.isArray(warnings) &&
-    warnings.every(isRecoverableStructuredError)
+    isDenseArrayOf(layers, isLayerPngEntry)
   );
 }

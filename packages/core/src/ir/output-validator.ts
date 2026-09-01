@@ -1,9 +1,97 @@
-import type { OutputIrValidationError } from "../generated/ir/output-ir-validator.js";
-import { validateOutputIr } from "../generated/ir/output-ir-validator.js";
+import { RecoverableError } from "../errors.js";
+import type { StructuralIrValidationError } from "../generated/ir/structural-ir-validator.js";
+import { validateStructuralIr } from "../generated/ir/structural-ir-validator.js";
+import type { SerializedIR } from "./types.js";
 
-/** Validate the JSON-safe IR shape emitted by the Rust rendering boundary. */
-export function validateSerializedIR(value: unknown): boolean {
-  return validateOutputIr(value);
+let structuralWarningsRejected = false;
+
+function ownDataProperty(value: object, key: string): PropertyDescriptor | undefined {
+  try {
+    return Object.getOwnPropertyDescriptor(value, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function denseOwnDataElements(value: unknown): unknown[] | undefined {
+  let arrayValue: unknown[];
+  try {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+    arrayValue = value;
+  } catch {
+    return undefined;
+  }
+
+  const lengthDescriptor = ownDataProperty(arrayValue, "length");
+  if (
+    lengthDescriptor === undefined ||
+    !("value" in lengthDescriptor) ||
+    typeof lengthDescriptor.value !== "number" ||
+    !Number.isSafeInteger(lengthDescriptor.value) ||
+    lengthDescriptor.value < 0
+  ) {
+    return undefined;
+  }
+
+  const elements: unknown[] = [];
+  for (let index = 0; index < lengthDescriptor.value; index += 1) {
+    const descriptor = ownDataProperty(arrayValue, String(index));
+    if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+      return undefined;
+    }
+    elements.push(descriptor.value);
+  }
+  return elements;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Validate warning-free IR used inside WASM and Worker operation envelopes. */
+export function validateStructuralIR(value: unknown): boolean {
+  structuralWarningsRejected = false;
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+  const warningsDescriptor = ownDataProperty(value, "warnings");
+  if (warningsDescriptor !== undefined) {
+    structuralWarningsRejected = true;
+    return false;
+  }
+  try {
+    return validateStructuralIr(value);
+  } catch {
+    return false;
+  }
+}
+
+/** Validate a public JSON IR carrying one canonical serialized warning list. */
+export function validateSerializedIR(value: unknown): value is SerializedIR {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+  const warningsDescriptor = ownDataProperty(value, "warnings");
+  const warnings =
+    warningsDescriptor !== undefined && "value" in warningsDescriptor
+      ? denseOwnDataElements(warningsDescriptor.value)
+      : undefined;
+  if (
+    warningsDescriptor === undefined ||
+    !warningsDescriptor.enumerable ||
+    !("value" in warningsDescriptor) ||
+    warnings === undefined ||
+    !warnings.every((warning) => RecoverableError.isSerialized(warning))
+  ) {
+    return false;
+  }
+  try {
+    return validateStructuralIr(value);
+  } catch {
+    return false;
+  }
 }
 
 function decodeJsonPointerToken(token: string): string {
@@ -31,7 +119,7 @@ function propertyPath(instancePath: string): string {
     .join("");
 }
 
-function errorProperty(error: OutputIrValidationError): string | undefined {
+function errorProperty(error: StructuralIrValidationError): string | undefined {
   if (error.keyword === "required" && typeof error.params.missingProperty === "string") {
     return error.params.missingProperty;
   }
@@ -44,15 +132,15 @@ function errorProperty(error: OutputIrValidationError): string | undefined {
   return undefined;
 }
 
-function errorDepth(error: OutputIrValidationError): number {
+function errorDepth(error: StructuralIrValidationError): number {
   const pointerDepth = error.instancePath.split("/").length - 1;
   return pointerDepth + (errorProperty(error) === undefined ? 0 : 1);
 }
 
 function mostSpecificError(
-  errors: readonly OutputIrValidationError[] | null | undefined,
-): OutputIrValidationError | undefined {
-  let selectedError: OutputIrValidationError | undefined;
+  errors: readonly StructuralIrValidationError[] | null | undefined,
+): StructuralIrValidationError | undefined {
+  let selectedError: StructuralIrValidationError | undefined;
   let selectedDepth = -1;
   for (const error of errors ?? []) {
     const depth = errorDepth(error);
@@ -65,11 +153,17 @@ function mostSpecificError(
 }
 
 /** Details from the most recent failed generated-validator call. */
-export function serializedIRValidationFailure(rootPath: string): {
+export function structuralIRValidationFailure(rootPath: string): {
   path: string;
   description: string;
 } {
-  const error = mostSpecificError(validateOutputIr.errors);
+  if (structuralWarningsRejected) {
+    return {
+      path: `${rootPath}.warnings`,
+      description: "nested warnings are forbidden in structural IR",
+    };
+  }
+  const error = mostSpecificError(validateStructuralIr.errors);
   if (!error) {
     return { path: rootPath, description: "unknown" };
   }

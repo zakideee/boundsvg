@@ -929,6 +929,8 @@ describe("animated SVG document timeline", () => {
         () => engine.renderToAnimatedSvgAndIR(invalid.scene, options),
       ]) {
         const fatal = captureFatal(render);
+        expect(fatal.stage).toBe("emit");
+        expect(fatal.nodeId).toBe(invalid.ownerId);
         expect(fatal.context).toEqual({
           ownerKind: owner,
           ownerId: invalid.ownerId,
@@ -937,8 +939,6 @@ describe("animated SVG document timeline", () => {
           received: String(received),
           migration:
             "Use playback mode independent or change the authored value to the supported timeline range.",
-          stage: "emit",
-          nodeId: invalid.ownerId,
         });
         expect(fatal.code).toBe("ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
       }
@@ -989,6 +989,8 @@ describe("animated SVG document timeline", () => {
     ]) {
       const fatal = captureFatal(render);
       expect(fatal.code).toBe("ANIMATED_SVG_TIMELINE_UNREPRESENTABLE");
+      expect(fatal.stage).toBe("emit");
+      expect(fatal.nodeId).toBe("tiny-triangle-node");
       expect(fatal.context).toEqual({
         ownerKind: "node",
         ownerId: "tiny-triangle-node",
@@ -997,8 +999,6 @@ describe("animated SVG document timeline", () => {
         received: String(1 - 2 ** -53),
         migration:
           "Use playback mode independent or change the authored value to the supported timeline range.",
-        stage: "emit",
-        nodeId: "tiny-triangle-node",
       });
     }
   });
@@ -1169,7 +1169,7 @@ describe("animated SVG document timeline", () => {
     expect(error).toMatchObject({
       code: "ANIMATED_SVG_INVALID_TIMELINE",
       stage: "validate",
-      context: { stage: "validate", field, received },
+      context: { field, received },
     });
   });
 
@@ -1222,7 +1222,7 @@ describe("animated SVG document timeline", () => {
         expect(error).toMatchObject({
           code: "ANIMATED_SVG_INVALID_TIMELINE",
           stage: "validate",
-          context: { stage: "validate", field: "timeMs", received: "null" },
+          context: { field: "timeMs", received: "null" },
         });
       }
       expect(renderTransport).not.toHaveBeenCalled();
@@ -1243,7 +1243,6 @@ describe("animated SVG document timeline", () => {
       code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
       stage: "validate",
       context: {
-        stage: "validate",
         kind: "time-ratio",
         timeMs: 2 ** 31 + 1,
         durationMs: 1,
@@ -1270,8 +1269,6 @@ describe("animated SVG document timeline", () => {
         stage: "emit",
         nodeId: "timeline-box",
         context: {
-          stage: "emit",
-          nodeId: "timeline-box",
           ownerKind: "node",
           ownerId: "timeline-box",
           reason: "spring-easing",

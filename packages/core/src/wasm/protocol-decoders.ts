@@ -1,6 +1,6 @@
-import type { StructuredError } from "../errors.js";
-import { FatalError } from "../errors.js";
-import { serializedIRValidationFailure, validateSerializedIR } from "../ir/output-validator.js";
+import type { SerializedRecoverableError } from "../errors.js";
+import { FatalError, RecoverableError } from "../errors.js";
+import { structuralIRValidationFailure, validateStructuralIR } from "../ir/output-validator.js";
 import type {
   IntrinsicInlineSizeResult,
   MeasureTextBlockLine,
@@ -91,22 +91,6 @@ function arrayOf<Value>(guard: Guard<Value>): Guard<Value[]> {
   };
 }
 
-function recordOf<Value>(guard: Guard<Value>): Guard<Record<string, Value>> {
-  return (value: unknown, path = "$record"): value is Record<string, Value> => {
-    if (!isRecord(value)) {
-      return recordFailure(path, value);
-    }
-    for (const [key, property] of Object.entries(value)) {
-      if (!guard(property, `${path}.${key}`)) {
-        lastFailurePath ??= `${path}.${key}`;
-        lastFailureDescription ??= describeRejectedValue(property);
-        return false;
-      }
-    }
-    return true;
-  };
-}
-
 function objectGuard<Value extends object>(shape: ObjectShape<Value>): Guard<Value> {
   const entries = Object.entries(shape) as Array<[string, RuntimeFieldRule]>;
   return (value: unknown, path = "$object"): value is Value => {
@@ -154,41 +138,27 @@ function decodeJson<Value>(
       `${error.description} returned an invalid response shape at ${failurePath} (received ${failureDescription}).`,
       {
         stage: "wasm",
-        protocolPath: failurePath,
-        received: failureDescription,
+        context: {
+          protocolPath: failurePath,
+          received: failureDescription,
+        },
       },
     );
   }
   return parsed;
 }
 
-const pipelineStage = literal(
-  "validate",
-  "layout",
-  "text",
-  "ir",
-  "emit",
-  "wasm",
-  "font",
-  "engine",
-  "analyzer",
-);
-
-const isStructuredError = objectGuard<StructuredError>({
-  severity: required(literal("fatal", "recoverable")),
-  code: required(isString),
-  message: required(isString),
-  stage: optional(pipelineStage),
-  nodeId: optional(isString),
-  fallback: optional(isString),
-  context: optional(recordOf((_value): _value is unknown => true)),
-} satisfies ObjectShape<StructuredError>);
+const isSerializedRecoverableError: Guard<SerializedRecoverableError> = (
+  value,
+  path = "$warning",
+): value is SerializedRecoverableError =>
+  RecoverableError.isSerialized(value) || recordFailure(path, value);
 
 const isWasmIrOutput: Guard<WasmIrOutput> = (value, path = "$ir"): value is WasmIrOutput => {
-  if (validateSerializedIR(value)) {
+  if (validateStructuralIR(value)) {
     return true;
   }
-  const failure = serializedIRValidationFailure(path);
+  const failure = structuralIRValidationFailure(path);
   lastFailurePath ??= failure.path;
   lastFailureDescription ??= failure.description;
   return false;
@@ -196,13 +166,13 @@ const isWasmIrOutput: Guard<WasmIrOutput> = (value, path = "$ir"): value is Wasm
 
 const isRenderToIrEnvelope = objectGuard<RenderToIrEnvelope>({
   ir: required(isWasmIrOutput),
-  warnings: required(arrayOf(isStructuredError)),
+  warnings: required(arrayOf(isSerializedRecoverableError)),
 } satisfies ObjectShape<RenderToIrEnvelope>);
 
 const isRenderToSvgEnvelope = objectGuard<RenderToSvgEnvelope>({
   svg: required(isString),
   ir: optional(isWasmIrOutput),
-  warnings: required(arrayOf(isStructuredError)),
+  warnings: required(arrayOf(isSerializedRecoverableError)),
   textNodeIds: required(arrayOf(isString)),
 } satisfies ObjectShape<RenderToSvgEnvelope>);
 
@@ -238,7 +208,7 @@ const isTextFlowLine = objectGuard<TextFlowLine>({
 const isTextFlowResult = objectGuard<TextFlowResult>({
   lines: required(arrayOf(isTextFlowLine)),
   exhausted: required(isBoolean),
-  warnings: optional(arrayOf(isStructuredError)),
+  warnings: optional(arrayOf(isSerializedRecoverableError)),
 } satisfies ObjectShape<TextFlowResult>);
 
 const isTextFlowFragmentStyle = objectGuard<TextFlowFragmentStyle>({
@@ -299,7 +269,7 @@ const isTextFlowWithExclusionsResult = objectGuard<TextFlowWithExclusionsResult>
   usedLineCount: required(isNumber),
   overflowReason: optional(literal("maxLinesTruncated", "flowBoxExhausted", "cannotFit")),
   chosenFontSizePx: optional(isNumber),
-  warnings: optional(arrayOf(isStructuredError)),
+  warnings: optional(arrayOf(isSerializedRecoverableError)),
   topRubyOverflowPx: required(isNumber),
   bottomRubyOverflowPx: required(isNumber),
 } satisfies ObjectShape<TextFlowWithExclusionsResult>);
@@ -355,8 +325,47 @@ const isShrinkwrapFlowResult = objectGuard<ShrinkwrapFlowResult>({
 const isIntrinsicInlineSizeResult = objectGuard<IntrinsicInlineSizeResult>({
   minContentInlineSize: required(isNumber),
   maxContentInlineSize: required(isNumber),
-  warnings: optional(arrayOf(isStructuredError)),
+  warnings: optional(arrayOf(isSerializedRecoverableError)),
 } satisfies ObjectShape<IntrinsicInlineSizeResult>);
+
+function testDecodedValue<Value>(value: unknown, guard: Guard<Value>): value is Value {
+  lastFailurePath = undefined;
+  lastFailureDescription = undefined;
+  try {
+    return guard(value, "$");
+  } catch {
+    return false;
+  }
+}
+
+/** Strict value predicates shared by the WASM and Worker trust boundaries. */
+export function isWasmTextFlowResult(value: unknown): value is TextFlowResult {
+  return testDecodedValue(value, isTextFlowResult);
+}
+
+export function isWasmTextFlowWithExclusionsResult(
+  value: unknown,
+): value is TextFlowWithExclusionsResult {
+  return testDecodedValue(value, isTextFlowWithExclusionsResult);
+}
+
+export function isWasmMeasureTextBlockResult(value: unknown): value is MeasureTextBlockResult {
+  return testDecodedValue(value, isMeasureTextBlockResult);
+}
+
+export function isWasmShrinkwrapTextResult(value: unknown): value is ShrinkwrapTextResult {
+  return testDecodedValue(value, isShrinkwrapTextResult);
+}
+
+export function isWasmShrinkwrapFlowResult(value: unknown): value is ShrinkwrapFlowResult {
+  return testDecodedValue(value, isShrinkwrapFlowResult);
+}
+
+export function isWasmIntrinsicInlineSizeResult(
+  value: unknown,
+): value is IntrinsicInlineSizeResult {
+  return testDecodedValue(value, isIntrinsicInlineSizeResult);
+}
 
 export function decodeRenderToIrEnvelope(json: string): RenderToIrEnvelope {
   return decodeJson(json, isRenderToIrEnvelope, {

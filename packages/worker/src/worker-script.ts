@@ -18,17 +18,18 @@ import {
   type MeasureTextBlockInput,
   type RecoverableError,
   type SceneNode,
+  type SerializedFatalError,
+  type SerializedRecoverableError,
   type ShrinkwrapFlowInput,
   type ShrinkwrapTextInput,
-  type StructuredError,
   type TextFlowInput,
   type TextFlowWithExclusionsInput,
 } from "@boundsvg/core";
 import { initWasm } from "@boundsvg/core/wasm";
+import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import {
   collectResponseTransferables,
-  getWorkerMessageId,
-  isWorkerRequest,
+  decodeWorkerRequestMessage,
   type WorkerAnimatedGifRenderOptions,
   type WorkerAnimatedWebpRenderOptions,
   type WorkerLayeredPngRenderOptions,
@@ -63,10 +64,11 @@ declare const self: DedicatedWorkerGlobalScope;
 
 self.onmessage = (event: MessageEvent) => {
   const data: unknown = event.data;
+  const { id: requestId, message: request } = decodeWorkerRequestMessage(data);
 
-  if (!isWorkerRequest(data)) {
-    // Cannot correlate with an ID — best-effort extraction, fallback to -1.
-    const fallbackId = getWorkerMessageId(data) ?? -1;
+  if (request === undefined) {
+    // Preserve the correlation ID captured by the failed decode, or fall back to -1.
+    const fallbackId = requestId ?? -1;
     const response: WorkerResponse = {
       id: fallbackId,
       type: "error",
@@ -81,7 +83,7 @@ self.onmessage = (event: MessageEvent) => {
     return;
   }
 
-  void handleMessage(data);
+  void handleMessage(request);
 };
 
 async function handleMessage(request: WorkerRequest): Promise<void> {
@@ -164,7 +166,7 @@ async function handleMessage(request: WorkerRequest): Promise<void> {
     respond({
       id: request.id,
       type: "error",
-      error: toStructuredError(err),
+      error: toSerializedFatalError(err),
     });
   }
 }
@@ -208,7 +210,7 @@ function handleRenderSvg(id: number, scene: SceneNode, options?: WorkerRenderSvg
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const svg = eng.renderToSvg(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -226,7 +228,7 @@ function handleRenderAnimatedSvg(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const svg = eng.renderToAnimatedSvg(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -244,13 +246,8 @@ function handleRenderSvgAndIr(
     return;
   }
 
-  const warnings: StructuredError[] = [];
-  const { svg, ir } = eng.renderToSvgAndIR(scene, {
-    ...options,
-    onWarning: (warning) => warnings.push(warning.toJSON()),
-  });
-  // Strip non-serializable RecoverableError instances from IR.warnings
-  // (warnings are captured separately via onWarning above)
+  const { svg, ir } = eng.renderToSvgAndIR(scene, options);
+  const warnings = ir.warnings.map((warning) => warning.toJSON());
   const { warnings: _irWarnings, ...serializableIr } = ir;
   respond({ id, type: "render-svg-and-ir-ok", svg, ir: serializableIr, warnings });
 }
@@ -265,11 +262,8 @@ function handleRenderAnimatedSvgAndIr(
     return;
   }
 
-  const warnings: StructuredError[] = [];
-  const { svg, ir } = eng.renderToAnimatedSvgAndIR(scene, {
-    ...options,
-    onWarning: (warning) => warnings.push(warning.toJSON()),
-  });
+  const { svg, ir } = eng.renderToAnimatedSvgAndIR(scene, options);
+  const warnings = ir.warnings.map((warning) => warning.toJSON());
   const { warnings: _irWarnings, ...serializableIr } = ir;
   respond({ id, type: "render-animated-svg-and-ir-ok", svg, ir: serializableIr, warnings });
 }
@@ -280,7 +274,7 @@ function handleRenderPng(id: number, scene: SceneNode, options?: WorkerRenderPng
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const png = eng.renderToPng(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -296,7 +290,7 @@ function handleRenderWebp(id: number, scene: SceneNode, options?: WorkerRenderWe
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const webp = eng.renderToWebp(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -316,7 +310,7 @@ function handleRenderAnimatedWebp(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const webp = eng.renderToAnimatedWebp(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -336,7 +330,7 @@ function handleRenderAnimatedGif(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const gif = eng.renderToAnimatedGif(scene, {
     ...options,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -360,7 +354,7 @@ function handleRenderLayoutTransitionAnimatedWebp(
   }
   const { skipValidation, textPathMode, ...renderOptions } = options;
   const compiled = eng.compileLayoutTransition(transition, { skipValidation, textPathMode });
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const webp = eng.renderCompiledToAnimatedWebp(compiled, {
     ...renderOptions,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -383,7 +377,7 @@ function handleRenderLayoutTransitionAnimatedGif(
   }
   const { skipValidation, textPathMode, ...renderOptions } = options;
   const compiled = eng.compileLayoutTransition(transition, { skipValidation, textPathMode });
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const gif = eng.renderCompiledToAnimatedGif(compiled, {
     ...renderOptions,
     onWarning: (warning) => warnings.push(warning.toJSON()),
@@ -402,7 +396,7 @@ function handleRenderLayeredSvg(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const result = eng.renderToLayeredSvg(scene, {
     ...options,
     onWarning: (warning: RecoverableError) => warnings.push(warning.toJSON()),
@@ -410,10 +404,8 @@ function handleRenderLayeredSvg(
   respond({
     id,
     type: "render-layered-svg-ok",
-    result: {
-      ...result,
-      warnings,
-    },
+    result,
+    warnings,
   });
 }
 
@@ -427,7 +419,7 @@ function handleRenderLayeredPng(
     return;
   }
 
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const result = eng.renderToLayeredPng(scene, {
     ...options,
     onWarning: (warning: RecoverableError) => warnings.push(warning.toJSON()),
@@ -435,10 +427,8 @@ function handleRenderLayeredPng(
   const response: WorkerResponse = {
     id,
     type: "render-layered-png-ok",
-    result: {
-      ...result,
-      warnings,
-    },
+    result,
+    warnings,
   };
   self.postMessage(response, collectResponseTransferables(response));
 }
@@ -460,7 +450,7 @@ function handleOpenFrameStream(
 
   // renderFrames prepares eagerly, so every warning in the current core
   // contract is delivered before this open response is posted.
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const iterator = eng
     .renderFrames(request.scene, {
       ...request.options,
@@ -497,7 +487,7 @@ function handleOpenLayoutTransitionFrameStream(
     skipValidation,
     textPathMode,
   });
-  const warnings: StructuredError[] = [];
+  const warnings: SerializedRecoverableError[] = [];
   const iterator = eng
     .renderCompiledFrames(compiled, {
       ...renderOptions,
@@ -670,24 +660,23 @@ function respond(response: WorkerResponse): void {
   self.postMessage(response);
 }
 
-function toStructuredError(err: unknown): StructuredError {
-  if (err instanceof FatalError) {
-    return err.toJSON();
+function toSerializedFatalError(err: unknown): SerializedFatalError {
+  try {
+    if (err instanceof FatalError) {
+      return err.toJSON();
+    }
+  } catch {
+    // Fall through to the total boundary formatter.
   }
-  const message = err instanceof Error ? err.message : String(err);
   return {
     severity: "fatal",
     code: "WORKER_UNHANDLED_ERROR",
-    message,
+    message: formatUnknownWorkerFailure(err, "Unknown worker failure"),
     stage: "engine",
   };
 }
 
 /** JSON.stringify that never throws (handles circular refs, BigInt, etc.). */
 function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+  return formatUnknownWorkerFailure(value, "unprintable value");
 }

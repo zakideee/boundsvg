@@ -65,13 +65,20 @@ struct SourceAllowance {
 }
 
 // Manual serialization is normally forbidden because source-AST field
-// inventory cannot prove its omission policy. This one test-only projection is
-// deliberately manual: deriving Serialize would register a phantom bridge DTO.
-const MANUAL_SERIALIZE_ALLOWLIST: &[SourceAllowance] = &[SourceAllowance {
-    source: "crates/boundsvg/src/ir/types.rs",
-    item: "LinesProjection",
-    reason: "test-only projection exercises custom Line serialization without creating a bridge DTO",
-}];
+// inventory cannot prove its omission policy. These exact projections have a
+// separately tested structural contract that cannot be expressed by deriving.
+const MANUAL_SERIALIZE_ALLOWLIST: &[SourceAllowance] = &[
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "Ir",
+        reason: "canonical structural IR serialization excludes envelope-owned warnings while preserving every schema-generated field",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "LinesProjection",
+        reason: "test-only projection exercises custom Line serialization without creating a bridge DTO",
+    },
+];
 
 // Item macros can emit DTOs invisible to syn's unexpanded AST. These three
 // invocations generate test counters or font backend helpers, never serde DTOs.

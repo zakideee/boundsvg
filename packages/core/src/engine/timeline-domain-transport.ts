@@ -32,15 +32,17 @@ function authoredTimelineValueOutOfDomain(
     "ANIMATED_SVG_TIMELINE_UNREPRESENTABLE",
     `Animated SVG timeline cannot represent ${owner.ownerKind} track ${JSON.stringify(owner.ownerId)}: authored ${field} is outside the supported timeline range`,
     {
-      ownerKind: owner.ownerKind,
-      ownerId: owner.ownerId,
-      ...(owner.unitId === undefined ? {} : { unitId: owner.unitId }),
-      reason: "authored-value-out-of-domain",
-      field,
-      received: String(received),
-      migration: AUTHORED_TIMELINE_DOMAIN_MIGRATION,
       stage: "emit",
       nodeId: owner.ownerId,
+      context: {
+        ownerKind: owner.ownerKind,
+        ownerId: owner.ownerId,
+        ...(owner.unitId === undefined ? {} : { unitId: owner.unitId }),
+        reason: "authored-value-out-of-domain",
+        field,
+        received: String(received),
+        migration: AUTHORED_TIMELINE_DOMAIN_MIGRATION,
+      },
     },
   );
 }

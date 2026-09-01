@@ -539,7 +539,7 @@ fn canvas_stroke_rejects_non_uniform_and_mirrored_ancestors() {
                 ..
             } if code == "CANVAS_STROKE_UNSUPPORTED_TRANSFORM"
                 && message == "Canvas-stable border for node \"hairline\" requires similarity transforms without axis mirroring on every ancestor"
-                && stage.as_deref() == Some("emit")
+                && stage.as_ref() == Some(&crate::diagnostics::PipelineStage::Emit)
                 && node_id.as_deref() == Some("hairline")
         ));
     }
@@ -625,7 +625,7 @@ fn canvas_stroke_rejects_dasharrays_at_the_ir_boundary() {
             ..
         } if code == "CANVAS_STROKE_DASH_UNSUPPORTED"
             && message == "Canvas-stable box borders do not support strokeDasharray"
-            && stage.as_deref() == Some("emit")
+            && stage.as_ref() == Some(&crate::diagnostics::PipelineStage::Emit)
             && node_id.as_deref() == Some("hairline")
     ));
 }

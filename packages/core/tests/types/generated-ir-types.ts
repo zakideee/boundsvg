@@ -9,12 +9,14 @@ import type {
   IRSvgNode,
   IRTextNode,
   RecoverableError,
+  SerializedIR,
+  SerializedRecoverableError,
 } from "../../dist/index.js";
 import { validateSerializedIR } from "../../dist/index.js";
 import type {
   IrNode as GeneratedIrNode,
-  GeneratedOutputIr,
-} from "../../src/generated/ir/output-ir.js";
+  GeneratedStructuralIr,
+} from "../../src/generated/ir/structural-ir.js";
 
 type GeneratedGroupNode = Extract<GeneratedIrNode, { type: "group" }>;
 type GeneratedRectNode = Extract<GeneratedIrNode, { type: "rect" }>;
@@ -24,7 +26,7 @@ type GeneratedPathNode = Extract<GeneratedIrNode, { type: "path" }>;
 type GeneratedSvgNode = Extract<GeneratedIrNode, { type: "svg" }>;
 type GeneratedShapeNode = Extract<GeneratedIrNode, { type: "shape" }>;
 
-type CandidatePublicIr = Omit<GeneratedOutputIr, "warnings"> & {
+type CandidatePublicIr = GeneratedStructuralIr & {
   warnings: RecoverableError[];
 };
 
@@ -36,6 +38,8 @@ declare const generatedPath: GeneratedPathNode;
 declare const generatedSvg: GeneratedSvgNode;
 declare const generatedShape: GeneratedShapeNode;
 declare const candidateIr: CandidatePublicIr;
+declare const serializedWarning: SerializedRecoverableError;
+declare const serializedIr: SerializedIR;
 declare const publicGroup: IRGroupNode;
 declare const publicRect: IRRectNode;
 declare const publicText: IRTextNode;
@@ -71,9 +75,12 @@ const generatedPathAgain: GeneratedPathNode = publicPath;
 const generatedSvgAgain: GeneratedSvgNode = publicSvg;
 const generatedShapeAgain: GeneratedShapeNode = publicShape;
 const generatedNodeAgain: GeneratedIrNode = publicNode;
-const generatedStructureAgain: Omit<GeneratedOutputIr, "warnings"> = publicIr;
+const generatedStructureAgain: GeneratedStructuralIr = publicIr;
 const rehydratedWarning: RecoverableError | undefined = publicIr.warnings[0];
-const validSerializedIr: boolean = validateSerializedIR(candidateIr);
+const serializedWarningAgain: SerializedRecoverableError | undefined = serializedIr.warnings[0];
+const validSerializedIr: boolean = validateSerializedIR(serializedIr);
+// @ts-expect-error structural IR intentionally has no nested warning authority
+const invalidGeneratedWarnings = generatedStructureAgain.warnings;
 
 void currentGroup;
 void currentRect;
@@ -94,7 +101,10 @@ void generatedShapeAgain;
 void generatedNodeAgain;
 void generatedStructureAgain;
 void rehydratedWarning;
+void serializedWarning;
+void serializedWarningAgain;
 void validSerializedIr;
+void invalidGeneratedWarnings;
 
 function exhaustGeneratedNode(node: GeneratedIrNode): string {
   switch (node.type) {

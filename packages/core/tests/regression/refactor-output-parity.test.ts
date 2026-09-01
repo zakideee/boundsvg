@@ -50,6 +50,60 @@ function jsonBytes(value: unknown): Uint8Array {
   return utf8(JSON.stringify(value));
 }
 
+function c2aIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
+  return new Map([
+    ["contracts/wasm-schema-version.txt", utf8("29")],
+    [
+      "fallback/missing-glyph.warnings.json",
+      jsonBytes([
+        {
+          severity: "recoverable",
+          code: "MISSING_GLYPH",
+          message: 'Font "NotoSansJP" is missing glyphs for: U+1F389 (🎉)',
+          fallback: "blank",
+          stage: "text",
+          nodeId: "parity-missing-glyph",
+        },
+      ]),
+    ],
+    [
+      "fallback/png-resolution-adjusted.warnings.json",
+      jsonBytes([
+        {
+          severity: "recoverable",
+          code: "PNG_RESOLUTION_ADJUSTED",
+          message:
+            "PNG resolution exceeded 4K-equivalent cap; auto-adjusted scale from 1 to 0.768 (5000x2 -> 3840x2)",
+          fallback: "auto-adjusted scale",
+          stage: "emit",
+          context: {
+            requestedScale: 1,
+            appliedScale: 0.768,
+            baseWidth: 5000,
+            baseHeight: 2,
+            requestedWidth: 5000,
+            requestedHeight: 2,
+            outputWidth: 3840,
+            outputHeight: 2,
+            maxLongEdge: 3840,
+            maxPixels: 8_294_400,
+          },
+        },
+      ]),
+    ],
+    [
+      "fatal/timeline-precision-loss.json",
+      jsonBytes({
+        severity: "fatal",
+        code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
+        message: "Animated SVG timeline keyframe precision check failed: separation",
+        stage: "emit",
+        context: { kind: "separation", leftTimeMs: 0, rightTimeMs: 0 },
+      }),
+    ],
+  ]);
+}
+
 function safeArtifactPath(relativePath: string): string {
   if (
     relativePath.startsWith("/") ||
@@ -303,14 +357,31 @@ describe("refactor output parity", () => {
     expect(manifest.artifacts).toEqual([...corpus.artifacts.keys()].sort());
     expect(listReferenceArtifacts(referenceRoot)).toEqual(manifest.artifacts);
 
+    const intentionalArtifacts = c2aIntentionalArtifacts();
+    let unchangedCount = 0;
+    let intentionalCount = 0;
     for (const artifactName of manifest.artifacts) {
       const actualBytes = corpus.artifacts.get(artifactName);
       if (actualBytes === undefined) {
         throw new TypeError(`Missing captured parity artifact: ${artifactName}`);
       }
       const expectedBytes = new Uint8Array(readFileSync(safeArtifactPath(artifactName)));
+      const intentionalBytes = intentionalArtifacts.get(artifactName);
+      if (intentionalBytes !== undefined) {
+        expect(actualBytes, `${artifactName}: intentional C2a byte content`).toEqual(
+          intentionalBytes,
+        );
+        expect(actualBytes, `${artifactName}: differs from the preserved base fixture`).not.toEqual(
+          expectedBytes,
+        );
+        intentionalCount += 1;
+        continue;
+      }
       expect(actualBytes.byteLength, `${artifactName}: byte length`).toBe(expectedBytes.byteLength);
       expect(actualBytes, `${artifactName}: byte content`).toEqual(expectedBytes);
+      unchangedCount += 1;
     }
+    expect(unchangedCount).toBe(19);
+    expect(intentionalCount).toBe(4);
   });
 });

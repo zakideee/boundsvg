@@ -188,6 +188,82 @@ describe("computeLayout", () => {
     expect(textNode.textLayout!.measuredWidth).toBeGreaterThan(0);
   });
 
+  it("preserves strict recoverable warnings from the layout wire", () => {
+    const mock = createMockComputeLayout();
+    const computeLayoutFn: ComputeLayoutFn = (inputJson) => {
+      const output = JSON.parse(mock.computeLayoutFn(inputJson)) as {
+        nodes: Array<{ textLayout?: { warnings?: unknown[] } }>;
+      };
+      const textLayout = output.nodes.find((node) => node.textLayout)?.textLayout;
+      if (textLayout) {
+        textLayout.warnings = [
+          {
+            severity: "recoverable",
+            code: "MISSING_GLYPH",
+            message: "Font is missing a glyph.",
+            fallback: "blank",
+            stage: "text",
+            nodeId: "text-warning",
+          },
+        ];
+      }
+      return JSON.stringify(output);
+    };
+    const vnode = createElement(
+      "Canvas",
+      { width: 200, height: 80 },
+      createElement("Text", { font: "NotoSansJP", fontSizePx: 24, id: "text-warning" }, "A"),
+    );
+
+    const warnings = computeLayout(vnode, { computeLayoutFn }).root.children[0]?.textLayout
+      ?.resolvedTextLayout.warnings;
+
+    expect(warnings).toEqual([
+      {
+        severity: "recoverable",
+        code: "MISSING_GLYPH",
+        message: "Font is missing a glyph.",
+        fallback: "blank",
+        stage: "text",
+        nodeId: "text-warning",
+      },
+    ]);
+  });
+
+  it("rejects legacy severity-less warnings from the layout wire", () => {
+    const mock = createMockComputeLayout();
+    const computeLayoutFn: ComputeLayoutFn = (inputJson) => {
+      const output = JSON.parse(mock.computeLayoutFn(inputJson)) as {
+        nodes: Array<{ textLayout?: { warnings?: unknown[] } }>;
+      };
+      const textLayout = output.nodes.find((node) => node.textLayout)?.textLayout;
+      if (textLayout) {
+        textLayout.warnings = [
+          { code: "MISSING_GLYPH", message: "Font is missing a glyph.", fallback: "blank" },
+        ];
+      }
+      return JSON.stringify(output);
+    };
+    const vnode = createElement(
+      "Canvas",
+      { width: 200, height: 80 },
+      createElement("Text", { font: "NotoSansJP", fontSizePx: 24 }, "A"),
+    );
+
+    let caught: unknown;
+    try {
+      computeLayout(vnode, { computeLayoutFn });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(FatalError);
+    expect(caught).toMatchObject({
+      code: "LAYOUT_INVALID_WASM_OUTPUT",
+      stage: "layout",
+    });
+  });
+
   it("serializes the exact flow-fit probe budget", () => {
     const mock = createMockComputeLayout();
     const vnode = createElement(

@@ -13,6 +13,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::diagnostics::SerializedRecoverableError;
 use crate::font::shaping::GlyphInfo;
 use crate::text::types::{Line, PositionedGlyph, TextRunStyle};
 pub use crate::text::types::{TextShadowLayer, TextStrokeLayer};
@@ -1090,110 +1091,6 @@ fn deserialize_lines_ts_projection<'de, D: Deserializer<'de>>(
 }
 
 // ---------------------------------------------------------------------------
-// Render warning (structured — matches TS StructuredError contract)
-// ---------------------------------------------------------------------------
-
-/// Error severity — matches TS `ErrorSeverity` in `packages/core/src/errors.ts`.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ErrorSeverity {
-    Fatal,
-    Recoverable,
-}
-
-/// Pipeline stages for structured warning/error reporting.
-/// Matches TS `PipelineStage` in `packages/core/src/errors.ts`.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PipelineStage {
-    Validate,
-    Layout,
-    Text,
-    Ir,
-    Emit,
-    Wasm,
-    Font,
-    Engine,
-    Analyzer,
-}
-
-/// A structured warning emitted during IR build or SVG emission.
-///
-/// Matches the TS `StructuredError` schema
-/// (`{ severity, code, message, stage?, nodeId?, fallback? }`).
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RenderWarning {
-    pub severity: ErrorSeverity,
-    pub code: String,
-    pub message: String,
-    pub stage: PipelineStage,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_id: Option<String>,
-    /// Description of the fallback action taken (e.g. "`placeholder_rect`").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<String>,
-}
-
-impl RenderWarning {
-    pub(crate) fn recoverable(
-        code: impl Into<String>,
-        message: impl Into<String>,
-        stage: PipelineStage,
-        node_id: Option<String>,
-        fallback: impl Into<String>,
-    ) -> Self {
-        let code = code.into();
-        let message = message.into();
-        let fallback = fallback.into();
-        debug_assert!(
-            matches!(
-                code.as_str(),
-                "IMAGE_LOAD_FAILED"
-                    | "IMAGE_SRC_NOT_EMBEDDED"
-                    | "INLINE_BOX_MAX_DEPTH"
-                    | "KINSOKU_UNRESOLVED"
-                    | "LONG_RUBY_ANNOTATION"
-                    | "MISSING_GLYPH"
-                    | "RUBY_INTER_CHARACTER_FALLBACK"
-                    | "SHAPE_PART_PAINT_UNKNOWN_PART"
-                    | "SVG_EMBEDDED_TEXT"
-                    | "TEXT_ANIMATION_FRAGMENT_COUNT_HIGH"
-                    | "TEXT_ANIMATION_UNIT_COUNT_HIGH"
-                    | "TEXT_DECORATION_SKIP_INK_LIMIT"
-            ),
-            "recoverable warning code must have a declared policy"
-        );
-        debug_assert!(
-            code.starts_with(|character: char| character.is_ascii_uppercase())
-                && code.chars().all(|character| character.is_ascii_uppercase()
-                    || character.is_ascii_digit()
-                    || character == '_'),
-            "recoverable warning code must be stable SCREAMING_SNAKE_CASE"
-        );
-        debug_assert!(
-            !message.trim().is_empty(),
-            "recoverable warning message must not be empty"
-        );
-        debug_assert!(
-            !fallback.trim().is_empty(),
-            "recoverable warning fallback must not be empty"
-        );
-        Self {
-            severity: ErrorSeverity::Recoverable,
-            code,
-            message,
-            stage,
-            node_id,
-            fallback: Some(fallback),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Hit target (returned alongside SVG for TS-side spatial indexing)
 // ---------------------------------------------------------------------------
 
@@ -1212,10 +1109,9 @@ pub struct HitTarget {
 // ---------------------------------------------------------------------------
 
 /// Complete intermediate representation for a rendered tree.
-/// Serializes as the TS `IR` shape (camelCase, `debug` omitted unless true).
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Diagnostics remain internal and are serialized only by the surrounding
+/// render envelope.
+#[derive(Debug, Clone)]
 pub struct Ir {
     pub root: IrNode,
     /// Node IDs in z-ascending order (back-to-front).
@@ -1223,9 +1119,46 @@ pub struct Ir {
     pub width: f64,
     pub height: f64,
     /// Declarative Canvas debug overlay default; omitted unless enabled.
+    pub debug: Option<bool>,
+    pub warnings: Vec<SerializedRecoverableError>,
+}
+
+/// Borrowed structural projection used at every IR wire boundary.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StructuralIr<'a> {
+    pub root: &'a IrNode,
+    pub draw_order: &'a [String],
+    pub width: f64,
+    pub height: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub debug: Option<bool>,
-    pub warnings: Vec<RenderWarning>,
+}
+
+impl Ir {
+    #[must_use]
+    pub fn structural(&self) -> StructuralIr<'_> {
+        StructuralIr {
+            root: &self.root,
+            draw_order: &self.draw_order,
+            width: self.width,
+            height: self.height,
+            debug: self.debug,
+        }
+    }
+}
+
+impl Serialize for Ir {
+    fn serialize<SerializerType>(
+        &self,
+        serializer: SerializerType,
+    ) -> Result<SerializerType::Ok, SerializerType::Error>
+    where
+        SerializerType: Serializer,
+    {
+        self.structural().serialize(serializer)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1436,23 +1369,23 @@ fn count_ascii_digits(bytes: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::{PipelineStage, RecoverableCode, SerializedRecoverableError};
 
     #[test]
     fn recoverable_warning_constructor_fixes_the_required_wire_fields() {
-        let warning = RenderWarning::recoverable(
-            "IMAGE_LOAD_FAILED",
+        let warning = SerializedRecoverableError::recoverable(
+            RecoverableCode::ImageLoadFailed,
             "warning message",
             PipelineStage::Ir,
             Some("node-1".to_string()),
             "deterministic fallback",
         );
 
-        assert_eq!(warning.severity, ErrorSeverity::Recoverable);
         assert_eq!(warning.code, "IMAGE_LOAD_FAILED");
         assert_eq!(warning.message, "warning message");
         assert_eq!(warning.stage, PipelineStage::Ir);
         assert_eq!(warning.node_id.as_deref(), Some("node-1"));
-        assert_eq!(warning.fallback.as_deref(), Some("deterministic fallback"));
+        assert_eq!(warning.fallback, "deterministic fallback");
     }
 
     #[test]

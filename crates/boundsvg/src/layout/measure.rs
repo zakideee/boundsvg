@@ -893,7 +893,7 @@ pub(super) fn measure_text_node(
             crate::error::EngineError::Structured {
                 code: code.to_string(),
                 message: error.to_string(),
-                stage: Some("text".to_string()),
+                stage: Some(crate::diagnostics::PipelineStage::Text),
                 node_id: None,
             }
         })?;

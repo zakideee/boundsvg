@@ -65,7 +65,7 @@ fn animation_error(node_id: &str, message: &str) -> EngineError {
     EngineError::Structured {
         code: "ANIMATION_INVALID_SPEC".to_string(),
         message: format!("Invalid animation: {message}"),
-        stage: Some("validate".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Validate),
         node_id: Some(node_id.to_string()),
     }
 }
@@ -664,7 +664,7 @@ fn validate_text_unit_animation(node: &IrNode) -> Result<(), EngineError> {
         return Err(EngineError::Structured {
             code: "TEXT_UNIT_MAP_UNAVAILABLE".to_string(),
             message: "Text unit animation requires a resolved UnitMap".to_string(),
-            stage: Some("text".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Text),
             node_id: Some(node.node_id.clone()),
         });
     };
@@ -675,7 +675,7 @@ fn validate_text_unit_animation(node: &IrNode) -> Result<(), EngineError> {
         return Err(EngineError::Structured {
             code: "TEXT_UNIT_MAP_MISMATCH".to_string(),
             message: "Text unit animation does not match its resolved UnitMap".to_string(),
-            stage: Some("text".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Text),
             node_id: Some(node.node_id.clone()),
         });
     }
@@ -699,7 +699,7 @@ fn validate_text_unit_animation(node: &IrNode) -> Result<(), EngineError> {
         return Err(EngineError::Structured {
             code: "TEXT_UNIT_OUTLINES_UNAVAILABLE".to_string(),
             message: "Text unit animation requires resolved unit outline bounds".to_string(),
-            stage: Some("text".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Text),
             node_id: Some(node.node_id.clone()),
         });
     };
@@ -719,7 +719,7 @@ fn validate_text_unit_animation(node: &IrNode) -> Result<(), EngineError> {
         return Err(EngineError::Structured {
             code: "TEXT_UNIT_SAMPLE_MISMATCH".to_string(),
             message: "Text unit samples must map one-to-one to UnitMap entries".to_string(),
-            stage: Some("text".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Text),
             node_id: Some(node.node_id.clone()),
         });
     }
@@ -734,7 +734,7 @@ fn validate_text_unit_animation(node: &IrNode) -> Result<(), EngineError> {
         return Err(EngineError::Structured {
             code: "TEXT_UNIT_INVALID_BBOX".to_string(),
             message: "Text unit outline bounds must be finite and non-negative".to_string(),
-            stage: Some("text".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Text),
             node_id: Some(node.node_id.clone()),
         });
     }
@@ -786,7 +786,7 @@ fn sample_node(node: &mut IrNode, time_ms: f64) -> Result<(), EngineError> {
                 return Err(EngineError::Structured {
                     code: "TEXT_UNIT_MAP_UNAVAILABLE".to_string(),
                     message: "Text unit animation requires a resolved UnitMap".to_string(),
-                    stage: Some("text".to_string()),
+                    stage: Some(crate::diagnostics::PipelineStage::Text),
                     node_id: Some(node_id),
                 });
             };
@@ -795,7 +795,7 @@ fn sample_node(node: &mut IrNode, time_ms: f64) -> Result<(), EngineError> {
                     code: "TEXT_UNIT_OUTLINES_UNAVAILABLE".to_string(),
                     message: "Text unit animation requires resolved unit outline bounds"
                         .to_string(),
-                    stage: Some("text".to_string()),
+                    stage: Some(crate::diagnostics::PipelineStage::Text),
                     node_id: Some(node_id),
                 });
             };
@@ -1013,7 +1013,7 @@ pub(crate) fn validate_text_animation_budget_counts(
             message: format!(
                 "Text animation unit count {unit_count} exceeds the scene limit {MAX_TEXT_ANIMATION_UNITS}"
             ),
-            stage: Some("layout".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Layout),
             node_id: None,
         });
     }
@@ -1023,7 +1023,7 @@ pub(crate) fn validate_text_animation_budget_counts(
             message: format!(
                 "Text animation fragment estimate {fragment_count} exceeds the scene limit {MAX_TEXT_ANIMATION_FRAGMENTS}"
             ),
-            stage: Some("emit".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Emit),
             node_id: None,
         });
     }
@@ -1151,7 +1151,7 @@ pub fn sample_animation(ir: &Ir, time_ms: f64) -> Result<Ir, EngineError> {
         return Err(EngineError::Structured {
             code: "ANIMATION_INVALID_TIME".to_string(),
             message: "Animation timeMs must be a non-negative finite number".to_string(),
-            stage: Some("emit".to_string()),
+            stage: Some(crate::diagnostics::PipelineStage::Emit),
             node_id: None,
         });
     }

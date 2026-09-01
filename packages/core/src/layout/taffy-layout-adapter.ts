@@ -1,4 +1,4 @@
-import { FatalError } from "../errors.js";
+import { FatalError, RecoverableError } from "../errors.js";
 import { DEFAULT_FONT_WEIGHT } from "../font/types.js";
 import { HANDLER_KEYS, type NodePosition } from "../ir/internal.js";
 import { generateNodeId } from "../ir/node-id.js";
@@ -21,6 +21,7 @@ import type {
   TextDecorationFragment,
   TextDecorationLine,
   TextLayoutResult,
+  TextLayoutWarning,
   TextOverflow,
   TextRunStyle,
   TextShadowLayer,
@@ -479,7 +480,7 @@ type WasmNodeOutput = {
     displayText?: string;
     unitMap?: TextUnitMap;
     /** Recoverable text warnings from the engine (e.g. MISSING_GLYPH). */
-    warnings?: Array<{ code: string; message: string; fallback?: string }>;
+    warnings?: TextLayoutWarning[];
     /** Inline / InlineBox decoration rects, in text-local coordinates. */
     inlineBoxDecorations?: Array<{
       x: number;
@@ -1492,6 +1493,18 @@ function parseResolvedTextLayout(
       `computeLayoutFn returned textLayout for node "${nodeId}" without required ` +
         `resolved fields (lines, bbox, chosenFontSizePx). ` +
         `Custom computeLayoutFn implementations must include full text layout data.`,
+      { stage: "layout", nodeId },
+    );
+  }
+
+  if (
+    wasmTextLayout.warnings !== undefined &&
+    (!Array.isArray(wasmTextLayout.warnings) ||
+      !wasmTextLayout.warnings.every((warning) => RecoverableError.isSerialized(warning)))
+  ) {
+    throw new FatalError(
+      "LAYOUT_INVALID_WASM_OUTPUT",
+      `computeLayoutFn returned invalid recoverable warnings for node "${nodeId}".`,
       { stage: "layout", nodeId },
     );
   }

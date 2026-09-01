@@ -42,7 +42,9 @@ export function assertNodeIdIsWellFormedUnicode(nodeId: string): void {
     {
       stage: "validate",
       nodeId,
-      reason: "lone UTF-16 surrogate",
+      context: {
+        reason: "lone UTF-16 surrogate",
+      },
     },
   );
 }

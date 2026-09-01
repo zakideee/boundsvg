@@ -209,7 +209,13 @@ function unsupportedConfig(config: VideoEncoderConfig, cause?: unknown): FatalEr
   return new FatalError(
     "VIDEO_ENCODER_UNSUPPORTED",
     `this runtime cannot encode ${config.codec} at ${config.width}x${config.height}${detail}`,
-    { codec: config.codec, width: config.width, height: config.height },
+    {
+      context: {
+        codec: config.codec,
+        width: config.width,
+        height: config.height,
+      },
+    },
   );
 }
 
@@ -247,7 +253,9 @@ function asEncoderFailure(error: unknown): FatalError {
   }
   const detail = describeError(error);
   return new FatalError("VIDEO_ENCODER_UNSUPPORTED", `video encoding failed: ${detail}`, {
-    cause: detail,
+    context: {
+      cause: detail,
+    },
   });
 }
 

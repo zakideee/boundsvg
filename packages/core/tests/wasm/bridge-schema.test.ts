@@ -47,6 +47,7 @@ const wasmIndexFile = "packages/core/src/wasm/index.ts";
 const protocolDecoderFile = "packages/core/src/wasm/protocol-decoders.ts";
 const layoutAdapterFile = "packages/core/src/layout/taffy-layout-adapter.ts";
 const irTypesFile = "packages/core/src/ir/types.ts";
+const generatedIrTypesFile = "packages/core/src/generated/ir/structural-ir.ts";
 const textTypesFile = "packages/core/src/text/types.ts";
 
 const typeTargets: Record<string, TypeTarget[]> = {
@@ -67,7 +68,6 @@ const typeTargets: Record<string, TypeTarget[]> = {
     { file: wasmIndexFile, typeName: "FlowExclusionMarginPx", selectObject: true },
   ],
   FlowTextSpanDto: [{ file: wasmIndexFile, typeName: "TextMeasureSpan" }],
-  FlowWarning: [{ file: "packages/core/src/errors.ts", typeName: "StructuredError" }],
   IntrinsicInlineSizeInput: [{ file: wasmIndexFile, typeName: "IntrinsicInlineSizeInput" }],
   IntrinsicInlineSizeResult: [{ file: wasmIndexFile, typeName: "IntrinsicInlineSizeResult" }],
   MeasureTextBlockInput: [{ file: wasmIndexFile, typeName: "MeasureTextBlockInput" }],
@@ -108,8 +108,11 @@ const typeTargets: Record<string, TypeTarget[]> = {
     { file: irTypesFile, typeName: "IRNode", path: ["gradient", "geometry"] },
   ],
   HandlersRef: [{ file: irTypesFile, typeName: "HandlersRef" }],
-  Ir: [{ file: irTypesFile, typeName: "IR" }],
-  RenderWarning: [{ file: "packages/core/src/errors.ts", typeName: "StructuredError" }],
+  StructuralIr: [{ file: generatedIrTypesFile, typeName: "GeneratedStructuralIr" }],
+  SerializedFatalError: [{ file: "packages/core/src/errors.ts", typeName: "SerializedFatalError" }],
+  SerializedRecoverableError: [
+    { file: "packages/core/src/errors.ts", typeName: "SerializedRecoverableError" },
+  ],
   RenderToIrOutput: [{ file: "packages/core/src/wasm/types.ts", typeName: "RenderToIrEnvelope" }],
   OutlineGlyphLimitExceeded: [
     {
@@ -287,7 +290,16 @@ const unitEnumTargets: Record<string, TypeTarget> = {
     path: ["oversizeBehavior"],
   },
   // IR output enums (serialize direction)
-  ErrorSeverity: { file: "packages/core/src/errors.ts", typeName: "ErrorSeverity" },
+  FatalSeverity: {
+    file: "packages/core/src/errors.ts",
+    typeName: "SerializedFatalError",
+    path: ["severity"],
+  },
+  RecoverableSeverity: {
+    file: "packages/core/src/errors.ts",
+    typeName: "SerializedRecoverableError",
+    path: ["severity"],
+  },
   PipelineStage: { file: "packages/core/src/errors.ts", typeName: "PipelineStage" },
   StrokeLinecap: { file: irTypesFile, typeName: "IRNode", path: ["strokeLinecap"] },
   StrokeLinejoin: { file: irTypesFile, typeName: "IRNode", path: ["strokeLinejoin"] },
@@ -783,14 +795,14 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       rustDtos.size,
     );
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(131);
+    expect(rustDtos.size).toBe(132);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(863);
+    ).toBe(864);
     expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(81);
   });
 

@@ -17,9 +17,10 @@ use boundshape::{
     region_to_path,
 };
 
+use crate::diagnostics::{PipelineStage, RecoverableCode, SerializedRecoverableError};
 use crate::error::EngineError;
 use crate::font::FontRegistry;
-use crate::ir::types::{BBox, IrNode, IrNodeKind, PipelineStage, RenderWarning};
+use crate::ir::types::{BBox, IrNode, IrNodeKind};
 use crate::text::decoration::{
     MAX_TEXT_DECORATION_PATTERN_CONTOURS, MAX_TEXT_DECORATION_PATTERN_SEGMENTS,
 };
@@ -51,7 +52,7 @@ const GEOMETRY_EPSILON: f64 = 1e-4;
 pub fn resolve_text_decoration_skip_ink(
     root: &mut IrNode,
     registry: &FontRegistry,
-    warnings: &mut Vec<RenderWarning>,
+    warnings: &mut Vec<SerializedRecoverableError>,
 ) -> Result<(), EngineError> {
     if let IrNodeKind::Group { children, .. } = &mut root.kind {
         for child in children {
@@ -96,8 +97,8 @@ pub fn resolve_text_decoration_skip_ink(
     };
     *text_decorations = Some(fallback_decorations);
     root.bbox = text_bbox_with_decorations(&root.kind, original_bbox, &node_id)?;
-    warnings.push(RenderWarning::recoverable(
-        "TEXT_DECORATION_SKIP_INK_LIMIT",
+    warnings.push(SerializedRecoverableError::recoverable(
+        RecoverableCode::TextDecorationSkipInkLimit,
         warning_message,
         PipelineStage::Ir,
         Some(node_id),
@@ -1383,7 +1384,7 @@ fn decoration_geometry_error(node_id: &str, message: impl Into<String>) -> Engin
     EngineError::Structured {
         code: "TEXT_DECORATION_GEOMETRY".to_string(),
         message: message.into(),
-        stage: Some("ir".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Ir),
         node_id: Some(node_id.to_string()),
     }
 }
@@ -1392,7 +1393,7 @@ fn path_decoration_limit_error(node_id: &str, message: impl Into<String>) -> Eng
     EngineError::Structured {
         code: "TEXT_PATH_DECORATION_LIMIT".to_string(),
         message: message.into(),
-        stage: Some("ir".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Ir),
         node_id: Some(node_id.to_string()),
     }
 }
@@ -1401,7 +1402,7 @@ fn skip_ink_limit_error(node_id: &str, message: impl Into<String>) -> EngineErro
     EngineError::Structured {
         code: "TEXT_DECORATION_SKIP_INK_LIMIT".to_string(),
         message: message.into(),
-        stage: Some("ir".to_string()),
+        stage: Some(crate::diagnostics::PipelineStage::Ir),
         node_id: Some(node_id.to_string()),
     }
 }

@@ -1,5 +1,3 @@
-// Error rehydration
-export { rehydrateError } from "./error-rehydration.js";
 export type { WorkerLayoutTransitionInput } from "./layout-transition-transport.js";
 export {
   isWorkerLayoutTransitionInput,

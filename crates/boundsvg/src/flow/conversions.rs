@@ -1,12 +1,12 @@
 use super::geometry;
 use super::types::{
-    FlowOverflowReason, FlowTextSpanDto, FlowWarning, ShrinkwrapStatusDto, TextFlowExclusionLine,
+    FlowOverflowReason, FlowTextSpanDto, ShrinkwrapStatusDto, TextFlowExclusionLine,
     TextFlowFragment, TextFlowFragmentStyle, TextFlowLine, TextFlowResult, TextFlowRubyAnnotation,
     TextFlowRubyAnnotationLevel, TextFlowRubyAnnotationRun, TextFlowWithExclusionsResult,
 };
+use crate::diagnostics::text_warning_to_recoverable;
 use crate::text::flow as bt_flow;
 use crate::text::shrinkwrap;
-use crate::text::types::TextWarning;
 
 // ---------------------------------------------------------------------------
 // Exclusion region provider
@@ -74,28 +74,6 @@ impl bt_flow::RegionProvider for ExclusionRegionProvider<'_> {
 // ---------------------------------------------------------------------------
 // Conversion helpers
 // ---------------------------------------------------------------------------
-
-/// Convert a `TextWarning` from boundtext to the WASM-facing `FlowWarning`.
-pub(super) fn text_warning_to_flow_warning(warning: &TextWarning) -> FlowWarning {
-    debug_assert!(
-        !warning.code.trim().is_empty() && !warning.message.trim().is_empty(),
-        "recoverable text warning must retain code and message"
-    );
-    debug_assert!(
-        warning
-            .fallback
-            .as_deref()
-            .is_some_and(|fallback| !fallback.trim().is_empty()),
-        "recoverable text warning must retain a non-empty fallback"
-    );
-    FlowWarning {
-        severity: "recoverable".to_string(),
-        code: warning.code.clone(),
-        message: warning.message.clone(),
-        stage: "text".to_string(),
-        fallback: warning.fallback.clone(),
-    }
-}
 
 /// Convert a `FlowTextSpanDto` to `boundtext::text::flow::FlowTextSpan`.
 pub(super) fn convert_flow_span(dto: &FlowTextSpanDto) -> bt_flow::FlowTextSpan {
@@ -206,7 +184,7 @@ pub(super) fn convert_simple_result(result: bt_flow::FlowSimpleResult) -> TextFl
         warnings: result
             .warnings
             .iter()
-            .map(text_warning_to_flow_warning)
+            .map(|warning| text_warning_to_recoverable(warning, None))
             .collect(),
     }
 }
@@ -233,7 +211,7 @@ pub(super) fn convert_flow_result(
         warnings: result
             .warnings
             .iter()
-            .map(text_warning_to_flow_warning)
+            .map(|warning| text_warning_to_recoverable(warning, None))
             .collect(),
         top_ruby_overflow_px,
         bottom_ruby_overflow_px,

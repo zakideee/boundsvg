@@ -103,11 +103,15 @@ function createHarness() {
     } | null;
     if (exceeded) {
       throw JSON.stringify({
+        severity: "fatal",
         code: "PNG_OUTLINE_GLYPH_LIMIT",
         message: `PNG rendering exceeds the outline glyph limit of ${exceeded.maxGlyphs}.`,
         stage: "emit",
         nodeId: exceeded.nodeId,
-        context: { stage: "emit", ...exceeded },
+        context: {
+          maxGlyphs: exceeded.maxGlyphs,
+          actualGlyphs: exceeded.actualGlyphs,
+        },
       });
     }
     return {
@@ -166,8 +170,6 @@ function expectOutlineGlyphLimitError(run: () => unknown): void {
   expect(error.stage).toBe("emit");
   expect(error.nodeId).toBe("subject");
   expect(error.context).toEqual({
-    stage: "emit",
-    nodeId: "subject",
     maxGlyphs: MAX_OUTLINE_GLYPHS,
     actualGlyphs: MAX_OUTLINE_GLYPHS + 1,
   });

@@ -1365,7 +1365,9 @@ function validateRubyEnumProp(options: {
     throw new FatalError("VALIDATION", errorMessage, {
       stage: "validate",
       nodeId: nid,
-      prop: propName,
+      context: {
+        prop: propName,
+      },
     });
   }
 }
@@ -1379,7 +1381,13 @@ function validateRubyFiniteNumberProp(
     throw new FatalError(
       "VALIDATION",
       `Validation error: Ruby "${propName}" must be a finite number`,
-      { stage: "validate", nodeId: nid, prop: propName },
+      {
+        stage: "validate",
+        nodeId: nid,
+        context: {
+          prop: propName,
+        },
+      },
     );
   }
 }

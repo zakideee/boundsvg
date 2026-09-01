@@ -17,8 +17,8 @@ use boundtext::text::engine::layout_text_with_unit_metadata;
 use boundtext::text::types::{
     FitMode, InlineRectInput, Language, MAX_INLINE_RECTS, MAX_RICH_TEXT_DEPTH, RichTextNodeInput,
     RichTextStyleInput, TextDecorationInput, TextDecorationLine, TextDecorationSkipInk,
-    TextDecorationStyle, TextLayoutRequest, TextOrientation, TextSpanInput, WhiteSpaceMode,
-    WrapMode, WritingMode,
+    TextDecorationStyle, TextLayoutRequest, TextOrientation, TextSpanInput, TextWarningCode,
+    WhiteSpaceMode, WrapMode, WritingMode,
 };
 use boundtext::text::unit_map::{
     TextUnitKind, TextUnitRubyMode, TextUnitSourceRole, build_text_unit_map_for_request,
@@ -1701,7 +1701,8 @@ fn rich_ellipsis_omits_atomic_output_and_diagnostics_as_a_unit() {
     );
     assert!(
         layout_result.warnings.iter().all(|warning| {
-            warning.code != "LONG_RUBY_ANNOTATION" && !warning.message.contains("10FFFF")
+            warning.code != TextWarningCode::LongRubyAnnotation
+                && !warning.message.contains("10FFFF")
         }),
         "omitted atomic descendants must not commit owned warnings: {:?}",
         layout_result.warnings
@@ -1759,7 +1760,7 @@ fn rich_ellipsis_commits_warning_owned_by_a_retained_atomic_node() {
         layout_result
             .warnings
             .iter()
-            .any(|warning| warning.code == "LONG_RUBY_ANNOTATION"),
+            .any(|warning| warning.code == TextWarningCode::LongRubyAnnotation),
         "a warning owned by the retained atomic node must be committed: {:?}",
         layout_result.warnings
     );
@@ -1796,7 +1797,7 @@ fn rich_ellipsis_commits_only_selected_inline_depth_warnings() {
             layout_result
                 .warnings
                 .iter()
-                .filter(|warning| warning.code == "INLINE_BOX_MAX_DEPTH")
+                .filter(|warning| warning.code == TextWarningCode::InlineBoxMaxDepth)
                 .count(),
             usize::from(should_retain_inline_box),
             "retain={should_retain_inline_box}: display={:?}",

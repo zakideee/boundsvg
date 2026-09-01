@@ -25,6 +25,14 @@ a Web Worker, subject to the mode boundaries and exceptions on this page.
 Structured fatal failures and ordered recoverable warnings are deterministic
 contract artifacts too.
 
+For one operation, the warning sequence is authoritative rather than a merged
+set: WASM-produced warnings retain serialized order, later owned pipeline
+phases append in their documented order, and duplicate events remain visible.
+Node, browser, direct, compiled, and Worker routes preserve the same fields,
+order, and count. Mutable warning objects and contexts are detached when one
+operation fans out to independently mutable consumers; identity is not part of
+the determinism contract.
+
 This holds because the entire text pipeline — shaping (rustybuzz), line
 breaking, kinsoku, vertical layout, font metrics — and the rasterizer (resvg)
 and every bundled image encoder run in version-pinned WASM built from the same

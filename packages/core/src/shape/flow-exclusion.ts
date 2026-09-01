@@ -162,14 +162,14 @@ function assertPlacement(options: GeometryExclusionOptions): void {
   if (!(Number.isFinite(x) && Number.isFinite(y))) {
     throw new FatalError("VALIDATION", `Exclusion placement x/y must be finite, got ${x}/${y}.`, {
       stage: "validate",
-      nodeId,
+      ...(nodeId !== undefined && { nodeId }),
     });
   }
   if (!(Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0)) {
     throw new FatalError(
       "VALIDATION",
       `Exclusion width/height must be positive and finite, got ${width}/${height}.`,
-      { stage: "validate", nodeId },
+      { stage: "validate", ...(nodeId !== undefined && { nodeId }) },
     );
   }
 }

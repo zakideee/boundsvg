@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Engine } from "../../src/engine.js";
+import { RecoverableError } from "../../src/errors.js";
 import type { IRGroupNode, IRTextNode } from "../../src/ir/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import { WasmEngineHandle } from "../../src/wasm/index.js";
@@ -324,16 +325,6 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
       width: 100,
       height: 40,
       debug: true,
-      warnings: [
-        {
-          severity: "recoverable",
-          code: "FIXTURE",
-          message: "fixture warning",
-          stage: "ir",
-          nodeId: "root",
-          fallback: "none",
-        },
-      ],
     },
     warnings: [
       {
@@ -478,6 +469,13 @@ describe("WASM protocol decoders", () => {
       () => decodeRenderToIrEnvelope(JSON.stringify(invalidWarning)),
       "WASM_INVALID_IR_OUTPUT",
     );
+
+    const duplicatedNestedWarnings = structuredClone(createFullyPopulatedEnvelope());
+    Reflect.set(duplicatedNestedWarnings.ir, "warnings", []);
+    expectCode(
+      () => decodeRenderToIrEnvelope(JSON.stringify(duplicatedNestedWarnings)),
+      "WASM_INVALID_IR_OUTPUT",
+    );
   });
 
   it("routes all Engine render and animation response boundaries through the decoders", () => {
@@ -526,6 +524,162 @@ describe("WASM protocol decoders", () => {
       (node): node is IRTextNode => node.type === "text",
     );
     expect(compiledText?.lines[0]?.fragments?.[0]).not.toHaveProperty("style");
+  });
+
+  it("rehydrates an AndIR warning once and detaches callback mutation from returned IR", () => {
+    const scene = createElement("Canvas", { width: 100, height: 40 });
+    const serializedWarning = {
+      severity: "recoverable",
+      code: "FIXTURE_WARNING",
+      message: "retained warning",
+      fallback: "retained fallback",
+      stage: "ir",
+      context: { owner: { id: "root" } },
+    } as const;
+    const engine = new Engine({
+      computeLayoutFn: () => "{}",
+      renderToSvgFn: () =>
+        JSON.stringify({
+          svg: "<svg/>",
+          ir: {
+            root: { type: "group", nodeId: "root", bbox },
+            drawOrder: [],
+            width: 100,
+            height: 40,
+          },
+          warnings: [serializedWarning],
+          textNodeIds: [],
+        }),
+    });
+    const delivered: RecoverableError[] = [];
+    const rehydrate = vi.spyOn(RecoverableError, "fromSerialized");
+    try {
+      const result = engine.renderToSvgAndIR(scene, {
+        onWarning: (warning) => {
+          delivered.push(warning);
+          warning.message = "callback mutation";
+          if (warning.context) {
+            warning.context.owner = { id: "callback" };
+          }
+        },
+      });
+
+      expect(rehydrate).toHaveBeenCalledTimes(1);
+      expect(result.ir.warnings).toHaveLength(1);
+      expect(result.ir.warnings[0]).toBeInstanceOf(RecoverableError);
+      expect(result.ir.warnings[0]?.message).toBe("retained warning");
+      expect(result.ir.warnings[0]?.context).toEqual({ owner: { id: "root" } });
+      expect(delivered[0]).not.toBe(result.ir.warnings[0]);
+      expect(delivered[0]?.context).not.toBe(result.ir.warnings[0]?.context);
+    } finally {
+      rehydrate.mockRestore();
+    }
+  });
+
+  it("accepts only the exact serialized Fatal shape at render boundaries", () => {
+    const scene = createElement("Canvas", { width: 100, height: 40 });
+    const strictEngine = new Engine({
+      computeLayoutFn: () => "{}",
+      renderToIrFn: () => {
+        throw JSON.stringify({
+          severity: "fatal",
+          code: "STRICT_RENDER_FAILURE",
+          message: "strict failure",
+          stage: "ir",
+          nodeId: "root",
+          context: { reason: "fixture" },
+        });
+      },
+    });
+    expect(() => strictEngine.compile(scene)).toThrowError(
+      expect.objectContaining({
+        code: "STRICT_RENDER_FAILURE",
+        message: "strict failure",
+        stage: "ir",
+        nodeId: "root",
+        context: { reason: "fixture" },
+      }),
+    );
+
+    for (const malformed of [
+      { code: "LEGACY_FAILURE", message: "missing severity", stage: "ir" },
+      {
+        severity: "fatal",
+        code: "EXTRA_FIELD_FAILURE",
+        message: "extra field",
+        stage: "ir",
+        fallback: "not permitted",
+      },
+      {
+        severity: "recoverable",
+        code: "WRONG_SEVERITY_FAILURE",
+        message: "wrong severity",
+        stage: "ir",
+        fallback: "continue",
+      },
+    ]) {
+      const malformedEngine = new Engine({
+        computeLayoutFn: () => "{}",
+        renderToIrFn: () => {
+          throw JSON.stringify(malformed);
+        },
+      });
+      expect(() => malformedEngine.compile(scene)).toThrowError(
+        expect.objectContaining({ code: "WASM_RENDER_FAILED", stage: "engine" }),
+      );
+    }
+  });
+
+  it.each([
+    ["empty string", () => ""],
+    ["symbol", () => Symbol("boundary")],
+    ["BigInt", () => 42n],
+    ["null-prototype object", () => Object.create(null) as object],
+    [
+      "throwing accessors and toString",
+      () => {
+        const value = {} as { message?: string; toString?: () => string };
+        Object.defineProperty(value, "message", {
+          enumerable: true,
+          get: () => {
+            throw new TypeError("message trap");
+          },
+        });
+        value.toString = () => {
+          throw new TypeError("toString trap");
+        };
+        return value;
+      },
+    ],
+    [
+      "hostile Proxy",
+      () =>
+        new Proxy(
+          {},
+          {
+            getOwnPropertyDescriptor: () => {
+              throw new TypeError("descriptor trap");
+            },
+            getPrototypeOf: () => {
+              throw new TypeError("prototype trap");
+            },
+            get: () => {
+              throw new TypeError("get trap");
+            },
+          },
+        ),
+    ],
+  ] as const)("totally formats a %s render failure", (_name, createFailure) => {
+    const scene = createElement("Canvas", { width: 100, height: 40 });
+    const engine = new Engine({
+      computeLayoutFn: () => "{}",
+      renderToIrFn: () => {
+        throw createFailure();
+      },
+    });
+    expect(() => engine.compile(scene)).toThrowError(
+      expect.objectContaining({ code: "WASM_RENDER_FAILED", stage: "engine" }),
+    );
   });
 
   it("decodes all six measurement result contracts including nested flow and ruby fields", () => {
@@ -715,6 +869,7 @@ describe("WASM protocol decoders", () => {
     const handle = new WasmEngineHandle({
       [wasmMethod]: () => {
         throw JSON.stringify({
+          severity: "fatal",
           code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
           message: "exact candidate budget exceeded",
           stage: "text",

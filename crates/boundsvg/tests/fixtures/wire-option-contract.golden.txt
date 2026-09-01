@@ -29,7 +29,11 @@ boundshape	crates/boundshape/src/lib.rs	Transform2D	scale_x	scaleX	omit-none
 boundshape	crates/boundshape/src/lib.rs	Transform2D	scale_y	scaleY	omit-none
 boundshape	crates/boundshape/src/lib.rs	Transform2D	translate_x	translateX	omit-none
 boundshape	crates/boundshape/src/lib.rs	Transform2D	translate_y	translateY	omit-none
-boundsvg	crates/boundsvg/src/flow/types.rs	FlowWarning	fallback	fallback	omit-none
+boundsvg	crates/boundsvg/src/diagnostics.rs	SerializedFatalError	context	context	omit-none
+boundsvg	crates/boundsvg/src/diagnostics.rs	SerializedFatalError	node_id	nodeId	omit-none
+boundsvg	crates/boundsvg/src/diagnostics.rs	SerializedFatalError	stage	stage	omit-none
+boundsvg	crates/boundsvg/src/diagnostics.rs	SerializedRecoverableError	context	context	omit-none
+boundsvg	crates/boundsvg/src/diagnostics.rs	SerializedRecoverableError	node_id	nodeId	omit-none
 boundsvg	crates/boundsvg/src/flow/types.rs	MeasureTextBlockResult	lines	lines	omit-none
 boundsvg	crates/boundsvg/src/flow/types.rs	ShrinkwrapFlowResultDto	chosen_height_px	chosenHeightPx	omit-none
 boundsvg	crates/boundsvg/src/flow/types.rs	ShrinkwrapFlowResultDto	chosen_width_px	chosenWidthPx	omit-none
@@ -84,7 +88,6 @@ boundsvg	crates/boundsvg/src/ir/types.rs	HandlersRef	on_pointer_up	onPointerUp	o
 boundsvg	crates/boundsvg/src/ir/types.rs	HandlersRef	on_touch_end	onTouchEnd	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	HandlersRef	on_touch_move	onTouchMove	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	HandlersRef	on_touch_start	onTouchStart	omit-none
-boundsvg	crates/boundsvg/src/ir/types.rs	Ir	debug	debug	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	IrNodeKind::Group	animation	animation	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	IrNodeKind::Group	box_shadow	boxShadow	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	IrNodeKind::Group	clip_border_radius	clipBorderRadius	omit-none
@@ -153,8 +156,6 @@ boundsvg	crates/boundsvg/src/ir/types.rs	IrNodeKind::Text	unit_map	unitMap	omit-
 boundsvg	crates/boundsvg/src/ir/types.rs	IrNodeKind::Text	writing_mode	writingMode	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	LineProjection	fragments	fragments	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	LineProjection	positioned_glyphs	positionedGlyphs	omit-none
-boundsvg	crates/boundsvg/src/ir/types.rs	RenderWarning	fallback	fallback	omit-none
-boundsvg	crates/boundsvg/src/ir/types.rs	RenderWarning	node_id	nodeId	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	ShapePartPaint	fill	fill	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	ShapePartPaint	stroke	stroke	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	ShapePartPaint	stroke_dasharray	strokeDasharray	omit-none
@@ -166,6 +167,7 @@ boundsvg	crates/boundsvg/src/ir/types.rs	ShapePathPart	bounds	bounds	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	ShapePathPart	paint	paint	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	ShapePathPart	part_id	partId	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	ShapePathPart	stroke_d	strokeD	omit-none
+boundsvg	crates/boundsvg/src/ir/types.rs	StructuralIr	debug	debug	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	TextOutlinePath	missing_glyph	missingGlyph	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	TextOutlinePath	paint_range_index	paintRangeIndex	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	TextOutlinePath	shadows	shadows	omit-none
@@ -257,4 +259,3 @@ boundtext	crates/boundtext/src/text/types.rs	TextStrokeLayer	dasharray	dasharray
 boundtext	crates/boundtext/src/text/types.rs	TextStrokeLayer	linecap	linecap	omit-none
 boundtext	crates/boundtext/src/text/types.rs	TextStrokeLayer	linejoin	linejoin	omit-none
 boundtext	crates/boundtext/src/text/types.rs	TextStrokeLayer	miterlimit	miterlimit	omit-none
-boundtext	crates/boundtext/src/text/types.rs	TextWarning	fallback	fallback	omit-none

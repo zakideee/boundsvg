@@ -111,6 +111,10 @@ class TestWorkerScope {
   send(request: WorkerRequest): void {
     this.onmessage?.({ data: structuredClone(request) } as MessageEvent);
   }
+
+  sendRaw(value: unknown): void {
+    this.onmessage?.({ data: value } as MessageEvent);
+  }
 }
 
 describe("worker script measurement dispatch", () => {
@@ -162,6 +166,114 @@ describe("worker script measurement dispatch", () => {
       { api: "shrinkwrapFlow", input: { marker: 6 } },
       { api: "measureIntrinsicInlineSize", input: { marker: 7 } },
     ]);
+  });
+
+  it("serializes hostile thrown values without replacing the original failure", async () => {
+    scope.send({ id: 1, type: "init", fonts: [] });
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(1));
+
+    const hostile = new Proxy(Object.create(null) as object, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error("descriptor trap");
+      },
+      getPrototypeOf: () => {
+        throw new Error("prototype trap");
+      },
+      get: () => {
+        throw new Error("get trap");
+      },
+    });
+    workerEngineMethods.layoutTextFlow.mockImplementationOnce(() => {
+      throw hostile;
+    });
+
+    scope.send({ id: 2, type: "layout-text-flow", input: { marker: 2 } as never });
+
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(2));
+    expect(scope.responses[1]).toEqual({
+      id: 2,
+      type: "error",
+      error: {
+        severity: "fatal",
+        code: "WORKER_UNHANDLED_ERROR",
+        message: "Unknown worker failure",
+        stage: "engine",
+      },
+    });
+  });
+
+  it("formats hostile uncorrelatable messages without throwing", () => {
+    const hostile = new Proxy(Object.create(null) as object, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error("descriptor trap");
+      },
+      getPrototypeOf: () => {
+        throw new Error("prototype trap");
+      },
+      get: () => {
+        throw new Error("get trap");
+      },
+    });
+
+    expect(() => scope.sendRaw(hostile)).not.toThrow();
+    expect(scope.responses[0]).toEqual({
+      id: -1,
+      type: "error",
+      error: {
+        severity: "fatal",
+        code: "WORKER_INVALID_MESSAGE",
+        message: "Invalid worker message: unprintable value",
+        stage: "engine",
+      },
+    });
+  });
+
+  it("dispatches from a validated top-level snapshot without invoking Proxy get", async () => {
+    let getCalls = 0;
+    const request = new Proxy(
+      { id: 1, type: "init", fonts: [] },
+      {
+        get() {
+          getCalls += 1;
+          throw new Error("get trap must not run");
+        },
+      },
+    );
+
+    scope.sendRaw(request);
+
+    await vi.waitFor(() => expect(scope.responses).toContainEqual({ id: 1, type: "init-ok" }));
+    expect(getCalls).toBe(0);
+  });
+
+  it("correlates an invalid request from the same top-level snapshot", () => {
+    let idDescriptorCalls = 0;
+    const request = new Proxy(
+      { id: 2, type: "render-svg", scene: 42 },
+      {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "id") {
+            idDescriptorCalls += 1;
+            return {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              value: idDescriptorCalls === 1 ? 2 : 3,
+            };
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      },
+    );
+
+    scope.sendRaw(request);
+
+    expect(scope.responses[0]).toMatchObject({
+      id: 2,
+      type: "error",
+      error: { code: "WORKER_INVALID_MESSAGE" },
+    });
+    expect(idDescriptorCalls).toBe(1);
   });
 
   it("dispatches static and animated SVG direct and SVG+IR request families", async () => {

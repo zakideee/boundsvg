@@ -37,7 +37,6 @@ function createStubEngine(frames: Frame[] = []): StubEngine {
           drawOrder: [],
           width: 64,
           height: 32,
-          warnings: [],
         },
         warnings: [],
       }),

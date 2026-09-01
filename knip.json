@@ -6,7 +6,7 @@
     "packages/core": {
       "project": ["src/**/*.ts"],
       "includeEntryExports": false,
-      "entry": ["src/wasm/index.ts", "src/wasm/types.ts", "src/generated/ir/output-ir.ts"]
+      "entry": ["src/wasm/index.ts", "src/wasm/types.ts", "src/generated/ir/structural-ir.ts"]
     },
     "packages/react": {
       "project": ["src/**/*.ts", "src/**/*.tsx"]

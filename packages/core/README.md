@@ -69,6 +69,13 @@ const embedded = withNodeIdPrefix(localized, "preview:");
 ```
 
 - `inspectScene` is the high-level read API for build tools, CI checks, and editors that need layout, sampled IR, positioned bboxes, warnings, lookup maps, and node ID validation in one call.
+
+Fatal and recoverable diagnostics use explicit options objects and
+severity-specific serialized shapes. Recoverable values require both
+`fallback` and a closed pipeline `stage`. Public `IR.warnings` contains detached
+`RecoverableError` instances; structural IR transported through WASM does not
+contain nested warnings.
+
 - `@boundsvg/core/inspect` contains the lower-level bbox collector and the complete inspection type surface.
 - `@boundsvg/core/vnode` is for template transforms such as localization, composing multiple generated scenes, and prefixing explicit node IDs before embedding.
 
