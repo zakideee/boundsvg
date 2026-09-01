@@ -138,7 +138,7 @@ pub enum TextOnPathError {
     UnitMapInvalid,
 }
 
-fn map_text_layout_error_to_path_error(error: crate::TextLayoutError) -> TextOnPathError {
+fn map_text_layout_error_to_path_error(error: &crate::TextLayoutError) -> TextOnPathError {
     match error {
         crate::TextLayoutError::InvalidRequest { .. }
         | crate::TextLayoutError::FontUnavailable { .. }
@@ -587,7 +587,7 @@ pub fn layout_text_on_path(
         ..request.text.clone()
     };
     let mut layout = layout_text_inner_with_prepared_spans(&path_text_request, font_context, true)
-        .map_err(map_text_layout_error_to_path_error)?;
+        .map_err(|error| map_text_layout_error_to_path_error(&error))?;
     apply_text_path_span_metadata(
         &mut layout.lines,
         path_text_request.spans,
@@ -1113,7 +1113,7 @@ fn shape_path_ellipsis(
         ..path_text_request.clone()
     };
     let mut layout = layout_text_inner_with_prepared_spans(&ellipsis_request, font_context, true)
-        .map_err(map_text_layout_error_to_path_error)?;
+        .map_err(|error| map_text_layout_error_to_path_error(&error))?;
     apply_text_path_span_metadata(
         &mut layout.lines,
         ellipsis_request.spans,

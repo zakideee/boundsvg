@@ -279,29 +279,29 @@ mod c2b_line_range_contract {
 
     use super::slice_measured_line_text;
 
-    fn assert_invariant(result: Result<String, TextLayoutError>, expected: TextLayoutInvariant) {
+    fn assert_invariant(result: &Result<String, TextLayoutError>, expected: TextLayoutInvariant) {
         assert!(matches!(
             result,
-            Err(TextLayoutError::InvariantViolation { invariant }) if invariant == expected
+            Err(TextLayoutError::InvariantViolation { invariant }) if *invariant == expected
         ));
     }
 
     #[test]
     fn line_range_faults_are_typed_instead_of_becoming_partial_success() {
         assert_invariant(
-            slice_measured_line_text("A", &[0, 1], 2, 2),
+            &slice_measured_line_text("A", &[0, 1], 2, 2),
             TextLayoutInvariant::LineRangeMissing,
         );
         assert_invariant(
-            slice_measured_line_text("AB", &[0, 2, 1], 1, 2),
+            &slice_measured_line_text("AB", &[0, 2, 1], 1, 2),
             TextLayoutInvariant::LineRangeReversed,
         );
         assert_invariant(
-            slice_measured_line_text("ABC", &[0, 4], 0, 1),
+            &slice_measured_line_text("ABC", &[0, 4], 0, 1),
             TextLayoutInvariant::LineRangeOutOfBounds,
         );
         assert_invariant(
-            slice_measured_line_text("é", &[0, 1], 0, 1),
+            &slice_measured_line_text("é", &[0, 1], 0, 1),
             TextLayoutInvariant::LineRangeNotUtf8Boundary,
         );
     }

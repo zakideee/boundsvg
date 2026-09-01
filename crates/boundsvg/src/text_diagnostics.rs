@@ -63,19 +63,16 @@ impl TextLayoutDiagnostic {
 }
 
 fn operation_context(operation: TextLayoutOperation) -> Value {
+    Value::Object(context_map(operation))
+}
+
+fn context_map(operation: TextLayoutOperation) -> Map<String, Value> {
     let mut context = Map::new();
     context.insert(
         "operation".to_string(),
         Value::String(operation.as_str().to_string()),
     );
-    Value::Object(context)
-}
-
-fn context_map(operation: TextLayoutOperation) -> Map<String, Value> {
-    operation_context(operation)
-        .as_object()
-        .cloned()
-        .expect("operation context is an object")
+    context
 }
 
 fn bounded_prefix(value: &str, maximum_bytes: usize) -> String {

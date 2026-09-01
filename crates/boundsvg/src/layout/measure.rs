@@ -539,7 +539,7 @@ pub(super) fn measure_text_node(
     if !is_vertical && (width_is_min_content || width_is_max_content) {
         let intrinsic =
             measure_intrinsic_inline_sizes(text_input, font_registry, fallback_registry)
-                .map_err(render_text_layout_error)?;
+                .map_err(|error| render_text_layout_error(&error))?;
         if width_is_min_content {
             max_width = ceil_nonnegative_f32(intrinsic.min_content_inline_size);
         } else if width_is_max_content && max_width >= f32::MAX {
@@ -582,7 +582,7 @@ pub(super) fn measure_text_node(
             font_registry,
             fallback_registry,
         )
-        .map_err(render_text_layout_error)?;
+        .map_err(|error| render_text_layout_error(&error))?;
         let size = Size {
             width: measured_width_px(
                 rust_result.bbox.w,
@@ -876,7 +876,7 @@ pub(super) fn measure_text_node(
         } else {
             crate::text::engine::layout_text(&req, &font_ctx)
         }
-        .map_err(render_text_layout_error)?;
+        .map_err(|error| render_text_layout_error(&error))?;
         let size = Size {
             width: measured_width_px(
                 rust_result.bbox.w,
@@ -903,9 +903,9 @@ pub(super) fn measure_text_node(
     }
 }
 
-fn render_text_layout_error(error: boundtext::TextLayoutError) -> crate::error::EngineError {
+fn render_text_layout_error(error: &boundtext::TextLayoutError) -> crate::error::EngineError {
     crate::text_diagnostics::classify_text_layout_error(
-        &error,
+        error,
         crate::text_diagnostics::TextLayoutOperation::RenderTextLayout,
         None,
     )

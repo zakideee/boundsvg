@@ -250,19 +250,18 @@ fn scale_flow_span(span: &FlowTextSpan, scale: f64) -> FlowTextSpan {
     }
 }
 
+type PreparedInlineFlowInputs = (
+    Vec<FlowTextSpan>,
+    Vec<TextSpanInput>,
+    Vec<Option<inline_runs::SpanRubyInfo>>,
+    inline_runs::ShapedInlineRuns,
+);
+
 pub(super) fn prepare_inline_flow_inputs(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     chosen_font_size_px: f64,
-) -> Result<
-    (
-        Vec<FlowTextSpan>,
-        Vec<TextSpanInput>,
-        Vec<Option<inline_runs::SpanRubyInfo>>,
-        inline_runs::ShapedInlineRuns,
-    ),
-    crate::TextLayoutError,
-> {
+) -> Result<PreparedInlineFlowInputs, crate::TextLayoutError> {
     // Callers dispatch here only when spans exist; an absent value degrades to
     // an empty inline flow rather than aborting the render.
     let spans_input = req.spans.unwrap_or_default();

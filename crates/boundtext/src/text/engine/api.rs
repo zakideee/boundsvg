@@ -43,7 +43,11 @@ pub struct MeasuredTextBlock {
 
 /// Measure plain horizontal text with the full fallback-capable shaper while
 /// retaining authoritative per-line grapheme ranges and kinsoku diagnostics.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns a closed text-layout failure when font resolution, shaping, or
+/// checked line projection cannot complete.
 pub fn measure_text_lines(
     req: &PlainTextMeasurementRequest<'_>,
     font_ctx: &FontContext<'_>,

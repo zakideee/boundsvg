@@ -1128,11 +1128,11 @@ fn render_error_envelope_with_context(
 }
 
 fn text_layout_error_to_js(
-    error: boundtext::TextLayoutError,
+    error: &boundtext::TextLayoutError,
     operation: text_diagnostics::TextLayoutOperation,
 ) -> JsValue {
     let engine_error =
-        text_diagnostics::classify_text_layout_error(&error, operation, None).into_engine_error();
+        text_diagnostics::classify_text_layout_error(error, operation, None).into_engine_error();
     engine_error_to_render_envelope(&engine_error)
 }
 
@@ -2164,7 +2164,7 @@ impl BoundSvgEngine {
                 .map_err(|e| JsValue::from_str(&format!("Invalid flow input: {e}")))?;
             let result = flow::layout_text_flow(&input, &self.registry).map_err(|error| {
                 text_layout_error_to_js(
-                    error,
+                    &error,
                     text_diagnostics::TextLayoutOperation::LayoutTextFlow,
                 )
             })?;
@@ -2185,7 +2185,7 @@ impl BoundSvgEngine {
             let flow_layout = flow::layout_text_flow_with_exclusions(&input, &self.registry)
                 .map_err(|error| {
                     text_layout_error_to_js(
-                        error,
+                        &error,
                         text_diagnostics::TextLayoutOperation::LayoutTextFlowWithExclusions,
                     )
                 })?;
@@ -2206,7 +2206,7 @@ impl BoundSvgEngine {
                 .map_err(|e| JsValue::from_str(&format!("Invalid measure input: {e}")))?;
             let result = flow::measure_text_block(&input, &self.registry).map_err(|error| {
                 text_layout_error_to_js(
-                    error,
+                    &error,
                     text_diagnostics::TextLayoutOperation::MeasureTextBlock,
                 )
             })?;
@@ -2226,7 +2226,7 @@ impl BoundSvgEngine {
                 .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap input: {e}")))?;
             let shrinkwrap = flow::shrinkwrap_text(&input, &self.registry).map_err(|error| {
                 text_layout_error_to_js(
-                    error,
+                    &error,
                     text_diagnostics::TextLayoutOperation::ShrinkwrapText,
                 )
             })?;
@@ -2249,7 +2249,7 @@ impl BoundSvgEngine {
             let flow_shrinkwrap =
                 flow::shrinkwrap_flow(&input, &self.registry).map_err(|error| {
                     text_layout_error_to_js(
-                        error,
+                        &error,
                         text_diagnostics::TextLayoutOperation::ShrinkwrapFlow,
                     )
                 })?;
@@ -2273,7 +2273,7 @@ impl BoundSvgEngine {
             let result =
                 flow::measure_intrinsic_inline_size(&input, &self.registry).map_err(|error| {
                     text_layout_error_to_js(
-                        error,
+                        &error,
                         text_diagnostics::TextLayoutOperation::MeasureIntrinsicInlineSize,
                     )
                 })?;

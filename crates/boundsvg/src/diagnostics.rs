@@ -433,6 +433,10 @@ mod tests {
     };
     use serde_json::json;
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "catalog tests consume one-shot diagnostic fixtures for readability"
+    )]
     fn assert_text_layout_diagnostic(
         error: TextLayoutError,
         expected_code: &str,

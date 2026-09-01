@@ -20,6 +20,11 @@ use crate::text::engine::{build_byte_to_char_map, build_char_byte_offsets};
 /// of optional ruby metadata per span (same length as `spans`).
 /// When `vertical` is true, shapes with vertical writing mode and computes
 /// vertical advances (`y_advance` with `x_advance` fallback).
+///
+/// # Errors
+///
+/// Returns a closed text-layout failure when an effective run cannot resolve
+/// or shaping cannot produce the requested inline-run preparation.
 pub fn prepare_inline_runs(
     spans: &[TextSpanInput],
     font_ctx: &FontContext<'_>,
