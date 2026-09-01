@@ -1104,6 +1104,124 @@ describe("isWorkerResponse", () => {
     expect(getterCalls).toBe(0);
   });
 
+  it("rejects a measurement warning with a non-plain diagnostic context", () => {
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result: {
+          minContentInlineSize: 10,
+          maxContentInlineSize: 20,
+          warnings: [
+            {
+              severity: "recoverable",
+              code: "INTRINSIC_WARN",
+              message: "invalid context",
+              fallback: "continued",
+              stage: "text",
+              context: new Date(0),
+            },
+          ],
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not reuse a failed unknown snapshot for supported measurement warnings", () => {
+    let ownKeysCalls = 0;
+    const warnings = new Proxy(
+      [
+        {
+          severity: "recoverable" as const,
+          code: "INTRINSIC_WARN",
+          message: "must not disappear",
+          fallback: "continued",
+          stage: "text" as const,
+        },
+      ],
+      {
+        ownKeys() {
+          ownKeysCalls += 1;
+          throw new TypeError("unreadable warning keys");
+        },
+      },
+    );
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result: {
+          futureWarnings: warnings,
+          minContentInlineSize: 10,
+          maxContentInlineSize: 20,
+          warnings,
+        },
+      }),
+    ).toBeUndefined();
+    expect(ownKeysCalls).toBe(1);
+  });
+
+  it("does not reuse a failed unknown snapshot for supported measurement lines", () => {
+    let ownKeysCalls = 0;
+    const lines = new Proxy(
+      [
+        {
+          text: "text",
+          charStart: 0,
+          charEnd: 4,
+          inlineAdvancePx: 10,
+          availableInlineSizePx: 20,
+        },
+      ],
+      {
+        ownKeys() {
+          ownKeysCalls += 1;
+          throw new TypeError("unreadable line keys");
+        },
+      },
+    );
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "layout-text-flow-ok",
+        result: {
+          futureLines: lines,
+          lines,
+          exhausted: false,
+        },
+      }),
+    ).toBeUndefined();
+    expect(ownKeysCalls).toBe(1);
+  });
+
+  it("keeps an unreadable unknown measurement field accepted in isolation", () => {
+    let ownKeysCalls = 0;
+    const futureValue = new Proxy(
+      {},
+      {
+        ownKeys() {
+          ownKeysCalls += 1;
+          throw new TypeError("unreadable future keys");
+        },
+      },
+    );
+
+    expect(
+      decodeWorkerResponse({
+        id: 1,
+        type: "measure-intrinsic-inline-size-ok",
+        result: {
+          futureValue,
+          minContentInlineSize: 10,
+          maxContentInlineSize: 20,
+        },
+      })?.type,
+    ).toBe("measure-intrinsic-inline-size-ok");
+    expect(ownKeysCalls).toBe(1);
+  });
+
   it("detaches nested shrinkwrap-flow warnings from the validated result", () => {
     const warning = {
       severity: "recoverable" as const,

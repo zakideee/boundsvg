@@ -685,13 +685,25 @@ function snapshotRecoverableWarnings(value: unknown): SerializedRecoverableError
   return warnings;
 }
 
-// Keep future fields forward-compatible while ensuring any supported field
-// backed by an accessor or unreadable child fails the ordinary value guards.
+// Keep future fields forward-compatible while ensuring known fields receive
+// only complete, plain, getter-free values. Invalid unknown values become a
+// sentinel and cannot make a later supported alias reuse a partial snapshot.
 const INVALID_SNAPSHOT_VALUE = Symbol("worker-protocol-invalid-snapshot");
 
 type GetterFreeSnapshotResult =
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false };
+
+type GetterFreeSnapshotState = {
+  status: "visiting" | "complete" | "failed";
+  value: unknown;
+};
+
+type GetterFreeSnapshotContainer = {
+  readonly isArrayValue: boolean;
+  readonly valueSnapshot: object;
+  readonly snapshotState: GetterFreeSnapshotState;
+};
 
 function snapshotOwnDescriptor(value: object, key: PropertyKey): PropertyDescriptor | undefined {
   try {
@@ -701,9 +713,125 @@ function snapshotOwnDescriptor(value: object, key: PropertyKey): PropertyDescrip
   }
 }
 
+function invalidGetterFreeSnapshot(
+  value: object,
+  snapshots: WeakMap<object, GetterFreeSnapshotState>,
+): undefined {
+  snapshots.set(value, { status: "complete", value: INVALID_SNAPSHOT_VALUE });
+  return undefined;
+}
+
+function prepareGetterFreeSnapshotContainer(
+  value: object,
+  snapshots: WeakMap<object, GetterFreeSnapshotState>,
+): GetterFreeSnapshotContainer | undefined {
+  let isArrayValue: boolean;
+  let valuePrototype: object | null;
+  try {
+    isArrayValue = Array.isArray(value);
+    valuePrototype = Reflect.getPrototypeOf(value);
+  } catch {
+    return invalidGetterFreeSnapshot(value, snapshots);
+  }
+
+  if (
+    (isArrayValue && valuePrototype !== Array.prototype) ||
+    (!isArrayValue && valuePrototype !== Object.prototype && valuePrototype !== null)
+  ) {
+    return invalidGetterFreeSnapshot(value, snapshots);
+  }
+
+  const valueSnapshot: object = isArrayValue ? [] : Object.create(valuePrototype);
+  const snapshotState: GetterFreeSnapshotState = {
+    status: "visiting",
+    value: valueSnapshot,
+  };
+  snapshots.set(value, snapshotState);
+  return { isArrayValue, valueSnapshot, snapshotState };
+}
+
+function defineGetterFreeSnapshotProperty({
+  valueSnapshot,
+  key,
+  descriptor,
+  snapshots,
+}: {
+  valueSnapshot: object;
+  key: PropertyKey;
+  descriptor: PropertyDescriptor | undefined;
+  snapshots: WeakMap<object, GetterFreeSnapshotState>;
+}): void {
+  const childSnapshot =
+    descriptor !== undefined && "value" in descriptor
+      ? snapshotGetterFreeValue(descriptor.value, snapshots)
+      : ({ ok: true, value: INVALID_SNAPSHOT_VALUE } as const);
+  Object.defineProperty(valueSnapshot, key, {
+    configurable: true,
+    enumerable: descriptor?.enumerable ?? true,
+    value: childSnapshot.ok ? childSnapshot.value : INVALID_SNAPSHOT_VALUE,
+    writable: true,
+  });
+}
+
+function finalizeGetterFreeArraySnapshot(
+  valueSnapshot: object,
+  arrayLengthDescriptor: PropertyDescriptor | undefined,
+): boolean {
+  if (
+    arrayLengthDescriptor === undefined ||
+    !("value" in arrayLengthDescriptor) ||
+    typeof arrayLengthDescriptor.value !== "number" ||
+    !Number.isSafeInteger(arrayLengthDescriptor.value) ||
+    arrayLengthDescriptor.value < 0
+  ) {
+    return false;
+  }
+  Object.defineProperty(valueSnapshot, "length", {
+    configurable: false,
+    enumerable: false,
+    value: arrayLengthDescriptor.value,
+    writable: true,
+  });
+  return true;
+}
+
+function failGetterFreeSnapshot(snapshotState: GetterFreeSnapshotState): GetterFreeSnapshotResult {
+  snapshotState.status = "failed";
+  snapshotState.value = INVALID_SNAPSHOT_VALUE;
+  return { ok: false };
+}
+
+function materializeGetterFreeSnapshot(
+  value: object,
+  container: GetterFreeSnapshotContainer,
+  snapshots: WeakMap<object, GetterFreeSnapshotState>,
+): GetterFreeSnapshotResult {
+  const { isArrayValue, valueSnapshot, snapshotState } = container;
+  try {
+    let arrayLengthDescriptor: PropertyDescriptor | undefined;
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = snapshotOwnDescriptor(value, key);
+      if (isArrayValue && key === "length") {
+        arrayLengthDescriptor = descriptor;
+        continue;
+      }
+      defineGetterFreeSnapshotProperty({ valueSnapshot, key, descriptor, snapshots });
+    }
+
+    if (isArrayValue && !finalizeGetterFreeArraySnapshot(valueSnapshot, arrayLengthDescriptor)) {
+      return failGetterFreeSnapshot(snapshotState);
+    }
+
+    snapshotState.status = "complete";
+    return { ok: true, value: valueSnapshot };
+  } catch {
+    return failGetterFreeSnapshot(snapshotState);
+  }
+}
+
 function snapshotGetterFreeValue(
   value: unknown,
-  snapshots: WeakMap<object, object>,
+  snapshots: WeakMap<object, GetterFreeSnapshotState>,
 ): GetterFreeSnapshotResult {
   if (typeof value === "function") {
     return { ok: true, value: INVALID_SNAPSHOT_VALUE };
@@ -714,65 +842,20 @@ function snapshotGetterFreeValue(
 
   const existingSnapshot = snapshots.get(value);
   if (existingSnapshot !== undefined) {
-    return { ok: true, value: existingSnapshot };
+    if (existingSnapshot.status === "failed") {
+      return { ok: false };
+    }
+    if (existingSnapshot.status === "visiting") {
+      return { ok: true, value: INVALID_SNAPSHOT_VALUE };
+    }
+    return { ok: true, value: existingSnapshot.value };
   }
 
-  try {
-    const isArrayValue = Array.isArray(value);
-    const valueSnapshot: object = isArrayValue ? [] : {};
-    snapshots.set(value, valueSnapshot);
-
-    let arrayLengthDescriptor: PropertyDescriptor | undefined;
-    for (const key of Reflect.ownKeys(value)) {
-      const descriptor = snapshotOwnDescriptor(value, key);
-      if (descriptor === undefined) {
-        Object.defineProperty(valueSnapshot, key, {
-          configurable: true,
-          enumerable: true,
-          value: INVALID_SNAPSHOT_VALUE,
-          writable: true,
-        });
-        continue;
-      }
-      if (isArrayValue && key === "length") {
-        arrayLengthDescriptor = descriptor;
-        continue;
-      }
-
-      const childSnapshot =
-        "value" in descriptor
-          ? snapshotGetterFreeValue(descriptor.value, snapshots)
-          : ({ ok: true, value: INVALID_SNAPSHOT_VALUE } as const);
-      Object.defineProperty(valueSnapshot, key, {
-        configurable: true,
-        enumerable: descriptor.enumerable,
-        value: childSnapshot.ok ? childSnapshot.value : INVALID_SNAPSHOT_VALUE,
-        writable: true,
-      });
-    }
-
-    if (isArrayValue) {
-      if (
-        arrayLengthDescriptor === undefined ||
-        !("value" in arrayLengthDescriptor) ||
-        typeof arrayLengthDescriptor.value !== "number" ||
-        !Number.isSafeInteger(arrayLengthDescriptor.value) ||
-        arrayLengthDescriptor.value < 0
-      ) {
-        return { ok: false };
-      }
-      Object.defineProperty(valueSnapshot, "length", {
-        configurable: false,
-        enumerable: false,
-        value: arrayLengthDescriptor.value,
-        writable: true,
-      });
-    }
-
-    return { ok: true, value: valueSnapshot };
-  } catch {
-    return { ok: false };
+  const container = prepareGetterFreeSnapshotContainer(value, snapshots);
+  if (container === undefined) {
+    return { ok: true, value: INVALID_SNAPSHOT_VALUE };
   }
+  return materializeGetterFreeSnapshot(value, container, snapshots);
 }
 
 function snapshotGetterFreeObject(value: unknown): Record<string, unknown> | undefined {
