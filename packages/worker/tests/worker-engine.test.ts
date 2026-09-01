@@ -1617,6 +1617,100 @@ describe("WorkerEngine", () => {
       engine.dispose();
     });
 
+    it("rejects only the request correlated by the response snapshot", async () => {
+      const engine = await createEngine(mockWorker);
+      const requestIds: number[] = [];
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg") {
+          requestIds.push(request.id);
+        }
+      });
+
+      const first = engine.renderToSvg(SCENE);
+      const second = engine.renderToSvg(SCENE);
+      expect(requestIds).toEqual([2, 3]);
+
+      let idDescriptorCalls = 0;
+      const malformedResponse = new Proxy(
+        { id: requestIds[0]!, type: "render-svg-ok", svg: 42, warnings: [] },
+        {
+          getOwnPropertyDescriptor(target, key) {
+            if (key === "id") {
+              idDescriptorCalls += 1;
+              return {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                value: idDescriptorCalls === 1 ? requestIds[0] : requestIds[1],
+              };
+            }
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        },
+      );
+      mockWorker.respondUnknown(malformedResponse);
+
+      await expect(first).rejects.toMatchObject({
+        code: "WORKER_PROTOCOL_INVALID_RESPONSE",
+        context: expect.objectContaining({ requestId: 2 }),
+      });
+      mockWorker.respond({
+        id: requestIds[1]!,
+        type: "render-svg-ok",
+        svg: '<svg data-second="true"/>',
+        warnings: [],
+      });
+      await expect(second).resolves.toContain("data-second");
+      expect(idDescriptorCalls).toBe(1);
+      engine.dispose();
+    });
+
+    it("rehydrates warnings from a single detached array snapshot", async () => {
+      const engine = await createEngine(mockWorker);
+      const onWarning = vi.fn();
+      const warning = {
+        severity: "recoverable" as const,
+        code: "WARN",
+        message: "stable warning",
+        fallback: "continued",
+        stage: "emit" as const,
+      };
+      let entryDescriptorCalls = 0;
+      const warnings = new Proxy([warning] as unknown[], {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "0") {
+            entryDescriptorCalls += 1;
+            return {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              value: entryDescriptorCalls === 1 ? warning : 0,
+            };
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg") {
+          mockWorker.respondUnknown({
+            id: request.id,
+            type: "render-svg-ok",
+            svg: '<svg data-warning="true"/>',
+            warnings,
+          });
+        }
+      });
+
+      await expect(engine.renderToSvg(SCENE, { onWarning })).resolves.toContain("data-warning");
+      expect(entryDescriptorCalls).toBe(1);
+      expect(onWarning).toHaveBeenCalledTimes(1);
+      expect(onWarning.mock.calls[0]?.[0]).toMatchObject({
+        code: "WARN",
+        message: "stable warning",
+      });
+      engine.dispose();
+    });
+
     it("rejects sparse warnings without forwarding an undefined callback value", async () => {
       const engine = await createEngine(mockWorker);
       const onWarning = vi.fn();

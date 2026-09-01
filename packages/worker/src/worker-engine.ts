@@ -61,9 +61,8 @@ import {
 } from "./layout-transition-transport.js";
 import {
   collectRequestTransferables,
-  decodeWorkerResponse,
+  decodeWorkerResponseMessage,
   type FontTransfer,
-  getWorkerMessageId,
   type IndexedFrameTime,
   isWorkerMessageId,
   type WorkerFrameRenderOptions,
@@ -201,9 +200,8 @@ export class WorkerEngine {
 
     this.handleMessage = (event: MessageEvent) => {
       const data: unknown = event.data;
-      const response = decodeWorkerResponse(data);
+      const { id: responseId, message: response } = decodeWorkerResponseMessage(data);
       if (response === undefined) {
-        const responseId = getWorkerMessageId(data);
         if (responseId !== undefined) {
           const entry = this.pending.get(responseId);
           if (entry) {

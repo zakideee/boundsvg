@@ -29,8 +29,7 @@ import { initWasm } from "@boundsvg/core/wasm";
 import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import {
   collectResponseTransferables,
-  decodeWorkerRequest,
-  getWorkerMessageId,
+  decodeWorkerRequestMessage,
   type WorkerAnimatedGifRenderOptions,
   type WorkerAnimatedWebpRenderOptions,
   type WorkerLayeredPngRenderOptions,
@@ -65,11 +64,11 @@ declare const self: DedicatedWorkerGlobalScope;
 
 self.onmessage = (event: MessageEvent) => {
   const data: unknown = event.data;
-  const request = decodeWorkerRequest(data);
+  const { id: requestId, message: request } = decodeWorkerRequestMessage(data);
 
   if (request === undefined) {
-    // Cannot correlate with an ID — best-effort extraction, fallback to -1.
-    const fallbackId = getWorkerMessageId(data) ?? -1;
+    // Preserve the correlation ID captured by the failed decode, or fall back to -1.
+    const fallbackId = requestId ?? -1;
     const response: WorkerResponse = {
       id: fallbackId,
       type: "error",

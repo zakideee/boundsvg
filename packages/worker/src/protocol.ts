@@ -668,7 +668,24 @@ function snapshotArrayProperties(value: Record<string, unknown>, keys: readonly 
   return true;
 }
 
-function requestArrayKeys(type: WorkerRequest["type"]): readonly string[] {
+function snapshotRecoverableWarnings(value: unknown): SerializedRecoverableError[] | undefined {
+  const entries = snapshotDenseOwnDataArray(value);
+  if (entries === undefined) {
+    return undefined;
+  }
+
+  const warnings: SerializedRecoverableError[] = [];
+  for (const entry of entries) {
+    try {
+      warnings.push(RecoverableError.fromSerialized(entry).toJSON());
+    } catch {
+      return undefined;
+    }
+  }
+  return warnings;
+}
+
+function requestArrayKeys(type: string): readonly string[] {
   switch (type) {
     case "init":
       return ["fonts", "geometries", "symbols"];
@@ -680,7 +697,7 @@ function requestArrayKeys(type: WorkerRequest["type"]): readonly string[] {
   }
 }
 
-function responseArrayKeys(type: WorkerResponse["type"]): readonly string[] {
+function responseArrayKeys(type: string): readonly string[] {
   switch (type) {
     case "render-svg-ok":
     case "render-animated-svg-ok":
@@ -698,6 +715,34 @@ function responseArrayKeys(type: WorkerResponse["type"]): readonly string[] {
       return [];
   }
 }
+
+function snapshotResponseDiagnostics(value: Record<string, unknown>, type: string): boolean {
+  for (const key of responseArrayKeys(type)) {
+    const propertyValue = value[key];
+    if (propertyValue === undefined) {
+      continue;
+    }
+    const warnings = snapshotRecoverableWarnings(propertyValue);
+    if (warnings === undefined) {
+      return false;
+    }
+    value[key] = warnings;
+  }
+
+  if (type === "error" && value.error !== undefined) {
+    try {
+      value.error = FatalError.fromSerialized(value.error).toJSON();
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+type WorkerMessageDecodeResult<TMessage> = {
+  readonly id: number | undefined;
+  readonly message: TMessage | undefined;
+};
 
 /** Return whether a protocol ID can be correlated without precision loss. */
 export function isWorkerMessageId(value: unknown): value is number {
@@ -849,22 +894,32 @@ function isWorkerRequestSnapshot(value: object): value is WorkerRequest {
   }
 }
 
-/** Decode one request into a getter-free top-level snapshot. */
-export function decodeWorkerRequest(value: unknown): WorkerRequest | undefined {
+/** Decode one request and its correlation ID from the same getter-free snapshot. */
+export function decodeWorkerRequestMessage(
+  value: unknown,
+): WorkerMessageDecodeResult<WorkerRequest> {
   const snapshot = snapshotKnownProperties(value, WORKER_REQUEST_KEYS);
   if (snapshot === undefined) {
-    return undefined;
+    return { id: undefined, message: undefined };
   }
+  const id = getWorkerMessageId(snapshot);
   try {
-    if (!isWorkerRequestSnapshot(snapshot)) {
-      return undefined;
+    const type = getStringProperty(snapshot, "type");
+    if (type !== undefined && !snapshotArrayProperties(snapshot, requestArrayKeys(type))) {
+      return { id, message: undefined };
     }
-    return snapshotArrayProperties(snapshot, requestArrayKeys(snapshot.type))
-      ? snapshot
-      : undefined;
+    if (!isWorkerRequestSnapshot(snapshot)) {
+      return { id, message: undefined };
+    }
+    return { id, message: snapshot };
   } catch {
-    return undefined;
+    return { id, message: undefined };
   }
+}
+
+/** Decode one request into a getter-free top-level snapshot. */
+function decodeWorkerRequest(value: unknown): WorkerRequest | undefined {
+  return decodeWorkerRequestMessage(value).message;
 }
 
 export function isWorkerRequest(value: unknown): value is WorkerRequest {
@@ -964,22 +1019,32 @@ function isWorkerResponseSnapshot(value: object): value is WorkerResponse {
   }
 }
 
-/** Decode one response into a getter-free top-level snapshot. */
-export function decodeWorkerResponse(value: unknown): WorkerResponse | undefined {
+/** Decode one response and its correlation ID from the same getter-free snapshot. */
+export function decodeWorkerResponseMessage(
+  value: unknown,
+): WorkerMessageDecodeResult<WorkerResponse> {
   const snapshot = snapshotKnownProperties(value, WORKER_RESPONSE_KEYS);
   if (snapshot === undefined) {
-    return undefined;
+    return { id: undefined, message: undefined };
   }
+  const id = getWorkerMessageId(snapshot);
   try {
-    if (!isWorkerResponseSnapshot(snapshot)) {
-      return undefined;
+    const type = getStringProperty(snapshot, "type");
+    if (type !== undefined && !snapshotResponseDiagnostics(snapshot, type)) {
+      return { id, message: undefined };
     }
-    return snapshotArrayProperties(snapshot, responseArrayKeys(snapshot.type))
-      ? snapshot
-      : undefined;
+    if (!isWorkerResponseSnapshot(snapshot)) {
+      return { id, message: undefined };
+    }
+    return { id, message: snapshot };
   } catch {
-    return undefined;
+    return { id, message: undefined };
   }
+}
+
+/** Decode one response into a getter-free top-level snapshot. */
+export function decodeWorkerResponse(value: unknown): WorkerResponse | undefined {
+  return decodeWorkerResponseMessage(value).message;
 }
 
 export function isWorkerResponse(value: unknown): value is WorkerResponse {

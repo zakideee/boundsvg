@@ -246,6 +246,36 @@ describe("worker script measurement dispatch", () => {
     expect(getCalls).toBe(0);
   });
 
+  it("correlates an invalid request from the same top-level snapshot", () => {
+    let idDescriptorCalls = 0;
+    const request = new Proxy(
+      { id: 2, type: "render-svg", scene: 42 },
+      {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "id") {
+            idDescriptorCalls += 1;
+            return {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              value: idDescriptorCalls === 1 ? 2 : 3,
+            };
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      },
+    );
+
+    scope.sendRaw(request);
+
+    expect(scope.responses[0]).toMatchObject({
+      id: 2,
+      type: "error",
+      error: { code: "WORKER_INVALID_MESSAGE" },
+    });
+    expect(idDescriptorCalls).toBe(1);
+  });
+
   it("dispatches static and animated SVG direct and SVG+IR request families", async () => {
     scope.send({ id: 1, type: "init", fonts: [] });
     await vi.waitFor(() => expect(scope.responses).toContainEqual({ id: 1, type: "init-ok" }));

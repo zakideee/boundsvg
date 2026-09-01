@@ -4,6 +4,7 @@ import type { WorkerLayoutTransitionInput } from "../src/layout-transition-trans
 import {
   collectRequestTransferables,
   collectResponseTransferables,
+  decodeWorkerResponse,
   type FontTransfer,
   getWorkerMessageId,
   type InitRequest,
@@ -923,6 +924,53 @@ describe("isWorkerResponse", () => {
     ).toBe(true);
   });
 
+  it("snapshots each warning descriptor once and detaches the validated payload", () => {
+    const warning = {
+      severity: "recoverable" as const,
+      code: "WARN",
+      message: "original warning",
+      fallback: "continued",
+      stage: "emit" as const,
+      context: { owner: { id: "original" } },
+    };
+    let entryDescriptorCalls = 0;
+    const warnings = new Proxy([warning] as unknown[], {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "0") {
+          entryDescriptorCalls += 1;
+          return {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: entryDescriptorCalls === 1 ? warning : 0,
+          };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    const decoded = decodeWorkerResponse({
+      id: 1,
+      type: "render-svg-ok",
+      svg: "<svg/>",
+      warnings,
+    });
+
+    expect(decoded?.type).toBe("render-svg-ok");
+    if (decoded?.type !== "render-svg-ok") {
+      throw new TypeError("expected a decoded SVG response");
+    }
+    expect(entryDescriptorCalls).toBe(1);
+    expect(decoded.warnings[0]).toEqual(warning);
+    expect(decoded.warnings[0]).not.toBe(warning);
+    expect(decoded.warnings[0]?.context).not.toBe(warning.context);
+
+    warning.message = "mutated warning";
+    warning.context.owner.id = "mutated";
+    expect(decoded.warnings[0]?.message).toBe("original warning");
+    expect(decoded.warnings[0]?.context).toEqual({ owner: { id: "original" } });
+  });
+
   it("returns false for render-png-ok with malformed recoverable warnings", () => {
     expect(
       isWorkerResponse({
@@ -995,6 +1043,31 @@ describe("isWorkerResponse", () => {
         error: { severity: "fatal", code: "X", message: "m", stage: "validate" },
       }),
     ).toBe(true);
+  });
+
+  it("detaches a validated fatal diagnostic from the response payload", () => {
+    const error = {
+      severity: "fatal" as const,
+      code: "WORKER_FAILURE",
+      message: "original failure",
+      stage: "engine" as const,
+      context: { owner: { id: "original" } },
+    };
+
+    const decoded = decodeWorkerResponse({ id: 1, type: "error", error });
+
+    expect(decoded?.type).toBe("error");
+    if (decoded?.type !== "error") {
+      throw new TypeError("expected a decoded error response");
+    }
+    expect(decoded.error).toEqual(error);
+    expect(decoded.error).not.toBe(error);
+    expect(decoded.error.context).not.toBe(error.context);
+
+    error.message = "mutated failure";
+    error.context.owner.id = "mutated";
+    expect(decoded.error.message).toBe("original failure");
+    expect(decoded.error.context).toEqual({ owner: { id: "original" } });
   });
 
   it("returns false for warning with invalid severity", () => {
