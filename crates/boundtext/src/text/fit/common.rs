@@ -7,8 +7,7 @@ use super::super::types::{
 };
 use crate::font::FontContext;
 use crate::font::line_metrics::{LineMetrics, resolve_line_metrics_for_style};
-use crate::font::shaping::{self, GlyphInfo, ShapeOptions};
-use crate::font::{FontRegistry, FontStyle};
+use crate::font::shaping::{GlyphInfo, ShapeOptions};
 
 /// Default minimum font size for shrink (px).
 pub(super) const DEFAULT_MIN_FONT_SIZE: f64 = 8.0;
@@ -159,68 +158,15 @@ pub(super) fn shape_at_size(
     letter_spacing_px: f64,
     shape_options: &ShapeOptions,
 ) -> Result<Vec<GlyphInfo>, crate::TextLayoutError> {
-    if text.is_empty() {
-        return Ok(Vec::new());
-    }
-    if font_ctx.families.len() > 1 {
-        let result = shaping::shape_with_fallback_and_options_checked(
-            font_ctx,
-            text,
-            font_size_px,
-            letter_spacing_px,
-            shape_options,
-        )
-        .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
-            run_index: 0,
-            families: font_ctx.families.to_vec(),
-            weight: font_ctx.weight,
-            style: font_ctx.style.clone(),
-        })?;
-        if !result.glyphs.is_empty() {
-            return Ok(result.glyphs);
-        }
-        return Err(crate::TextLayoutError::PreparationFailed {
-            phase: crate::TextPreparationPhase::PlainShaping,
-        });
-    }
-
-    let font_entry = resolve_font(
-        font_ctx.registry,
-        font_ctx.fallback_registry,
-        font_ctx.families,
-        font_ctx.weight,
-        font_ctx.style,
-    )
-    .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
-        run_index: 0,
-        families: font_ctx.families.to_vec(),
-        weight: font_ctx.weight,
-        style: font_ctx.style.clone(),
-    })?;
-    Ok(shaping::shape_text_with_options(
-        font_ctx.registry,
-        font_entry,
+    crate::text::shape_checked_text_run(
+        font_ctx,
         text,
         font_size_px,
         letter_spacing_px,
         shape_options,
-    ))
-}
-
-pub(super) fn resolve_font<'a>(
-    font_registry: &'a FontRegistry,
-    fallback_registry: Option<&'a FontRegistry>,
-    aliases: &[String],
-    weight: u16,
-    style: &FontStyle,
-) -> Option<&'a crate::font::FontEntry> {
-    if let Some(entry) = font_registry.resolve_chain(aliases, weight, style) {
-        return Some(entry);
-    }
-    if let Some(fallback) = fallback_registry {
-        return fallback.resolve_chain(aliases, weight, style);
-    }
-    None
+        0,
+        crate::TextPreparationPhase::PlainShaping,
+    )
 }
 
 pub(super) fn language_to_str(lang: Language) -> &'static str {

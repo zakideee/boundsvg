@@ -15,10 +15,8 @@ use super::result_building::{
 use crate::font::FontContext;
 use crate::font::line_metrics::resolve_line_metrics_for_style;
 use crate::font::shaping::{
-    self, GlyphInfo, ShapeOptions, parse_css_font_feature_settings,
-    parse_css_font_variation_settings,
+    GlyphInfo, ShapeOptions, parse_css_font_feature_settings, parse_css_font_variation_settings,
 };
-use crate::font::{FontRegistry, FontStyle};
 use crate::text::kinsoku::{get_hanging_chars, get_kinsoku_profile};
 
 // ---------------------------------------------------------------------------
@@ -916,71 +914,15 @@ fn shape_text_for_layout_result(
     run_index: usize,
     phase: crate::TextPreparationPhase,
 ) -> Result<Vec<GlyphInfo>, crate::TextLayoutError> {
-    if text.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if font_ctx.families.len() > 1 {
-        let result = shaping::shape_with_fallback_and_options_checked(
-            font_ctx,
-            text,
-            font_size_px,
-            letter_spacing_px,
-            shape_options,
-        )
-        .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
-            run_index,
-            families: font_ctx.families.to_vec(),
-            weight: font_ctx.weight,
-            style: font_ctx.style.clone(),
-        })?;
-        if !result.glyphs.is_empty() {
-            return Ok(result.glyphs);
-        }
-        return Err(crate::TextLayoutError::PreparationFailed { phase });
-    }
-
-    let font_entry = resolve_font(
-        font_ctx.registry,
-        font_ctx.fallback_registry,
-        font_ctx.families,
-        font_ctx.weight,
-        font_ctx.style,
-    )
-    .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
-        run_index,
-        families: font_ctx.families.to_vec(),
-        weight: font_ctx.weight,
-        style: font_ctx.style.clone(),
-    })?;
-    let glyphs = shaping::shape_text_with_options(
-        font_ctx.registry,
-        font_entry,
+    crate::text::shape_checked_text_run(
+        font_ctx,
         text,
         font_size_px,
         letter_spacing_px,
         shape_options,
-    );
-    if glyphs.is_empty() {
-        return Err(crate::TextLayoutError::PreparationFailed { phase });
-    }
-    Ok(glyphs)
-}
-
-fn resolve_font<'a>(
-    font_registry: &'a FontRegistry,
-    fallback_registry: Option<&'a FontRegistry>,
-    aliases: &[String],
-    weight: u16,
-    style: &FontStyle,
-) -> Option<&'a crate::font::FontEntry> {
-    if let Some(entry) = font_registry.resolve_chain(aliases, weight, style) {
-        return Some(entry);
-    }
-    if let Some(fallback) = fallback_registry {
-        return fallback.resolve_chain(aliases, weight, style);
-    }
-    None
+        run_index,
+        phase,
+    )
 }
 
 // ---------------------------------------------------------------------------

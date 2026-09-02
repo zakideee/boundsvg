@@ -4374,10 +4374,6 @@ fn shape_text(
     vertical: bool,
     run_index: usize,
 ) -> Result<Vec<GlyphInfo>, crate::TextLayoutError> {
-    if text.is_empty() {
-        return Ok(Vec::new());
-    }
-
     let options = ShapeOptions {
         writing_mode: if vertical {
             Some("vertical-rl".to_string())
@@ -4409,66 +4405,15 @@ fn shape_text(
         weight: style.font_weight,
         style: &style.font_style,
     };
-
-    if style.font_families.len() > 1 {
-        let result = shaping::shape_with_fallback_and_options_checked(
-            &font_ctx,
-            text,
-            style.font_size_px,
-            style.letter_spacing_px,
-            &options,
-        )
-        .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
-            run_index,
-            families: style.font_families.clone(),
-            weight: style.font_weight,
-            style: style.font_style.clone(),
-        })?;
-        if !result.glyphs.is_empty() {
-            return Ok(result.glyphs);
-        }
-        return Err(crate::TextLayoutError::PreparationFailed {
-            phase: crate::TextPreparationPhase::RichPreparation,
-        });
-    }
-
-    let entry = resolve_font(
-        font_registry,
-        fallback_registry,
-        &style.font_families,
-        style.font_weight,
-        &style.font_style,
-    )
-    .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
-        run_index,
-        families: style.font_families.clone(),
-        weight: style.font_weight,
-        style: style.font_style.clone(),
-    })?;
-    Ok(shaping::shape_text_with_options(
-        font_registry,
-        entry,
+    crate::text::shape_checked_text_run(
+        &font_ctx,
         text,
         style.font_size_px,
         style.letter_spacing_px,
         &options,
-    ))
-}
-
-fn resolve_font<'a>(
-    font_registry: &'a FontRegistry,
-    fallback_registry: Option<&'a FontRegistry>,
-    aliases: &[String],
-    weight: u16,
-    style: &FontStyle,
-) -> Option<&'a crate::font::FontEntry> {
-    if let Some(entry) = font_registry.resolve_chain(aliases, weight, style) {
-        return Some(entry);
-    }
-    if let Some(fallback) = fallback_registry {
-        return fallback.resolve_chain(aliases, weight, style);
-    }
-    None
+        run_index,
+        crate::TextPreparationPhase::RichPreparation,
+    )
 }
 
 #[expect(
