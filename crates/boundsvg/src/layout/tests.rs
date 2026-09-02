@@ -457,12 +457,54 @@ fn rejects_rich_text_beyond_maximum_depth_before_layout() {
     let error = compute_full_layout(&rich_text_layout_input(MAX_RICH_TEXT_DEPTH + 1))
         .expect_err("over-depth rich text should be rejected");
     match error {
-        crate::error::EngineError::Validation(message) => {
-            assert!(message.contains("rich text exceeds max depth (48)"));
-            assert!(message.contains("text-boundary"));
-            assert!(message.contains("actual depth 49"));
+        crate::error::EngineError::StructuredContext {
+            code,
+            message,
+            stage,
+            node_id,
+            context,
+        } => {
+            assert_eq!(code, "RICH_TEXT_MAX_DEPTH");
+            assert_eq!(message, "Rich text depth limit was exceeded.");
+            assert_eq!(stage, Some(crate::diagnostics::PipelineStage::Validate));
+            assert_eq!(node_id.as_deref(), Some("text-boundary"));
+            assert_eq!(
+                *context,
+                serde_json::json!({
+                    "operation": "renderTextLayout",
+                    "actual": 49,
+                    "limit": 48,
+                })
+            );
         }
-        other => panic!("expected validation error, got {other:?}"),
+        other => panic!("expected structured rich-depth error, got {other:?}"),
+    }
+}
+
+#[test]
+fn text_path_layout_unavailable_keeps_render_operation_context() {
+    let error = super::taffy::map_text_path_layout_error(
+        &crate::text::path::TextOnPathError::LayoutUnavailable,
+        "path-text",
+    );
+    match error {
+        crate::error::EngineError::StructuredContext {
+            code,
+            message,
+            stage,
+            node_id,
+            context,
+        } => {
+            assert_eq!(code, "TEXT_PATH_LAYOUT_UNAVAILABLE");
+            assert_eq!(message, "Text-on-path layout is unavailable.");
+            assert_eq!(stage, Some(crate::diagnostics::PipelineStage::Text));
+            assert_eq!(node_id.as_deref(), Some("path-text"));
+            assert_eq!(
+                *context,
+                serde_json::json!({ "operation": "renderTextLayout" })
+            );
+        }
+        other => panic!("expected structured text-path error, got {other:?}"),
     }
 }
 

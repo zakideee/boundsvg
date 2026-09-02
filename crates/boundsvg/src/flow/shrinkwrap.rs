@@ -14,8 +14,9 @@ use crate::text::inline_runs;
 use crate::text::paragraph;
 use crate::text::shrinkwrap;
 use crate::text::types::{
-    FitMode, Language, RichTextNodeInput, TextLayoutRequest, TextOrientation, WhiteSpaceMode,
-    WrapMode, WritingMode, preprocess_span_texts_for_white_space, preprocess_text_for_white_space,
+    FitMode, Language, MAX_RICH_TEXT_DEPTH, RichTextNodeInput, TextLayoutRequest, TextOrientation,
+    WhiteSpaceMode, WrapMode, WritingMode, first_excess_rich_text_depth,
+    preprocess_span_texts_for_white_space, preprocess_text_for_white_space,
 };
 
 /// Headroom for synthesized unconstrained flow height. Tight authored line
@@ -272,6 +273,12 @@ pub(crate) fn shrinkwrap_text(
         );
     let bt_spans_ref = bt_spans.as_deref();
     let rich_text_ref = input.rich_text.as_deref().filter(|nodes| !nodes.is_empty());
+    if let Some(actual_depth) = rich_text_ref.and_then(first_excess_rich_text_depth) {
+        return Err(boundtext::TextLayoutError::RichTextDepthLimit {
+            actual: actual_depth,
+            limit: MAX_RICH_TEXT_DEPTH,
+        });
+    }
 
     let config = shrinkwrap::ShrinkwrapConfig {
         epsilon_px: input.epsilon_px.unwrap_or(0.25),

@@ -1680,6 +1680,27 @@ fn rich_text_depth_49_is_rejected_by_all_typed_consumers() {
     }
 }
 
+#[test]
+fn shrinkwrap_text_rejects_extreme_depth_before_recursive_estimation() {
+    let registry = make_registry();
+    let mut input: ShrinkwrapTextInput = serde_json::from_value(serde_json::json!({
+        "text": "",
+        "fontFamily": "NotoSansJP",
+        "fontSizePx": 12.0,
+        "maxWidth": 120.0
+    }))
+    .expect("valid shrinkwrap text input");
+    input.rich_text = Some(make_nested_rich_text(512));
+
+    assert_eq!(
+        shrinkwrap_text(&input, &registry).expect_err("extreme depth must be rejected"),
+        boundtext::TextLayoutError::RichTextDepthLimit {
+            actual: 49,
+            limit: 48,
+        }
+    );
+}
+
 fn make_rich_text_ruby() -> Vec<RichTextNodeInput> {
     vec![RichTextNodeInput::Ruby {
         ruby_position: Some("over".to_string()),

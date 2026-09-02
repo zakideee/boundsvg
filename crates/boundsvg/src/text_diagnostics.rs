@@ -62,6 +62,20 @@ impl TextLayoutDiagnostic {
     }
 }
 
+/// Classify the text-on-path branch that completed shaping without a usable
+/// layout artifact. It is not a boundtext `TextLayoutError`, but it shares the
+/// same render operation identity and bounded diagnostic transport.
+#[must_use]
+pub(crate) fn classify_text_path_layout_unavailable(node_id: String) -> TextLayoutDiagnostic {
+    TextLayoutDiagnostic {
+        code: "TEXT_PATH_LAYOUT_UNAVAILABLE",
+        message: "Text-on-path layout is unavailable.",
+        stage: PipelineStage::Text,
+        node_id: Some(node_id),
+        context: operation_context(TextLayoutOperation::RenderTextLayout),
+    }
+}
+
 fn operation_context(operation: TextLayoutOperation) -> Value {
     Value::Object(context_map(operation))
 }

@@ -145,10 +145,15 @@ fn validate_layout_tree_depth(root: &LayoutNodeInput) -> Result<(), EngineError>
                 .as_deref()
                 .and_then(first_excess_rich_text_depth)
         {
-            return Err(EngineError::Validation(format!(
-                "rich text exceeds max depth ({MAX_RICH_TEXT_DEPTH}) at node \"{}\" (actual depth {actual_depth})",
-                node.node_id
-            )));
+            return Err(crate::text_diagnostics::classify_text_layout_error(
+                &boundtext::TextLayoutError::RichTextDepthLimit {
+                    actual: actual_depth,
+                    limit: MAX_RICH_TEXT_DEPTH,
+                },
+                crate::text_diagnostics::TextLayoutOperation::RenderTextLayout,
+                Some(node.node_id.clone()),
+            )
+            .into_engine_error());
         }
         if let Some(text) = &node.text {
             validate_text_decorations(text, node.visual.as_ref(), &node.node_id)?;
@@ -1603,7 +1608,7 @@ fn build_text_path_layout_output(
     })
 }
 
-fn map_text_path_layout_error(
+pub(super) fn map_text_path_layout_error(
     error: &crate::text::path::TextOnPathError,
     node_id: &str,
 ) -> EngineError {
@@ -1615,6 +1620,12 @@ fn map_text_path_layout_error(
                 error,
                 crate::text_diagnostics::TextLayoutOperation::RenderTextLayout,
                 Some(node_id.to_string()),
+            )
+            .into_engine_error();
+        }
+        TextOnPathError::LayoutUnavailable => {
+            return crate::text_diagnostics::classify_text_path_layout_unavailable(
+                node_id.to_string(),
             )
             .into_engine_error();
         }
@@ -1635,17 +1646,11 @@ fn map_text_path_layout_error(
         TextOnPathError::DecorationGeometry => "TEXT_DECORATION_GEOMETRY",
         TextOnPathError::InlineClusterSplit => "TEXT_PATH_INLINE_CLUSTER_SPLIT",
         TextOnPathError::FitUnsatisfiable => "TEXT_PATH_FIT_UNSATISFIABLE",
-        TextOnPathError::LayoutUnavailable => "TEXT_PATH_LAYOUT_UNAVAILABLE",
         TextOnPathError::UnitMapInvalid => "TEXT_UNIT_MAP_INVALID",
-    };
-    let message = if matches!(error, TextOnPathError::LayoutUnavailable) {
-        "Text-on-path layout is unavailable.".to_string()
-    } else {
-        error.to_string()
     };
     EngineError::Structured {
         code: code.to_string(),
-        message,
+        message: error.to_string(),
         stage: Some(crate::diagnostics::PipelineStage::Text),
         node_id: Some(node_id.to_string()),
     }
