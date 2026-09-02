@@ -3334,15 +3334,12 @@ mod tests {
         validate_animated_timeline_wire_options, validate_layout_text_decoration_wire_values,
     };
 
-    #[derive(serde::Deserialize)]
-    struct RejectedTextLayoutWireInput {}
-
     struct RejectedTextLayoutRequest;
 
-    impl TryFrom<RejectedTextLayoutWireInput> for RejectedTextLayoutRequest {
+    impl TryFrom<serde_json::Value> for RejectedTextLayoutRequest {
         type Error = boundtext::TextLayoutError;
 
-        fn try_from(_: RejectedTextLayoutWireInput) -> Result<Self, Self::Error> {
+        fn try_from(_: serde_json::Value) -> Result<Self, Self::Error> {
             Err(boundtext::TextLayoutError::InvalidRequest {
                 reason: boundtext::TextRequestError::InvalidRequestShape,
             })
@@ -3372,7 +3369,7 @@ mod tests {
         );
 
         let conversion = run_text_layout_operation::<
-            RejectedTextLayoutWireInput,
+            serde_json::Value,
             RejectedTextLayoutRequest,
             serde_json::Value,
             _,

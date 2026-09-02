@@ -494,7 +494,7 @@ describe("WASM instance-based engine", () => {
       } catch (error) {
         expect(error).toMatchObject({
           name: "FatalError",
-          code: "FONT_ALIAS_NOT_REGISTERED",
+          code: "TEXT_FONT_UNAVAILABLE",
           stage: "text",
         });
       }
@@ -554,7 +554,7 @@ describe("WASM instance-based engine", () => {
       } catch (error) {
         expect(error).toMatchObject({
           name: "FatalError",
-          code: "FONT_ALIAS_NOT_REGISTERED",
+          code: "TEXT_FONT_UNAVAILABLE",
           stage: "text",
         });
       }

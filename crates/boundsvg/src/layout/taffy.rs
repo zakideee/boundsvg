@@ -1560,7 +1560,7 @@ fn build_text_path_layout_output(
         }),
     };
     let mut result = layout_text_on_path(&path_request, &font_context)
-        .map_err(|error| map_text_path_layout_error(error, node_id))?;
+        .map_err(|error| map_text_path_layout_error(&error, node_id))?;
     let unit_map = result.unit_map.take();
     let text_decorations = std::mem::take(&mut result.text_decorations);
     let warnings = result
@@ -1604,12 +1604,20 @@ fn build_text_path_layout_output(
 }
 
 fn map_text_path_layout_error(
-    error: crate::text::path::TextOnPathError,
+    error: &crate::text::path::TextOnPathError,
     node_id: &str,
 ) -> EngineError {
     use crate::text::path::TextOnPathError;
 
     let code = match error {
+        TextOnPathError::TextLayout(error) => {
+            return crate::text_diagnostics::classify_text_layout_error(
+                error,
+                crate::text_diagnostics::TextLayoutOperation::RenderTextLayout,
+                Some(node_id.to_string()),
+            )
+            .into_engine_error();
+        }
         TextOnPathError::Invalid => "TEXT_PATH_INVALID",
         TextOnPathError::InvalidData => "TEXT_PATH_INVALID_DATA",
         TextOnPathError::MultipleSubpathsUnsupported => "TEXT_PATH_MULTIPLE_SUBPATHS_UNSUPPORTED",
