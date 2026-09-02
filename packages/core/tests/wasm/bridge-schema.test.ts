@@ -657,17 +657,32 @@ function payloadShape(
     ) {
       payloads.push(node.arguments[0]);
     }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "invokeWasmShapeOperation"
+    ) {
+      const createInput = node.arguments[1];
+      if (createInput && ts.isArrowFunction(createInput)) {
+        const body = ts.isParenthesizedExpression(createInput.body)
+          ? createInput.body.expression
+          : createInput.body;
+        if (ts.isObjectLiteralExpression(body)) {
+          payloads.push(body);
+        }
+      }
+    }
     ts.forEachChild(node, visit);
   }
   visit(declaration);
   if (payloads.length !== 1) {
     throw new TypeError(
-      `expected one JSON.stringify object payload in ${functionName}, found ${payloads.length}`,
+      `expected one shape input object in ${functionName}, found ${payloads.length}`,
     );
   }
   const payload = payloads[0];
   if (!payload) {
-    throw new TypeError(`missing JSON.stringify object payload: ${functionName}`);
+    throw new TypeError(`missing shape input object: ${functionName}`);
   }
   const entries: Array<[string, boolean]> = [];
   for (const property of payload.properties) {

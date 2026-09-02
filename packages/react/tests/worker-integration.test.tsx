@@ -229,6 +229,40 @@ describe("BoundSvg Worker/non-Worker branching", () => {
     });
   });
 
+  it("passes a rendered Shape FatalError to the sync error fallback unchanged", () => {
+    const fatalError = new FatalError("SHAPE_PATH_DATA_INVALID", "Shape path data is invalid.", {
+      stage: "validate",
+      nodeId: "invalid-shape",
+      context: { operation: "renderShape" },
+    });
+    const engine = makeEngineMock({
+      renderToSvg: vi.fn(() => {
+        throw fatalError;
+      }),
+    });
+    let observedError: Error | undefined;
+
+    renderToString(
+      <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
+        <BoundSvg
+          vnode={sampleVNode()}
+          errorFallback={(error: Error) => {
+            observedError = error;
+            return <span>{error.message}</span>;
+          }}
+        />
+      </BoundSvgContext.Provider>,
+    );
+
+    expect(observedError).toBe(fatalError);
+    expect(observedError).toMatchObject({
+      code: "SHAPE_PATH_DATA_INVALID",
+      stage: "validate",
+      nodeId: "invalid-shape",
+      context: { operation: "renderShape" },
+    });
+  });
+
   it("renders error fallback when declarative children include unsupported React elements", () => {
     const renderToSvg = vi.fn(() => '<svg viewBox="0 0 100 100"></svg>');
     const engine = makeEngineMock({ renderToSvg });

@@ -79,6 +79,13 @@ contain nested warnings.
 - `@boundsvg/core/inspect` contains the lower-level bbox collector and the complete inspection type surface.
 - `@boundsvg/core/vnode` is for template transforms such as localization, composing multiple generated scenes, and prefixing explicit node IDs before embedding.
 
+`@boundsvg/core/wasm` exposes all nine low-level shape operations: SVG and
+path compilation, part hit testing, symbol resolution, part and region
+evaluation, region SVG rendering, division, and intersection queries. The
+entry validates structured success values and converts known shape failures
+to stable `FatalError` diagnostics. Custom WASM modules must implement the
+complete operation family and schema expected by this Core version.
+
 See [Choosing an API](../../apps/docs/reference/api-selection.md) for the coordinate space, animation sampling, and cost of each read API.
 
 ## JSX Runtime

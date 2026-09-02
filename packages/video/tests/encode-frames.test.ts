@@ -541,6 +541,21 @@ describe("renderToMp4 end to end", () => {
     await expect(renderToMp4(engine, SCENE, { durationMs: 200 })).rejects.toBe(fatalError);
   });
 
+  it("preserves a rendered Symbol FatalError from the frame producer", async () => {
+    const fatalError = new FatalError("SHAPE_PATH_DATA_INVALID", "Shape path data is invalid.", {
+      stage: "validate",
+      nodeId: "invalid-symbol",
+      context: { operation: "renderSymbol" },
+    });
+    const engine = {
+      renderFrames(): Iterable<Frame> {
+        throw fatalError;
+      },
+    } as unknown as Engine;
+
+    await expect(renderToMp4(engine, SCENE, { durationMs: 200 })).rejects.toBe(fatalError);
+  });
+
   it("closes the engine's frame iterator when the export fails", async () => {
     const returnSpy = vi.fn(() => ({ done: true as const, value: undefined }));
     const engine = {

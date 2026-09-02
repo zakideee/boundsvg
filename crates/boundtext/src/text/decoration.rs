@@ -737,7 +737,7 @@ fn build_paint_path(
         u32::try_from(contour_count).map_err(|_| TextDecorationPaintError::PatternLimit)?;
     let segment_count =
         u32::try_from(segment_count).map_err(|_| TextDecorationPaintError::PatternLimit)?;
-    let d = region_to_path(&physical_region);
+    let d = region_to_path(&physical_region).map_err(|_| TextDecorationPaintError::Geometry)?;
     if d.is_empty() {
         return Err(TextDecorationPaintError::Geometry);
     }

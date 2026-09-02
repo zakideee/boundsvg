@@ -297,7 +297,6 @@ pub enum CurveSegment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
 pub enum ShapeError {
     #[error("boolean nodes require at least 2 children")]
     BooleanChildCount,
@@ -309,8 +308,8 @@ pub enum ShapeError {
     BooleanTopology,
     #[error("duplicate addressable part id `{0}`")]
     DuplicatePartId(String),
-    #[error("geometry tree exceeds max depth ({MAX_GEOMETRY_TREE_DEPTH})")]
-    GeometryDepthLimit,
+    #[error("geometry tree depth {actual} exceeds max depth ({limit})")]
+    GeometryDepthLimit { actual: usize, limit: usize },
     #[error("path measurement supports exactly one drawable subpath")]
     PathMeasureMultipleSubpaths,
     #[error("path measurement requires a non-zero path length")]
@@ -327,6 +326,8 @@ pub enum ShapeError {
     RegionClipInterval,
     #[error("region axis clip requires axis-monotonic contour segments")]
     RegionClipNonMonotonic,
+    #[error("shape output contains a non-finite numeric value")]
+    NonFiniteOutput,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1272,8 +1273,13 @@ pub fn intersections_between_geometries(
     Ok(intersections_between_regions(&lhs_region, &rhs_region))
 }
 
-#[must_use]
-pub fn region_to_path(region: &Region) -> String {
+/// Serializes a concrete region as SVG path data.
+///
+/// # Errors
+///
+/// Returns [`ShapeError::NonFiniteOutput`] when any emitted coordinate is
+/// non-finite.
+pub fn region_to_path(region: &Region) -> Result<String, ShapeError> {
     let mut fragments = Vec::new();
     for contour in &region.contours {
         if contour.segments.is_empty() {
@@ -1283,8 +1289,8 @@ pub fn region_to_path(region: &Region) -> String {
         let mut commands = Vec::new();
         commands.push(format!(
             "M{},{}",
-            format_path_number(start.x),
-            format_path_number(start.y)
+            format_path_number(start.x)?,
+            format_path_number(start.y)?
         ));
         let last_index = contour.segments.len().saturating_sub(1);
         for (segment_index, segment) in contour.segments.iter().enumerate() {
@@ -1298,14 +1304,14 @@ pub fn region_to_path(region: &Region) -> String {
             if is_redundant_close_line {
                 continue;
             }
-            commands.push(segment_to_path_command(segment));
+            commands.push(segment_to_path_command(segment)?);
         }
         if contour.closed {
             commands.push("Z".to_string());
         }
         fragments.push(commands.join(""));
     }
-    fragments.join(" ")
+    Ok(fragments.join(" "))
 }
 
 /// Returns exact axis-aligned bounds for a concrete region. Curve extrema,
@@ -1384,8 +1390,16 @@ pub fn normalize_filled_region(region: Region) -> Result<Region, ShapeError> {
     normalize_region(region, "nonzero", tolerance).map(|value| stabilize_region(value, tolerance))
 }
 
-#[must_use]
-pub fn region_to_svg(region: &Region, options: Option<&CompileGeometryOptions>) -> String {
+/// Serializes a concrete region as a standalone SVG document.
+///
+/// # Errors
+///
+/// Returns [`ShapeError::NonFiniteOutput`] when any generated numeric value is
+/// non-finite.
+pub fn region_to_svg(
+    region: &Region,
+    options: Option<&CompileGeometryOptions>,
+) -> Result<String, ShapeError> {
     let bbox = region_bbox(region).unwrap_or(BBox {
         min_x: 0.0,
         min_y: 0.0,
@@ -1641,14 +1655,14 @@ pub fn compile_geometry_paths(
     let to_part = |part_id: Option<String>,
                    region: Region,
                    stroke_region: Region|
-     -> Option<CompiledGeometryPart> {
-        let d = region_to_path(&region);
-        let stroke_path = region_to_path(&stroke_region);
+     -> Result<Option<CompiledGeometryPart>, ShapeError> {
+        let d = region_to_path(&region)?;
+        let stroke_path = region_to_path(&stroke_region)?;
         // A shape whose fill normalized to nothing (a line, a zero-area
         // contour) still has a stroke to draw. Only a shape with neither is
         // empty.
         if d.is_empty() && stroke_path.is_empty() {
-            return None;
+            return Ok(None);
         }
         // `d` already strokes correctly for the common case; carry a separate
         // stroke path only when normalization changed the geometry.
@@ -1661,29 +1675,38 @@ pub fn compile_geometry_paths(
                 width: bbox.max_x - bbox.min_x,
                 height: bbox.max_y - bbox.min_y,
             });
-        Some(CompiledGeometryPart {
+        if bounds.is_some_and(|part_bounds| {
+            !part_bounds.x.is_finite()
+                || !part_bounds.y.is_finite()
+                || !part_bounds.width.is_finite()
+                || !part_bounds.height.is_finite()
+        }) {
+            return Err(ShapeError::NonFiniteOutput);
+        }
+        Ok(Some(CompiledGeometryPart {
             part_id,
             d,
             stroke_d,
             bounds,
-        })
+        }))
     };
     if compiled_options.part_ids {
         let parts = evaluate_geometry_parts_with_default_fill_rule(geometry, default_fill_rule)?;
-        return Ok(parts
+        return parts
             .into_iter()
-            .filter_map(|part| {
+            .map(|part| {
                 to_part(
                     Some(part.part_id),
                     bake(&part.region),
                     bake(&part.stroke_region),
                 )
             })
-            .collect());
+            .filter_map(Result::transpose)
+            .collect();
     }
     let region = evaluate_geometry_node_with_default_fill_rule(&geometry.root, default_fill_rule)?;
     let stroke_region = evaluate_stroke_geometry(&geometry.root, default_fill_rule)?;
-    Ok(to_part(None, bake(&region), bake(&stroke_region))
+    Ok(to_part(None, bake(&region), bake(&stroke_region))?
         .into_iter()
         .collect())
 }
@@ -1711,21 +1734,22 @@ pub fn compile_geometry_to_svg_document(
             .map_or(geometry.view_box.height, |value| value.height),
     };
     let parts = compile_geometry_paths(geometry, Some(&compiled_options))?;
-    Ok(render_compiled_parts_svg(
-        &parts,
-        &baked_view_box,
-        compiled_options.paint.as_ref(),
-    ))
+    render_compiled_parts_svg(&parts, &baked_view_box, compiled_options.paint.as_ref())
 }
 
-#[must_use]
-pub fn transform_to_svg(transform: &Transform2D) -> String {
+/// Serializes a geometry transform as an SVG transform list.
+///
+/// # Errors
+///
+/// Returns [`ShapeError::NonFiniteOutput`] when an emitted transform value is
+/// non-finite.
+pub fn transform_to_svg(transform: &Transform2D) -> Result<String, ShapeError> {
     let mut commands = Vec::new();
     if transform.translate_x.unwrap_or(0.0) != 0.0 || transform.translate_y.unwrap_or(0.0) != 0.0 {
         commands.push(format!(
             "translate({} {})",
-            format_svg_number(transform.translate_x.unwrap_or(0.0)),
-            format_svg_number(transform.translate_y.unwrap_or(0.0))
+            format_svg_number(transform.translate_x.unwrap_or(0.0))?,
+            format_svg_number(transform.translate_y.unwrap_or(0.0))?
         ));
     }
 
@@ -1734,9 +1758,9 @@ pub fn transform_to_svg(transform: &Transform2D) -> String {
     if let Some(rotate_deg) = transform.rotate_deg {
         commands.push(format!(
             "rotate({} {} {})",
-            format_svg_number(rotate_deg),
-            format_svg_number(origin_x),
-            format_svg_number(origin_y)
+            format_svg_number(rotate_deg)?,
+            format_svg_number(origin_x)?,
+            format_svg_number(origin_y)?
         ));
     }
     if transform.scale_x.is_some() || transform.scale_y.is_some() {
@@ -1745,28 +1769,28 @@ pub fn transform_to_svg(transform: &Transform2D) -> String {
         if origin_x != 0.0 || origin_y != 0.0 {
             commands.push(format!(
                 "translate({} {})",
-                format_svg_number(origin_x),
-                format_svg_number(origin_y)
+                format_svg_number(origin_x)?,
+                format_svg_number(origin_y)?
             ));
             commands.push(format!(
                 "scale({} {})",
-                format_svg_number(scale_x),
-                format_svg_number(scale_y)
+                format_svg_number(scale_x)?,
+                format_svg_number(scale_y)?
             ));
             commands.push(format!(
                 "translate({} {})",
-                format_svg_number(-origin_x),
-                format_svg_number(-origin_y)
+                format_svg_number(-origin_x)?,
+                format_svg_number(-origin_y)?
             ));
         } else {
             commands.push(format!(
                 "scale({} {})",
-                format_svg_number(scale_x),
-                format_svg_number(scale_y)
+                format_svg_number(scale_x)?,
+                format_svg_number(scale_y)?
             ));
         }
     }
-    commands.join(" ")
+    Ok(commands.join(" "))
 }
 
 fn evaluate_geometry_node(node: &GeometryNode) -> Result<Region, ShapeError> {
@@ -1783,7 +1807,10 @@ pub fn validate_geometry_tree_depth(root: &GeometryNode) -> Result<(), ShapeErro
     let mut pending = vec![(root, 0usize)];
     while let Some((node, depth)) = pending.pop() {
         if depth > MAX_GEOMETRY_TREE_DEPTH {
-            return Err(ShapeError::GeometryDepthLimit);
+            return Err(ShapeError::GeometryDepthLimit {
+                actual: depth,
+                limit: MAX_GEOMETRY_TREE_DEPTH,
+            });
         }
         match node {
             GeometryNode::Path { .. } => {}
@@ -6510,7 +6537,7 @@ fn render_compiled_parts_svg(
     parts: &[CompiledGeometryPart],
     view_box: &GeometryViewBox,
     paint: Option<&GeometryPaint>,
-) -> String {
+) -> Result<String, ShapeError> {
     use std::fmt::Write as _;
     let mut body = String::new();
     for part in parts {
@@ -6554,7 +6581,7 @@ fn render_compiled_parts_svg(
                     "<path{} d=\"{}\"{} />",
                     part_id_attribute,
                     escape_xml(&part.d),
-                    build_native_paint_attributes(fill_paint.as_ref())
+                    build_native_paint_attributes(fill_paint.as_ref())?
                 );
             }
             if should_stroke {
@@ -6573,14 +6600,14 @@ fn render_compiled_parts_svg(
                     "<path{} d=\"{}\"{} />",
                     part_id_attribute,
                     escape_xml(stroke_path),
-                    build_native_paint_attributes(stroke_paint.as_ref())
+                    build_native_paint_attributes(stroke_paint.as_ref())?
                 );
             }
             if let Some(opacity) = group_opacity {
                 let _ = write!(
                     body,
                     "<g opacity=\"{}\">{}</g>",
-                    format_svg_number(opacity),
+                    format_svg_number(opacity)?,
                     split_body
                 );
             } else {
@@ -6596,55 +6623,59 @@ fn render_compiled_parts_svg(
             "<path{} d=\"{}\"{} />",
             part_id_attribute,
             escape_xml(&part.d),
-            build_native_paint_attributes(paint)
+            build_native_paint_attributes(paint)?
         );
     }
     let view_box_value = format!(
         "0 0 {} {}",
-        format_svg_number(view_box.width),
-        format_svg_number(view_box.height)
+        format_svg_number(view_box.width)?,
+        format_svg_number(view_box.height)?
     );
-    format!(
+    Ok(format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{}\"><g>{}</g></svg>",
         escape_xml(&view_box_value),
         body
-    )
+    ))
 }
 
 fn render_region_svg(
     region: &Region,
     view_box: &GeometryViewBox,
     paint: Option<&GeometryPaint>,
-) -> String {
-    let path = region_to_path(region);
+) -> Result<String, ShapeError> {
+    let path = region_to_path(region)?;
     let body = if path.is_empty() {
         String::new()
     } else {
-        render_region_body(region, &path, paint)
+        render_region_body(region, &path, paint)?
     };
     let view_box_value = format!(
         "0 0 {} {}",
-        format_svg_number(view_box.width),
-        format_svg_number(view_box.height)
+        format_svg_number(view_box.width)?,
+        format_svg_number(view_box.height)?
     );
-    format!(
+    Ok(format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{}\"><g>{}</g></svg>",
         escape_xml(&view_box_value),
         body
-    )
+    ))
 }
 
-fn render_region_body(region: &Region, fill_path: &str, paint: Option<&GeometryPaint>) -> String {
+fn render_region_body(
+    region: &Region,
+    fill_path: &str,
+    paint: Option<&GeometryPaint>,
+) -> Result<String, ShapeError> {
     let Some(paint) = paint else {
-        return format!("<path d=\"{}\" />", escape_xml(fill_path));
+        return Ok(format!("<path d=\"{}\" />", escape_xml(fill_path)));
     };
 
     let _ = region;
-    format!(
+    Ok(format!(
         "<path d=\"{}\"{} />",
         escape_xml(fill_path),
-        build_native_paint_attributes(Some(paint))
-    )
+        build_native_paint_attributes(Some(paint))?
+    ))
 }
 
 fn stroke_padding(paint: Option<&GeometryPaint>) -> f64 {
@@ -7140,9 +7171,9 @@ fn vector_angle(left: Point2D, right: Point2D) -> f64 {
     cross(left, right).atan2(dot(left, right))
 }
 
-fn build_native_paint_attributes(paint: Option<&GeometryPaint>) -> String {
+fn build_native_paint_attributes(paint: Option<&GeometryPaint>) -> Result<String, ShapeError> {
     let Some(paint) = paint else {
-        return String::new();
+        return Ok(String::new());
     };
 
     let mut attributes = Vec::new();
@@ -7157,7 +7188,7 @@ fn build_native_paint_attributes(paint: Option<&GeometryPaint>) -> String {
     if let Some(stroke_width) = paint.stroke_width {
         attributes.push(format!(
             "stroke-width=\"{}\"",
-            format_svg_number(stroke_width)
+            format_svg_number(stroke_width)?
         ));
     }
     if let Some(linecap) = paint.stroke_linecap.as_deref() {
@@ -7172,40 +7203,42 @@ fn build_native_paint_attributes(paint: Option<&GeometryPaint>) -> String {
     if let Some(miterlimit) = paint.stroke_miterlimit {
         attributes.push(format!(
             "stroke-miterlimit=\"{}\"",
-            format_svg_number(miterlimit)
+            format_svg_number(miterlimit)?
         ));
     }
     if let Some(opacity) = paint.opacity {
-        attributes.push(format!("opacity=\"{}\"", format_svg_number(opacity)));
+        attributes.push(format!("opacity=\"{}\"", format_svg_number(opacity)?));
     }
     if attributes.is_empty() {
-        String::new()
+        Ok(String::new())
     } else {
-        format!(" {}", attributes.join(" "))
+        Ok(format!(" {}", attributes.join(" ")))
     }
 }
 
-fn segment_to_path_command(segment: &CurveSegment) -> String {
+fn segment_to_path_command(segment: &CurveSegment) -> Result<String, ShapeError> {
     match segment {
-        CurveSegment::Line { p1, .. } => {
-            format!("L{},{}", format_path_number(p1.x), format_path_number(p1.y))
-        }
-        CurveSegment::Quad { p1, p2, .. } => format!(
+        CurveSegment::Line { p1, .. } => Ok(format!(
+            "L{},{}",
+            format_path_number(p1.x)?,
+            format_path_number(p1.y)?
+        )),
+        CurveSegment::Quad { p1, p2, .. } => Ok(format!(
             "Q{},{} {},{}",
-            format_path_number(p1.x),
-            format_path_number(p1.y),
-            format_path_number(p2.x),
-            format_path_number(p2.y)
-        ),
-        CurveSegment::Cubic { p1, p2, p3, .. } => format!(
+            format_path_number(p1.x)?,
+            format_path_number(p1.y)?,
+            format_path_number(p2.x)?,
+            format_path_number(p2.y)?
+        )),
+        CurveSegment::Cubic { p1, p2, p3, .. } => Ok(format!(
             "C{},{} {},{} {},{}",
-            format_path_number(p1.x),
-            format_path_number(p1.y),
-            format_path_number(p2.x),
-            format_path_number(p2.y),
-            format_path_number(p3.x),
-            format_path_number(p3.y)
-        ),
+            format_path_number(p1.x)?,
+            format_path_number(p1.y)?,
+            format_path_number(p2.x)?,
+            format_path_number(p2.y)?,
+            format_path_number(p3.x)?,
+            format_path_number(p3.y)?
+        )),
     }
 }
 
@@ -7694,18 +7727,29 @@ fn escape_xml(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn format_path_number(value: f64) -> String {
-    let rounded = (value * 100.0).round() / 100.0;
+fn format_path_number(value: f64) -> Result<String, ShapeError> {
+    if !value.is_finite() {
+        return Err(ShapeError::NonFiniteOutput);
+    }
+    let scaled = value * 100.0;
+    let rounded = if scaled.is_finite() {
+        scaled.round() / 100.0
+    } else {
+        value
+    };
     let normalized = if rounded == -0.0 { 0.0 } else { rounded };
     format_svg_number(normalized)
 }
 
-fn format_svg_number(value: f64) -> String {
+fn format_svg_number(value: f64) -> Result<String, ShapeError> {
+    if !value.is_finite() {
+        return Err(ShapeError::NonFiniteOutput);
+    }
     let mut formatted = value.to_string();
     if let Some(stripped) = formatted.strip_suffix(".0") {
         formatted = stripped.to_string();
     }
-    formatted
+    Ok(formatted)
 }
 
 #[expect(
@@ -8680,7 +8724,7 @@ mod tests {
             | ShapeError::RegionClipNonMonotonic => {
                 "error_reachability::region_operation_limits_and_clip_preconditions_have_runtime_origins"
             }
-            ShapeError::GeometryDepthLimit => {
+            ShapeError::GeometryDepthLimit { .. } => {
                 "error_reachability::geometry_depth_limit_has_a_runtime_origin"
             }
             ShapeError::PathOffsetGeometry => {
@@ -8689,13 +8733,19 @@ mod tests {
             ShapeError::PathOffsetSampleLimit => {
                 "open_path_measurement::original_curve_offset_band_is_filled_and_budgeted"
             }
+            ShapeError::NonFiniteOutput => {
+                "error_reachability::numeric_output_has_a_runtime_origin"
+            }
         }
     }
 
     #[test]
     fn shape_error_variants_name_runtime_origin_tests() {
         assert_eq!(
-            shape_error_runtime_origin_test(&ShapeError::GeometryDepthLimit),
+            shape_error_runtime_origin_test(&ShapeError::GeometryDepthLimit {
+                actual: MAX_GEOMETRY_TREE_DEPTH + 1,
+                limit: MAX_GEOMETRY_TREE_DEPTH,
+            }),
             "error_reachability::geometry_depth_limit_has_a_runtime_origin"
         );
         assert_eq!(
@@ -8761,7 +8811,10 @@ mod tests {
         .expect("geometry should parse");
         assert_eq!(region.contours.len(), 1);
         assert_eq!(region.contours[0].segments.len(), 4);
-        assert_eq!(region_to_path(&region), "M0,0L24,0L24,24L0,24Z");
+        assert_eq!(
+            region_to_path(&region).expect("serialize region"),
+            "M0,0L24,0L24,24L0,24Z"
+        );
     }
 
     #[test]
@@ -8780,7 +8833,10 @@ mod tests {
             },
         })
         .expect("relative commands should normalize");
-        assert_eq!(region_to_path(&region), "M0,0L10,0L10,10Z");
+        assert_eq!(
+            region_to_path(&region).expect("serialize region"),
+            "M0,0L10,0L10,10Z"
+        );
     }
 
     #[test]
@@ -8799,7 +8855,7 @@ mod tests {
             },
         })
         .expect("arc commands should normalize");
-        let path = region_to_path(&region);
+        let path = region_to_path(&region).expect("serialize region");
         assert!(path.starts_with("M80,20C"));
         assert!(path.ends_with('Z'));
     }
@@ -8820,7 +8876,10 @@ mod tests {
             },
         })
         .expect("SVG fill semantics close an open subpath");
-        assert_eq!(region_to_path(&region), "M0,0L60,0L60,60Z");
+        assert_eq!(
+            region_to_path(&region).expect("serialize region"),
+            "M0,0L60,0L60,60Z"
+        );
     }
 
     #[test]
@@ -9190,7 +9249,7 @@ mod tests {
         })
         .expect("nested boolean with transform should evaluate");
 
-        let path = region_to_path(&region);
+        let path = region_to_path(&region).expect("serialize region");
         assert!(path.starts_with("M20,10"));
         assert!(path.contains("L200,30"));
     }
@@ -11486,7 +11545,7 @@ mod line_intersection_symmetry_tests {
         force_full_scan: bool,
     ) -> Result<String, ShapeError> {
         with_forced_bbox_index_full_scan(force_full_scan, || {
-            boolean_regions(lhs, rhs, op).map(|region| region_to_path(&region))
+            boolean_regions(lhs, rhs, op).and_then(|region| region_to_path(&region))
         })
     }
 
@@ -11524,7 +11583,7 @@ mod line_intersection_symmetry_tests {
         let previous_override = FORCE_BOOLEAN_INTERSECTION_PAIRING
             .with(|pairing_override| pairing_override.replace(force_pairing));
         let _reset = PairingOverrideReset(previous_override);
-        boolean_regions(lhs, rhs, op).map(|region| region_to_path(&region))
+        boolean_regions(lhs, rhs, op).and_then(|region| region_to_path(&region))
     }
 
     #[test]
@@ -11581,11 +11640,11 @@ mod line_intersection_symmetry_tests {
         let rhs_only =
             boolean_regions(&semantic_rhs, &empty, BooleanOp::Union).expect("rhs union empty");
         assert_eq!(
-            region_to_path(&semantic_union),
+            region_to_path(&semantic_union).expect("serialize semantic union"),
             format!(
                 "{} {}",
-                region_to_path(&lhs_only),
-                region_to_path(&rhs_only)
+                region_to_path(&lhs_only).expect("serialize lhs"),
+                region_to_path(&rhs_only).expect("serialize rhs")
             )
         );
 
@@ -11647,7 +11706,7 @@ mod line_intersection_symmetry_tests {
         let union = boolean_regions(&nested_same_orientation, &far, BooleanOp::Union)
             .expect("normalized disjoint union");
         assert_eq!(
-            region_to_path(&union),
+            region_to_path(&union).expect("serialize union"),
             "M0,0L10,0L10,10L0,10Z M100,0L101,0L101,1L100,1Z"
         );
 
@@ -11660,7 +11719,7 @@ mod line_intersection_symmetry_tests {
         let deduplicated = boolean_regions(&duplicate, &far, BooleanOp::Union)
             .expect("deduplicated disjoint union");
         assert_eq!(
-            region_to_path(&deduplicated),
+            region_to_path(&deduplicated).expect("serialize deduplicated union"),
             "M0,0L2,0L2,2L0,2Z M100,0L101,0L101,1L100,1Z"
         );
 

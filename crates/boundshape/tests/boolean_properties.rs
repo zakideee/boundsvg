@@ -605,7 +605,10 @@ fn require_non_empty_union(
 
 fn evaluation_outcome(doc: &GeometryDoc) -> String {
     match evaluate_geometry(doc) {
-        Ok(region) => format!("OK {}", region_to_path(&region)),
+        Ok(region) => match region_to_path(&region) {
+            Ok(path) => format!("OK {path}"),
+            Err(error) => format!("ERR {error}"),
+        },
         Err(error) => format!("ERR {error}"),
     }
 }
@@ -616,8 +619,14 @@ fn commutative_consistency_verdict(shape_a: &GeometryNode, shape_b: &GeometryNod
         let reversed = evaluate_geometry(&binary_boolean_doc(op, shape_b.clone(), shape_a.clone()));
         match (forward, reversed) {
             (Ok(forward_region), Ok(reversed_region)) => {
-                let forward_path = region_to_path(&forward_region);
-                let reversed_path = region_to_path(&reversed_region);
+                let forward_path = match region_to_path(&forward_region) {
+                    Ok(path) => path,
+                    Err(error) => return format!("FAIL forward serialization failed: {error}"),
+                };
+                let reversed_path = match region_to_path(&reversed_region) {
+                    Ok(path) => path,
+                    Err(error) => return format!("FAIL reversed serialization failed: {error}"),
+                };
                 if forward_path != reversed_path {
                     return format!(
                         "FAIL {op:?} path changed with operand order: {forward_path} != {reversed_path}"
@@ -671,15 +680,39 @@ fn divide_consistency_verdict(shape_a: &GeometryNode, shape_b: &GeometryNode) ->
     match divided {
         Ok(divided_regions) => match (subtract_result, intersect_result) {
             (Ok(subtract_region), Ok(intersect_region)) => {
-                let divided_subtract_path = region_to_path(&divided_regions.subtract);
-                let standalone_subtract_path = region_to_path(&subtract_region);
+                let divided_subtract_path = match region_to_path(&divided_regions.subtract) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return format!("FAIL divided subtraction serialization failed: {error}");
+                    }
+                };
+                let standalone_subtract_path = match region_to_path(&subtract_region) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return format!(
+                            "FAIL standalone subtraction serialization failed: {error}"
+                        );
+                    }
+                };
                 if divided_subtract_path != standalone_subtract_path {
                     return format!(
                         "FAIL divide subtract {divided_subtract_path} != standalone {standalone_subtract_path}"
                     );
                 }
-                let divided_intersect_path = region_to_path(&divided_regions.intersect);
-                let standalone_intersect_path = region_to_path(&intersect_region);
+                let divided_intersect_path = match region_to_path(&divided_regions.intersect) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return format!("FAIL divided intersection serialization failed: {error}");
+                    }
+                };
+                let standalone_intersect_path = match region_to_path(&intersect_region) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return format!(
+                            "FAIL standalone intersection serialization failed: {error}"
+                        );
+                    }
+                };
                 if divided_intersect_path != standalone_intersect_path {
                     return format!(
                         "FAIL divide intersect {divided_intersect_path} != standalone {standalone_intersect_path}"
@@ -889,7 +922,7 @@ fn f1_self_union_square_preserves_area_repro() {
     assert!(
         areas_close(self_union_area, square_area),
         "self-union area {self_union_area} differs from square area {square_area}; path={}",
-        region_to_path(&self_union_region)
+        region_to_path(&self_union_region).expect("serialize self union")
     );
 }
 
@@ -982,7 +1015,7 @@ fn f5_xor_identity_matches_union_minus_intersect_repro() {
     assert!(
         areas_close(xor_area, expected_xor_area),
         "xor {xor_area} != union - intersect {expected_xor_area}; xor_path={}",
-        region_to_path(&xor_region)
+        region_to_path(&xor_region).expect("serialize xor region")
     );
 }
 
@@ -1025,7 +1058,7 @@ fn f7_area_helper_adds_snap_touching_union_contours() {
     assert!(
         areas_close(union_area, F7_EXPECTED_UNION_AREA),
         "union area {union_area} != fixed fixture area {F7_EXPECTED_UNION_AREA}; union_path={}",
-        region_to_path(&union_region)
+        region_to_path(&union_region).expect("serialize union region")
     );
 }
 
@@ -1072,7 +1105,11 @@ fn f13_spatially_distinct_nearby_splits_preserve_boolean_notch() {
         ))
         .expect("spatially distinct split parameters should preserve the boolean notch");
 
-        assert_eq!(region_to_path(&region), expected_path, "op={op:?}");
+        assert_eq!(
+            region_to_path(&region).expect("serialize boolean result"),
+            expected_path,
+            "op={op:?}"
+        );
     }
 }
 

@@ -485,6 +485,43 @@ custom producer or WASM is invoked. See
 [Debugging & Diagnostics](/guides/debugging-diagnostics#text-layout-fatal-contract)
 for the complete catalog and migration table.
 
+#### Low-level shape operations
+
+The `@boundsvg/core/wasm` entry exposes the complete low-level shape operation
+family:
+
+```ts
+import {
+  wasmCompileShapePaths,
+  wasmCompileShapeSvg,
+  wasmComputeShapeIntersections,
+  wasmDivideShapeRegions,
+  wasmEvaluateShapeParts,
+  wasmEvaluateShapeRegion,
+  wasmHitTestShapeParts,
+  wasmRenderShapeRegionSvg,
+  wasmResolveSymbolGeometry,
+} from "@boundsvg/core/wasm";
+```
+
+All nine functions require a matching schema-31 WASM module. A custom module
+must provide the complete capability set; `isShapeWasmAvailable()` is `true`
+only when all nine exports are functions. Each call also checks its own
+capability and throws `SHAPE_WASM_CAPABILITY_MISSING` when it is absent.
+
+Seven operations return recursively validated JSON values and the two SVG
+operations validate a raw string result. Unknown extra result fields are
+preserved. Optional `partId`, `strokeD`, and `bounds` fields in compiled paths
+remain absent when Rust omits them; an explicitly returned `null` is invalid.
+Every evaluated `GeometryPart` includes both `region` and the required
+`strokeRegion` used for stroke geometry.
+
+Known Rust shape failures keep their fixed code, message, stage, and operation
+through Node and browser transports. Malformed inputs, malformed results,
+panics, transport failures, and missing capabilities use distinct boundary
+codes. See [Debugging & Diagnostics](/guides/debugging-diagnostics#shape-operation-fatal-contract)
+for the catalog and migration guidance.
+
 ### `engine.renderToSvg(input, options?)`
 
 Renders a VNode tree to an SVG string.

@@ -66,7 +66,7 @@ import { assertSerializableSceneTransport } from "./scene/serializable-transport
 import type { SceneNode } from "./scene/types.js";
 import { isSceneNode } from "./scene/types.js";
 import { assertShapeReferencesResolvable, type ShapeRegistry } from "./shape/expand.js";
-import type { CompiledShapePathPart, GeometryDoc, SymbolDefinition } from "./shape/types.js";
+import type { GeometryDoc, SymbolDefinition } from "./shape/types.js";
 import { toCssSafeResourceId } from "./svg/resource-id.js";
 import type { DebugOverlayConfig } from "./svg/types.js";
 import { formatNumber } from "./svg/utils.js";
@@ -1274,7 +1274,6 @@ export class Engine {
     createCompiledSceneOwnerToken();
   private disposed = false;
   private readonly geometryRegistry = new Map<string, GeometryDoc>();
-  private readonly shapeCompileCache = new Map<string, CompiledShapePathPart[]>();
   private readonly symbolRegistry = new Map<string, SymbolDefinition>();
   private readonly preparedFrameScenes = new Set<WeakRef<PreparedSceneRenderHandle>>();
 
@@ -3268,7 +3267,6 @@ export class Engine {
     return {
       geometries: this.geometryRegistry,
       symbols: this.symbolRegistry,
-      compileCache: this.shapeCompileCache,
     };
   }
 

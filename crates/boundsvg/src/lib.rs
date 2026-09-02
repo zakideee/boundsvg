@@ -30,6 +30,7 @@ pub mod render_backend;
 #[cfg(feature = "resvg-backend")]
 pub mod render_resvg;
 pub mod scene;
+mod shape_diagnostics;
 pub mod svg_emit;
 mod text_diagnostics;
 #[cfg(feature = "resvg-backend")]
@@ -1642,7 +1643,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 30;
+pub const WASM_SCHEMA_VERSION: u32 = 31;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -1658,18 +1659,21 @@ pub fn wasm_schema_version() -> u32 {
 /// Returns `JsValue` if the input JSON is invalid or geometry compilation fails.
 #[wasm_bindgen]
 pub fn compile_shape_svg(json_input: &str) -> Result<String, JsValue> {
-    catch_unwind_to_js(AssertUnwindSafe(|| {
-        let input: CompileShapeSvgInput = serde_json::from_str(json_input)
-            .map_err(|e| JsValue::from_str(&format!("Invalid shape compile input: {e}")))?;
-        let options = CompileGeometryOptions {
-            paint: input.paint,
-            viewport: input.viewport,
-            preserve_aspect_ratio: input.preserve_aspect_ratio,
-            part_ids: input.part_ids,
-        };
-        boundshape::compile_geometry_to_svg_document(&input.geometry, Some(&options))
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }))
+    shape_diagnostics::run_shape_wasm_operation::<CompileShapeSvgInput, _>(
+        shape_diagnostics::ShapeOperation::CompileShapeSvg,
+        json_input,
+        |input| {
+            let options = CompileGeometryOptions {
+                paint: input.paint,
+                viewport: input.viewport,
+                preserve_aspect_ratio: input.preserve_aspect_ratio,
+                part_ids: input.part_ids,
+            };
+            boundshape::compile_geometry_to_svg_document(&input.geometry, Some(&options))
+                .map(shape_diagnostics::ShapeOperationOutput::RawSvg)
+                .map_err(Into::into)
+        },
+    )
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1681,52 +1685,54 @@ struct HitTestShapePartsInput {
     options: Option<boundshape::HitTestOptions>,
 }
 
-/// Precise per-part hit test in geometry coordinates. Additive export
-/// (no schema bump).
+/// Precise per-part hit test in geometry coordinates.
 ///
 /// # Errors
 ///
 /// Returns `JsValue` if the input JSON is invalid, evaluation fails, or serialization fails.
 #[wasm_bindgen]
 pub fn hit_test_shape_parts(json_input: &str) -> Result<String, JsValue> {
-    catch_unwind_to_js(AssertUnwindSafe(|| {
-        let input: HitTestShapePartsInput = serde_json::from_str(json_input)
-            .map_err(|e| JsValue::from_str(&format!("Invalid shape hit-test input: {e}")))?;
-        let hits = boundshape::hit_test_geometry_parts(
-            &input.geometry,
-            input.point,
-            input.options.as_ref(),
-        )
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&hits)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize shape hits: {e}")))
-    }))
+    shape_diagnostics::run_shape_wasm_operation::<HitTestShapePartsInput, _>(
+        shape_diagnostics::ShapeOperation::HitTestShapeParts,
+        json_input,
+        |input| {
+            let hits = boundshape::hit_test_geometry_parts(
+                &input.geometry,
+                input.point,
+                input.options.as_ref(),
+            )
+            .map_err(shape_diagnostics::ShapeOperationFailure::from)?;
+            Ok(shape_diagnostics::ShapeOperationOutput::Hits(hits))
+        },
+    )
 }
 
 /// Compile a shape geometry document into per-part path data (viewport-baked)
-/// instead of an SVG document string. Additive export (no schema bump):
-/// same input DTO as `compile_shape_svg`.
+/// instead of an SVG document string. Uses the same input DTO as
+/// `compile_shape_svg`.
 ///
 /// # Errors
 ///
 /// Returns `JsValue` if the input JSON is invalid, compilation fails, or serialization fails.
 #[wasm_bindgen]
 pub fn compile_shape_paths(json_input: &str) -> Result<String, JsValue> {
-    catch_unwind_to_js(AssertUnwindSafe(|| {
-        let input: CompileShapeSvgInput = serde_json::from_str(json_input)
-            .map_err(|e| JsValue::from_str(&format!("Invalid shape compile input: {e}")))?;
-        let options = CompileGeometryOptions {
-            paint: input.paint,
-            viewport: input.viewport,
-            preserve_aspect_ratio: input.preserve_aspect_ratio,
-            part_ids: input.part_ids,
-        };
-        let parts = boundshape::compile_geometry_paths(&input.geometry, Some(&options))
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&parts).map_err(|e| {
-            JsValue::from_str(&format!("Failed to serialize compiled shape paths: {e}"))
-        })
-    }))
+    shape_diagnostics::run_shape_wasm_operation::<CompileShapeSvgInput, _>(
+        shape_diagnostics::ShapeOperation::CompileShapePaths,
+        json_input,
+        |input| {
+            let options = CompileGeometryOptions {
+                paint: input.paint,
+                viewport: input.viewport,
+                preserve_aspect_ratio: input.preserve_aspect_ratio,
+                part_ids: input.part_ids,
+            };
+            let parts = boundshape::compile_geometry_paths(&input.geometry, Some(&options))
+                .map_err(shape_diagnostics::ShapeOperationFailure::from)?;
+            Ok(shape_diagnostics::ShapeOperationOutput::CompiledPaths(
+                parts,
+            ))
+        },
+    )
 }
 
 /// Resolve a symbol definition to concrete geometry.
@@ -1737,14 +1743,15 @@ pub fn compile_shape_paths(json_input: &str) -> Result<String, JsValue> {
 /// the resolved geometry exceeds its depth limit, or serialization fails.
 #[wasm_bindgen]
 pub fn resolve_symbol_geometry(json_input: &str) -> Result<String, JsValue> {
-    catch_unwind_to_js(AssertUnwindSafe(|| {
-        let input: ResolveSymbolGeometryInput = serde_json::from_str(json_input)
-            .map_err(|e| JsValue::from_str(&format!("Invalid symbol resolve input: {e}")))?;
-        let geometry = boundshape::resolve_symbol_geometry(&input.definition, &input.options)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&geometry)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize symbol geometry: {e}")))
-    }))
+    shape_diagnostics::run_shape_wasm_operation::<ResolveSymbolGeometryInput, _>(
+        shape_diagnostics::ShapeOperation::ResolveSymbolGeometry,
+        json_input,
+        |input| {
+            let geometry = boundshape::resolve_symbol_geometry(&input.definition, &input.options)
+                .map_err(shape_diagnostics::ShapeOperationFailure::from)?;
+            Ok(shape_diagnostics::ShapeOperationOutput::Geometry(geometry))
+        },
+    )
 }
 
 /// Evaluate a shape geometry document into its addressable parts.
@@ -1754,14 +1761,15 @@ pub fn resolve_symbol_geometry(json_input: &str) -> Result<String, JsValue> {
 /// Returns `JsValue` if the input JSON is invalid, evaluation fails, or serialization fails.
 #[wasm_bindgen]
 pub fn evaluate_shape_parts(json_input: &str) -> Result<String, JsValue> {
-    catch_unwind_to_js(AssertUnwindSafe(|| {
-        let input: EvaluateShapePartsInput = serde_json::from_str(json_input)
-            .map_err(|e| JsValue::from_str(&format!("Invalid shape parts input: {e}")))?;
-        let parts = boundshape::evaluate_geometry_parts(&input.geometry)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&parts)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize shape parts: {e}")))
-    }))
+    shape_diagnostics::run_shape_wasm_operation::<EvaluateShapePartsInput, _>(
+        shape_diagnostics::ShapeOperation::EvaluateShapeParts,
+        json_input,
+        |input| {
+            let parts = boundshape::evaluate_geometry_parts(&input.geometry)
+                .map_err(shape_diagnostics::ShapeOperationFailure::from)?;
+            Ok(shape_diagnostics::ShapeOperationOutput::Parts(parts))
+        },
+    )
 }
 
 /// Evaluate a shape geometry document into a boolean-resolved region.
@@ -1771,14 +1779,15 @@ pub fn evaluate_shape_parts(json_input: &str) -> Result<String, JsValue> {
 /// Returns `JsValue` if the input JSON is invalid, evaluation fails, or serialization fails.
 #[wasm_bindgen]
 pub fn evaluate_shape_region(json_input: &str) -> Result<String, JsValue> {
-    catch_unwind_to_js(AssertUnwindSafe(|| {
-        let input: EvaluateShapeRegionInput = serde_json::from_str(json_input)
-            .map_err(|e| JsValue::from_str(&format!("Invalid shape region input: {e}")))?;
-        let region = boundshape::evaluate_geometry(&input.geometry)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&region)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize shape region: {e}")))
-    }))
+    shape_diagnostics::run_shape_wasm_operation::<EvaluateShapeRegionInput, _>(
+        shape_diagnostics::ShapeOperation::EvaluateShapeRegion,
+        json_input,
+        |input| {
+            let region = boundshape::evaluate_geometry(&input.geometry)
+                .map_err(shape_diagnostics::ShapeOperationFailure::from)?;
+            Ok(shape_diagnostics::ShapeOperationOutput::Region(region))
+        },
+    )
 }
 
 /// Render an evaluated shape region to an SVG document string.
@@ -1788,17 +1797,21 @@ pub fn evaluate_shape_region(json_input: &str) -> Result<String, JsValue> {
 /// Returns `JsValue` if the input JSON is invalid.
 #[wasm_bindgen]
 pub fn render_shape_region_svg(json_input: &str) -> Result<String, JsValue> {
-    catch_unwind_to_js(AssertUnwindSafe(|| {
-        let input: RenderShapeRegionSvgInput = serde_json::from_str(json_input)
-            .map_err(|e| JsValue::from_str(&format!("Invalid shape region render input: {e}")))?;
-        let options = CompileGeometryOptions {
-            paint: input.paint,
-            viewport: input.viewport,
-            preserve_aspect_ratio: input.preserve_aspect_ratio,
-            part_ids: false,
-        };
-        Ok(boundshape::region_to_svg(&input.region, Some(&options)))
-    }))
+    shape_diagnostics::run_shape_wasm_operation::<RenderShapeRegionSvgInput, _>(
+        shape_diagnostics::ShapeOperation::RenderShapeRegionSvg,
+        json_input,
+        |input| {
+            let options = CompileGeometryOptions {
+                paint: input.paint,
+                viewport: input.viewport,
+                preserve_aspect_ratio: input.preserve_aspect_ratio,
+                part_ids: false,
+            };
+            boundshape::region_to_svg(&input.region, Some(&options))
+                .map(shape_diagnostics::ShapeOperationOutput::RawSvg)
+                .map_err(Into::into)
+        },
+    )
 }
 
 /// Divide two shape geometries into intersection/difference regions.
@@ -1808,18 +1821,27 @@ pub fn render_shape_region_svg(json_input: &str) -> Result<String, JsValue> {
 /// Returns `JsValue` if the input JSON is invalid, evaluation fails, or serialization fails.
 #[wasm_bindgen]
 pub fn divide_shape_regions(json_input: &str) -> Result<String, JsValue> {
-    catch_unwind_to_js(AssertUnwindSafe(|| {
-        let input: ShapeBooleanPairInput = serde_json::from_str(json_input)
-            .map_err(|e| JsValue::from_str(&format!("Invalid divide regions input: {e}")))?;
-        let lhs = boundshape::evaluate_geometry(&input.lhs)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let rhs = boundshape::evaluate_geometry(&input.rhs)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let result: ShapeDivideRegions = boundshape::divide_regions(&lhs, &rhs)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&result)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize divide result: {e}")))
-    }))
+    shape_diagnostics::run_shape_wasm_operation::<ShapeBooleanPairInput, _>(
+        shape_diagnostics::ShapeOperation::DivideShapeRegions,
+        json_input,
+        |input| {
+            let lhs = boundshape::evaluate_geometry(&input.lhs).map_err(|error| {
+                shape_diagnostics::ShapeOperationFailure::for_operand(
+                    error,
+                    shape_diagnostics::ShapeOperand::Lhs,
+                )
+            })?;
+            let rhs = boundshape::evaluate_geometry(&input.rhs).map_err(|error| {
+                shape_diagnostics::ShapeOperationFailure::for_operand(
+                    error,
+                    shape_diagnostics::ShapeOperand::Rhs,
+                )
+            })?;
+            let result: ShapeDivideRegions = boundshape::divide_regions(&lhs, &rhs)
+                .map_err(shape_diagnostics::ShapeOperationFailure::from)?;
+            Ok(shape_diagnostics::ShapeOperationOutput::Divide(result))
+        },
+    )
 }
 
 /// Compute intersection points between two shape geometries.
@@ -1829,15 +1851,18 @@ pub fn divide_shape_regions(json_input: &str) -> Result<String, JsValue> {
 /// Returns `JsValue` if the input JSON is invalid, computation fails, or serialization fails.
 #[wasm_bindgen]
 pub fn compute_shape_intersections(json_input: &str) -> Result<String, JsValue> {
-    catch_unwind_to_js(AssertUnwindSafe(|| {
-        let input: ShapeBooleanPairInput = serde_json::from_str(json_input)
-            .map_err(|e| JsValue::from_str(&format!("Invalid shape intersections input: {e}")))?;
-        let result: Vec<ShapeGeometryIntersection> =
-            boundshape::intersections_between_geometries(&input.lhs, &input.rhs)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        serde_json::to_string(&result)
-            .map_err(|e| JsValue::from_str(&format!("Failed to serialize intersections: {e}")))
-    }))
+    shape_diagnostics::run_shape_wasm_operation::<ShapeBooleanPairInput, _>(
+        shape_diagnostics::ShapeOperation::ComputeShapeIntersections,
+        json_input,
+        |input| {
+            let result: Vec<ShapeGeometryIntersection> =
+                boundshape::intersections_between_geometries(&input.lhs, &input.rhs)
+                    .map_err(shape_diagnostics::ShapeOperationFailure::from)?;
+            Ok(shape_diagnostics::ShapeOperationOutput::Intersections(
+                result,
+            ))
+        },
+    )
 }
 
 // Every exported method routes through `catch_unwind_to_js` so a panic surfaces

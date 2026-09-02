@@ -1627,7 +1627,8 @@ fn resolve_text_path_decorations(
                         .iter()
                         .map(|contour| contour.segments.len())
                         .sum::<usize>();
-                    let d = region_to_path(&paint_region);
+                    let d = region_to_path(&paint_region)
+                        .map_err(|_| TextOnPathError::DecorationGeometry)?;
                     if d.is_empty() {
                         return Err(TextOnPathError::DecorationGeometry);
                     }
@@ -2684,7 +2685,8 @@ mod tests {
             for contour in region.contours {
                 let serialized = region_to_path(&boundshape::Region {
                     contours: vec![contour],
-                });
+                })
+                .expect("serialize closed curved wavy contour");
                 evaluate_geometry(&GeometryDoc {
                     view_box: GeometryViewBox {
                         x: 0.0,
@@ -2734,7 +2736,8 @@ mod tests {
                         for contour in region.contours {
                             let serialized = region_to_path(&boundshape::Region {
                                 contours: vec![contour],
-                            });
+                            })
+                            .expect("serialize sampled closed curved wavy contour");
                             evaluate_geometry(&GeometryDoc {
                                 view_box: GeometryViewBox {
                                     x: 0.0,

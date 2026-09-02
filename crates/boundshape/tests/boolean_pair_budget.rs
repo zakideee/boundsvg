@@ -87,7 +87,7 @@ fn monotonic_axis_clip_preserves_curves_and_canonicalizes_boundaries() -> Result
 
     assert!((min_x - 2.0).abs() < 1e-9);
     assert!((max_x - 8.0).abs() < 1e-9);
-    assert!(region_to_path(&clipped).contains('C'));
+    assert!(region_to_path(&clipped)?.contains('C'));
     Ok(())
 }
 

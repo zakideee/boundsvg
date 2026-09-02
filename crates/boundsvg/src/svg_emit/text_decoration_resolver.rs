@@ -577,7 +577,12 @@ fn resolve_curved_paint_path(
         .map_err(|_| skip_ink_limit_error(node_id, "Curved skip-ink contour count overflowed."))?;
     path.segment_count = u32::try_from(segment_count)
         .map_err(|_| skip_ink_limit_error(node_id, "Curved skip-ink segment count overflowed."))?;
-    path.d = region_to_path(&resolved_region);
+    path.d = region_to_path(&resolved_region).map_err(|_| {
+        decoration_geometry_error(
+            node_id,
+            "Curved text decoration skip-ink result could not be serialized.",
+        )
+    })?;
     if path.d.is_empty() {
         return Err(decoration_geometry_error(
             node_id,
@@ -972,7 +977,12 @@ fn resolve_paint_path_with_context(
             "Text decoration skip-ink segment count overflowed.",
         )
     })?;
-    path.d = region_to_path(&resolved_region);
+    path.d = region_to_path(&resolved_region).map_err(|_| {
+        decoration_geometry_error(
+            node_id,
+            "Text decoration skip-ink result could not be serialized.",
+        )
+    })?;
     if path.d.is_empty() {
         return Err(decoration_geometry_error(
             node_id,

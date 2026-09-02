@@ -1450,13 +1450,28 @@ fn reports_geometry_depth_errors_before_shape_compilation() {
         "shapeGeometry": nested_geometry(MAX_GEOMETRY_TREE_DEPTH + 1, None),
     }))
     .expect_err("over-depth geometry should fail");
-    assert!(matches!(
-        error,
-        EngineError::Structured { code, stage, node_id, .. }
-            if code == "SHAPE_GEOMETRY_MAX_DEPTH"
-                && stage.as_ref() == Some(&crate::diagnostics::PipelineStage::Validate)
-                && node_id.as_deref() == Some("shp")
-    ));
+    let EngineError::StructuredContext {
+        code,
+        message,
+        stage,
+        node_id,
+        context,
+    } = error
+    else {
+        panic!("expected a structured context error");
+    };
+    assert_eq!(code, "SHAPE_GEOMETRY_MAX_DEPTH");
+    assert_eq!(message, "Shape geometry exceeds the maximum tree depth.");
+    assert_eq!(stage, Some(crate::diagnostics::PipelineStage::Validate));
+    assert_eq!(node_id.as_deref(), Some("shp"));
+    assert_eq!(
+        *context,
+        json!({
+            "operation": "renderShape",
+            "actual": MAX_GEOMETRY_TREE_DEPTH + 1,
+            "limit": MAX_GEOMETRY_TREE_DEPTH,
+        })
+    );
 }
 
 #[test]
@@ -1471,13 +1486,28 @@ fn reports_depth_added_while_resolving_elastic_symbols() {
         }],
     }))
     .expect_err("resolved over-depth geometry should fail");
-    assert!(matches!(
-        error,
-        EngineError::Structured { code, stage, node_id, .. }
-            if code == "SHAPE_GEOMETRY_MAX_DEPTH"
-                && stage.as_ref() == Some(&crate::diagnostics::PipelineStage::Validate)
-                && node_id.as_deref() == Some("sym")
-    ));
+    let EngineError::StructuredContext {
+        code,
+        message,
+        stage,
+        node_id,
+        context,
+    } = error
+    else {
+        panic!("expected a structured context error");
+    };
+    assert_eq!(code, "SHAPE_GEOMETRY_MAX_DEPTH");
+    assert_eq!(message, "Shape geometry exceeds the maximum tree depth.");
+    assert_eq!(stage, Some(crate::diagnostics::PipelineStage::Validate));
+    assert_eq!(node_id.as_deref(), Some("sym"));
+    assert_eq!(
+        *context,
+        json!({
+            "operation": "renderSymbol",
+            "actual": MAX_GEOMETRY_TREE_DEPTH + 1,
+            "limit": MAX_GEOMETRY_TREE_DEPTH,
+        })
+    );
 }
 
 #[test]
@@ -1594,11 +1624,28 @@ fn rejects_duplicate_addressable_part_ids() {
             },
         },
     }))
-    .expect_err("duplicate ids should fail")
-    .to_string();
-    assert!(
-        error.contains("duplicate addressable part id \"dup\""),
-        "{error}"
+    .expect_err("duplicate ids should fail");
+    let EngineError::StructuredContext {
+        code,
+        message,
+        stage,
+        node_id,
+        context,
+    } = error
+    else {
+        panic!("expected a structured context error");
+    };
+    assert_eq!(code, "SHAPE_DUPLICATE_PART_ID");
+    assert_eq!(message, "Shape contains a duplicate addressable part id.");
+    assert_eq!(stage, Some(crate::diagnostics::PipelineStage::Validate));
+    assert_eq!(node_id.as_deref(), Some("shp"));
+    assert_eq!(
+        *context,
+        json!({
+            "operation": "renderShape",
+            "partIdPrefix": "dup",
+            "omittedPartIdByteCount": 0,
+        })
     );
 }
 

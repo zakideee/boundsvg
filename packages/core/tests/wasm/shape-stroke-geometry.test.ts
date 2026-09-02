@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createEngineAsync, type Engine } from "../../src/engine.js";
+import { FatalError } from "../../src/errors.js";
 import { initNodeWasm } from "../../src/node.js";
 import { assertWasmPkgAvailable, loadSubsetFont } from "./test-prerequisites.js";
 
@@ -22,6 +23,17 @@ const geometry = (d: string) => ({
   viewBox: { width: 200, height: 200 },
   root: { kind: "path" as const, d },
 });
+
+function captureFatal(callback: () => unknown): FatalError {
+  let capturedError: unknown;
+  try {
+    callback();
+  } catch (error) {
+    capturedError = error;
+  }
+  expect(capturedError).toBeInstanceOf(FatalError);
+  return capturedError as FatalError;
+}
 
 describe("a Shape strokes what its author drew", () => {
   let engine: Engine;
@@ -252,7 +264,7 @@ describe("a Shape strokes what its author drew", () => {
   });
 
   it("rejects duplicate addressable part ids even without emitted part attributes", () => {
-    expect(() =>
+    const fatalError = captureFatal(() =>
       engine.renderToSvg({
         type: "Canvas",
         width: 100,
@@ -266,11 +278,21 @@ describe("a Shape strokes what its author drew", () => {
           },
         ],
       } as never),
-    ).toThrow(/duplicate addressable part id "same"/);
+    );
+    expect(fatalError).toMatchObject({
+      code: "SHAPE_DUPLICATE_PART_ID",
+      message: "Shape contains a duplicate addressable part id.",
+      stage: "validate",
+      context: {
+        operation: "renderShape",
+        partIdPrefix: "same",
+        omittedPartIdByteCount: 0,
+      },
+    });
   });
 
   it("rejects explicit part ids that collide with generated positional ids", () => {
-    expect(() =>
+    const fatalError = captureFatal(() =>
       engine.renderToSvg({
         type: "Canvas",
         width: 100,
@@ -284,6 +306,16 @@ describe("a Shape strokes what its author drew", () => {
           },
         ],
       } as never),
-    ).toThrow(/duplicate addressable part id "part:1"/);
+    );
+    expect(fatalError).toMatchObject({
+      code: "SHAPE_DUPLICATE_PART_ID",
+      message: "Shape contains a duplicate addressable part id.",
+      stage: "validate",
+      context: {
+        operation: "renderShape",
+        partIdPrefix: "part:1",
+        omittedPartIdByteCount: 0,
+      },
+    });
   });
 });

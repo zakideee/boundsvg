@@ -248,6 +248,39 @@ describe("worker script measurement dispatch", () => {
     });
   });
 
+  it("serializes a rendered Symbol FatalError without changing any field", async () => {
+    scope.send({ id: 1, type: "init", fonts: [] });
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(1));
+
+    workerEngineMethods.renderToSvg.mockImplementationOnce(() => {
+      throw new FatalError("SHAPE_PATH_DATA_INVALID", "Shape path data is invalid.", {
+        stage: "validate",
+        nodeId: "invalid-symbol",
+        context: { operation: "renderSymbol" },
+      });
+    });
+
+    scope.send({
+      id: 2,
+      type: "render-svg",
+      scene: { type: "Canvas", width: 10, height: 10, children: [] },
+    });
+
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(2));
+    expect(scope.responses[1]).toEqual({
+      id: 2,
+      type: "error",
+      error: {
+        severity: "fatal",
+        code: "SHAPE_PATH_DATA_INVALID",
+        message: "Shape path data is invalid.",
+        stage: "validate",
+        nodeId: "invalid-symbol",
+        context: { operation: "renderSymbol" },
+      },
+    });
+  });
+
   it("formats hostile uncorrelatable messages without throwing", () => {
     const hostile = new Proxy(Object.create(null) as object, {
       getOwnPropertyDescriptor: () => {

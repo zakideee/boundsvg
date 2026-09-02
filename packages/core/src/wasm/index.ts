@@ -6,20 +6,15 @@ import type { ComputeLayoutTransportFn } from "../layout/backend.js";
 import type { ResolvedRasterScale } from "../render-capabilities.js";
 import {
   assertGeometryTreeDepth,
-  assertResolvedSymbolGeometryDepth,
-  MAX_GEOMETRY_TREE_DEPTH,
+  assertSymbolDefinitionGeometryDepth,
 } from "../shape/geometry-depth.js";
 import type {
   CompiledShapePathPart,
-  Contour,
-  CurvePoint,
-  CurveSegment,
   DivideRegions,
   GeometryDoc,
   GeometryHitTestOptions,
   GeometryIntersection,
   GeometryPart,
-  GeometryPartBounds,
   GeometryPartHit,
   Region,
   SymbolDefinition,
@@ -34,6 +29,24 @@ import {
   decodeTextFlowResult,
   decodeTextFlowWithExclusionsResult,
 } from "./protocol-decoders.js";
+import {
+  decodeWasmShapeFatal,
+  type StandaloneShapeOperation,
+  shapeCapabilityFailure,
+  shapeInputBoundaryFailure,
+  shapeOutputDecodeFailure,
+  shapeWasmBoundaryFailure,
+} from "./shape-fatal-decoder.js";
+import {
+  decodeCompiledShapePaths,
+  decodeDividedShapeRegions,
+  decodeEvaluatedShapeParts,
+  decodeEvaluatedShapeRegion,
+  decodeResolvedShapeGeometry,
+  decodeShapeHits,
+  decodeShapeIntersections,
+  decodeShapeRawString,
+} from "./shape-result-decoders.js";
 import {
   decodeWasmTextLayoutFatal,
   textLayoutWasmBoundaryFailure,
@@ -52,7 +65,7 @@ let wasmModule: WasmModule | null = null;
  * `crates/boundsvg/src/lib.rs`; both sides change in the same commit.
  * Bump whenever a WASM-boundary DTO shape or export signature changes.
  */
-export const EXPECTED_WASM_SCHEMA_VERSION = 30;
+export const EXPECTED_WASM_SCHEMA_VERSION = 31;
 
 function assertWasmSchemaVersion(preloaded: WasmModule): void {
   const readSchemaVersion = preloaded.wasm_schema_version;
@@ -280,164 +293,6 @@ function isResolvedRasterScale(value: unknown): value is ResolvedRasterScale {
     typeof getNumberProperty(value, "outputHeight") === "number" &&
     typeof Reflect.get(value, "adjusted") === "boolean"
   );
-}
-
-function isGeometryViewBox(value: unknown): value is GeometryDoc["viewBox"] {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  const width = getNumberProperty(value, "width");
-  const height = getNumberProperty(value, "height");
-  return typeof width === "number" && typeof height === "number";
-}
-
-type UnknownGeometryDepthFrame = {
-  node: unknown;
-  depth: number;
-};
-
-const geometryBooleanOps = new Set(["union", "subtract", "intersect", "xor"]);
-
-function pushGeometryArrayChildren(
-  children: unknown,
-  depth: number,
-  pending: UnknownGeometryDepthFrame[],
-): boolean {
-  if (!Array.isArray(children)) {
-    return false;
-  }
-  for (const child of children) {
-    pending.push({ node: child, depth: depth + 1 });
-  }
-  return true;
-}
-
-function pushGeometryNodeChildren(
-  node: object,
-  depth: number,
-  pending: UnknownGeometryDepthFrame[],
-): boolean {
-  const kind = getStringProperty(node, "kind");
-  switch (kind) {
-    case "path":
-      return typeof getStringProperty(node, "d") === "string";
-    case "group":
-      return pushGeometryArrayChildren(Reflect.get(node, "children"), depth, pending);
-    case "transform":
-      if (!isObjectLike(Reflect.get(node, "transform"))) {
-        return false;
-      }
-      pending.push({ node: Reflect.get(node, "child"), depth: depth + 1 });
-      return true;
-    case "boolean":
-      return (
-        geometryBooleanOps.has(getStringProperty(node, "op") ?? "") &&
-        pushGeometryArrayChildren(Reflect.get(node, "children"), depth, pending)
-      );
-    default:
-      return false;
-  }
-}
-
-function isGeometryNode(value: unknown): boolean {
-  const pending: UnknownGeometryDepthFrame[] = [{ node: value, depth: 0 }];
-  while (pending.length > 0) {
-    const frame = pending.pop();
-    if (!frame || !isObjectLike(frame.node) || frame.depth > MAX_GEOMETRY_TREE_DEPTH) {
-      return false;
-    }
-    if (!pushGeometryNodeChildren(frame.node, frame.depth, pending)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function isGeometryDoc(value: unknown): value is GeometryDoc {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  return (
-    isGeometryViewBox(Reflect.get(value, "viewBox")) && isGeometryNode(Reflect.get(value, "root"))
-  );
-}
-
-function isCurvePoint(value: unknown): value is CurvePoint {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  return (
-    typeof getNumberProperty(value, "x") === "number" &&
-    typeof getNumberProperty(value, "y") === "number"
-  );
-}
-
-function isCurveSegment(value: unknown): value is CurveSegment {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  const kind = getStringProperty(value, "kind");
-  if (kind === "line") {
-    return isCurvePoint(Reflect.get(value, "p0")) && isCurvePoint(Reflect.get(value, "p1"));
-  }
-  if (kind === "quad") {
-    return (
-      isCurvePoint(Reflect.get(value, "p0")) &&
-      isCurvePoint(Reflect.get(value, "p1")) &&
-      isCurvePoint(Reflect.get(value, "p2"))
-    );
-  }
-  if (kind === "cubic") {
-    return (
-      isCurvePoint(Reflect.get(value, "p0")) &&
-      isCurvePoint(Reflect.get(value, "p1")) &&
-      isCurvePoint(Reflect.get(value, "p2")) &&
-      isCurvePoint(Reflect.get(value, "p3"))
-    );
-  }
-  return false;
-}
-
-function isContour(value: unknown): value is Contour {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  const segments = Reflect.get(value, "segments");
-  return Array.isArray(segments) && segments.every(isCurveSegment);
-}
-
-function isRegion(value: unknown): value is Region {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  const contours = Reflect.get(value, "contours");
-  return Array.isArray(contours) && contours.every(isContour);
-}
-
-function isGeometryIntersection(value: unknown): value is GeometryIntersection {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  return (
-    isCurvePoint(Reflect.get(value, "point")) &&
-    typeof getNumberProperty(value, "tA") === "number" &&
-    typeof getNumberProperty(value, "tB") === "number" &&
-    typeof getNumberProperty(value, "contourIndexA") === "number" &&
-    typeof getNumberProperty(value, "segmentIndexA") === "number" &&
-    typeof getNumberProperty(value, "contourIndexB") === "number" &&
-    typeof getNumberProperty(value, "segmentIndexB") === "number"
-  );
-}
-
-function isGeometryIntersectionArray(value: unknown): value is GeometryIntersection[] {
-  return Array.isArray(value) && value.every(isGeometryIntersection);
-}
-
-function isDivideRegions(value: unknown): value is DivideRegions {
-  if (!isObjectLike(value)) {
-    return false;
-  }
-  return isRegion(Reflect.get(value, "subtract")) && isRegion(Reflect.get(value, "intersect"));
 }
 
 export type ShapeCompileOptions = {
@@ -740,32 +595,105 @@ export function isShapeWasmAvailable(): boolean {
     return false;
   }
   const wasm = getWasm();
-  return (
-    typeof wasm.compile_shape_svg === "function" &&
-    typeof wasm.resolve_symbol_geometry === "function" &&
-    typeof wasm.divide_shape_regions === "function" &&
-    typeof wasm.compute_shape_intersections === "function"
-  );
+  try {
+    return Object.values(SHAPE_WASM_EXPORTS).every(
+      (exportName) => typeof Reflect.get(wasm, exportName) === "function",
+    );
+  } catch {
+    return false;
+  }
+}
+
+const SHAPE_WASM_EXPORTS = {
+  compileShapeSvg: "compile_shape_svg",
+  hitTestShapeParts: "hit_test_shape_parts",
+  compileShapePaths: "compile_shape_paths",
+  resolveSymbolGeometry: "resolve_symbol_geometry",
+  evaluateShapeParts: "evaluate_shape_parts",
+  evaluateShapeRegion: "evaluate_shape_region",
+  renderShapeRegionSvg: "render_shape_region_svg",
+  divideShapeRegions: "divide_shape_regions",
+  computeShapeIntersections: "compute_shape_intersections",
+} as const satisfies Record<StandaloneShapeOperation, keyof WasmModule>;
+
+type ShapeWasmCapability = (jsonInput: string) => unknown;
+
+function getShapeWasmCapability(
+  wasm: WasmModule,
+  operation: StandaloneShapeOperation,
+): ShapeWasmCapability {
+  let capability: unknown;
+  try {
+    capability = Reflect.get(wasm, SHAPE_WASM_EXPORTS[operation]);
+  } catch {
+    throw shapeWasmBoundaryFailure(operation);
+  }
+  if (typeof capability !== "function") {
+    throw shapeCapabilityFailure(operation);
+  }
+  return capability as ShapeWasmCapability;
+}
+
+function serializeShapeInput(
+  operation: StandaloneShapeOperation,
+  createInput: () => unknown,
+): string {
+  try {
+    const jsonInput = JSON.stringify(createInput());
+    if (typeof jsonInput !== "string") {
+      throw shapeInputBoundaryFailure(operation, "serializationFailed");
+    }
+    return jsonInput;
+  } catch {
+    throw shapeInputBoundaryFailure(operation, "serializationFailed");
+  }
+}
+
+function decodeShapeOutput<Output>(
+  operation: StandaloneShapeOperation,
+  rawOutput: unknown,
+  decode: (raw: unknown) => Output,
+): Output {
+  try {
+    return decode(rawOutput);
+  } catch (error) {
+    if (error instanceof FatalError) {
+      throw error;
+    }
+    throw shapeOutputDecodeFailure(operation, "$", "decoder failure");
+  }
+}
+
+function invokeWasmShapeOperation<Output>(
+  operation: StandaloneShapeOperation,
+  createInput: () => unknown,
+  decode: (raw: unknown) => Output,
+): Output {
+  const wasm = getWasm();
+  const capability = getShapeWasmCapability(wasm, operation);
+  const jsonInput = serializeShapeInput(operation, createInput);
+  let rawOutput: unknown;
+  try {
+    rawOutput = Reflect.apply(capability, wasm, [jsonInput]);
+  } catch (error) {
+    throw decodeWasmShapeFatal(error, operation) ?? shapeWasmBoundaryFailure(operation);
+  }
+  return decodeShapeOutput(operation, rawOutput, decode);
 }
 
 export function wasmCompileShapeSvg(geometry: GeometryDoc, options?: ShapeCompileOptions): string {
-  assertGeometryTreeDepth(geometry);
-  const wasm = getWasm();
-  if (typeof wasm.compile_shape_svg !== "function") {
-    throw new FatalError(
-      "WASM_NO_SHAPE_COMPILE_API",
-      "compile_shape_svg is not available in this WASM build. Rebuild WASM.",
-      { stage: "wasm" },
-    );
-  }
-  return wasm.compile_shape_svg(
-    JSON.stringify({
+  const operation = "compileShapeSvg";
+  assertGeometryTreeDepth(geometry, { operation });
+  return invokeWasmShapeOperation(
+    operation,
+    () => ({
       geometry,
       paint: options?.paint,
       viewport: options?.viewport,
       preserveAspectRatio: options?.preserveAspectRatio ?? "none",
       partIds: options?.partIds ?? false,
     }),
+    (rawOutput) => decodeShapeRawString(rawOutput, operation),
   );
 }
 
@@ -774,192 +702,87 @@ export function wasmHitTestShapeParts(
   point: { x: number; y: number },
   options?: GeometryHitTestOptions,
 ): GeometryPartHit[] {
-  assertGeometryTreeDepth(geometry);
-  const wasm = getWasm();
-  if (typeof wasm.hit_test_shape_parts !== "function") {
-    throw new FatalError(
-      "WASM_NO_SHAPE_HIT_TEST_API",
-      "hit_test_shape_parts is not available in this WASM build. Rebuild WASM.",
-      { stage: "wasm" },
-    );
-  }
-  return JSON.parse(
-    wasm.hit_test_shape_parts(JSON.stringify({ geometry, point, options })),
-  ) as GeometryPartHit[];
+  const operation = "hitTestShapeParts";
+  assertGeometryTreeDepth(geometry, { operation });
+  return invokeWasmShapeOperation(operation, () => ({ geometry, point, options }), decodeShapeHits);
 }
 
 export function wasmCompileShapePaths(
   geometry: GeometryDoc,
   options?: ShapeCompileOptions,
 ): CompiledShapePathPart[] {
-  assertGeometryTreeDepth(geometry);
-  const wasm = getWasm();
-  if (typeof wasm.compile_shape_paths !== "function") {
-    throw new FatalError(
-      "WASM_NO_SHAPE_COMPILE_API",
-      "compile_shape_paths is not available in this WASM build. Rebuild WASM.",
-      { stage: "wasm" },
-    );
-  }
-  const raw = JSON.parse(
-    wasm.compile_shape_paths(
-      JSON.stringify({
-        geometry,
-        paint: options?.paint,
-        viewport: options?.viewport,
-        preserveAspectRatio: options?.preserveAspectRatio ?? "none",
-        partIds: options?.partIds ?? false,
-      }),
-    ),
-  ) as Array<{
-    partId: string | null;
-    d: string;
-    strokeD?: string | null;
-    bounds: GeometryPartBounds | null;
-  }>;
-  // serde serializes Option::None as null; normalize to absent fields.
-  return raw.map((part) => ({
-    d: part.d,
-    ...(part.partId == null ? {} : { partId: part.partId }),
-    ...(part.strokeD == null ? {} : { strokeD: part.strokeD }),
-    ...(part.bounds == null ? {} : { bounds: part.bounds }),
-  }));
+  const operation = "compileShapePaths";
+  assertGeometryTreeDepth(geometry, { operation });
+  return invokeWasmShapeOperation(
+    operation,
+    () => ({
+      geometry,
+      paint: options?.paint,
+      viewport: options?.viewport,
+      preserveAspectRatio: options?.preserveAspectRatio ?? "none",
+      partIds: options?.partIds ?? false,
+    }),
+    decodeCompiledShapePaths,
+  );
 }
 
 export function wasmResolveSymbolGeometry(
   definition: SymbolDefinition,
   options: ShapeSymbolResolutionOptions,
 ): GeometryDoc {
-  assertResolvedSymbolGeometryDepth(definition, options);
-  const wasm = getWasm();
-  if (typeof wasm.resolve_symbol_geometry !== "function") {
-    throw new FatalError(
-      "WASM_NO_SYMBOL_RESOLVE_API",
-      "resolve_symbol_geometry is not available in this WASM build. Rebuild WASM.",
-      { stage: "wasm" },
-    );
-  }
-  const json = wasm.resolve_symbol_geometry(
-    JSON.stringify({
+  const operation = "resolveSymbolGeometry";
+  assertSymbolDefinitionGeometryDepth(definition, { operation });
+  return invokeWasmShapeOperation(
+    operation,
+    () => ({
       definition,
       options,
     }),
-  );
-  return parseWasmJson(
-    json,
-    isGeometryDoc,
-    "WASM_INVALID_SYMBOL_GEOMETRY",
-    "WASM resolve_symbol_geometry returned invalid geometry JSON.",
+    decodeResolvedShapeGeometry,
   );
 }
 
 export function wasmEvaluateShapeParts(geometry: GeometryDoc): GeometryPart[] {
-  assertGeometryTreeDepth(geometry);
-  const wasm = getWasm();
-  if (typeof wasm.evaluate_shape_parts !== "function") {
-    throw new FatalError(
-      "WASM_NO_SHAPE_PARTS_API",
-      "evaluate_shape_parts is not available in this WASM build. Rebuild WASM.",
-      { stage: "wasm" },
-    );
-  }
-  const json = wasm.evaluate_shape_parts(JSON.stringify({ geometry }));
-  return JSON.parse(json) as GeometryPart[];
+  const operation = "evaluateShapeParts";
+  assertGeometryTreeDepth(geometry, { operation });
+  return invokeWasmShapeOperation(operation, () => ({ geometry }), decodeEvaluatedShapeParts);
 }
 
 export function wasmEvaluateShapeRegion(geometry: GeometryDoc): Region {
-  assertGeometryTreeDepth(geometry);
-  const wasm = getWasm();
-  if (typeof wasm.evaluate_shape_region !== "function") {
-    throw new FatalError(
-      "WASM_NO_SHAPE_REGION_API",
-      "evaluate_shape_region is not available in this WASM build. Rebuild WASM.",
-      { stage: "wasm" },
-    );
-  }
-  const json = wasm.evaluate_shape_region(
-    JSON.stringify({
-      geometry,
-    }),
-  );
-  return parseWasmJson(
-    json,
-    isRegion,
-    "WASM_INVALID_SHAPE_REGION",
-    "WASM evaluate_shape_region returned invalid region JSON.",
-  );
+  const operation = "evaluateShapeRegion";
+  assertGeometryTreeDepth(geometry, { operation });
+  return invokeWasmShapeOperation(operation, () => ({ geometry }), decodeEvaluatedShapeRegion);
 }
 
 export function wasmRenderShapeRegionSvg(region: Region, options?: ShapeCompileOptions): string {
-  const wasm = getWasm();
-  if (typeof wasm.render_shape_region_svg !== "function") {
-    throw new FatalError(
-      "WASM_NO_SHAPE_REGION_RENDER_API",
-      "render_shape_region_svg is not available in this WASM build. Rebuild WASM.",
-      { stage: "wasm" },
-    );
-  }
-  return wasm.render_shape_region_svg(
-    JSON.stringify({
+  const operation = "renderShapeRegionSvg";
+  return invokeWasmShapeOperation(
+    operation,
+    () => ({
       region,
       paint: options?.paint,
       viewport: options?.viewport,
       preserveAspectRatio: options?.preserveAspectRatio ?? "none",
     }),
+    (rawOutput) => decodeShapeRawString(rawOutput, operation),
   );
 }
 
 export function wasmDivideShapeRegions(lhs: GeometryDoc, rhs: GeometryDoc): DivideRegions {
-  assertGeometryTreeDepth(lhs);
-  assertGeometryTreeDepth(rhs);
-  const wasm = getWasm();
-  if (typeof wasm.divide_shape_regions !== "function") {
-    throw new FatalError(
-      "WASM_NO_SHAPE_DIVIDE_API",
-      "divide_shape_regions is not available in this WASM build. Rebuild WASM.",
-      { stage: "wasm" },
-    );
-  }
-  const json = wasm.divide_shape_regions(
-    JSON.stringify({
-      lhs,
-      rhs,
-    }),
-  );
-  return parseWasmJson(
-    json,
-    isDivideRegions,
-    "WASM_INVALID_SHAPE_DIVIDE",
-    "WASM divide_shape_regions returned invalid divide JSON.",
-  );
+  const operation = "divideShapeRegions";
+  assertGeometryTreeDepth(lhs, { operation, operand: "lhs" });
+  assertGeometryTreeDepth(rhs, { operation, operand: "rhs" });
+  return invokeWasmShapeOperation(operation, () => ({ lhs, rhs }), decodeDividedShapeRegions);
 }
 
 export function wasmComputeShapeIntersections(
   lhs: GeometryDoc,
   rhs: GeometryDoc,
 ): GeometryIntersection[] {
-  assertGeometryTreeDepth(lhs);
-  assertGeometryTreeDepth(rhs);
-  const wasm = getWasm();
-  if (typeof wasm.compute_shape_intersections !== "function") {
-    throw new FatalError(
-      "WASM_NO_SHAPE_INTERSECTIONS_API",
-      "compute_shape_intersections is not available in this WASM build. Rebuild WASM.",
-      { stage: "wasm" },
-    );
-  }
-  const json = wasm.compute_shape_intersections(
-    JSON.stringify({
-      lhs,
-      rhs,
-    }),
-  );
-  return parseWasmJson(
-    json,
-    isGeometryIntersectionArray,
-    "WASM_INVALID_SHAPE_INTERSECTIONS",
-    "WASM compute_shape_intersections returned invalid intersections JSON.",
-  );
+  const operation = "computeShapeIntersections";
+  assertGeometryTreeDepth(lhs, { operation });
+  assertGeometryTreeDepth(rhs, { operation });
+  return invokeWasmShapeOperation(operation, () => ({ lhs, rhs }), decodeShapeIntersections);
 }
 
 // ---------------------------------------------------------------------------

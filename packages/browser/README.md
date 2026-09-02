@@ -4,6 +4,12 @@ Browser WASM loader, SVG DOM utilities, and runtime adapter for boundsvg.
 
 This package provides the browser-targeted WASM bindings and SVG DOM interaction utilities used internally by `@boundsvg/react` and `@boundsvg/worker`. Most users should use those packages directly rather than importing `@boundsvg/browser`.
 
+The `@boundsvg/browser/wasm` loader requires the complete nine-operation shape
+WASM family and returns an adapter for `initWasm()` from
+`@boundsvg/core/wasm`. Keep Browser, Core, and the embedded WASM files on the
+same release; a missing operation or schema mismatch fails during
+initialization instead of falling back to a partial adapter.
+
 ## Installation
 
 ```bash
