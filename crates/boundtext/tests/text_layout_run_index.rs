@@ -1,5 +1,7 @@
 //! C2b first-failing effective-run identity.
 
+use std::error::Error;
+
 use boundtext::TextLayoutError;
 use boundtext::font::{FontContext, FontRegistry, FontStyle};
 use boundtext::text::engine::layout_text;
@@ -8,21 +10,14 @@ use boundtext::text::types::{
     TextSpanInput, WhiteSpaceMode, WrapMode, WritingMode,
 };
 
-fn fixture_registry() -> FontRegistry {
+fn fixture_registry() -> Result<FontRegistry, Box<dyn Error>> {
     let mut registry = FontRegistry::new();
-    registry
-        .register(
-            std::fs::read(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"
-            ))
-            .expect("fixture font"),
-            "Good".to_string(),
-            400,
-            FontStyle::Normal,
-        )
-        .expect("register fixture font");
-    registry
+    let font_bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"
+    ))?;
+    registry.register(font_bytes, "Good".to_string(), 400, FontStyle::Normal)?;
+    Ok(registry)
 }
 
 fn request<'a>(
@@ -104,20 +99,27 @@ fn rich_style(family: &str) -> RichTextStyleInput {
     }
 }
 
-fn expect_missing_run(error: TextLayoutError, run_index: usize, family: &str) {
-    match error {
+fn expect_missing_run<T>(result: Result<T, TextLayoutError>, run_index: usize, family: &str) {
+    let Err(error) = result else {
+        assert!(result.is_err(), "expected FontUnavailable");
+        return;
+    };
+    match &error {
         TextLayoutError::FontUnavailable {
             run_index: actual_index,
             families,
             weight,
             style,
         } => {
-            assert_eq!(actual_index, run_index);
-            assert_eq!(families, [family]);
-            assert_eq!(weight, 400);
-            assert_eq!(style, FontStyle::Normal);
+            assert_eq!(*actual_index, run_index);
+            assert_eq!(families, &[family]);
+            assert_eq!(*weight, 400);
+            assert_eq!(*style, FontStyle::Normal);
         }
-        other => panic!("expected FontUnavailable, got {other:?}"),
+        other => assert!(
+            matches!(other, TextLayoutError::FontUnavailable { .. }),
+            "expected FontUnavailable, got {other:?}"
+        ),
     }
 }
 
@@ -134,15 +136,15 @@ fn plain_missing_font_is_run_zero() {
         style: &style,
     };
     expect_missing_run(
-        layout_text(&request("A", None, None), &font_context).expect_err("missing font"),
+        layout_text(&request("A", None, None), &font_context),
         0,
         "Missing",
     );
 }
 
 #[test]
-fn spans_report_the_first_failing_non_empty_authored_run() {
-    let registry = fixture_registry();
+fn spans_report_the_first_failing_non_empty_authored_run() -> Result<(), Box<dyn Error>> {
+    let registry = fixture_registry()?;
     let families = vec!["Good".to_string()];
     let style = FontStyle::Normal;
     let font_context = FontContext {
@@ -158,16 +160,16 @@ fn spans_report_the_first_failing_non_empty_authored_run() {
         span("B", "Missing"),
     ];
     expect_missing_run(
-        layout_text(&request("AB", Some(&spans), None), &font_context)
-            .expect_err("second effective run is missing"),
+        layout_text(&request("AB", Some(&spans), None), &font_context),
         1,
         "Missing",
     );
+    Ok(())
 }
 
 #[test]
-fn nested_rich_text_preserves_depth_first_effective_run_order() {
-    let registry = fixture_registry();
+fn nested_rich_text_preserves_depth_first_effective_run_order() -> Result<(), Box<dyn Error>> {
+    let registry = fixture_registry()?;
     let families = vec!["Good".to_string()];
     let style = FontStyle::Normal;
     let font_context = FontContext {
@@ -197,16 +199,16 @@ fn nested_rich_text_preserves_depth_first_effective_run_order() {
         },
     ];
     expect_missing_run(
-        layout_text(&request("", None, Some(&rich_text)), &font_context)
-            .expect_err("nested second effective run is missing"),
+        layout_text(&request("", None, Some(&rich_text)), &font_context),
         1,
         "Missing",
     );
+    Ok(())
 }
 
 #[test]
-fn ruby_annotation_follows_its_base_in_effective_run_order() {
-    let registry = fixture_registry();
+fn ruby_annotation_follows_its_base_in_effective_run_order() -> Result<(), Box<dyn Error>> {
+    let registry = fixture_registry()?;
     let families = vec!["Good".to_string()];
     let style = FontStyle::Normal;
     let font_context = FontContext {
@@ -234,9 +236,9 @@ fn ruby_annotation_follows_its_base_in_effective_run_order() {
         rt_levels: Vec::new(),
     }];
     expect_missing_run(
-        layout_text(&request("", None, Some(&rich_text)), &font_context)
-            .expect_err("ruby annotation run is missing"),
+        layout_text(&request("", None, Some(&rich_text)), &font_context),
         1,
         "Missing",
     );
+    Ok(())
 }

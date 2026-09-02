@@ -18,15 +18,19 @@ impl RegionProvider for FailingRegionProvider {
     }
 }
 
-fn assert_plain_measurement_signature<'request, 'fonts>(
-    request: &PlainTextMeasurementRequest<'request>,
-    font_context: &FontContext<'fonts>,
+fn assert_plain_measurement_signature(
+    request: &PlainTextMeasurementRequest<'_>,
+    font_context: &FontContext<'_>,
 ) -> Result<MeasuredTextBlock, TextLayoutError> {
     measure_text_lines(request, font_context)
 }
 
+fn assert_error_messages<const ERROR_COUNT: usize>(errors: &[TextLayoutError; ERROR_COUNT]) {
+    assert!(errors.iter().all(|error| !error.to_string().is_empty()));
+}
+
 #[test]
-fn text_layout_error_exposes_only_closed_typed_reasons() {
+fn text_layout_error_exposes_closed_request_and_resource_reasons() {
     let errors = [
         TextLayoutError::InvalidRequest {
             reason: TextRequestError::MissingLineWidths,
@@ -68,6 +72,15 @@ fn text_layout_error_exposes_only_closed_typed_reasons() {
             required: 4_097,
             limit: 4_096,
         },
+    ];
+
+    assert_eq!(errors.len(), 11);
+    assert_error_messages(&errors);
+}
+
+#[test]
+fn text_layout_error_exposes_closed_region_and_invariant_reasons() {
+    let errors = [
         TextLayoutError::InvalidRegionQuery {
             reason: RegionQueryError::NonFiniteBounds {
                 field: RegionQueryField::FlowWidth,
@@ -133,8 +146,8 @@ fn text_layout_error_exposes_only_closed_typed_reasons() {
         },
     ];
 
-    assert_eq!(errors.len(), 26);
-    assert!(errors.iter().all(|error| !error.to_string().is_empty()));
+    assert_eq!(errors.len(), 15);
+    assert_error_messages(&errors);
 }
 
 #[test]
@@ -165,6 +178,15 @@ fn plain_measurement_has_a_narrow_request_and_typed_result() {
 #[test]
 fn boundtext_error_source_contains_no_layout_operation_variants() {
     let source = include_str!("../src/error.rs");
+    let Some((_, after_boundtext_error)) = source.split_once("pub enum BoundtextError") else {
+        assert!(source.contains("pub enum BoundtextError"));
+        return;
+    };
+    let Some((boundtext_error, _)) = after_boundtext_error.split_once("pub enum TextLayoutError")
+    else {
+        assert!(after_boundtext_error.contains("pub enum TextLayoutError"));
+        return;
+    };
     for removed in [
         "InvalidFitStep",
         "FitProbeLimit",
@@ -177,11 +199,6 @@ fn boundtext_error_source_contains_no_layout_operation_variants() {
         "RegionQueryLimit",
         "RegionIntervalLimit",
     ] {
-        let boundtext_error = source
-            .split("pub enum BoundtextError")
-            .nth(1)
-            .and_then(|tail| tail.split("pub enum TextLayoutError").next())
-            .expect("BoundtextError source range");
         assert!(
             !boundtext_error.contains(removed),
             "stale BoundtextError variant: {removed}"
