@@ -868,8 +868,9 @@ describe("WASM protocol decoders", () => {
         throw JSON.stringify({
           severity: "fatal",
           code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
-          message: "exact candidate budget exceeded",
+          message: "Text ellipsis candidate limit was exceeded.",
           stage: "text",
+          context: { operation: method, required: 2, limit: 1 },
         });
       },
       free: () => undefined,
@@ -900,8 +901,9 @@ describe("WASM protocol decoders", () => {
       expect.objectContaining({
         name: "FatalError",
         code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
-        message: "exact candidate budget exceeded",
+        message: "Text ellipsis candidate limit was exceeded.",
         stage: "text",
+        context: { operation: method, required: 2, limit: 1 },
       }),
     );
     handle.dispose();

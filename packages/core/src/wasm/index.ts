@@ -34,6 +34,10 @@ import {
   decodeTextFlowResult,
   decodeTextFlowWithExclusionsResult,
 } from "./protocol-decoders.js";
+import {
+  decodeWasmTextLayoutFatal,
+  textLayoutWasmBoundaryFailure,
+} from "./text-layout-fatal-decoder.js";
 import type {
   WasmEngineInstance,
   WasmModule,
@@ -172,14 +176,11 @@ function normalizeWasmTextLayoutError(
   error: unknown,
   operation: MeasurementTextLayoutOperation,
 ): FatalError {
-  const fatalError = rehydrateWasmFatalError(error);
+  const fatalError = decodeWasmTextLayoutFatal(error, operation);
   if (fatalError !== undefined) {
     return fatalError;
   }
-  return new FatalError("TEXT_LAYOUT_WASM_FAILED", "Text layout WASM transport failed.", {
-    stage: "wasm",
-    context: { operation },
-  });
+  return textLayoutWasmBoundaryFailure(operation);
 }
 
 function invokeWasmTextLayout<Output>(
