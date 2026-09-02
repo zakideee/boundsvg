@@ -467,6 +467,24 @@ interface Engine {
 }
 ```
 
+#### Text layout operation failures
+
+The six direct text methods use the same structured fatal contract as render:
+`layoutTextFlow`, `layoutTextFlowWithExclusions`, `measureTextBlock`,
+`measureIntrinsicInlineSize`, `shrinkwrapText`, and `shrinkwrapFlow`. A
+`FatalError` preserves its fixed code, message, stage, and operation context
+through Node, browser, and Worker routes. Invalid successful transport values
+throw `TEXT_LAYOUT_OUTPUT_INVALID`; an unknown custom transport throw becomes
+`TEXT_LAYOUT_TRANSPORT_FAILED` without exposing the thrown value.
+
+Font resolution uses the actual registered family chain. A missing primary or
+unused missing fallback is accepted when a later requested alias resolves; an
+entirely unresolved chain throws `TEXT_FONT_UNAVAILABLE`. Recursive rich text
+accepts depth 48 and rejects depth 49 with `RICH_TEXT_MAX_DEPTH` before a
+custom producer or WASM is invoked. See
+[Debugging & Diagnostics](/guides/debugging-diagnostics#text-layout-fatal-contract)
+for the complete catalog and migration table.
+
 ### `engine.renderToSvg(input, options?)`
 
 Renders a VNode tree to an SVG string.
@@ -1373,6 +1391,7 @@ const embedded = withNodeIdPrefix(localized, "invoice-preview:");
 
 - WASM initialization failure
 - SVG/PNG generator fatal errors
+- Text layout request, font, preparation, resource, provider, invariant, or transport failures
 - Unsupported property values (e.g., `lineHeight="normal"`)
 - Structural constraint violations (non-Canvas root, nested Canvas, non-string Text children)
 - Duplicate `id` in the same tree
@@ -1385,7 +1404,7 @@ contain `fallback`.
 
 ### Recoverable Errors (warning + fallback)
 
-- Font not found → try fallback chain → substitute with replacement glyph (□)
+- Missing glyph in a resolved font chain → substitute with replacement glyph (□)
 - Image load failure → render placeholder rectangle
 - `fit="shrink"` cannot fit → `overflow.type="cannot_fit"`, render at minimum font size
 

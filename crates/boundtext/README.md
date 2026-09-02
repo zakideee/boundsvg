@@ -74,6 +74,7 @@ for glyph in &glyphs {
 | `line_height_px`      | Absolute line height in px (overrides multiplier) |
 | `letter_spacing_px`   | Letter spacing in px                              |
 | `hanging_punctuation` | Enable hanging punctuation for vertical text      |
+| `fit_max_probes`      | Optional exact-grid work limit                    |
 
 **Output (TextLayoutResult):**
 
@@ -93,6 +94,31 @@ height, or `max_lines` failure takes precedence when both conditions occur.
 deterministic rich-depth, inline-rectangle, and ellipsis-budget exhaustion are
 fatal; no partial result is returned. Rich resource validation happens before
 recursive preparation.
+
+### Failure contract
+
+`TextLayoutError` is the closed failure authority for checked text layout,
+flow, measurement, intrinsic sizing, and full-engine shrinkwrap. Exhaustive
+matches must cover request rejection, font unavailability, preparation phase,
+fit and ellipsis budgets, rich depth, inline rectangles, provider/query/region
+failures, region budgets, and checked invariants. These are represented by
+typed variants and closed reason enums rather than formatted strings.
+
+Font resolution preserves the requested family order. Empty and generic CSS
+family names do not resolve; the first registered alias wins, using exact
+style, nearest weight, and lower-weight tie-breaking within that alias. A
+missing primary or unused missing fallback is accepted when another requested
+alias resolves. If the complete chain fails, `FontUnavailable` records the
+first failing effective run, requested families, weight, and style.
+
+Recursive rich text accepts a maximum container depth of 48. Depth 49 returns
+`RichTextDepthLimit` before recursive preparation or a region-provider query.
+Every checked entrypoint uses the same boundary.
+
+`BoundtextError` is reserved for font registration, backend construction, and
+glyph-outline input. A public `RegionProvider` returns `RegionProviderError`;
+the layout operation converts that failure to
+`TextLayoutError::RegionProviderFailure` without accepting arbitrary strings.
 
 ### Shaping & Measurement
 
@@ -250,35 +276,27 @@ boundtext is published on [crates.io](https://crates.io/crates/boundtext) and ma
 
 ### Migration from the previous Rust contract
 
-- Replace `Option` handling around `layout_text` and
-  `layout_text_with_unit_metadata` with `Result` handling. Existing
-  `.expect(...)` call sites continue to work; pattern matches change from
-  `Some`/`None` to `Ok`/`Err`.
-- Exhaustive matches over `TextLayoutError` / `BoundtextError` must handle
-  `InvalidFitStep`, `FitProbeLimit`, `RichTextDepthLimit`, and
-  `InlineRectLimit`. Direct layout and flow callers receive resource failures
-  before shaping or querying exclusion geometry.
-- Initialize `TextLayoutRequest::fit_max_probes` and
-  `FlowLayoutRequest::fit_max_probes` in direct Rust struct literals. Use
-  `None` for the 4,096-probe default or `Some(limit)` for a smaller explicit
-  work budget; the hard maximum is 65,536.
-- Replace the physical two-method `FlowRegionSource` implementation with
-  `RegionProvider`. Return `Result<Vec<FlowRegion>, BoundtextError>` from the
-  logical `RegionQuery`; implement `fit_search_kind` only when monotonicity is
-  actually proven.
-- Add `inline_box_decorations: Vec<InlineBoxDecoration>` when constructing a
-  `FlowLayoutResult`. Plain flow uses an empty vector; rich flow forwards the
-  materialized normal/region fragments.
-- If you relied on a `TextSpanInput` boundary resetting kerning or contextual
-  shaping, add an actual shaping-style difference. Paint-only boundaries now
-  preserve one shaping run by contract.
+- Change `measure_text_lines` inputs from `TextLayoutRequest` to
+  `PlainTextMeasurementRequest`, and replace `Option<MeasuredTextBlock>` with
+  `Result<MeasuredTextBlock, TextLayoutError>`.
+- Update public flow layout, flow measurement, intrinsic measurement, and
+  full-engine shrinkwrap call sites from `String`, `BoundtextError`, or
+  swallowed `Option` failures to `TextLayoutError`.
+- Remove text-layout variants from `BoundtextError` matches. Add exhaustive
+  handling for `TextLayoutError::{InvalidRequest, FontUnavailable,
+PreparationFailed, InvalidFitStep, FitProbeLimit, EllipsisCandidateLimit,
+RichTextDepthLimit, InlineRectLimit, InvalidRegionQuery,
+RegionProviderFailure, InvalidFlowRegion, RegionQueryLimit,
+RegionIntervalLimit, InvariantViolation}` and their closed reason enums.
+- Change `RegionProvider::regions` to return
+  `Result<Vec<FlowRegion>, RegionProviderError>`. Return a closed provider
+  reason; query validation, interval validation, and resource accounting are
+  owned by the layout operation.
+- Match `PreparationFailed { phase }` instead of the earlier unit variant, and
+  handle unresolved families as `FontUnavailable` rather than parsing an error
+  message.
 
 These are breaking changes for the `0.x` Rust crate contract.
-
-This release also adds `unicode-full` to the default feature set. Direct Rust
-consumers that disable default features retain the smaller per-code-point
-fallback and must opt into `unicode-full` for the extended-grapheme guarantees
-used by the authoritative default and WASM builds.
 
 ## Known Limitations
 

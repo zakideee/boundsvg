@@ -11,6 +11,11 @@ keywords = ["text-layout", "shaping", "kinsoku", "japanese", "linebreak"]
 categories = ["text-processing"]
 exclude = ["reports/", "tools/", "scripts/"]
 
+[package.metadata.boundsvg-release]
+pending-version = "0.3.0"
+change-kind = "breaking-public-api"
+obligation-id = "text-layout-failure-authority"
+
 [lints]
 workspace = true
 
