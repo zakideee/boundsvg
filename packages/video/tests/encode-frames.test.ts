@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import type { Engine, Frame, RenderFramesOptions } from "@boundsvg/core";
+import { type Engine, FatalError, type Frame, type RenderFramesOptions } from "@boundsvg/core";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { videoFrameDurationMicros, videoTimestampMicros } from "../src/frame-rate.js";
 import { Mp4VideoMuxer } from "../src/generated-wasm.js";
@@ -513,6 +513,32 @@ describe("renderToMp4 end to end", () => {
     expect(boxTypes[0]).toBe("ftyp");
     expect(boxTypes.indexOf("moov")).toBeLessThan(boxTypes.indexOf("mdat"));
     expect(new TextDecoder("latin1").decode(fileBytes)).toContain("@scope/aaaa/1.2.3-beta.1");
+  });
+
+  it("preserves a text-layout FatalError from the frame producer", async () => {
+    const fatalError = new FatalError(
+      "TEXT_FONT_UNAVAILABLE",
+      "No requested font is available for text layout.",
+      {
+        stage: "text",
+        nodeId: "video-text",
+        context: {
+          operation: "renderTextLayout",
+          runIndex: 0,
+          requestedAliases: ["Missing"],
+          omittedAliasCount: 0,
+          fontWeight: 400,
+          fontStyle: "normal",
+        },
+      },
+    );
+    const engine = {
+      renderFrames(): Iterable<Frame> {
+        throw fatalError;
+      },
+    } as unknown as Engine;
+
+    await expect(renderToMp4(engine, SCENE, { durationMs: 200 })).rejects.toBe(fatalError);
   });
 
   it("closes the engine's frame iterator when the export fails", async () => {

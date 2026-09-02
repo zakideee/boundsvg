@@ -355,6 +355,70 @@ describe("engine render contract", () => {
     });
   });
 
+  it("separates missing custom text layout from unavailable TextOnPath layout", () => {
+    const missingLayoutEngine = createEngine({
+      computeLayoutFn: () => "{}",
+      renderToIrFn: () =>
+        JSON.stringify({
+          ir: {
+            root: {
+              type: "group",
+              nodeId: "root",
+              bbox: { x: 0, y: 0, w: 100, h: 50 },
+              children: [],
+            },
+            drawOrder: ["root"],
+            width: 100,
+            height: 50,
+          },
+          warnings: [],
+        }),
+    });
+    const cases = [
+      {
+        scene: createElement(
+          "Canvas",
+          { width: 100, height: 50 },
+          createElement("Text", { id: "missing-text", font: "Custom", fontSizePx: 16 }, "abc"),
+        ),
+        code: "TEXT_LAYOUT_RESULT_MISSING",
+        message: "Text layout result is missing required text data.",
+        nodeId: "missing-text",
+      },
+      {
+        scene: createElement(
+          "Canvas",
+          { width: 100, height: 50 },
+          createElement(
+            "TextOnPath",
+            {
+              id: "missing-path",
+              d: "M0 25L100 25",
+              width: 100,
+              height: 50,
+              font: "Custom",
+              fontSizePx: 16,
+            },
+            "abc",
+          ),
+        ),
+        code: "TEXT_PATH_LAYOUT_UNAVAILABLE",
+        message: "Text-on-path layout is unavailable.",
+        nodeId: "missing-path",
+      },
+    ] as const;
+
+    for (const fixture of cases) {
+      expect(captureFatal(() => missingLayoutEngine.renderToIR(fixture.scene))).toMatchObject({
+        code: fixture.code,
+        message: fixture.message,
+        stage: "text",
+        nodeId: fixture.nodeId,
+        context: { operation: "renderTextLayout" },
+      });
+    }
+  });
+
   it("handles PNG oversize per rasterOversizeBehavior", () => {
     const scene = createElement(
       "Canvas",

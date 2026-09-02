@@ -1,5 +1,6 @@
 import { FatalError } from "../errors.js";
 import type { TextOnPathVNode, TextVNode, VNode } from "../vnode/types.js";
+import type { TextLayoutOperation } from "./layout-operation.js";
 import type { RichTextNode } from "./types.js";
 
 /** Text/root is depth 0; recursive rich-text containers through depth 48 are accepted. */
@@ -21,28 +22,30 @@ type RichTextContainerNode = Extract<
   { kind: "ruby" | "inlineBox" | "decoratedSpan" }
 >;
 
-function throwRichTextDepthError(nodeId: string, actualDepth: number): never {
-  throw new FatalError(
-    "RICH_TEXT_MAX_DEPTH",
-    `Validation error: rich text exceeds max depth (${MAX_RICH_TEXT_DEPTH})`,
-    {
-      stage: "validate",
-      nodeId,
-      context: {
-        maxDepth: MAX_RICH_TEXT_DEPTH,
-        actualDepth,
-      },
+function throwRichTextDepthError(
+  operation: TextLayoutOperation,
+  nodeId: string | undefined,
+  actualDepth: number,
+): never {
+  throw new FatalError("RICH_TEXT_MAX_DEPTH", "Rich text depth limit was exceeded.", {
+    stage: "validate",
+    ...(nodeId === undefined ? {} : { nodeId }),
+    context: {
+      operation,
+      actual: actualDepth,
+      limit: MAX_RICH_TEXT_DEPTH,
     },
-  );
+  });
 }
 
-function vnodeLabel(node: VNode): string {
+function authoredNodeId(node: VNode): string | undefined {
   const explicitId = "id" in node.props ? node.props.id : undefined;
-  return typeof explicitId === "string" ? explicitId : `<${node.type}>`;
+  return typeof explicitId === "string" ? explicitId : undefined;
 }
 
 /** Guard recursive JSX rich-text traversals before validation or bridge conversion. */
 export function assertVNodeRichTextDepth(textNode: TextVNode | TextOnPathVNode): void {
+  const nodeId = authoredNodeId(textNode);
   const pending: VNodeDepthFrame[] = [];
   for (const child of textNode.children) {
     if (typeof child !== "string") {
@@ -56,7 +59,7 @@ export function assertVNodeRichTextDepth(textNode: TextVNode | TextOnPathVNode):
       break;
     }
     if (frame.containerDepth > MAX_RICH_TEXT_DEPTH) {
-      throwRichTextDepthError(vnodeLabel(frame.node), frame.containerDepth);
+      throwRichTextDepthError("renderTextLayout", nodeId, frame.containerDepth);
     }
     for (const child of frame.node.children) {
       if (typeof child !== "string") {
@@ -95,7 +98,10 @@ function pushRichTextChildren(
 }
 
 /** Guard recursive public RichTextNode containers; leaf nodes do not add depth. */
-export function assertRichTextNodeDepth(nodes: readonly RichTextNode[]): void {
+export function assertRichTextNodeDepth(
+  nodes: readonly RichTextNode[],
+  operation: TextLayoutOperation = "renderTextLayout",
+): void {
   const pending: RichTextDepthFrame[] = [];
   for (const node of nodes) {
     pending.push({ node, parentContainerDepth: 0 });
@@ -111,7 +117,7 @@ export function assertRichTextNodeDepth(nodes: readonly RichTextNode[]): void {
     }
     const containerDepth = frame.parentContainerDepth + 1;
     if (containerDepth > MAX_RICH_TEXT_DEPTH) {
-      throwRichTextDepthError(`<${frame.node.kind}>`, containerDepth);
+      throwRichTextDepthError(operation, undefined, containerDepth);
     }
     pushRichTextChildren(frame.node, containerDepth, pending);
   }

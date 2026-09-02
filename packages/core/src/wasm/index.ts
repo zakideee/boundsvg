@@ -24,8 +24,8 @@ import type {
   Region,
   SymbolDefinition,
 } from "../shape/types.js";
+import type { MeasurementTextLayoutOperation } from "../text/layout-operation.js";
 import type { GlyphInfo, RichTextNode, ShapeFn, ShapingOptions } from "../text/types.js";
-import type { TextLayoutOperation } from "./protocol-decoders.js";
 import {
   decodeIntrinsicInlineSizeResult,
   decodeMeasureTextBlockResult,
@@ -150,7 +150,7 @@ function parseWasmJson<T>(
   return parsed;
 }
 
-function normalizeWasmTextLayoutError(error: unknown, operation: TextLayoutOperation): FatalError {
+function rehydrateWasmFatalError(error: unknown): FatalError | undefined {
   try {
     if (error instanceof FatalError) {
       return error;
@@ -162,8 +162,19 @@ function normalizeWasmTextLayoutError(error: unknown, operation: TextLayoutOpera
     try {
       return FatalError.fromSerialized(JSON.parse(error) as unknown);
     } catch {
-      // Fall through to the bounded transport diagnostic.
+      return undefined;
     }
+  }
+  return undefined;
+}
+
+function normalizeWasmTextLayoutError(
+  error: unknown,
+  operation: MeasurementTextLayoutOperation,
+): FatalError {
+  const fatalError = rehydrateWasmFatalError(error);
+  if (fatalError !== undefined) {
+    return fatalError;
   }
   return new FatalError("TEXT_LAYOUT_WASM_FAILED", "Text layout WASM transport failed.", {
     stage: "wasm",
@@ -172,7 +183,7 @@ function normalizeWasmTextLayoutError(error: unknown, operation: TextLayoutOpera
 }
 
 function invokeWasmTextLayout<Output>(
-  operation: TextLayoutOperation,
+  operation: MeasurementTextLayoutOperation,
   invoke: () => string,
   decode: (json: string) => Output,
 ): Output {
@@ -1183,7 +1194,15 @@ export class WasmEngineHandle {
   createComputeLayoutFn(): ComputeLayoutTransportFn {
     return (inputJson: string) => {
       this.ensureNotDisposed();
-      return this.instance.compute_layout(inputJson);
+      try {
+        return this.instance.compute_layout(inputJson);
+      } catch (error) {
+        const fatalError = rehydrateWasmFatalError(error);
+        if (fatalError !== undefined) {
+          throw fatalError;
+        }
+        throw error;
+      }
     };
   }
 

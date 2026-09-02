@@ -14,7 +14,7 @@ type MeasurementInvocation = {
     | "shrinkwrapText"
     | "shrinkwrapFlow"
     | "measureIntrinsicInlineSize";
-  invoke: (handle: WasmEngineHandle) => unknown;
+  invoke: (handle: WasmEngineHandle | Engine) => unknown;
 };
 
 const measurementInvocations: readonly MeasurementInvocation[] = [
@@ -158,15 +158,21 @@ describe("C2b six-route text-layout failure contract", () => {
       stage: "text",
       context: { owned: true },
     });
+    const throwPreserved = (): never => {
+      throw preserved;
+    };
     const fatalEngine = new Engine({
       computeLayoutFn: () => "{}",
-      layoutTextFlowFn: () => {
-        throw preserved;
-      },
+      layoutTextFlowFn: throwPreserved,
+      layoutTextFlowWithExclusionsFn: throwPreserved,
+      measureTextBlockFn: throwPreserved,
+      shrinkwrapTextFn: throwPreserved,
+      shrinkwrapFlowFn: throwPreserved,
+      measureIntrinsicInlineSizeFn: throwPreserved,
     });
-    expect(
-      captureFatal(() => fatalEngine.layoutTextFlow({ ...commonInput, lineWidths: [100] })),
-    ).toBe(preserved);
+    for (const invocation of measurementInvocations) {
+      expect(captureFatal(() => invocation.invoke(fatalEngine))).toBe(preserved);
+    }
 
     const unknownTransport = vi.fn((): never => {
       throw Symbol("private-custom-value");
@@ -174,16 +180,21 @@ describe("C2b six-route text-layout failure contract", () => {
     const unknownEngine = new Engine({
       computeLayoutFn: () => "{}",
       layoutTextFlowFn: unknownTransport,
+      layoutTextFlowWithExclusionsFn: unknownTransport,
+      measureTextBlockFn: unknownTransport,
+      shrinkwrapTextFn: unknownTransport,
+      shrinkwrapFlowFn: unknownTransport,
+      measureIntrinsicInlineSizeFn: unknownTransport,
     });
-    const normalized = captureFatal(() =>
-      unknownEngine.layoutTextFlow({ ...commonInput, lineWidths: [100] }),
-    );
-    expect(normalized).toMatchObject({
-      code: "TEXT_LAYOUT_TRANSPORT_FAILED",
-      message: "Text layout transport failed.",
-      stage: "engine",
-      context: { operation: "layoutTextFlow" },
-    });
-    expect(normalized.message).not.toContain("private-custom-value");
+    for (const invocation of measurementInvocations) {
+      const normalized = captureFatal(() => invocation.invoke(unknownEngine));
+      expect(normalized).toMatchObject({
+        code: "TEXT_LAYOUT_TRANSPORT_FAILED",
+        message: "Text layout transport failed.",
+        stage: "engine",
+        context: { operation: invocation.operation },
+      });
+      expect(normalized.message).not.toContain("private-custom-value");
+    }
   });
 });

@@ -31,7 +31,6 @@ import {
   RecoverableError,
   type SerializedRecoverableError,
 } from "./errors.js";
-import { GENERIC_FONT_FAMILIES } from "./font/generic-families.js";
 import { DEFAULT_FONT_WEIGHT } from "./font/types.js";
 import { cloneRecoverableError } from "./ir/clone.js";
 import { hitTest } from "./ir/hit-test.js";
@@ -74,7 +73,7 @@ import { formatNumber } from "./svg/utils.js";
 import { collectTextFontAliases } from "./text/inline-runs.js";
 import { projectResolvedTextOutlines } from "./text/outline-projection.js";
 import { assertRichTextNodeDepth } from "./text/rich-text-limits.js";
-import type { RichTextNode, TextOutlineNode, TextPathMode } from "./text/types.js";
+import type { TextOutlineNode, TextPathMode } from "./text/types.js";
 import { validate, validateAnimatedSvgTimeline } from "./validate/index.js";
 import type { AnimationSpec, VNode } from "./vnode/types.js";
 import type {
@@ -1274,12 +1273,6 @@ export class Engine {
   private readonly compiledSceneOwnerToken: CompiledSceneOwnerToken =
     createCompiledSceneOwnerToken();
   private disposed = false;
-  /**
-   * Aliases of fonts registered through this engine (constructor `fonts` or
-   * `registerFonts`). Empty when font state is managed outside the engine
-   * (custom `computeLayoutFn` backends) — diagnostics then stay generic.
-   */
-  private readonly registeredFontAliases = new Set<string>();
   private readonly geometryRegistry = new Map<string, GeometryDoc>();
   private readonly shapeCompileCache = new Map<string, CompiledShapePathPart[]>();
   private readonly symbolRegistry = new Map<string, SymbolDefinition>();
@@ -1287,9 +1280,6 @@ export class Engine {
 
   constructor(options: EngineOptions) {
     this.options = options;
-    for (const font of options.fonts ?? []) {
-      this.registeredFontAliases.add(font.alias);
-    }
     for (const geometry of options.geometries ?? []) {
       this.geometryRegistry.set(geometry.id, geometry.doc);
     }
@@ -1329,7 +1319,6 @@ export class Engine {
         style: font.style ?? "normal",
         data: font.data,
       });
-      this.registeredFontAliases.add(font.alias);
     }
   }
 
@@ -1907,8 +1896,7 @@ export class Engine {
         { stage: "engine" },
       );
     }
-    this.assertMeasurementFontAliasesRegistered("layoutTextFlow", input);
-    return invokeMeasurementTransport(this.options.layoutTextFlowFn, input);
+    return invokeMeasurementTransport("layoutTextFlow", this.options.layoutTextFlowFn, input);
   }
 
   layoutTextFlowWithExclusions(input: TextFlowWithExclusionsInput): TextFlowWithExclusionsResult {
@@ -1920,8 +1908,12 @@ export class Engine {
         { stage: "engine" },
       );
     }
-    this.assertMeasurementFontAliasesRegistered("layoutTextFlowWithExclusions", input);
-    return invokeMeasurementTransport(this.options.layoutTextFlowWithExclusionsFn, input);
+    assertRichTextNodeDepth(input.richText ?? [], "layoutTextFlowWithExclusions");
+    return invokeMeasurementTransport(
+      "layoutTextFlowWithExclusions",
+      this.options.layoutTextFlowWithExclusionsFn,
+      input,
+    );
   }
 
   measureTextBlock(input: MeasureTextBlockInput): MeasureTextBlockResult {
@@ -1931,8 +1923,7 @@ export class Engine {
         stage: "engine",
       });
     }
-    this.assertMeasurementFontAliasesRegistered("measureTextBlock", input);
-    return invokeMeasurementTransport(this.options.measureTextBlockFn, input);
+    return invokeMeasurementTransport("measureTextBlock", this.options.measureTextBlockFn, input);
   }
 
   shrinkwrapText(input: ShrinkwrapTextInput): ShrinkwrapTextResult {
@@ -1942,8 +1933,8 @@ export class Engine {
         stage: "engine",
       });
     }
-    this.assertMeasurementFontAliasesRegistered("shrinkwrapText", input);
-    return invokeMeasurementTransport(this.options.shrinkwrapTextFn, input);
+    assertRichTextNodeDepth(input.richText ?? [], "shrinkwrapText");
+    return invokeMeasurementTransport("shrinkwrapText", this.options.shrinkwrapTextFn, input);
   }
 
   shrinkwrapFlow(input: ShrinkwrapFlowInput): ShrinkwrapFlowResult {
@@ -1953,8 +1944,8 @@ export class Engine {
         stage: "engine",
       });
     }
-    this.assertMeasurementFontAliasesRegistered("shrinkwrapFlow", input);
-    return invokeMeasurementTransport(this.options.shrinkwrapFlowFn, input);
+    assertRichTextNodeDepth(input.richText ?? [], "shrinkwrapFlow");
+    return invokeMeasurementTransport("shrinkwrapFlow", this.options.shrinkwrapFlowFn, input);
   }
 
   measureIntrinsicInlineSize(input: IntrinsicInlineSizeInput): IntrinsicInlineSizeResult {
@@ -1966,8 +1957,12 @@ export class Engine {
         { stage: "engine" },
       );
     }
-    this.assertMeasurementFontAliasesRegistered("measureIntrinsicInlineSize", input);
-    return invokeMeasurementTransport(this.options.measureIntrinsicInlineSizeFn, input);
+    assertRichTextNodeDepth(input.richText ?? [], "measureIntrinsicInlineSize");
+    return invokeMeasurementTransport(
+      "measureIntrinsicInlineSize",
+      this.options.measureIntrinsicInlineSizeFn,
+      input,
+    );
   }
 
   renderToLayoutTree(input: EngineInput, renderOpts?: LayoutRenderOptions): LayoutResult {
@@ -1978,8 +1973,6 @@ export class Engine {
     if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
-    this.assertVNodeFontAliasesRegistered(vnode);
-
     return computeLayout(vnode, {
       computeLayoutFn: this.options.computeLayoutFn,
       fonts: this.options.fonts,
@@ -2104,8 +2097,6 @@ export class Engine {
       this.options.compileLayoutTransitionFn,
       "compileLayoutTransitionFn",
     );
-    this.assertVNodeFontAliasesRegistered(referenceVNode);
-    this.assertVNodeFontAliasesRegistered(targetVNode);
     let envelopeJson: string;
     try {
       envelopeJson = compileLayoutTransitionFn(
@@ -2452,11 +2443,13 @@ export class Engine {
         if (fontUsage.hasText) {
           if (!irTextNodeIds.has(nodeId)) {
             throw new FatalError(
-              "TEXT_NO_LAYOUT",
-              `Text node "${nodeId}" has content but computeLayoutFn produced no ` +
-                `textLayout. Ensure computeLayoutFn returns textLayout with lines, bbox, ` +
-                `and chosenFontSizePx for every text node.`,
-              { stage: "text", nodeId },
+              "TEXT_LAYOUT_RESULT_MISSING",
+              "Text layout result is missing required text data.",
+              {
+                stage: "text",
+                nodeId,
+                context: { operation: "renderTextLayout" },
+              },
             );
           }
         }
@@ -2465,35 +2458,14 @@ export class Engine {
       if (node.type === "TextOnPath") {
         if (!irTextNodeIds.has(nodeId)) {
           throw new FatalError(
-            "TEXT_NO_LAYOUT",
-            `TextOnPath node "${nodeId}" has content but computeLayoutFn produced no textLayout.`,
-            { stage: "text", nodeId },
+            "TEXT_PATH_LAYOUT_UNAVAILABLE",
+            "Text-on-path layout is unavailable.",
+            {
+              stage: "text",
+              nodeId,
+              context: { operation: "renderTextLayout" },
+            },
           );
-        }
-        return;
-      }
-      let siblingIndex = 0;
-      for (const child of node.children) {
-        if (typeof child !== "string") {
-          visit(child, { depth: position.depth + 1, siblingIndex, parentNodeId: nodeId });
-          siblingIndex += 1;
-        }
-      }
-    };
-    visit(vnode, { depth: 0, siblingIndex: 0 });
-  }
-
-  /**
-   * Reject unresolved authored aliases before authoritative Rust layout can
-   * replace their identity with a generic shaping failure.
-   */
-  private assertVNodeFontAliasesRegistered(vnode: VNode): void {
-    const visit = (node: VNode, position: NodePosition): void => {
-      const { id: nodeId } = generateNodeId(node, position);
-      if (node.type === "Text" || node.type === "TextOnPath") {
-        const fontUsage = collectTextFontAliases(node);
-        if (fontUsage.hasText || node.type === "TextOnPath") {
-          this.assertFontAliasesRegistered(fontUsage.aliases, nodeId);
         }
         return;
       }
@@ -2518,7 +2490,6 @@ export class Engine {
     },
   ): CompiledSceneSource {
     const renderToIrFn = this.requireWasmBackendFn(this.options.renderToIrFn, "renderToIrFn");
-    this.assertVNodeFontAliasesRegistered(vnode);
     let envelopeJson: string;
     try {
       envelopeJson = renderToIrFn(
@@ -2582,7 +2553,6 @@ export class Engine {
     } else if (!renderOpts?.skipValidation) {
       validate(vnode);
     }
-    this.assertVNodeFontAliasesRegistered(vnode);
     let envelopeJson: string;
     try {
       envelopeJson = renderToSvgFn(
@@ -2848,8 +2818,6 @@ export class Engine {
     if (!stableRenderOpts?.skipValidation) {
       validate(vnode);
     }
-    this.assertVNodeFontAliasesRegistered(vnode);
-
     // Layout once (matching the TS backend's single compile); the emit at
     // the applied scale reuses this IR so callback-driven registry changes
     // cannot re-layout the scene between the two steps.
@@ -3304,92 +3272,6 @@ export class Engine {
     };
   }
 
-  /**
-   * Reject aliases used by text content but absent from this engine's font
-   * registry. The check runs even when WASM returned a fallback layout: rich
-   * text can otherwise discard an unknown run font and silently render with
-   * its parent style. Custom backends that do not expose font state leave the
-   * tracked alias set empty and retain their own resolution contract.
-   */
-  private assertFontAliasesRegistered(aliases: Iterable<string>, nodeId: string): void {
-    const unregistered = this.collectUnregisteredFontAliases(aliases);
-    if (!unregistered) {
-      return;
-    }
-    throw new FatalError(
-      "FONT_ALIAS_NOT_REGISTERED",
-      `Text node "${nodeId}" references unregistered font alias(es): ${unregistered.requested}. ` +
-        `Registered aliases: ${unregistered.registered}. Register the font via createEngineAsync ` +
-        `fonts or Engine.registerFonts before rendering.`,
-      { stage: "text", nodeId },
-    );
-  }
-
-  /**
-   * Same diagnosis for the measurement APIs: the WASM engine silently drops
-   * unresolved aliases and measurement then fails with an opaque shaping
-   * error. Covers top-level, span, and nested rich-text font chains.
-   */
-  private assertMeasurementFontAliasesRegistered(
-    apiName: string,
-    input: {
-      fontFamily: string;
-      fallback?: string[];
-      spans?: Array<{ fontFamily?: string; fallback?: string[] }>;
-      richText?: RichTextNode[];
-    },
-  ): void {
-    assertRichTextNodeDepth(input.richText ?? []);
-    const aliases: Array<string | undefined> = [input.fontFamily, ...(input.fallback ?? [])];
-    for (const span of input.spans ?? []) {
-      aliases.push(span.fontFamily, ...(span.fallback ?? []));
-    }
-    collectRichTextFontAliases(input.richText ?? [], aliases);
-    const unregistered = this.collectUnregisteredFontAliases(aliases);
-    if (!unregistered) {
-      return;
-    }
-    throw new FatalError(
-      "FONT_ALIAS_NOT_REGISTERED",
-      `${apiName} references unregistered font alias(es): ${unregistered.requested}. ` +
-        `Registered aliases: ${unregistered.registered}. Register the font via ` +
-        `createEngineAsync fonts or Engine.registerFonts before measuring.`,
-      { stage: "text" },
-    );
-  }
-
-  /**
-   * Returns the unregistered aliases among `aliases`, or null when all
-   * resolve. Skips generic CSS families (resolved at rasterization time)
-   * and stays silent when this engine tracks no aliases (custom backends).
-   */
-  private collectUnregisteredFontAliases(
-    aliases: Iterable<string | undefined>,
-  ): { requested: string; registered: string } | null {
-    if (this.registeredFontAliases.size === 0) {
-      return null;
-    }
-    const unregisteredAliases = new Set<string>();
-    for (const alias of aliases) {
-      const normalizedAlias = alias?.trim();
-      if (
-        !normalizedAlias ||
-        this.registeredFontAliases.has(normalizedAlias) ||
-        GENERIC_FONT_FAMILIES.has(normalizedAlias.toLowerCase())
-      ) {
-        continue;
-      }
-      unregisteredAliases.add(normalizedAlias);
-    }
-    if (unregisteredAliases.size === 0) {
-      return null;
-    }
-    return {
-      requested: [...unregisteredAliases].join(", "),
-      registered: [...this.registeredFontAliases].sort().join(", "),
-    };
-  }
-
   private validateLayeredSvgComposition(args: {
     ir: IR;
     layeredResult: LayeredSvgResult;
@@ -3525,55 +3407,6 @@ export class Engine {
       return skippedResult;
     }
   }
-}
-
-function collectRichTextFontAliases(
-  nodes: RichTextNode[],
-  target: Array<string | undefined>,
-  inheritedStyle?: { font: string; fallback?: string[] },
-): boolean {
-  let hasText = false;
-  for (const node of nodes) {
-    hasText = collectRichTextNodeFontAliases(node, target, inheritedStyle) || hasText;
-  }
-  return hasText;
-}
-
-function collectRichTextNodeFontAliases(
-  node: RichTextNode,
-  target: Array<string | undefined>,
-  inheritedStyle?: { font: string; fallback?: string[] },
-): boolean {
-  if (node.kind === "text") {
-    if (node.text && inheritedStyle) {
-      target.push(inheritedStyle.font, ...(inheritedStyle.fallback ?? []));
-    }
-    return Boolean(node.text);
-  }
-  if (node.kind === "span" || node.kind === "combine") {
-    if (node.text) {
-      target.push(node.style.font, ...(node.style.fallback ?? []));
-    }
-    return Boolean(node.text);
-  }
-  if (node.kind === "ruby") {
-    return collectRichTextRubyFontAliases(node, target);
-  }
-  if (node.kind === "inlineRect") {
-    return false;
-  }
-  return collectRichTextFontAliases(node.children, target, node.style);
-}
-
-function collectRichTextRubyFontAliases(
-  node: Extract<RichTextNode, { kind: "ruby" }>,
-  target: Array<string | undefined>,
-): boolean {
-  let hasText = false;
-  for (const children of [node.base, node.rt, ...(node.rtLevels ?? [])]) {
-    hasText = collectRichTextFontAliases(children, target, node.style) || hasText;
-  }
-  return hasText;
 }
 
 export async function createEngineAsync(options: {

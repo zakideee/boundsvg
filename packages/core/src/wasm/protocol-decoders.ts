@@ -1,6 +1,7 @@
 import type { SerializedRecoverableError } from "../errors.js";
 import { FatalError, RecoverableError } from "../errors.js";
 import { structuralIRValidationFailure, validateStructuralIR } from "../ir/output-validator.js";
+import type { MeasurementTextLayoutOperation } from "../text/layout-operation.js";
 import type {
   IntrinsicInlineSizeResult,
   MeasureTextBlockLine,
@@ -32,7 +33,9 @@ type RuntimeFieldRule = {
   guard: (value: unknown, path?: string) => boolean;
 };
 
-type DecodeJsonError = { code: string; description: string } | { operation: TextLayoutOperation };
+type DecodeJsonError =
+  | { code: string; description: string }
+  | { operation: MeasurementTextLayoutOperation };
 
 const isString: Guard<string> = (value): value is string => typeof value === "string";
 const isNumber: Guard<number> = (value): value is number => typeof value === "number";
@@ -40,14 +43,6 @@ const isBoolean: Guard<boolean> = (value): value is boolean => typeof value === 
 let lastFailurePath: string | undefined;
 let lastFailureDescription: string | undefined;
 let lastFailureSafeDescription: string | undefined;
-
-export type TextLayoutOperation =
-  | "layoutTextFlow"
-  | "layoutTextFlowWithExclusions"
-  | "measureTextBlock"
-  | "shrinkwrapText"
-  | "shrinkwrapFlow"
-  | "measureIntrinsicInlineSize";
 
 function describeRejectedValue(value: unknown): string {
   if (value === null) {

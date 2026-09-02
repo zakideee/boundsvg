@@ -1,6 +1,12 @@
 /** @jsxImportSource react */
 
-import type { Engine, RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/core";
+import {
+  type Engine,
+  FatalError,
+  type RenderAnimatedSvgOptions,
+  type RenderSvgOptions,
+  type VNode,
+} from "@boundsvg/core";
 import type { WorkerEngine } from "@boundsvg/worker";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -176,6 +182,51 @@ describe("BoundSvg Worker/non-Worker branching", () => {
     expect(html).toContain("<span>Error:");
     expect(html).toContain("render boom");
     expect(html).not.toContain('role="alert"');
+  });
+
+  it("passes a text-layout FatalError to the sync error fallback unchanged", () => {
+    const fatalError = new FatalError(
+      "TEXT_FONT_UNAVAILABLE",
+      "No requested font is available for text layout.",
+      {
+        stage: "text",
+        nodeId: "txt",
+        context: {
+          operation: "renderTextLayout",
+          runIndex: 0,
+          requestedAliases: ["Missing"],
+          omittedAliasCount: 0,
+          fontWeight: 400,
+          fontStyle: "normal",
+        },
+      },
+    );
+    const engine = makeEngineMock({
+      renderToSvg: vi.fn(() => {
+        throw fatalError;
+      }),
+    });
+    let observedError: Error | undefined;
+
+    renderToString(
+      <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
+        <BoundSvg
+          vnode={sampleVNode()}
+          errorFallback={(error: Error) => {
+            observedError = error;
+            return <span>{error.message}</span>;
+          }}
+        />
+      </BoundSvgContext.Provider>,
+    );
+
+    expect(observedError).toBe(fatalError);
+    expect(observedError).toMatchObject({
+      code: "TEXT_FONT_UNAVAILABLE",
+      stage: "text",
+      nodeId: "txt",
+      context: expect.objectContaining({ operation: "renderTextLayout", runIndex: 0 }),
+    });
   });
 
   it("renders error fallback when declarative children include unsupported React elements", () => {

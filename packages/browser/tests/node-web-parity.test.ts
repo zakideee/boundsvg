@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { type AnimationSpec, createElement, Engine, type IRNode, type VNode } from "@boundsvg/core";
+import {
+  type AnimationSpec,
+  createElement,
+  Engine,
+  FatalError,
+  type IRNode,
+  type VNode,
+} from "@boundsvg/core";
 import {
   EXPECTED_WASM_SCHEMA_VERSION,
   WasmEngineHandle,
@@ -59,6 +66,16 @@ function captureRawTextLayoutDiagnostic(action: () => unknown): unknown {
     throw error;
   }
   throw new Error("Expected raw text-layout operation to fail");
+}
+
+function captureTextLayoutFatal(action: () => unknown): FatalError {
+  try {
+    action();
+  } catch (error) {
+    expect(error).toBeInstanceOf(FatalError);
+    return error as FatalError;
+  }
+  throw new Error("Expected text-layout operation to fail");
 }
 
 function createLowLevelEngine(instance: WasmEngineInstance): Engine {
@@ -753,6 +770,33 @@ describe("nodejs/web WASM public parity", () => {
           },
         });
       }
+    }
+  });
+
+  it("preserves the same public font diagnostic in every node and web engine", () => {
+    for (const parityEngine of timelineEngines) {
+      const error = captureTextLayoutFatal(() =>
+        parityEngine.measureTextBlock({
+          text: "AB",
+          fontFamily: "Missing",
+          fontSizePx: 16,
+          maxWidth: 100,
+        }),
+      );
+      expect(error.toJSON()).toEqual({
+        severity: "fatal",
+        code: "TEXT_FONT_UNAVAILABLE",
+        message: "No requested font is available for text layout.",
+        stage: "text",
+        context: {
+          operation: "measureTextBlock",
+          runIndex: 0,
+          requestedAliases: ["Missing"],
+          omittedAliasCount: 0,
+          fontWeight: 400,
+          fontStyle: "normal",
+        },
+      });
     }
   });
 
