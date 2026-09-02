@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { MAX_RICH_TEXT_DEPTH } from "../../src/text/rich-text-limits.js";
 
 function repositorySource(relativePath: string): string {
   return readFileSync(
@@ -10,6 +11,14 @@ function repositorySource(relativePath: string): string {
 }
 
 describe("C2b text-layout authority source guard", () => {
+  it("keeps the TypeScript and boundtext rich-depth limit at the exact shared value", () => {
+    const boundtextTypes = repositorySource("crates/boundtext/src/text/types.rs");
+    expect(MAX_RICH_TEXT_DEPTH).toBe(48);
+    expect(boundtextTypes).toContain(
+      `pub const MAX_RICH_TEXT_DEPTH: usize = ${MAX_RICH_TEXT_DEPTH};`,
+    );
+  });
+
   it("removes the six route-specific malformed-success codes", () => {
     const source = repositorySource("packages/core/src/wasm/protocol-decoders.ts");
     for (const staleCode of [

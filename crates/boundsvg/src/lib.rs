@@ -1127,13 +1127,159 @@ fn render_error_envelope_with_context(
     JsValue::from_str(&serialized)
 }
 
-fn text_layout_error_to_js(
-    error: &boundtext::TextLayoutError,
+trait TextLayoutRequestConversionFailure {
+    fn into_text_layout_error(self) -> boundtext::TextLayoutError;
+}
+
+impl TextLayoutRequestConversionFailure for boundtext::TextLayoutError {
+    fn into_text_layout_error(self) -> boundtext::TextLayoutError {
+        self
+    }
+}
+
+impl TextLayoutRequestConversionFailure for std::convert::Infallible {
+    fn into_text_layout_error(self) -> boundtext::TextLayoutError {
+        match self {}
+    }
+}
+
+fn text_layout_fallback_envelope(operation: text_diagnostics::TextLayoutOperation) -> &'static str {
+    match operation {
+        text_diagnostics::TextLayoutOperation::LayoutTextFlow => {
+            r#"{"severity":"fatal","code":"TEXT_LAYOUT_WASM_FAILED","message":"Text layout WASM transport failed.","stage":"wasm","context":{"operation":"layoutTextFlow"}}"#
+        }
+        text_diagnostics::TextLayoutOperation::LayoutTextFlowWithExclusions => {
+            r#"{"severity":"fatal","code":"TEXT_LAYOUT_WASM_FAILED","message":"Text layout WASM transport failed.","stage":"wasm","context":{"operation":"layoutTextFlowWithExclusions"}}"#
+        }
+        text_diagnostics::TextLayoutOperation::MeasureTextBlock => {
+            r#"{"severity":"fatal","code":"TEXT_LAYOUT_WASM_FAILED","message":"Text layout WASM transport failed.","stage":"wasm","context":{"operation":"measureTextBlock"}}"#
+        }
+        text_diagnostics::TextLayoutOperation::ShrinkwrapText => {
+            r#"{"severity":"fatal","code":"TEXT_LAYOUT_WASM_FAILED","message":"Text layout WASM transport failed.","stage":"wasm","context":{"operation":"shrinkwrapText"}}"#
+        }
+        text_diagnostics::TextLayoutOperation::ShrinkwrapFlow => {
+            r#"{"severity":"fatal","code":"TEXT_LAYOUT_WASM_FAILED","message":"Text layout WASM transport failed.","stage":"wasm","context":{"operation":"shrinkwrapFlow"}}"#
+        }
+        text_diagnostics::TextLayoutOperation::MeasureIntrinsicInlineSize => {
+            r#"{"severity":"fatal","code":"TEXT_LAYOUT_WASM_FAILED","message":"Text layout WASM transport failed.","stage":"wasm","context":{"operation":"measureIntrinsicInlineSize"}}"#
+        }
+        text_diagnostics::TextLayoutOperation::RenderTextLayout => {
+            r#"{"severity":"fatal","code":"TEXT_LAYOUT_WASM_FAILED","message":"Text layout WASM transport failed.","stage":"wasm","context":{"operation":"renderTextLayout"}}"#
+        }
+    }
+}
+
+fn serialize_text_layout_diagnostic(
+    diagnostic: text_diagnostics::TextLayoutDiagnostic,
+    operation: text_diagnostics::TextLayoutOperation,
+) -> String {
+    let serialized = diagnostics::SerializedFatalError::new(
+        diagnostic.code,
+        diagnostic.message,
+        Some(diagnostic.stage),
+        diagnostic.node_id,
+        Some(diagnostic.context),
+    )
+    .ok()
+    .and_then(|wire_diagnostic| serde_json::to_string(&wire_diagnostic).ok());
+    serialized.unwrap_or_else(|| text_layout_fallback_envelope(operation).to_string())
+}
+
+fn text_layout_diagnostic_to_js(
+    diagnostic: text_diagnostics::TextLayoutDiagnostic,
     operation: text_diagnostics::TextLayoutOperation,
 ) -> JsValue {
-    let engine_error =
-        text_diagnostics::classify_text_layout_error(error, operation, None).into_engine_error();
-    engine_error_to_render_envelope(&engine_error)
+    JsValue::from_str(&serialize_text_layout_diagnostic(diagnostic, operation))
+}
+
+fn text_layout_input_decode_diagnostic(
+    operation: text_diagnostics::TextLayoutOperation,
+) -> text_diagnostics::TextLayoutDiagnostic {
+    text_diagnostics::TextLayoutDiagnostic {
+        code: "TEXT_LAYOUT_INPUT_INVALID",
+        message: "Text layout request is invalid.",
+        stage: diagnostics::PipelineStage::Validate,
+        node_id: None,
+        context: serde_json::json!({
+            "operation": operation.as_str(),
+            "reason": "malformedJson",
+        }),
+    }
+}
+
+fn text_layout_output_encode_diagnostic(
+    operation: text_diagnostics::TextLayoutOperation,
+) -> text_diagnostics::TextLayoutDiagnostic {
+    text_diagnostics::TextLayoutDiagnostic {
+        code: "TEXT_LAYOUT_OUTPUT_INVALID",
+        message: "Text layout transport returned an invalid result.",
+        stage: diagnostics::PipelineStage::Wasm,
+        node_id: None,
+        context: serde_json::json!({
+            "operation": operation.as_str(),
+            "phase": "serialize",
+        }),
+    }
+}
+
+fn text_layout_panic_diagnostic(
+    operation: text_diagnostics::TextLayoutOperation,
+) -> text_diagnostics::TextLayoutDiagnostic {
+    text_diagnostics::TextLayoutDiagnostic {
+        code: "TEXT_LAYOUT_PANIC",
+        message: "Text layout failed unexpectedly.",
+        stage: diagnostics::PipelineStage::Wasm,
+        node_id: None,
+        context: serde_json::json!({ "operation": operation.as_str() }),
+    }
+}
+
+fn run_text_layout_operation<WireInput, Request, Output, Run>(
+    operation: text_diagnostics::TextLayoutOperation,
+    json_input: &str,
+    run: Run,
+) -> Result<String, text_diagnostics::TextLayoutDiagnostic>
+where
+    WireInput: serde::de::DeserializeOwned,
+    Request: TryFrom<WireInput>,
+    Request::Error: TextLayoutRequestConversionFailure,
+    Output: serde::Serialize,
+    Run: FnOnce(Request) -> Result<Output, boundtext::TextLayoutError>,
+{
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let wire_input = serde_json::from_str::<WireInput>(json_input)
+            .map_err(|_| text_layout_input_decode_diagnostic(operation))?;
+        let request = Request::try_from(wire_input).map_err(|failure| {
+            let error = failure.into_text_layout_error();
+            text_diagnostics::classify_text_layout_error(&error, operation, None)
+        })?;
+        let output = run(request).map_err(|error| {
+            text_diagnostics::classify_text_layout_error(&error, operation, None)
+        })?;
+        serde_json::to_string(&output).map_err(|_| text_layout_output_encode_diagnostic(operation))
+    }));
+
+    match result {
+        Ok(operation_result) => operation_result,
+        Err(_) => Err(text_layout_panic_diagnostic(operation)),
+    }
+}
+
+fn run_text_layout_wasm_operation<WireInput, Request, Output, Run>(
+    operation: text_diagnostics::TextLayoutOperation,
+    json_input: &str,
+    _wire_input: std::marker::PhantomData<WireInput>,
+    run: Run,
+) -> Result<String, JsValue>
+where
+    WireInput: serde::de::DeserializeOwned,
+    Request: TryFrom<WireInput>,
+    Request::Error: TextLayoutRequestConversionFailure,
+    Output: serde::Serialize,
+    Run: FnOnce(Request) -> Result<Output, boundtext::TextLayoutError>,
+{
+    run_text_layout_operation::<WireInput, Request, Output, Run>(operation, json_input, run)
+        .map_err(|diagnostic| text_layout_diagnostic_to_js(diagnostic, operation))
 }
 
 fn transition_compatibility_error_to_js(
@@ -1496,7 +1642,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 29;
+pub const WASM_SCHEMA_VERSION: u32 = 30;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -2159,18 +2305,12 @@ impl BoundSvgEngine {
     ///
     /// Returns `JsValue` if the input JSON is invalid, font is not found, or serialization fails.
     pub fn layout_text_flow(&self, json_input: &str) -> Result<String, JsValue> {
-        catch_unwind_to_js(AssertUnwindSafe(|| {
-            let input: flow::TextFlowInput = serde_json::from_str(json_input)
-                .map_err(|e| JsValue::from_str(&format!("Invalid flow input: {e}")))?;
-            let result = flow::layout_text_flow(&input, &self.registry).map_err(|error| {
-                text_layout_error_to_js(
-                    &error,
-                    text_diagnostics::TextLayoutOperation::LayoutTextFlow,
-                )
-            })?;
-            serde_json::to_string(&result)
-                .map_err(|e| JsValue::from_str(&format!("Failed to serialize flow result: {e}")))
-        }))
+        run_text_layout_wasm_operation(
+            text_diagnostics::TextLayoutOperation::LayoutTextFlow,
+            json_input,
+            std::marker::PhantomData::<flow::TextFlowInput>,
+            |input: flow::TextFlowInput| flow::layout_text_flow(&input, &self.registry),
+        )
     }
 
     /// Layout text flow with shape exclusions (geometry-aware flow layout).
@@ -2179,20 +2319,14 @@ impl BoundSvgEngine {
     ///
     /// Returns `JsValue` if input JSON is invalid, font is not found, or serialization fails.
     pub fn layout_text_flow_with_exclusions(&self, json_input: &str) -> Result<String, JsValue> {
-        catch_unwind_to_js(AssertUnwindSafe(|| {
-            let input: flow::TextFlowWithExclusionsInput = serde_json::from_str(json_input)
-                .map_err(|e| JsValue::from_str(&format!("Invalid exclusion flow input: {e}")))?;
-            let flow_layout = flow::layout_text_flow_with_exclusions(&input, &self.registry)
-                .map_err(|error| {
-                    text_layout_error_to_js(
-                        &error,
-                        text_diagnostics::TextLayoutOperation::LayoutTextFlowWithExclusions,
-                    )
-                })?;
-            serde_json::to_string(&flow_layout).map_err(|e| {
-                JsValue::from_str(&format!("Failed to serialize exclusion flow result: {e}"))
-            })
-        }))
+        run_text_layout_wasm_operation(
+            text_diagnostics::TextLayoutOperation::LayoutTextFlowWithExclusions,
+            json_input,
+            std::marker::PhantomData::<flow::TextFlowWithExclusionsInput>,
+            |input: flow::TextFlowWithExclusionsInput| {
+                flow::layout_text_flow_with_exclusions(&input, &self.registry)
+            },
+        )
     }
 
     /// Measure a text block and return line count, used width/height, etc.
@@ -2201,18 +2335,12 @@ impl BoundSvgEngine {
     ///
     /// Returns `JsValue` if input JSON is invalid, font is not found, or serialization fails.
     pub fn measure_text_block(&self, json_input: &str) -> Result<String, JsValue> {
-        catch_unwind_to_js(AssertUnwindSafe(|| {
-            let input: flow::MeasureTextBlockInput = serde_json::from_str(json_input)
-                .map_err(|e| JsValue::from_str(&format!("Invalid measure input: {e}")))?;
-            let result = flow::measure_text_block(&input, &self.registry).map_err(|error| {
-                text_layout_error_to_js(
-                    &error,
-                    text_diagnostics::TextLayoutOperation::MeasureTextBlock,
-                )
-            })?;
-            serde_json::to_string(&result)
-                .map_err(|e| JsValue::from_str(&format!("Failed to serialize measure result: {e}")))
-        }))
+        run_text_layout_wasm_operation(
+            text_diagnostics::TextLayoutOperation::MeasureTextBlock,
+            json_input,
+            std::marker::PhantomData::<flow::MeasureTextBlockInput>,
+            |input: flow::MeasureTextBlockInput| flow::measure_text_block(&input, &self.registry),
+        )
     }
 
     /// Find the minimum width preserving the current line count (shrinkwrap).
@@ -2221,19 +2349,12 @@ impl BoundSvgEngine {
     ///
     /// Returns `JsValue` if input JSON is invalid, font is not found, or serialization fails.
     pub fn shrinkwrap_text(&self, json_input: &str) -> Result<String, JsValue> {
-        catch_unwind_to_js(AssertUnwindSafe(|| {
-            let input: flow::ShrinkwrapTextInput = serde_json::from_str(json_input)
-                .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap input: {e}")))?;
-            let shrinkwrap = flow::shrinkwrap_text(&input, &self.registry).map_err(|error| {
-                text_layout_error_to_js(
-                    &error,
-                    text_diagnostics::TextLayoutOperation::ShrinkwrapText,
-                )
-            })?;
-            serde_json::to_string(&shrinkwrap).map_err(|e| {
-                JsValue::from_str(&format!("Failed to serialize shrinkwrap result: {e}"))
-            })
-        }))
+        run_text_layout_wasm_operation(
+            text_diagnostics::TextLayoutOperation::ShrinkwrapText,
+            json_input,
+            std::marker::PhantomData::<flow::ShrinkwrapTextInput>,
+            |input: flow::ShrinkwrapTextInput| flow::shrinkwrap_text(&input, &self.registry),
+        )
     }
 
     /// Shrinkwrap flow layout with exclusions: find minimum flow box size
@@ -2243,20 +2364,12 @@ impl BoundSvgEngine {
     ///
     /// Returns `JsValue` if input JSON is invalid, font is not found, or serialization fails.
     pub fn shrinkwrap_flow(&self, json_input: &str) -> Result<String, JsValue> {
-        catch_unwind_to_js(AssertUnwindSafe(|| {
-            let input: flow::ShrinkwrapFlowInput = serde_json::from_str(json_input)
-                .map_err(|e| JsValue::from_str(&format!("Invalid shrinkwrap flow input: {e}")))?;
-            let flow_shrinkwrap =
-                flow::shrinkwrap_flow(&input, &self.registry).map_err(|error| {
-                    text_layout_error_to_js(
-                        &error,
-                        text_diagnostics::TextLayoutOperation::ShrinkwrapFlow,
-                    )
-                })?;
-            serde_json::to_string(&flow_shrinkwrap).map_err(|e| {
-                JsValue::from_str(&format!("Failed to serialize shrinkwrap flow result: {e}"))
-            })
-        }))
+        run_text_layout_wasm_operation(
+            text_diagnostics::TextLayoutOperation::ShrinkwrapFlow,
+            json_input,
+            std::marker::PhantomData::<flow::ShrinkwrapFlowInput>,
+            |input: flow::ShrinkwrapFlowInput| flow::shrinkwrap_flow(&input, &self.registry),
+        )
     }
 
     /// Measure intrinsic (min-content / max-content) inline sizes for text.
@@ -2265,24 +2378,14 @@ impl BoundSvgEngine {
     ///
     /// Returns `JsValue` if input JSON is invalid, font is not found, or serialization fails.
     pub fn measure_intrinsic_inline_size(&self, json_input: &str) -> Result<String, JsValue> {
-        catch_unwind_to_js(AssertUnwindSafe(|| {
-            let input: flow::IntrinsicInlineSizeInput =
-                serde_json::from_str(json_input).map_err(|e| {
-                    JsValue::from_str(&format!("Invalid intrinsic inline-size input: {e}"))
-                })?;
-            let result =
-                flow::measure_intrinsic_inline_size(&input, &self.registry).map_err(|error| {
-                    text_layout_error_to_js(
-                        &error,
-                        text_diagnostics::TextLayoutOperation::MeasureIntrinsicInlineSize,
-                    )
-                })?;
-            serde_json::to_string(&result).map_err(|e| {
-                JsValue::from_str(&format!(
-                    "Failed to serialize intrinsic inline-size result: {e}"
-                ))
-            })
-        }))
+        run_text_layout_wasm_operation(
+            text_diagnostics::TextLayoutOperation::MeasureIntrinsicInlineSize,
+            json_input,
+            std::marker::PhantomData::<flow::IntrinsicInlineSizeInput>,
+            |input: flow::IntrinsicInlineSizeInput| {
+                flow::measure_intrinsic_inline_size(&input, &self.registry)
+            },
+        )
     }
 
     /// Shape text using a registered font from this instance's registry.
@@ -3226,9 +3329,141 @@ pub fn uax14_line_breaks(text: &str) -> Result<String, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundSvgEngine, panic_payload_message, pipeline_phase_trace,
+        BoundSvgEngine, panic_payload_message, pipeline_phase_trace, run_text_layout_operation,
+        serialize_text_layout_diagnostic, text_layout_fallback_envelope,
         validate_animated_timeline_wire_options, validate_layout_text_decoration_wire_values,
     };
+
+    #[derive(serde::Deserialize)]
+    struct RejectedTextLayoutWireInput {}
+
+    struct RejectedTextLayoutRequest;
+
+    impl TryFrom<RejectedTextLayoutWireInput> for RejectedTextLayoutRequest {
+        type Error = boundtext::TextLayoutError;
+
+        fn try_from(_: RejectedTextLayoutWireInput) -> Result<Self, Self::Error> {
+            Err(boundtext::TextLayoutError::InvalidRequest {
+                reason: boundtext::TextRequestError::InvalidRequestShape,
+            })
+        }
+    }
+
+    #[test]
+    fn text_layout_operation_totalizes_each_boundary_phase() {
+        use crate::text_diagnostics::TextLayoutOperation;
+
+        let operation = TextLayoutOperation::MeasureTextBlock;
+        let malformed = run_text_layout_operation::<
+            serde_json::Value,
+            serde_json::Value,
+            serde_json::Value,
+            _,
+        >(operation, "{", Ok)
+        .expect_err("malformed JSON must be classified");
+        assert_eq!(malformed.code, "TEXT_LAYOUT_INPUT_INVALID");
+        assert_eq!(malformed.stage, crate::diagnostics::PipelineStage::Validate);
+        assert_eq!(
+            malformed.context,
+            serde_json::json!({
+                "operation": "measureTextBlock",
+                "reason": "malformedJson",
+            })
+        );
+
+        let conversion = run_text_layout_operation::<
+            RejectedTextLayoutWireInput,
+            RejectedTextLayoutRequest,
+            serde_json::Value,
+            _,
+        >(operation, "{}", |_| Ok(serde_json::Value::Null))
+        .expect_err("request conversion must be classified");
+        assert_eq!(conversion.code, "TEXT_LAYOUT_INPUT_INVALID");
+        assert_eq!(conversion.context["reason"], "invalidRequestShape");
+
+        let domain = run_text_layout_operation::<
+            serde_json::Value,
+            serde_json::Value,
+            serde_json::Value,
+            _,
+        >(operation, "{}", |_| {
+            Err(boundtext::TextLayoutError::InvalidFitStep)
+        })
+        .expect_err("domain failure must be classified");
+        assert_eq!(domain.code, "TEXT_FIT_INVALID_STEP");
+        assert_eq!(domain.stage, crate::diagnostics::PipelineStage::Text);
+
+        let encode = run_text_layout_operation::<
+            serde_json::Value,
+            serde_json::Value,
+            std::collections::BTreeMap<Vec<u8>, u8>,
+            _,
+        >(operation, "{}", |_| {
+            Ok(std::collections::BTreeMap::from([(vec![1_u8], 1_u8)]))
+        })
+        .expect_err("unsupported JSON map key must be classified");
+        assert_eq!(encode.code, "TEXT_LAYOUT_OUTPUT_INVALID");
+        assert_eq!(
+            encode.context,
+            serde_json::json!({
+                "operation": "measureTextBlock",
+                "phase": "serialize",
+            })
+        );
+
+        let panic = run_text_layout_operation::<
+            serde_json::Value,
+            serde_json::Value,
+            serde_json::Value,
+            _,
+        >(operation, "{}", |_| {
+            panic!("private panic payload");
+        })
+        .expect_err("panic must be classified");
+        assert_eq!(panic.code, "TEXT_LAYOUT_PANIC");
+        assert_eq!(panic.message, "Text layout failed unexpectedly.");
+        assert_eq!(panic.stage, crate::diagnostics::PipelineStage::Wasm);
+        assert_eq!(
+            panic.context,
+            serde_json::json!({ "operation": "measureTextBlock" })
+        );
+    }
+
+    #[test]
+    fn text_layout_diagnostic_serialization_has_valid_closed_fallbacks() {
+        use crate::text_diagnostics::{TextLayoutDiagnostic, TextLayoutOperation};
+
+        let operations = [
+            TextLayoutOperation::LayoutTextFlow,
+            TextLayoutOperation::LayoutTextFlowWithExclusions,
+            TextLayoutOperation::MeasureTextBlock,
+            TextLayoutOperation::ShrinkwrapText,
+            TextLayoutOperation::ShrinkwrapFlow,
+            TextLayoutOperation::MeasureIntrinsicInlineSize,
+            TextLayoutOperation::RenderTextLayout,
+        ];
+        for operation in operations {
+            let fallback: serde_json::Value =
+                serde_json::from_str(text_layout_fallback_envelope(operation))
+                    .expect("hard-coded fallback must be valid JSON");
+            assert_eq!(fallback["severity"], "fatal");
+            assert_eq!(fallback["code"], "TEXT_LAYOUT_WASM_FAILED");
+            assert_eq!(fallback["stage"], "wasm");
+            assert_eq!(fallback["context"]["operation"], operation.as_str());
+        }
+
+        let invalid = TextLayoutDiagnostic {
+            code: "invalid-code",
+            message: "must not escape",
+            stage: crate::diagnostics::PipelineStage::Wasm,
+            node_id: None,
+            context: serde_json::json!({ "operation": "measureTextBlock" }),
+        };
+        assert_eq!(
+            serialize_text_layout_diagnostic(invalid, TextLayoutOperation::MeasureTextBlock),
+            text_layout_fallback_envelope(TextLayoutOperation::MeasureTextBlock)
+        );
+    }
 
     fn phase_trace_transition_state(slot_height: u32) -> String {
         serde_json::json!({

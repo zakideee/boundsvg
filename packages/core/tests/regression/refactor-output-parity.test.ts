@@ -50,9 +50,9 @@ function jsonBytes(value: unknown): Uint8Array {
   return utf8(JSON.stringify(value));
 }
 
-function c2aIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
+function architectureIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
   return new Map([
-    ["contracts/wasm-schema-version.txt", utf8("29")],
+    ["contracts/wasm-schema-version.txt", utf8("30")],
     [
       "fallback/missing-glyph.warnings.json",
       jsonBytes([
@@ -357,7 +357,7 @@ describe("refactor output parity", () => {
     expect(manifest.artifacts).toEqual([...corpus.artifacts.keys()].sort());
     expect(listReferenceArtifacts(referenceRoot)).toEqual(manifest.artifacts);
 
-    const intentionalArtifacts = c2aIntentionalArtifacts();
+    const intentionalArtifacts = architectureIntentionalArtifacts();
     let unchangedCount = 0;
     let intentionalCount = 0;
     for (const artifactName of manifest.artifacts) {
@@ -368,7 +368,7 @@ describe("refactor output parity", () => {
       const expectedBytes = new Uint8Array(readFileSync(safeArtifactPath(artifactName)));
       const intentionalBytes = intentionalArtifacts.get(artifactName);
       if (intentionalBytes !== undefined) {
-        expect(actualBytes, `${artifactName}: intentional C2a byte content`).toEqual(
+        expect(actualBytes, `${artifactName}: intentional architecture byte content`).toEqual(
           intentionalBytes,
         );
         expect(actualBytes, `${artifactName}: differs from the preserved base fixture`).not.toEqual(
