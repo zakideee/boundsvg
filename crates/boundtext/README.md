@@ -207,8 +207,8 @@ a descending exact grid and returns the largest fitting grid size:
 `TextLayoutRequest::fit_max_probes` and
 `FlowLayoutRequest::fit_max_probes` limit uncertified exact-grid work. The
 default is 4,096 and the hard maximum is 65,536. A grid that exceeds the limit
-returns `TextLayoutError::FitProbeLimit` or `BoundtextError::FitProbeLimit`
-instead of an approximate size. Vertical text uses the same policy and checks
+returns `TextLayoutError::FitProbeLimit` instead of an approximate size.
+Vertical text uses the same policy and checks
 both column count and column height.
 
 Candidate scaling applies uniformly to `font_size_px` and
@@ -233,8 +233,7 @@ The marker has no authored source range. Omitted output and warnings are
 discarded; marker warnings are retained. If the marker cannot fit, display ink
 is empty while source metadata remains complete. At most 1,024 exact candidate
 layouts are admitted after overflow is established; a larger maximum set
-returns `TextLayoutError::EllipsisCandidateLimit` or
-`BoundtextError::EllipsisCandidateLimit` before candidate materialization.
+returns `TextLayoutError::EllipsisCandidateLimit` before candidate materialization.
 This typed candidate limit is provided by the checked authorities above, not
 by the legacy direct vertical helper.
 
@@ -245,7 +244,7 @@ The engine memoizes identical `RegionQuery` values and validates that returned
 `FlowRegion` intervals are finite, non-negative, clipped, ordered, and
 non-overlapping. Each public layout or measurement call permits at most 65,536
 distinct queries and 262,144 cumulative returned intervals. Provider
-invalidity or budget exhaustion is a typed `BoundtextError`; it is never
+invalidity or budget exhaustion is a typed `TextLayoutError`; it is never
 interpreted as an empty region or a rejected fit/ellipsis candidate.
 
 ### Vertical Writing (vertical-rl)
@@ -295,6 +294,9 @@ RegionIntervalLimit, InvariantViolation}` and their closed reason enums.
 - Match `PreparationFailed { phase }` instead of the earlier unit variant, and
   handle unresolved families as `FontUnavailable` rather than parsing an error
   message.
+- Match the new `TextOnPathError::TextLayout(TextLayoutError)` variant. Because
+  it carries the operation error, `TextOnPathError` is no longer `Copy` or
+  `Eq`; borrow or clone values where ownership requires it.
 
 These are breaking changes for the `0.x` Rust crate contract.
 
