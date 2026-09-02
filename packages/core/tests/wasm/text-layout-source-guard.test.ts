@@ -10,7 +10,7 @@ function repositorySource(relativePath: string): string {
   );
 }
 
-describe("C2b text-layout authority source guard", () => {
+describe("text-layout authority source guard", () => {
   it("keeps the TypeScript and boundtext rich-depth limit at the exact shared value", () => {
     const boundtextTypes = repositorySource("crates/boundtext/src/text/types.rs");
     expect(MAX_RICH_TEXT_DEPTH).toBe(48);

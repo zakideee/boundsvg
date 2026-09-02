@@ -1,4 +1,4 @@
-//! C2b closed public operation-error contract.
+//! Closed public text-layout operation-error contract.
 
 use boundtext::font::FontContext;
 use boundtext::text::engine::{MeasuredTextBlock, measure_text_lines};

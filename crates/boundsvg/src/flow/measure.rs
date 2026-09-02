@@ -274,7 +274,7 @@ fn slice_measured_line_text(
 }
 
 #[cfg(test)]
-mod c2b_line_range_contract {
+mod line_range_contract {
     use boundtext::{TextLayoutError, TextLayoutInvariant};
 
     use super::slice_measured_line_text;

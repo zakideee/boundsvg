@@ -76,7 +76,7 @@ function captureFatal(invoke: () => unknown): FatalError {
   throw new Error("expected FatalError");
 }
 
-describe("C2b six-route text-layout failure contract", () => {
+describe("six-route text-layout failure contract", () => {
   it("preserves one structured domain diagnostic on every WASM route", () => {
     for (const invocation of measurementInvocations) {
       const handle = makeWasmHandle(() => {

@@ -6,7 +6,7 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-describe("C2b raw text-layout success fixtures", () => {
+describe("raw text-layout success fixtures", () => {
   it("seals all six operation inputs and exact base output bytes", () => {
     expect(textLayoutRawSuccessFixtures).toHaveLength(6);
     expect(new Set(textLayoutRawSuccessFixtures.map((fixture) => fixture.operation)).size).toBe(6);

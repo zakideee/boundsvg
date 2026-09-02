@@ -19,7 +19,7 @@ export type TextLayoutRawSuccessFixture = {
   outputSha256: string;
 };
 
-/** Exact node/web success bytes captured from C2b base 836b0bde. */
+/** Exact node/web success bytes captured from pre-migration base 836b0bde. */
 export const textLayoutRawSuccessFixtures: readonly TextLayoutRawSuccessFixture[] = [
   {
     operation: "layoutTextFlow",

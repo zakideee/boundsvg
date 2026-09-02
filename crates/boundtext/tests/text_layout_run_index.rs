@@ -1,4 +1,4 @@
-//! C2b first-failing effective-run identity.
+//! First-failing effective text-run identity contract.
 
 use std::error::Error;
 
