@@ -22,7 +22,7 @@ import {
   assertGeometryTreeDepth,
   MAX_GEOMETRY_TREE_DEPTH,
 } from "../../src/shape/geometry-depth.js";
-import { Canvas, Shape } from "../../src/vnode/components.js";
+import { Canvas, Shape, Symbol as ShapeSymbol } from "../../src/vnode/components.js";
 import type { ShapeOperand, ShapeOperation } from "../../src/wasm/shape-fatal-decoder.js";
 
 function nestedGeometry(depth: number, leafId?: string): GeometryDoc {
@@ -31,6 +31,17 @@ function nestedGeometry(depth: number, leafId?: string): GeometryDoc {
     root = transformGeometry({}, root);
   }
   return geometryDoc({ width: 10, height: 10 }, root);
+}
+
+function geometryWithLeafAtDepth(leaf: unknown, depth: number): GeometryDoc {
+  let root: unknown = leaf;
+  for (let currentDepth = 0; currentDepth < depth; currentDepth += 1) {
+    root = { kind: "transform", transform: {}, child: root };
+  }
+  return {
+    viewBox: { width: 10, height: 10 },
+    root,
+  } as unknown as GeometryDoc;
 }
 
 function expectDepthError(
@@ -56,6 +67,36 @@ function expectDepthError(
     ...(expected.operand === undefined ? {} : { operand: expected.operand }),
     actual: MAX_GEOMETRY_TREE_DEPTH + 1,
     limit: MAX_GEOMETRY_TREE_DEPTH,
+  });
+}
+
+function expectInputError(
+  callback: () => unknown,
+  expected: {
+    operation: ShapeOperation;
+    reason: "invalidRequestShape" | "serializationFailed";
+    operand?: ShapeOperand;
+    nodeId?: string;
+  },
+): void {
+  let capturedError: unknown;
+  try {
+    callback();
+  } catch (error) {
+    capturedError = error;
+  }
+  expect(capturedError).toBeInstanceOf(FatalError);
+  const fatalError = capturedError as FatalError;
+  expect(fatalError).toMatchObject({
+    code: "SHAPE_INPUT_INVALID",
+    message: "Shape operation input is invalid.",
+    stage: "validate",
+    nodeId: expected.nodeId,
+  });
+  expect(fatalError.context).toEqual({
+    operation: expected.operation,
+    ...(expected.operand === undefined ? {} : { operand: expected.operand }),
+    reason: expected.reason,
   });
 }
 
@@ -142,6 +183,108 @@ describe("geometry tree depth", () => {
         context: { operation: "evaluateShapeRegion", reason: "serializationFailed" },
       }),
     );
+  });
+
+  it("classifies malformed and unreadable nodes before depth at the limit boundary", () => {
+    for (const leafDepth of [MAX_GEOMETRY_TREE_DEPTH, MAX_GEOMETRY_TREE_DEPTH + 1]) {
+      for (const malformedLeaf of [null, { kind: "unknown" }]) {
+        expectInputError(
+          () =>
+            assertGeometryTreeDepth(geometryWithLeafAtDepth(malformedLeaf, leafDepth), {
+              operation: "compileShapePaths",
+            }),
+          { operation: "compileShapePaths", reason: "invalidRequestShape" },
+        );
+      }
+    }
+
+    const throwingProxy = new Proxy(
+      { kind: "path" },
+      {
+        get(): never {
+          throw new TypeError("unreadable proxy node");
+        },
+      },
+    );
+    expectInputError(
+      () =>
+        assertGeometryTreeDepth(
+          geometryWithLeafAtDepth(throwingProxy, MAX_GEOMETRY_TREE_DEPTH + 1),
+          { operation: "evaluateShapeRegion" },
+        ),
+      { operation: "evaluateShapeRegion", reason: "serializationFailed" },
+    );
+
+    const revoked = Proxy.revocable({ kind: "path" }, {});
+    revoked.revoke();
+    expectInputError(
+      () =>
+        assertGeometryTreeDepth(
+          geometryWithLeafAtDepth(revoked.proxy, MAX_GEOMETRY_TREE_DEPTH + 1),
+          { operation: "renderSymbol", nodeId: "revoked-symbol" },
+        ),
+      {
+        operation: "renderSymbol",
+        reason: "serializationFailed",
+        nodeId: "revoked-symbol",
+      },
+    );
+  });
+
+  it("keeps malformed-over-depth precedence across standalone, binary, and render routes", () => {
+    const malformedGeometry = geometryWithLeafAtDepth(null, MAX_GEOMETRY_TREE_DEPTH + 1);
+    const shallow = nestedGeometry(0);
+
+    expectInputError(() => compileGeometryToSvgDocument(malformedGeometry), {
+      operation: "compileShapeSvg",
+      reason: "invalidRequestShape",
+    });
+    expectInputError(() => divideGeometryRegions(shallow, malformedGeometry), {
+      operation: "divideShapeRegions",
+      reason: "invalidRequestShape",
+    });
+
+    const computeLayoutFn = vi.fn((): never => {
+      throw new TypeError("unexpected layout transport call");
+    });
+    const engine = new Engine({ computeLayoutFn });
+    const renderCases = [
+      {
+        node: Shape({
+          id: "malformed-shape",
+          geometry: malformedGeometry,
+          width: 10,
+          height: 10,
+        }),
+        operation: "renderShape" as const,
+        nodeId: "malformed-shape",
+      },
+      {
+        node: ShapeSymbol({
+          id: "malformed-symbol",
+          symbol: { geometry: malformedGeometry },
+          width: 10,
+          height: 10,
+        }),
+        operation: "renderSymbol" as const,
+        nodeId: "malformed-symbol",
+      },
+    ];
+
+    for (const renderCase of renderCases) {
+      expectInputError(
+        () =>
+          engine.renderToLayoutTree(Canvas({ width: 100, height: 100 }, renderCase.node), {
+            skipValidation: true,
+          }),
+        {
+          operation: renderCase.operation,
+          reason: "invalidRequestShape",
+          nodeId: renderCase.nodeId,
+        },
+      );
+    }
+    expect(computeLayoutFn).not.toHaveBeenCalled();
   });
 
   it("rejects direct geometry operations before WASM initialization", () => {

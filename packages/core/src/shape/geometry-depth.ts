@@ -98,6 +98,14 @@ export function assertGeometryTreeDepth(
     if (!frame) {
       break;
     }
+    if (!isObject(frame.node, context)) {
+      invalidGeometry(context);
+    }
+
+    const kind = readProperty(frame.node, "kind", context);
+    if (kind !== "path" && kind !== "transform" && kind !== "group" && kind !== "boolean") {
+      invalidGeometry(context);
+    }
     if (frame.depth > MAX_GEOMETRY_TREE_DEPTH) {
       throw shapeDepthBoundaryFailure({
         operation: context.operation,
@@ -106,11 +114,6 @@ export function assertGeometryTreeDepth(
         nodeId: context.nodeId,
       });
     }
-    if (!isObject(frame.node, context)) {
-      invalidGeometry(context);
-    }
-
-    const kind = readProperty(frame.node, "kind", context);
     switch (kind) {
       case "path":
         break;
@@ -128,8 +131,6 @@ export function assertGeometryTreeDepth(
           context,
         });
         break;
-      default:
-        invalidGeometry(context);
     }
   }
 }

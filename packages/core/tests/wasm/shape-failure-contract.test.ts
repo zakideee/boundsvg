@@ -77,6 +77,20 @@ describe("standalone shape failure contract", () => {
       stage: "validate",
       context: { operation: "compileShapeSvg", reason: "invalidRequestShape" },
     });
+
+    const geometryJson = JSON.stringify(pathGeometry("M0 0H10V10H0Z"));
+    for (const duplicateInput of [
+      `{"geometry":${geometryJson},"geometry":${geometryJson}}`,
+      '{"geometry":{"viewBox":{"width":200,"width":200,"height":200},"root":{"kind":"path","d":"M0 0H10V10H0Z"}}}',
+    ]) {
+      expect(captureRawDiagnostic(() => rawCompile?.(duplicateInput))).toEqual({
+        severity: "fatal",
+        code: "SHAPE_INPUT_INVALID",
+        message: "Shape operation input is invalid.",
+        stage: "validate",
+        context: { operation: "compileShapeSvg", reason: "invalidRequestShape" },
+      });
+    }
   });
 
   it("preserves missing, null, and value input presence on the three optional routes", () => {

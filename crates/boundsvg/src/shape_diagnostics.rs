@@ -4,7 +4,7 @@ use boundshape::{
     CompiledGeometryPart, DivideRegions, EvaluatedPart, GeometryDoc, GeometryIntersection,
     GeometryNode, PartBounds, PartHit, Region, ShapeError,
 };
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, IgnoredAny};
 use serde_json::{Map, Value};
 use wasm_bindgen::JsValue;
 
@@ -565,9 +565,9 @@ where
     Run: FnOnce(Input) -> Result<ShapeOperationOutput, ShapeOperationFailure>,
 {
     let operation_result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let input_value = serde_json::from_str::<Value>(json_input)
+        serde_json::from_str::<IgnoredAny>(json_input)
             .map_err(|_| input_diagnostic(operation, "malformedJson"))?;
-        let input = serde_json::from_value::<Input>(input_value)
+        let input = serde_json::from_str::<Input>(json_input)
             .map_err(|_| input_diagnostic(operation, "invalidRequestShape"))?;
         let output = run(input)
             .map_err(|failure| classify_shape_error(&failure.error, operation, failure.operand))?;
@@ -961,6 +961,32 @@ mod tests {
                     "reason": "invalidRequestShape",
                 })
             );
+
+            for duplicate_input in [
+                r#"{"geometry":{"viewBox":{"width":10,"height":10},"root":{"kind":"path","d":"M0 0H10V10H0Z"}},"geometry":{"viewBox":{"width":10,"height":10},"root":{"kind":"path","d":"M0 0H10V10H0Z"}}}"#,
+                r#"{"geometry":{"viewBox":{"width":10,"width":10,"height":10},"root":{"kind":"path","d":"M0 0H10V10H0Z"}}}"#,
+            ] {
+                let mut duplicate_closure_called = false;
+                let duplicate = run_shape_operation::<crate::EvaluateShapeRegionInput, _>(
+                    operation,
+                    duplicate_input,
+                    |input| {
+                        duplicate_closure_called = true;
+                        let _ = input.geometry;
+                        Err(ShapeOperationFailure::from(ShapeError::InvalidPathData))
+                    },
+                )
+                .expect_err("duplicate known fields must fail");
+                assert!(!duplicate_closure_called);
+                assert_eq!(duplicate.code, "SHAPE_INPUT_INVALID");
+                assert_eq!(
+                    duplicate.context,
+                    serde_json::json!({
+                        "operation": operation.as_str(),
+                        "reason": "invalidRequestShape",
+                    })
+                );
+            }
         }
     }
 
