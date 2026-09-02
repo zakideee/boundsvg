@@ -1441,6 +1441,48 @@ describe("WorkerEngine", () => {
       expect(result.lineCount).toBe(1);
       engine.dispose();
     });
+
+    it("rehydrates a known text-layout FatalError without a Worker code fallback", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "layout-text-flow") {
+          mockWorker.respond({
+            id: request.id,
+            type: "error",
+            error: {
+              severity: "fatal",
+              code: "TEXT_FONT_UNAVAILABLE",
+              message: "No requested font is available for text layout.",
+              stage: "text",
+              context: {
+                operation: "layoutTextFlow",
+                runIndex: 0,
+                requestedAliases: ["Missing"],
+                omittedAliasCount: 0,
+                fontWeight: 400,
+                fontStyle: "normal",
+              },
+            },
+          });
+        }
+      });
+
+      await expect(engine.layoutTextFlow({} as never)).rejects.toMatchObject({
+        name: "FatalError",
+        code: "TEXT_FONT_UNAVAILABLE",
+        message: "No requested font is available for text layout.",
+        stage: "text",
+        context: {
+          operation: "layoutTextFlow",
+          runIndex: 0,
+          requestedAliases: ["Missing"],
+          omittedAliasCount: 0,
+          fontWeight: 400,
+          fontStyle: "normal",
+        },
+      });
+      engine.dispose();
+    });
   });
 
   // -----------------------------------------------------------------------

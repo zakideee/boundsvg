@@ -1,6 +1,7 @@
 import type { SerializedRecoverableError } from "../errors.js";
 import { FatalError, RecoverableError } from "../errors.js";
 import { structuralIRValidationFailure, validateStructuralIR } from "../ir/output-validator.js";
+import type { MeasurementTextLayoutOperation } from "../text/layout-operation.js";
 import type {
   IntrinsicInlineSizeResult,
   MeasureTextBlockLine,
@@ -32,11 +33,16 @@ type RuntimeFieldRule = {
   guard: (value: unknown, path?: string) => boolean;
 };
 
+type DecodeJsonError =
+  | { code: string; description: string }
+  | { operation: MeasurementTextLayoutOperation };
+
 const isString: Guard<string> = (value): value is string => typeof value === "string";
 const isNumber: Guard<number> = (value): value is number => typeof value === "number";
 const isBoolean: Guard<boolean> = (value): value is boolean => typeof value === "boolean";
 let lastFailurePath: string | undefined;
 let lastFailureDescription: string | undefined;
+let lastFailureSafeDescription: string | undefined;
 
 function describeRejectedValue(value: unknown): string {
   if (value === null) {
@@ -52,9 +58,26 @@ function describeRejectedValue(value: unknown): string {
   return serialized === undefined ? typeof value : serialized.slice(0, 120);
 }
 
+function describeRejectedValueSafely(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  if (typeof value === "string") {
+    return `string(length=${value.length})`;
+  }
+  if (typeof value === "object") {
+    return "object";
+  }
+  return typeof value;
+}
+
 function recordFailure(path: string | undefined, value?: unknown): false {
   lastFailurePath ??= path ?? "$";
   lastFailureDescription ??= describeRejectedValue(value);
+  lastFailureSafeDescription ??= describeRejectedValueSafely(value);
   return false;
 }
 
@@ -84,6 +107,7 @@ function arrayOf<Value>(guard: Guard<Value>): Guard<Value[]> {
       if (!guard(value[index], `${path}[${index}]`)) {
         lastFailurePath ??= `${path}[${index}]`;
         lastFailureDescription ??= describeRejectedValue(value[index]);
+        lastFailureSafeDescription ??= describeRejectedValueSafely(value[index]);
         return false;
       }
     }
@@ -108,6 +132,7 @@ function objectGuard<Value extends object>(shape: ObjectShape<Value>): Guard<Val
       if (!rule.guard(property, `${path}.${key}`)) {
         lastFailurePath ??= `${path}.${key}`;
         lastFailureDescription ??= describeRejectedValue(property);
+        lastFailureSafeDescription ??= describeRejectedValueSafely(property);
         return false;
       }
     }
@@ -115,17 +140,29 @@ function objectGuard<Value extends object>(shape: ObjectShape<Value>): Guard<Val
   };
 }
 
-function decodeJson<Value>(
-  json: string,
-  guard: Guard<Value>,
-  error: { code: string; description: string },
-): Value {
+function decodeJson<Value>(json: string, guard: Guard<Value>, error: DecodeJsonError): Value {
   let parsed: unknown;
   lastFailurePath = undefined;
   lastFailureDescription = undefined;
+  lastFailureSafeDescription = undefined;
   try {
     parsed = JSON.parse(json) as unknown;
   } catch {
+    if ("operation" in error) {
+      throw new FatalError(
+        "TEXT_LAYOUT_OUTPUT_INVALID",
+        "Text layout transport returned an invalid result.",
+        {
+          stage: "wasm",
+          context: {
+            operation: error.operation,
+            phase: "decode",
+            protocolPath: "$",
+            received: describeRejectedValueSafely(json),
+          },
+        },
+      );
+    }
     throw new FatalError(error.code, `${error.description} returned malformed JSON.`, {
       stage: "wasm",
     });
@@ -133,6 +170,27 @@ function decodeJson<Value>(
   if (!guard(parsed, "$")) {
     const failurePath = lastFailurePath ?? "$";
     const failureDescription = lastFailureDescription ?? "unknown";
+    if ("operation" in error) {
+      const safeFailureDescription =
+        lastFailureSafeDescription ?? describeRejectedValueSafely(parsed);
+      const topLevelRequiredFieldMissing =
+        safeFailureDescription === "undefined" && /^\$\.[^.[]+$/u.test(failurePath);
+      throw new FatalError(
+        "TEXT_LAYOUT_OUTPUT_INVALID",
+        "Text layout transport returned an invalid result.",
+        {
+          stage: "wasm",
+          context: {
+            operation: error.operation,
+            phase: "decode",
+            protocolPath: topLevelRequiredFieldMissing ? "$" : failurePath,
+            received: topLevelRequiredFieldMissing
+              ? describeRejectedValueSafely(parsed)
+              : safeFailureDescription,
+          },
+        },
+      );
+    }
     throw new FatalError(
       error.code,
       `${error.description} returned an invalid response shape at ${failurePath} (received ${failureDescription}).`,
@@ -331,6 +389,7 @@ const isIntrinsicInlineSizeResult = objectGuard<IntrinsicInlineSizeResult>({
 function testDecodedValue<Value>(value: unknown, guard: Guard<Value>): value is Value {
   lastFailurePath = undefined;
   lastFailureDescription = undefined;
+  lastFailureSafeDescription = undefined;
   try {
     return guard(value, "$");
   } catch {
@@ -389,43 +448,29 @@ export function decodeAnimationStateSamples(json: string): DecodedAnimationState
 }
 
 export function decodeTextFlowResult(json: string): TextFlowResult {
-  return decodeJson(json, isTextFlowResult, {
-    code: "WASM_INVALID_FLOW_OUTPUT",
-    description: "layout_text_flow",
-  });
+  return decodeJson(json, isTextFlowResult, { operation: "layoutTextFlow" });
 }
 
 export function decodeTextFlowWithExclusionsResult(json: string): TextFlowWithExclusionsResult {
   return decodeJson(json, isTextFlowWithExclusionsResult, {
-    code: "WASM_INVALID_EXCLUSION_FLOW_OUTPUT",
-    description: "layout_text_flow_with_exclusions",
+    operation: "layoutTextFlowWithExclusions",
   });
 }
 
 export function decodeMeasureTextBlockResult(json: string): MeasureTextBlockResult {
-  return decodeJson(json, isMeasureTextBlockResult, {
-    code: "WASM_INVALID_MEASURE_OUTPUT",
-    description: "measure_text_block",
-  });
+  return decodeJson(json, isMeasureTextBlockResult, { operation: "measureTextBlock" });
 }
 
 export function decodeShrinkwrapTextResult(json: string): ShrinkwrapTextResult {
-  return decodeJson(json, isShrinkwrapTextResult, {
-    code: "WASM_INVALID_SHRINKWRAP_OUTPUT",
-    description: "shrinkwrap_text",
-  });
+  return decodeJson(json, isShrinkwrapTextResult, { operation: "shrinkwrapText" });
 }
 
 export function decodeShrinkwrapFlowResult(json: string): ShrinkwrapFlowResult {
-  return decodeJson(json, isShrinkwrapFlowResult, {
-    code: "WASM_INVALID_SHRINKWRAP_FLOW_OUTPUT",
-    description: "shrinkwrap_flow",
-  });
+  return decodeJson(json, isShrinkwrapFlowResult, { operation: "shrinkwrapFlow" });
 }
 
 export function decodeIntrinsicInlineSizeResult(json: string): IntrinsicInlineSizeResult {
   return decodeJson(json, isIntrinsicInlineSizeResult, {
-    code: "WASM_INVALID_INTRINSIC_INLINE_SIZE_OUTPUT",
-    description: "measure_intrinsic_inline_size",
+    operation: "measureIntrinsicInlineSize",
   });
 }

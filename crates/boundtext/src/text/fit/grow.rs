@@ -17,14 +17,17 @@ use crate::font::shaping::ShapeOptions;
 /// 3. Binary search `[font_size_px, max_font_size]` with invariant
 ///    `lo=fit, hi=overflow`.
 /// 4. Build final layout once at the best found size.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns the first font, shaping, or fit-probe failure.
 pub fn fit_grow(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     max_font_size_px: Option<f64>,
     grow_epsilon_px: Option<f64>,
     grow_max_iterations: Option<usize>,
-) -> Option<crate::text::types::TextLayoutResult> {
+) -> Result<crate::text::types::TextLayoutResult, crate::TextLayoutError> {
     let max_size = max_font_size_px
         .unwrap_or(req.font_size_px * DEFAULT_GROW_MULTIPLIER)
         .max(req.font_size_px);
@@ -55,7 +58,7 @@ pub fn fit_grow(
             req.uax14_breaks,
             req.letter_spacing_px,
         ) {
-            return Some(fit_grow_shaped(
+            return Ok(fit_grow_shaped(
                 req, font_ctx, &pp, max_size, epsilon, max_iter,
             ));
         }
@@ -91,7 +94,7 @@ pub fn fit_grow(
         )?;
         let overflow = TextOverflow::overflow("initial font size does not fit; cannot grow");
         let warnings = collect_warnings_from_lines(&lines, primary_alias);
-        return Some(build_result(
+        return Ok(build_result(
             lines,
             req.font_size_px,
             lh,
@@ -124,7 +127,7 @@ pub fn fit_grow(
             TextOverflow::none()
         };
         let warnings = collect_warnings_from_lines(&lines, primary_alias);
-        return Some(build_result(lines, max_size, lh, overflow, warnings));
+        return Ok(build_result(lines, max_size, lh, overflow, warnings));
     }
 
     // Step 3: binary search — invariant: lo fits, hi overflows
@@ -168,7 +171,7 @@ pub fn fit_grow(
         TextOverflow::none()
     };
     let warnings = collect_warnings_from_lines(&lines, primary_alias);
-    Some(build_result(lines, best_size, lh, overflow, warnings))
+    Ok(build_result(lines, best_size, lh, overflow, warnings))
 }
 
 /// Grow-to-fit using a `ShapedParagraph`.

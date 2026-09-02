@@ -322,7 +322,7 @@ describe("engine render contract", () => {
     expect(fatal.message).toBe('Shape references unknown geometryId "missing-geometry".');
   });
 
-  it("rejects non-finite scales and unregistered font aliases", () => {
+  it("rejects non-finite scales and reports unavailable fonts from Rust", () => {
     const scene = createElement(
       "Canvas",
       { width: 100, height: 50 },
@@ -340,8 +340,83 @@ describe("engine render contract", () => {
       createElement("Text", { font: "UnknownAlias", fontSizePx: 16 }, "abc"),
     );
     const aliasError = captureFatal(() => engine.renderToSvg(unknownAlias));
-    expect(aliasError.code).toBe("FONT_ALIAS_NOT_REGISTERED");
-    expect(aliasError.message).toContain("references unregistered font alias(es): UnknownAlias");
+    expect(aliasError).toMatchObject({
+      code: "TEXT_FONT_UNAVAILABLE",
+      message: "No requested font is available for text layout.",
+      stage: "text",
+      context: {
+        operation: "renderTextLayout",
+        runIndex: 0,
+        requestedAliases: ["UnknownAlias"],
+        omittedAliasCount: 0,
+        fontWeight: 400,
+        fontStyle: "normal",
+      },
+    });
+  });
+
+  it("separates missing custom text layout from unavailable TextOnPath layout", () => {
+    const missingLayoutEngine = createEngine({
+      computeLayoutFn: () => "{}",
+      renderToIrFn: () =>
+        JSON.stringify({
+          ir: {
+            root: {
+              type: "group",
+              nodeId: "root",
+              bbox: { x: 0, y: 0, w: 100, h: 50 },
+              children: [],
+            },
+            drawOrder: ["root"],
+            width: 100,
+            height: 50,
+          },
+          warnings: [],
+        }),
+    });
+    const cases = [
+      {
+        scene: createElement(
+          "Canvas",
+          { width: 100, height: 50 },
+          createElement("Text", { id: "missing-text", font: "Custom", fontSizePx: 16 }, "abc"),
+        ),
+        code: "TEXT_LAYOUT_RESULT_MISSING",
+        message: "Text layout result is missing required text data.",
+        nodeId: "missing-text",
+      },
+      {
+        scene: createElement(
+          "Canvas",
+          { width: 100, height: 50 },
+          createElement(
+            "TextOnPath",
+            {
+              id: "missing-path",
+              d: "M0 25L100 25",
+              width: 100,
+              height: 50,
+              font: "Custom",
+              fontSizePx: 16,
+            },
+            "abc",
+          ),
+        ),
+        code: "TEXT_PATH_LAYOUT_UNAVAILABLE",
+        message: "Text-on-path layout is unavailable.",
+        nodeId: "missing-path",
+      },
+    ] as const;
+
+    for (const fixture of cases) {
+      expect(captureFatal(() => missingLayoutEngine.renderToIR(fixture.scene))).toMatchObject({
+        code: fixture.code,
+        message: fixture.message,
+        stage: "text",
+        nodeId: fixture.nodeId,
+        context: { operation: "renderTextLayout" },
+      });
+    }
   });
 
   it("handles PNG oversize per rasterOversizeBehavior", () => {

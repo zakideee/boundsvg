@@ -774,14 +774,14 @@ fn rebuild_curved_decoration_without_gaps(
             decoration_style,
             remaining_sample_budget,
         )
-        .map_err(|error| map_curved_decoration_rebuild_error(error, node_id))?;
+        .map_err(|error| map_curved_decoration_rebuild_error(&error, node_id))?;
         contours.extend(retained.contours);
     }
     Ok(canonicalize_region(Region { contours }))
 }
 
 fn map_curved_decoration_rebuild_error(
-    error: crate::text::path::TextOnPathError,
+    error: &crate::text::path::TextOnPathError,
     node_id: &str,
 ) -> EngineError {
     match error {

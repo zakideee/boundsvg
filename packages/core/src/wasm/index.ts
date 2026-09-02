@@ -1,5 +1,5 @@
 import type { SerializedRecoverableError } from "../errors.js";
-import { FatalError, formatUnknownDiagnosticValue } from "../errors.js";
+import { FatalError } from "../errors.js";
 import { DEFAULT_FONT_WEIGHT } from "../font/types.js";
 import type { LayeredCompositionValidationResult } from "../layered-svg.js";
 import type { ComputeLayoutTransportFn } from "../layout/backend.js";
@@ -24,6 +24,7 @@ import type {
   Region,
   SymbolDefinition,
 } from "../shape/types.js";
+import type { MeasurementTextLayoutOperation } from "../text/layout-operation.js";
 import type { GlyphInfo, RichTextNode, ShapeFn, ShapingOptions } from "../text/types.js";
 import {
   decodeIntrinsicInlineSizeResult,
@@ -33,6 +34,10 @@ import {
   decodeTextFlowResult,
   decodeTextFlowWithExclusionsResult,
 } from "./protocol-decoders.js";
+import {
+  decodeWasmTextLayoutFatal,
+  textLayoutWasmBoundaryFailure,
+} from "./text-layout-fatal-decoder.js";
 import type {
   WasmEngineInstance,
   WasmModule,
@@ -47,7 +52,7 @@ let wasmModule: WasmModule | null = null;
  * `crates/boundsvg/src/lib.rs`; both sides change in the same commit.
  * Bump whenever a WASM-boundary DTO shape or export signature changes.
  */
-export const EXPECTED_WASM_SCHEMA_VERSION = 29;
+export const EXPECTED_WASM_SCHEMA_VERSION = 30;
 
 function assertWasmSchemaVersion(preloaded: WasmModule): void {
   const readSchemaVersion = preloaded.wasm_schema_version;
@@ -149,7 +154,7 @@ function parseWasmJson<T>(
   return parsed;
 }
 
-function wrapWasmStructuredTextError(error: unknown): FatalError {
+function rehydrateWasmFatalError(error: unknown): FatalError | undefined {
   try {
     if (error instanceof FatalError) {
       return error;
@@ -157,16 +162,39 @@ function wrapWasmStructuredTextError(error: unknown): FatalError {
   } catch {
     // A hostile proxy may make instanceof itself throw.
   }
-  const text = formatUnknownDiagnosticValue(error, "Unknown WASM text failure");
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (FatalError.isSerialized(parsed)) {
-      return FatalError.fromSerialized(parsed);
+  if (typeof error === "string") {
+    try {
+      return FatalError.fromSerialized(JSON.parse(error) as unknown);
+    } catch {
+      return undefined;
     }
-  } catch {
-    // Preserve unstructured and malformed failures under one stable fatal code.
   }
-  return new FatalError("TEXT_LAYOUT_FAILED", text, { stage: "text" });
+  return undefined;
+}
+
+function normalizeWasmTextLayoutError(
+  error: unknown,
+  operation: MeasurementTextLayoutOperation,
+): FatalError {
+  const fatalError = decodeWasmTextLayoutFatal(error, operation);
+  if (fatalError !== undefined) {
+    return fatalError;
+  }
+  return textLayoutWasmBoundaryFailure(operation);
+}
+
+function invokeWasmTextLayout<Output>(
+  operation: MeasurementTextLayoutOperation,
+  invoke: () => string,
+  decode: (json: string) => Output,
+): Output {
+  let json: string;
+  try {
+    json = invoke();
+  } catch (error) {
+    throw normalizeWasmTextLayoutError(error, operation);
+  }
+  return decode(json);
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -1167,7 +1195,15 @@ export class WasmEngineHandle {
   createComputeLayoutFn(): ComputeLayoutTransportFn {
     return (inputJson: string) => {
       this.ensureNotDisposed();
-      return this.instance.compute_layout(inputJson);
+      try {
+        return this.instance.compute_layout(inputJson);
+      } catch (error) {
+        const fatalError = rehydrateWasmFatalError(error);
+        if (fatalError !== undefined) {
+          throw fatalError;
+        }
+        throw error;
+      }
     };
   }
 
@@ -1877,92 +1913,104 @@ export class WasmEngineHandle {
 
   layoutTextFlow(input: TextFlowInput): TextFlowResult {
     this.ensureNotDisposed();
-    if (typeof this.instance.layout_text_flow !== "function") {
+    const layoutTextFlow = this.instance.layout_text_flow;
+    if (typeof layoutTextFlow !== "function") {
       throw new FatalError(
         "WASM_NO_FLOW_API",
         "layout_text_flow is not available in this WASM build. Rebuild WASM.",
         { stage: "wasm" },
       );
     }
-    const json = this.instance.layout_text_flow(JSON.stringify(input));
-    return decodeTextFlowResult(json);
+    return invokeWasmTextLayout(
+      "layoutTextFlow",
+      () => layoutTextFlow.call(this.instance, JSON.stringify(input)),
+      decodeTextFlowResult,
+    );
   }
 
   layoutTextFlowWithExclusions(input: TextFlowWithExclusionsInput): TextFlowWithExclusionsResult {
     this.ensureNotDisposed();
-    if (typeof this.instance.layout_text_flow_with_exclusions !== "function") {
+    const layoutTextFlowWithExclusions = this.instance.layout_text_flow_with_exclusions;
+    if (typeof layoutTextFlowWithExclusions !== "function") {
       throw new FatalError(
         "WASM_NO_EXCLUSION_FLOW_API",
         "layout_text_flow_with_exclusions is not available in this WASM build.",
         { stage: "wasm" },
       );
     }
-    try {
-      const json = this.instance.layout_text_flow_with_exclusions(JSON.stringify(input));
-      return decodeTextFlowWithExclusionsResult(json);
-    } catch (error) {
-      throw wrapWasmStructuredTextError(error);
-    }
+    return invokeWasmTextLayout(
+      "layoutTextFlowWithExclusions",
+      () => layoutTextFlowWithExclusions.call(this.instance, JSON.stringify(input)),
+      decodeTextFlowWithExclusionsResult,
+    );
   }
 
   measureTextBlock(input: MeasureTextBlockInput): MeasureTextBlockResult {
     this.ensureNotDisposed();
-    if (typeof this.instance.measure_text_block !== "function") {
+    const measureTextBlock = this.instance.measure_text_block;
+    if (typeof measureTextBlock !== "function") {
       throw new FatalError(
         "WASM_NO_MEASURE_API",
         "measure_text_block is not available in this WASM build.",
         { stage: "wasm" },
       );
     }
-    const json = this.instance.measure_text_block(JSON.stringify(input));
-    return decodeMeasureTextBlockResult(json);
+    return invokeWasmTextLayout(
+      "measureTextBlock",
+      () => measureTextBlock.call(this.instance, JSON.stringify(input)),
+      decodeMeasureTextBlockResult,
+    );
   }
 
   shrinkwrapText(input: ShrinkwrapTextInput): ShrinkwrapTextResult {
     this.ensureNotDisposed();
-    if (typeof this.instance.shrinkwrap_text !== "function") {
+    const shrinkwrapText = this.instance.shrinkwrap_text;
+    if (typeof shrinkwrapText !== "function") {
       throw new FatalError(
         "WASM_NO_SHRINKWRAP_API",
         "shrinkwrap_text is not available in this WASM build.",
         { stage: "wasm" },
       );
     }
-    try {
-      const json = this.instance.shrinkwrap_text(JSON.stringify(input));
-      return decodeShrinkwrapTextResult(json);
-    } catch (error) {
-      throw wrapWasmStructuredTextError(error);
-    }
+    return invokeWasmTextLayout(
+      "shrinkwrapText",
+      () => shrinkwrapText.call(this.instance, JSON.stringify(input)),
+      decodeShrinkwrapTextResult,
+    );
   }
 
   shrinkwrapFlow(input: ShrinkwrapFlowInput): ShrinkwrapFlowResult {
     this.ensureNotDisposed();
-    if (typeof this.instance.shrinkwrap_flow !== "function") {
+    const shrinkwrapFlow = this.instance.shrinkwrap_flow;
+    if (typeof shrinkwrapFlow !== "function") {
       throw new FatalError(
         "WASM_NO_SHRINKWRAP_FLOW_API",
         "shrinkwrap_flow is not available in this WASM build.",
         { stage: "wasm" },
       );
     }
-    try {
-      const json = this.instance.shrinkwrap_flow(JSON.stringify(input));
-      return decodeShrinkwrapFlowResult(json);
-    } catch (error) {
-      throw wrapWasmStructuredTextError(error);
-    }
+    return invokeWasmTextLayout(
+      "shrinkwrapFlow",
+      () => shrinkwrapFlow.call(this.instance, JSON.stringify(input)),
+      decodeShrinkwrapFlowResult,
+    );
   }
 
   measureIntrinsicInlineSize(input: IntrinsicInlineSizeInput): IntrinsicInlineSizeResult {
     this.ensureNotDisposed();
-    if (typeof this.instance.measure_intrinsic_inline_size !== "function") {
+    const measureIntrinsicInlineSize = this.instance.measure_intrinsic_inline_size;
+    if (typeof measureIntrinsicInlineSize !== "function") {
       throw new FatalError(
         "WASM_NO_INTRINSIC_INLINE_SIZE_API",
         "measure_intrinsic_inline_size is not available in this WASM build.",
         { stage: "wasm" },
       );
     }
-    const json = this.instance.measure_intrinsic_inline_size(JSON.stringify(input));
-    return decodeIntrinsicInlineSizeResult(json);
+    return invokeWasmTextLayout(
+      "measureIntrinsicInlineSize",
+      () => measureIntrinsicInlineSize.call(this.instance, JSON.stringify(input)),
+      decodeIntrinsicInlineSizeResult,
+    );
   }
 
   dispose(): void {

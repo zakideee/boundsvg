@@ -7,8 +7,7 @@ use super::super::types::{
 };
 use crate::font::FontContext;
 use crate::font::line_metrics::{LineMetrics, resolve_line_metrics_for_style};
-use crate::font::shaping::{self, GlyphInfo, ShapeOptions};
-use crate::font::{FontRegistry, FontStyle};
+use crate::font::shaping::{GlyphInfo, ShapeOptions};
 
 /// Default minimum font size for shrink (px).
 pub(super) const DEFAULT_MIN_FONT_SIZE: f64 = 8.0;
@@ -158,73 +157,16 @@ pub(super) fn shape_at_size(
     font_size_px: f64,
     letter_spacing_px: f64,
     shape_options: &ShapeOptions,
-) -> Option<Vec<GlyphInfo>> {
-    if text.is_empty() {
-        return Some(Vec::new());
-    }
-    if font_ctx.families.len() > 1 {
-        let result = shaping::shape_with_fallback_and_options(
-            font_ctx,
-            text,
-            font_size_px,
-            letter_spacing_px,
-            shape_options,
-        );
-        if !result.glyphs.is_empty() {
-            return Some(result.glyphs);
-        }
-        if let Some(fallback) = font_ctx.fallback_registry {
-            let fallback_ctx = FontContext {
-                registry: fallback,
-                fallback_registry: None,
-                families: font_ctx.families,
-                weight: font_ctx.weight,
-                style: font_ctx.style,
-            };
-            let result = shaping::shape_with_fallback_and_options(
-                &fallback_ctx,
-                text,
-                font_size_px,
-                letter_spacing_px,
-                shape_options,
-            );
-            if !result.glyphs.is_empty() {
-                return Some(result.glyphs);
-            }
-        }
-    }
-
-    let font_entry = resolve_font(
-        font_ctx.registry,
-        font_ctx.fallback_registry,
-        font_ctx.families,
-        font_ctx.weight,
-        font_ctx.style,
-    )?;
-    Some(shaping::shape_text_with_options(
-        font_ctx.registry,
-        font_entry,
+) -> Result<Vec<GlyphInfo>, crate::TextLayoutError> {
+    crate::text::shape_checked_text_run(
+        font_ctx,
         text,
         font_size_px,
         letter_spacing_px,
         shape_options,
-    ))
-}
-
-pub(super) fn resolve_font<'a>(
-    font_registry: &'a FontRegistry,
-    fallback_registry: Option<&'a FontRegistry>,
-    aliases: &[String],
-    weight: u16,
-    style: &FontStyle,
-) -> Option<&'a crate::font::FontEntry> {
-    if let Some(entry) = font_registry.resolve_chain(aliases, weight, style) {
-        return Some(entry);
-    }
-    if let Some(fallback) = fallback_registry {
-        return fallback.resolve_chain(aliases, weight, style);
-    }
-    None
+        0,
+        crate::TextPreparationPhase::PlainShaping,
+    )
 }
 
 pub(super) fn language_to_str(lang: Language) -> &'static str {
@@ -243,7 +185,7 @@ pub(super) fn measure_fits_at_size(
     shape_options: &ShapeOptions,
     kinsoku_profile: Option<&crate::text::kinsoku::KinsokuProfile>,
     hanging_chars: Option<&[char]>,
-) -> Option<bool> {
+) -> Result<bool, crate::TextLayoutError> {
     let line_height_px = resolve_line_height(req, font_ctx, font_size_px);
     let glyphs = shape_at_size(
         font_ctx,
@@ -261,7 +203,7 @@ pub(super) fn measure_fits_at_size(
         req.uax14_breaks,
         hanging_chars,
     );
-    Some(measure.fits(req.max_width, req.max_lines, req.max_height, line_height_px))
+    Ok(measure.fits(req.max_width, req.max_lines, req.max_height, line_height_px))
 }
 
 /// Build a full layout result at the given font size, using the same break
@@ -273,7 +215,7 @@ pub(super) fn layout_at_size(
     shape_options: &ShapeOptions,
     kinsoku_profile: Option<&crate::text::kinsoku::KinsokuProfile>,
     hanging_chars: Option<&[char]>,
-) -> Option<(Vec<Line>, f64, bool)> {
+) -> Result<(Vec<Line>, f64, bool), crate::TextLayoutError> {
     let line_metrics = resolve_line_metrics(req, font_ctx, font_size_px);
     let line_height_px = line_metrics.line_height_px;
     let glyphs = shape_at_size(
@@ -296,7 +238,7 @@ pub(super) fn layout_at_size(
     );
     apply_variation_settings_to_lines(&mut break_result.lines, &req.font_variation_settings);
     apply_feature_settings_to_lines(&mut break_result.lines, &req.font_feature_settings);
-    Some((
+    Ok((
         break_result.lines,
         line_height_px,
         break_result.kinsoku_unresolved,

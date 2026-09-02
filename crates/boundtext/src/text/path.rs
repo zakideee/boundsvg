@@ -96,7 +96,7 @@ pub struct TextOnPathUnitMapRequest {
     pub ruby: TextUnitRubyMode,
 }
 
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq)]
 pub enum TextOnPathError {
     #[error("TextOnPath input contains an invalid numeric value")]
     Invalid,
@@ -132,6 +132,8 @@ pub enum TextOnPathError {
     InlineClusterSplit,
     #[error("TextOnPath path fitting constraints cannot be satisfied")]
     FitUnsatisfiable,
+    #[error(transparent)]
+    TextLayout(#[from] crate::TextLayoutError),
     #[error("TextOnPath text shaping produced no layout")]
     LayoutUnavailable,
     #[error("TextOnPath logical unit metadata could not be resolved")]
@@ -568,7 +570,7 @@ pub fn layout_text_on_path(
         ..request.text.clone()
     };
     let mut layout = layout_text_inner_with_prepared_spans(&path_text_request, font_context, true)
-        .ok_or(TextOnPathError::LayoutUnavailable)?;
+        .map_err(TextOnPathError::TextLayout)?;
     apply_text_path_span_metadata(
         &mut layout.lines,
         path_text_request.spans,
@@ -1094,7 +1096,7 @@ fn shape_path_ellipsis(
         ..path_text_request.clone()
     };
     let mut layout = layout_text_inner_with_prepared_spans(&ellipsis_request, font_context, true)
-        .ok_or(TextOnPathError::LayoutUnavailable)?;
+        .map_err(TextOnPathError::TextLayout)?;
     apply_text_path_span_metadata(
         &mut layout.lines,
         ellipsis_request.spans,

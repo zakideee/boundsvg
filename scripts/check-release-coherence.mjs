@@ -19,6 +19,21 @@ function sameMembers(left, right) {
   return left.length === right.length && left.every((value) => right.includes(value));
 }
 
+function parseStableVersion(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
+  return match === null ? null : match.slice(1).map(Number);
+}
+
+function compareStableVersions(left, right) {
+  for (let index = 0; index < left.length; index += 1) {
+    const difference = left[index] - right[index];
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+}
+
 const publicPackages = readdirSync(join(repoRoot, "packages"), { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => join("packages", entry.name, "package.json"))
@@ -81,6 +96,44 @@ for (const crate of publicCrates) {
         );
       }
     }
+  }
+}
+
+const releaseMarkerKeys = ["change-kind", "obligation-id", "pending-version"];
+for (const crate of cargoMetadata.packages) {
+  const releaseMarker = crate.metadata?.["boundsvg-release"];
+  if (releaseMarker === undefined) {
+    continue;
+  }
+  if (!publicCrateNames.has(crate.name)) {
+    fail(`${crate.name} has release metadata but is not a public crate`);
+  }
+  if (releaseMarker === null || typeof releaseMarker !== "object" || Array.isArray(releaseMarker)) {
+    fail(`${crate.name} release metadata must be a table`);
+  }
+  const actualMarkerKeys = Object.keys(releaseMarker).sort();
+  if (!sameMembers(actualMarkerKeys, releaseMarkerKeys)) {
+    fail(`${crate.name} release metadata must contain exactly ${releaseMarkerKeys.join(", ")}`);
+  }
+
+  const pendingVersion = releaseMarker["pending-version"];
+  const currentVersionParts = parseStableVersion(crate.version);
+  const pendingVersionParts =
+    typeof pendingVersion === "string" ? parseStableVersion(pendingVersion) : null;
+  if (currentVersionParts === null || pendingVersionParts === null) {
+    fail(`${crate.name} release versions must be stable semantic versions`);
+  }
+  if (compareStableVersions(currentVersionParts, pendingVersionParts) >= 0) {
+    fail(`${crate.name} pending version ${pendingVersion} must be greater than ${crate.version}`);
+  }
+
+  const changeKind = releaseMarker["change-kind"];
+  if (typeof changeKind !== "string" || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(changeKind)) {
+    fail(`${crate.name} release change-kind must be a non-empty kebab-case identifier`);
+  }
+  const obligationId = releaseMarker["obligation-id"];
+  if (typeof obligationId !== "string" || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(obligationId)) {
+    fail(`${crate.name} release obligation-id must be a non-empty kebab-case identifier`);
   }
 }
 

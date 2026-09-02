@@ -84,7 +84,7 @@ fn layout_vertical_at_size(
     req: &TextLayoutRequest,
     font_size_px: f64,
     font_ctx: &FontContext<'_>,
-) -> Option<VerticalAtSizeResult> {
+) -> Result<VerticalAtSizeResult, crate::TextLayoutError> {
     let line_height_px = resolve_line_height(req, font_ctx, font_size_px);
     let kinsoku_profile = get_kinsoku_profile(Some(language_to_str(req.language)));
     let hanging_chars = get_hanging_chars(req.hanging_punctuation);
@@ -162,7 +162,7 @@ fn layout_vertical_at_size(
         }
     }
 
-    Some(VerticalAtSizeResult {
+    Ok(VerticalAtSizeResult {
         columns: truncated_columns,
         line_height_px,
         total_width,
@@ -191,7 +191,7 @@ struct VerticalAtSizeResult {
 pub(super) fn fit_vertical_shrink(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     let min_size = req
         .min_font_size_px
         .unwrap_or(DEFAULT_MIN_FONT_SIZE)
@@ -213,7 +213,7 @@ pub(super) fn fit_vertical_shrink(
         } else {
             TextOverflow::none()
         };
-        return Some(build_vertical_fit_result(
+        return Ok(build_vertical_fit_result(
             at_initial,
             req.font_size_px,
             overflow,
@@ -228,14 +228,11 @@ pub(super) fn fit_vertical_shrink(
         at_min.line_height_px,
         at_min.all_placed,
     ) {
-        if req.ellipsis
-            && req.max_lines.is_some()
-            && let Some(layout_result) = layout_vertical_ellipsis_at_size(req, font_ctx, min_size)
-        {
-            return Some(layout_result);
+        if req.ellipsis && req.max_lines.is_some() {
+            return layout_vertical_ellipsis_at_size(req, font_ctx, min_size);
         }
         let overflow = TextOverflow::cannot_fit();
-        return Some(build_vertical_fit_result(at_min, min_size, overflow));
+        return Ok(build_vertical_fit_result(at_min, min_size, overflow));
     }
 
     // Step 3: binary search -- invariant: lo fits, hi overflows
@@ -269,14 +266,14 @@ pub(super) fn fit_vertical_shrink(
     } else {
         TextOverflow::none()
     };
-    Some(build_vertical_fit_result(at_best, best_size, overflow))
+    Ok(build_vertical_fit_result(at_best, best_size, overflow))
 }
 
 fn layout_vertical_ellipsis_at_size(
     req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     font_size_px: f64,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     let final_request = TextLayoutRequest {
         font_size_px,
         letter_spacing_px: crate::text::fit::scaled_letter_spacing(req, font_size_px),
@@ -293,7 +290,7 @@ fn layout_vertical_ellipsis_at_size(
     if layout_result.lines.is_empty() {
         layout_result.overflow = TextOverflow::cannot_fit();
     }
-    Some(layout_result)
+    Ok(layout_result)
 }
 
 /// Grow-to-fit for vertical text with boundary evaluation.
@@ -303,7 +300,7 @@ fn layout_vertical_ellipsis_at_size(
 pub(super) fn fit_vertical_grow(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     let max_size = req
         .max_font_size_px
         .unwrap_or(req.font_size_px * DEFAULT_GROW_MULTIPLIER)
@@ -320,7 +317,7 @@ pub(super) fn fit_vertical_grow(
         at_initial.all_placed,
     ) {
         let overflow = TextOverflow::overflow("initial font size does not fit; cannot grow");
-        return Some(build_vertical_fit_result(
+        return Ok(build_vertical_fit_result(
             at_initial,
             req.font_size_px,
             overflow,
@@ -340,7 +337,7 @@ pub(super) fn fit_vertical_grow(
         } else {
             TextOverflow::none()
         };
-        return Some(build_vertical_fit_result(at_max, max_size, overflow));
+        return Ok(build_vertical_fit_result(at_max, max_size, overflow));
     }
 
     // Step 3: binary search -- invariant: lo fits, hi overflows
@@ -374,7 +371,7 @@ pub(super) fn fit_vertical_grow(
     } else {
         TextOverflow::none()
     };
-    Some(build_vertical_fit_result(at_best, best_size, overflow))
+    Ok(build_vertical_fit_result(at_best, best_size, overflow))
 }
 
 /// Build a `TextLayoutResult` from a `VerticalAtSizeResult`.

@@ -14,7 +14,7 @@ pub(super) fn prepare_rich_text(
     req: &TextLayoutRequest,
     font_ctx: &crate::font::FontContext<'_>,
     chosen_font_size_px: f64,
-) -> Option<PreparedRichText> {
+) -> Result<PreparedRichText, crate::TextLayoutError> {
     let default_style = build_default_style(
         req,
         font_ctx.families,
@@ -34,6 +34,7 @@ pub(super) fn prepare_rich_text(
         );
     } else if !req.text.is_empty() {
         inline_nodes.push(RichInlineNode::Segment(RichSegment {
+            run_index: 0,
             text: req.text.to_string(),
             style: default_style.clone(),
             combine: false,
@@ -52,9 +53,10 @@ pub(super) fn prepare_rich_text(
     if request_has_text_decoration(req) {
         coalesce_shaping_segments(&mut inline_nodes);
     }
+    assign_effective_run_indices(&mut inline_nodes);
 
     if inline_nodes.is_empty() {
-        return Some(PreparedRichText {
+        return Ok(PreparedRichText {
             tokens: Vec::new(),
             decoration_spans: Vec::new(),
             warnings: flatten_warnings,
@@ -72,11 +74,52 @@ pub(super) fn prepare_rich_text(
     let mut warnings = collect_notdef_warnings_from_tokens(&tokens);
     warnings.extend(flatten_warnings);
 
-    Some(PreparedRichText {
+    Ok(PreparedRichText {
         tokens,
         decoration_spans,
         warnings,
     })
+}
+
+/// Assign deterministic document-order identities without resolving fonts a
+/// second time. Ruby base runs precede annotation levels, and nested boxes are
+/// traversed depth-first in authored order.
+pub(super) fn assign_effective_run_indices(nodes: &mut [RichInlineNode]) {
+    fn assign_segments(segments: &mut [RichSegment], next_run_index: &mut usize) {
+        for segment in segments {
+            if segment.text.is_empty() {
+                continue;
+            }
+            segment.run_index = *next_run_index;
+            *next_run_index = next_run_index.saturating_add(1);
+        }
+    }
+
+    fn assign_nodes(nodes: &mut [RichInlineNode], next_run_index: &mut usize) {
+        for node in nodes {
+            match node {
+                RichInlineNode::Segment(segment) => {
+                    assign_segments(std::slice::from_mut(segment), next_run_index);
+                }
+                RichInlineNode::Ruby(ruby) => {
+                    assign_segments(&mut ruby.base, next_run_index);
+                    for annotation_level in &mut ruby.rt_levels {
+                        assign_segments(annotation_level, next_run_index);
+                    }
+                }
+                RichInlineNode::InlineBox(inline_box) => {
+                    assign_nodes(&mut inline_box.children, next_run_index);
+                }
+                RichInlineNode::DecoratedSpan(decorated_span) => {
+                    assign_nodes(&mut decorated_span.children, next_run_index);
+                }
+                RichInlineNode::InlineRect(_) => {}
+            }
+        }
+    }
+
+    let mut next_run_index = 0;
+    assign_nodes(nodes, &mut next_run_index);
 }
 
 /// Merge adjacent segments whose shaping styles are identical. Text decoration
@@ -504,6 +547,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
             RichTextNodeInput::Text { text } => {
                 if !text.is_empty() {
                     out.push(RichInlineNode::Segment(RichSegment {
+                        run_index: 0,
                         text: text.clone(),
                         style: current_style.clone(),
                         combine: false,
@@ -514,6 +558,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
             RichTextNodeInput::Span { text, style } => {
                 if !text.is_empty() {
                     out.push(RichInlineNode::Segment(RichSegment {
+                        run_index: 0,
                         text: text.clone(),
                         style: resolve_style(style, current_style, scale),
                         combine: false,
@@ -528,6 +573,7 @@ pub(super) fn flatten_rich_nodes_with_warnings(
             } => {
                 if !text.is_empty() {
                     out.push(RichInlineNode::Segment(RichSegment {
+                        run_index: 0,
                         text: text.clone(),
                         style: resolve_style(style, current_style, scale),
                         combine: true,
@@ -656,6 +702,7 @@ fn flatten_inline_box_children(
             RichTextNodeInput::Text { text } => {
                 if !text.is_empty() {
                     out.push(RichInlineNode::Segment(RichSegment {
+                        run_index: 0,
                         text: text.clone(),
                         style: current_style.clone(),
                         combine: false,
@@ -666,6 +713,7 @@ fn flatten_inline_box_children(
             RichTextNodeInput::Span { text, style } => {
                 if !text.is_empty() {
                     out.push(RichInlineNode::Segment(RichSegment {
+                        run_index: 0,
                         text: text.clone(),
                         style: resolve_style(style, current_style, scale),
                         combine: false,
@@ -680,6 +728,7 @@ fn flatten_inline_box_children(
             } => {
                 if !text.is_empty() {
                     out.push(RichInlineNode::Segment(RichSegment {
+                        run_index: 0,
                         text: text.clone(),
                         style: resolve_style(style, current_style, scale),
                         combine: true,
@@ -883,6 +932,7 @@ fn flatten_ruby_segments(
             RichTextNodeInput::Text { text } => {
                 if !text.is_empty() {
                     out.push(RichSegment {
+                        run_index: 0,
                         text: text.clone(),
                         style: current_style.clone(),
                         combine: false,
@@ -893,6 +943,7 @@ fn flatten_ruby_segments(
             RichTextNodeInput::Span { text, style } => {
                 if !text.is_empty() {
                     out.push(RichSegment {
+                        run_index: 0,
                         text: text.clone(),
                         style: resolve_style(style, current_style, scale),
                         combine: false,
@@ -907,6 +958,7 @@ fn flatten_ruby_segments(
             } => {
                 if !text.is_empty() {
                     out.push(RichSegment {
+                        run_index: 0,
                         text: text.clone(),
                         style: resolve_style(style, current_style, scale),
                         combine: true,

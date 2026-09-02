@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { type AnimationSpec, createElement, Engine, type IRNode, type VNode } from "@boundsvg/core";
+import {
+  type AnimationSpec,
+  createElement,
+  Engine,
+  FatalError,
+  type IRNode,
+  type VNode,
+} from "@boundsvg/core";
 import {
   EXPECTED_WASM_SCHEMA_VERSION,
   WasmEngineHandle,
@@ -16,6 +23,10 @@ import scalarWebWasmInit, {
   BoundSvgEngine as ScalarWebBoundSvgEngine,
   wasm_schema_version as scalarWebSchemaVersion,
 } from "../../../crates/boundsvg/pkg-web/scalar/boundsvg.js";
+import {
+  type TextLayoutRawSuccessFixture,
+  textLayoutRawSuccessFixtures,
+} from "../../core/tests/wasm/text-layout-success-fixtures.js";
 
 type LowLevelWasmModule = {
   BoundSvgEngine: new () => WasmEngineInstance;
@@ -32,6 +43,40 @@ const scalarNodeWasm = require(
 const fontBytes = readFileSync(
   resolve(__dirname, "../../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"),
 );
+
+function invokeRawTextLayout(
+  instance: WasmEngineInstance,
+  fixture: TextLayoutRawSuccessFixture,
+  inputJson = fixture.inputJson,
+): string {
+  const operation = instance[fixture.wasmMethod];
+  if (typeof operation !== "function") {
+    throw new TypeError(`Missing text-layout WASM operation: ${fixture.operation}`);
+  }
+  return operation.call(instance, inputJson);
+}
+
+function captureRawTextLayoutDiagnostic(action: () => unknown): unknown {
+  try {
+    action();
+  } catch (error) {
+    if (typeof error === "string") {
+      return JSON.parse(error) as unknown;
+    }
+    throw error;
+  }
+  throw new Error("Expected raw text-layout operation to fail");
+}
+
+function captureTextLayoutFatal(action: () => unknown): FatalError {
+  try {
+    action();
+  } catch (error) {
+    expect(error).toBeInstanceOf(FatalError);
+    return error as FatalError;
+  }
+  throw new Error("Expected text-layout operation to fail");
+}
 
 function createLowLevelEngine(instance: WasmEngineInstance): Engine {
   const handle = new WasmEngineHandle(instance);
@@ -656,6 +701,7 @@ describe("nodejs/web WASM public parity", () => {
   let webEngine: Engine;
   let scalarWebEngine: Engine;
   let timelineEngines: Engine[];
+  let textLayoutWasmInstances: WasmEngineInstance[];
 
   beforeAll(async () => {
     const webWasmBytes = readFileSync(
@@ -666,12 +712,20 @@ describe("nodejs/web WASM public parity", () => {
     );
     await webWasmInit({ module_or_path: new WebAssembly.Module(webWasmBytes) });
     await scalarWebWasmInit({ module_or_path: new WebAssembly.Module(scalarWebWasmBytes) });
-    nodeEngine = createLowLevelEngine(new nodeWasm.BoundSvgEngine());
-    scalarNodeEngine = createLowLevelEngine(new scalarNodeWasm.BoundSvgEngine());
-    webEngine = createLowLevelEngine(new WebBoundSvgEngine() as unknown as WasmEngineInstance);
-    scalarWebEngine = createLowLevelEngine(
-      new ScalarWebBoundSvgEngine() as unknown as WasmEngineInstance,
-    );
+    const nodeWasmInstance = new nodeWasm.BoundSvgEngine();
+    const scalarNodeWasmInstance = new scalarNodeWasm.BoundSvgEngine();
+    const webWasmInstance = new WebBoundSvgEngine() as unknown as WasmEngineInstance;
+    const scalarWebWasmInstance = new ScalarWebBoundSvgEngine() as unknown as WasmEngineInstance;
+    textLayoutWasmInstances = [
+      nodeWasmInstance,
+      scalarNodeWasmInstance,
+      webWasmInstance,
+      scalarWebWasmInstance,
+    ];
+    nodeEngine = createLowLevelEngine(nodeWasmInstance);
+    scalarNodeEngine = createLowLevelEngine(scalarNodeWasmInstance);
+    webEngine = createLowLevelEngine(webWasmInstance);
+    scalarWebEngine = createLowLevelEngine(scalarWebWasmInstance);
     timelineEngines = [nodeEngine, scalarNodeEngine, webEngine, scalarWebEngine];
   });
 
@@ -686,6 +740,64 @@ describe("nodejs/web WASM public parity", () => {
     expect(scalarNodeWasm.wasm_schema_version()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
     expect(webSchemaVersion()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
     expect(scalarWebSchemaVersion()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
+  });
+
+  it("preserves all six raw text-layout success bytes in node and web artifacts", () => {
+    expect(textLayoutRawSuccessFixtures).toHaveLength(6);
+    for (const fixture of textLayoutRawSuccessFixtures) {
+      for (const instance of textLayoutWasmInstances) {
+        expect(invokeRawTextLayout(instance, fixture), fixture.operation).toBe(
+          fixture.expectedOutputJson,
+        );
+      }
+    }
+  });
+
+  it("returns the closed malformed-input diagnostic from every raw text-layout artifact", () => {
+    for (const fixture of textLayoutRawSuccessFixtures) {
+      for (const instance of textLayoutWasmInstances) {
+        expect(
+          captureRawTextLayoutDiagnostic(() => invokeRawTextLayout(instance, fixture, "{")),
+          fixture.operation,
+        ).toEqual({
+          severity: "fatal",
+          code: "TEXT_LAYOUT_INPUT_INVALID",
+          message: "Text layout request is invalid.",
+          stage: "validate",
+          context: {
+            operation: fixture.operation,
+            reason: "malformedJson",
+          },
+        });
+      }
+    }
+  });
+
+  it("preserves the same public font diagnostic in every node and web engine", () => {
+    for (const parityEngine of timelineEngines) {
+      const error = captureTextLayoutFatal(() =>
+        parityEngine.measureTextBlock({
+          text: "AB",
+          fontFamily: "Missing",
+          fontSizePx: 16,
+          maxWidth: 100,
+        }),
+      );
+      expect(error.toJSON()).toEqual({
+        severity: "fatal",
+        code: "TEXT_FONT_UNAVAILABLE",
+        message: "No requested font is available for text layout.",
+        stage: "text",
+        context: {
+          operation: "measureTextBlock",
+          runIndex: 0,
+          requestedAliases: ["Missing"],
+          omittedAliasCount: 0,
+          fontWeight: 400,
+          fontStyle: "normal",
+        },
+      });
+    }
   });
 
   it("renders representative SVG, IR, and PNG bytes identically", () => {

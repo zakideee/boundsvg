@@ -19,9 +19,10 @@ use super::grapheme::grapheme_split;
 use super::kinsoku::KinsokuProfile;
 use super::types::{
     FitMode, InlineRectInput, IntrinsicInlineSizes, Language, PositionedGlyph,
-    RichTextDecorationRunInput, TextBBox, TextDecorationGlyphGeometry, TextDecorationInput,
-    TextLayoutRequest, TextLayoutResult, TextOrientation, TextOverflow, TextWarning,
-    WhiteSpaceMode, WrapMode, is_text_fit_certified_monotone, validate_rich_text_resources,
+    RichTextDecorationRunInput, RichTextResourceViolation, TextBBox, TextDecorationGlyphGeometry,
+    TextDecorationInput, TextLayoutRequest, TextLayoutResult, TextOrientation, TextOverflow,
+    TextWarning, WhiteSpaceMode, WrapMode, is_text_fit_certified_monotone,
+    validate_rich_text_resources,
 };
 #[cfg(test)]
 use super::types::{RichTextNodeInput, RichTextStyleInput};
@@ -39,6 +40,28 @@ use prepare::{
 
 /// Maximum nesting depth for `InlineBox` (outer + 2 nested).
 const MAX_INLINE_BOX_DEPTH: u32 = 3;
+
+type RichLayoutResult<T> = Result<T, crate::TextLayoutError>;
+
+fn rich_preparation_error() -> crate::TextLayoutError {
+    crate::TextLayoutError::PreparationFailed {
+        phase: crate::TextPreparationPhase::RichPreparation,
+    }
+}
+
+fn validate_rich_text_request_resources(req: &TextLayoutRequest<'_>) -> RichLayoutResult<()> {
+    let Some(nodes) = req.rich_text else {
+        return Ok(());
+    };
+    validate_rich_text_resources(nodes).map_err(|violation| match violation {
+        RichTextResourceViolation::Depth { actual, limit } => {
+            crate::TextLayoutError::RichTextDepthLimit { actual, limit }
+        }
+        RichTextResourceViolation::InlineRects { required, limit } => {
+            crate::TextLayoutError::InlineRectLimit { required, limit }
+        }
+    })
+}
 
 #[derive(Debug, Clone, PartialEq)]
 struct ResolvedStyle {
@@ -63,6 +86,8 @@ struct ResolvedStyle {
 
 #[derive(Debug, Clone)]
 struct RichSegment {
+    /// Zero-based authored effective run identity assigned after flattening.
+    run_index: usize,
     text: String,
     style: ResolvedStyle,
     combine: bool,
@@ -390,19 +415,16 @@ fn extend_kinsoku_edges(
     }
 }
 
-/// Perform legacy direct rich-text layout.
+/// Perform direct rich-text layout with typed operation failures.
 ///
-/// Checked callers should use [`crate::text::engine::layout_text`] so resource,
-/// fit, and ellipsis failures retain their typed identity. This helper keeps its
-/// pre-existing `Option` contract until a separate breaking Rust API migration.
-#[must_use]
+/// # Errors
+///
+/// Returns the first request, font, preparation, fit, or ellipsis failure.
 pub fn layout_rich_text(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-) -> Option<TextLayoutResult> {
-    if let Some(nodes) = req.rich_text {
-        validate_rich_text_resources(nodes).ok()?;
-    }
+) -> RichLayoutResult<TextLayoutResult> {
+    validate_rich_text_request_resources(req)?;
     if req.fit == FitMode::Shrink {
         return fit_rich_text(req, font_ctx, true);
     }
@@ -421,7 +443,7 @@ pub(crate) fn layout_rich_text_at_selected_font_size(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     chosen_font_size_px: f64,
-) -> Option<TextLayoutResult> {
+) -> RichLayoutResult<TextLayoutResult> {
     layout_rich_text_at_font_size(req, font_ctx, chosen_font_size_px, true)
 }
 
@@ -451,6 +473,7 @@ fn build_normalized_inline_nodes(
         );
     } else if !req.text.is_empty() {
         inline_nodes.push(RichInlineNode::Segment(RichSegment {
+            run_index: 0,
             text: req.text.to_string(),
             style: default_style.clone(),
             combine: false,
@@ -479,6 +502,7 @@ fn build_inline_nodes(
     if prepare::request_has_text_decoration(req) {
         prepare::coalesce_shaping_segments(&mut inline_nodes);
     }
+    prepare::assign_effective_run_indices(&mut inline_nodes);
     (inline_nodes, default_style, flatten_warnings)
 }
 
@@ -698,12 +722,12 @@ fn prepare_rich_text(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     chosen_font_size_px: f64,
-) -> Option<PreparedRichText> {
+) -> RichLayoutResult<PreparedRichText> {
     let (inline_nodes, default_style, flatten_warnings) =
         build_inline_nodes(req, font_ctx, chosen_font_size_px);
 
     if inline_nodes.is_empty() {
-        return Some(PreparedRichText {
+        return Ok(PreparedRichText {
             tokens: Vec::new(),
             decoration_spans: Vec::new(),
             warnings: flatten_warnings,
@@ -721,7 +745,7 @@ fn prepare_rich_text(
     let mut warnings = collect_notdef_warnings_from_tokens(&tokens);
     warnings.extend(flatten_warnings);
 
-    Some(PreparedRichText {
+    Ok(PreparedRichText {
         tokens,
         decoration_spans,
         warnings,
@@ -735,21 +759,18 @@ fn prepare_rich_text(
 ///   physical column height. Newline-only tokens act as separators.
 /// - `min_content_inline_size`: the largest single unbreakable token.
 ///
-/// This legacy direct helper reports preparation and resource failure as
-/// `None`. A typed measurement authority requires a separate Rust API
-/// migration.
-#[must_use]
+/// # Errors
+///
+/// Returns the first request, font, or rich-text preparation failure.
 pub fn measure_intrinsic_inline_size(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-) -> Option<IntrinsicInlineSizes> {
-    if let Some(nodes) = req.rich_text {
-        validate_rich_text_resources(nodes).ok()?;
-    }
+) -> RichLayoutResult<IntrinsicInlineSizes> {
+    validate_rich_text_request_resources(req)?;
     let prepared = prepare_rich_text(req, font_ctx, req.font_size_px)?;
 
     if prepared.tokens.is_empty() {
-        return Some(IntrinsicInlineSizes {
+        return Ok(IntrinsicInlineSizes {
             min_content_inline_size: 0.0,
             max_content_inline_size: 0.0,
             warnings: prepared.warnings,
@@ -811,7 +832,7 @@ pub fn measure_intrinsic_inline_size(
         max_content_inline_size = max_content_inline_size.max(line_width);
     }
 
-    Some(IntrinsicInlineSizes {
+    Ok(IntrinsicInlineSizes {
         min_content_inline_size,
         max_content_inline_size,
         warnings: prepared.warnings,
@@ -822,7 +843,7 @@ fn fit_rich_text(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     should_shrink: bool,
-) -> Option<TextLayoutResult> {
+) -> RichLayoutResult<TextLayoutResult> {
     if !is_text_fit_certified_monotone(req) {
         return fit_rich_text_exact_grid(req, font_ctx, should_shrink);
     }
@@ -843,7 +864,7 @@ fn fit_rich_text(
 
     if should_shrink {
         if is_initial_fit {
-            return Some(initial);
+            return Ok(initial);
         }
         let min_size = req
             .min_font_size_px
@@ -854,17 +875,17 @@ fn fit_rich_text(
         if !is_rich_text_fit(req, &at_min) {
             if req.ellipsis
                 && req.max_lines.is_some()
-                && let Some(mut ellipsized) = apply_rich_ellipsis(req, font_ctx, min_size)
+                && let Some(mut ellipsized) = apply_rich_ellipsis(req, font_ctx, min_size)?
             {
                 if ellipsized.lines.is_empty() {
                     ellipsized.overflow = TextOverflow::cannot_fit();
                 }
-                return Some(ellipsized);
+                return Ok(ellipsized);
             }
             if at_min.overflow.overflow_type != "kinsoku_unresolved" {
                 at_min.overflow = TextOverflow::cannot_fit();
             }
-            return Some(at_min);
+            return Ok(at_min);
         }
 
         let mut lo = min_size;
@@ -890,15 +911,15 @@ fn fit_rich_text(
         // it must never make an overflowing initial size eligible to grow.
         if req.ellipsis
             && req.max_lines.is_some()
-            && let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, initial_size)
+            && let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, initial_size)?
         {
-            return Some(ellipsized);
+            return Ok(ellipsized);
         }
         if initial.overflow.overflow_type != "kinsoku_unresolved" {
             initial.overflow =
                 TextOverflow::overflow("initial font size does not fit; cannot grow");
         }
-        return Some(initial);
+        return Ok(initial);
     }
     let max_size = req
         .max_font_size_px
@@ -906,7 +927,7 @@ fn fit_rich_text(
         .max(initial_size);
     let at_max = fit_rich_probe(req, font_ctx, max_size)?;
     if is_rich_text_fit(req, &at_max) {
-        return Some(at_max);
+        return Ok(at_max);
     }
 
     let mut lo = initial_size;
@@ -930,15 +951,10 @@ fn fit_rich_text_exact_grid(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     should_shrink: bool,
-) -> Option<TextLayoutResult> {
+) -> RichLayoutResult<TextLayoutResult> {
     let is_fit_at_size = |candidate| {
         layout_rich_text_at_font_size(req, font_ctx, candidate, false)
             .map(|layout_result| is_rich_text_fit(req, &layout_result))
-            .ok_or_else(|| {
-                crate::BoundtextError::FlowLayout(
-                    "Failed to prepare exact-grid text fit candidate".to_string(),
-                )
-            })
     };
     let (chosen_size, fit_overflow) = if should_shrink {
         text_flow::fit_shrink_with(
@@ -964,12 +980,11 @@ fn fit_rich_text_exact_grid(
             req.fit_max_probes,
             is_fit_at_size,
         )
-    }
-    .ok()?;
+    }?;
 
     let mut layout_result = layout_rich_text_at_font_size(req, font_ctx, chosen_size, true)?;
     if fit_overflow.is_none() || layout_result.overflow.overflow_type == "kinsoku_unresolved" {
-        return Some(layout_result);
+        return Ok(layout_result);
     }
     let is_ellipsis_applied = req.ellipsis
         && req.max_lines.is_some()
@@ -986,14 +1001,14 @@ fn fit_rich_text_exact_grid(
         layout_result.overflow =
             TextOverflow::overflow("initial font size does not fit; cannot grow");
     }
-    Some(layout_result)
+    Ok(layout_result)
 }
 
 fn fit_rich_probe(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     font_size_px: f64,
-) -> Option<TextLayoutResult> {
+) -> RichLayoutResult<TextLayoutResult> {
     #[cfg(any(test, feature = "phase-trace"))]
     crate::phase_trace::record_fit_probe();
     layout_rich_text_at_font_size(req, font_ctx, font_size_px, false)
@@ -1021,11 +1036,11 @@ fn layout_rich_text_at_font_size(
     font_ctx: &FontContext<'_>,
     chosen_font_size_px: f64,
     should_apply_ellipsis_projection: bool,
-) -> Option<TextLayoutResult> {
+) -> RichLayoutResult<TextLayoutResult> {
     let prepared = prepare_rich_text(req, font_ctx, chosen_font_size_px)?;
 
     if prepared.tokens.is_empty() {
-        return Some(TextLayoutResult {
+        return Ok(TextLayoutResult {
             lines: Vec::new(),
             bbox: TextBBox {
                 x: 0.0,
@@ -1051,7 +1066,8 @@ fn layout_rich_text_at_font_size(
             &prepared.decoration_spans,
             chosen_font_size_px,
             prepared.warnings,
-        )?
+        )
+        .ok_or_else(rich_preparation_error)?
     } else {
         layout_horizontal_tokens(
             req,
@@ -1059,7 +1075,8 @@ fn layout_rich_text_at_font_size(
             &prepared.decoration_spans,
             chosen_font_size_px,
             prepared.warnings,
-        )?
+        )
+        .ok_or_else(rich_preparation_error)?
     };
 
     // Horizontal and vertical rich text share one display-projection step.
@@ -1067,11 +1084,11 @@ fn layout_rich_text_at_font_size(
         && req.ellipsis
         && req.max_lines.is_some()
         && !is_rich_text_fit(req, &layout_result)
-        && let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px)
+        && let Some(ellipsized) = apply_rich_ellipsis(req, font_ctx, chosen_font_size_px)?
     {
-        return Some(ellipsized);
+        return Ok(ellipsized);
     }
-    Some(layout_result)
+    Ok(layout_result)
 }
 
 /// Apply ellipsis to rich text by exact relayout. Candidates are legal logical
@@ -1081,16 +1098,18 @@ fn apply_rich_ellipsis(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     chosen_font_size_px: f64,
-) -> Option<TextLayoutResult> {
-    let max_lines = req.max_lines?;
+) -> RichLayoutResult<Option<TextLayoutResult>> {
+    let Some(max_lines) = req.max_lines else {
+        return Ok(None);
+    };
     let (inline_nodes, default_style, _) = build_inline_nodes(req, font_ctx, chosen_font_size_px);
     let total = count_inline_graphemes(&inline_nodes);
     if total == 0 {
-        return None;
+        return Ok(None);
     }
 
     let source_text = collect_inline_source_text(&inline_nodes);
-    let probe = |keep: usize| -> Option<TextLayoutResult> {
+    let probe = |keep: usize| -> RichLayoutResult<Option<TextLayoutResult>> {
         #[cfg(any(test, feature = "phase-trace"))]
         crate::phase_trace::record_ellipsis_candidate();
         let ellipsis_style = first_omitted_style(&inline_nodes, keep)
@@ -1100,6 +1119,7 @@ fn apply_rich_ellipsis(
             &inline_nodes,
             keep,
             RichSegment {
+                run_index: 0,
                 text: "\u{2026}".to_string(),
                 style: ellipsis_style,
                 combine: false,
@@ -1130,7 +1150,8 @@ fn apply_rich_ellipsis(
                 &decoration_spans,
                 chosen_font_size_px,
                 warnings,
-            )?
+            )
+            .ok_or_else(rich_preparation_error)?
         } else {
             layout_horizontal_tokens(
                 &probe_req,
@@ -1138,11 +1159,12 @@ fn apply_rich_ellipsis(
                 &decoration_spans,
                 chosen_font_size_px,
                 warnings,
-            )?
+            )
+            .ok_or_else(rich_preparation_error)?
         };
         candidate_layout.source_text = Some(source_text.clone());
         candidate_layout.display_text = Some(display_text);
-        Some(candidate_layout)
+        Ok(Some(candidate_layout))
     };
     let is_candidate_fit = |candidate_layout: &TextLayoutResult| {
         candidate_layout.lines.len() <= max_lines
@@ -1154,16 +1176,18 @@ fn apply_rich_ellipsis(
     };
 
     let legal_prefixes = legal_ellipsis_prefixes_for_request(req, &inline_nodes, total);
-    if let Some((_keep, mut selected)) = super::ellipsis_plan::select_longest_fitting(
+    if let Some((_keep, mut selected)) = super::ellipsis_plan::try_select_longest_fitting(
         legal_prefixes.iter().copied(),
         &probe,
         is_candidate_fit,
-    ) {
+    )? {
         selected.overflow = TextOverflow::overflow("ellipsis applied");
-        return Some(selected);
+        return Ok(Some(selected));
     }
 
-    let mut empty_projection = probe(0)?;
+    let Some(mut empty_projection) = probe(0)? else {
+        return Ok(None);
+    };
     empty_projection.lines.clear();
     empty_projection.bbox.w = 0.0;
     empty_projection.bbox.h = 0.0;
@@ -1173,7 +1197,7 @@ fn apply_rich_ellipsis(
     empty_projection.text_decorations.clear();
     empty_projection.inline_rects.clear();
     empty_projection.overflow = TextOverflow::overflow("ellipsis applied");
-    Some(empty_projection)
+    Ok(Some(empty_projection))
 }
 
 /// Return the maximum number of exact candidate layouts needed by the
@@ -1610,6 +1634,7 @@ fn project_inline_nodes_with_ellipsis(
                         let graphemes = grapheme_split(&segment.text);
                         let prefix = graphemes[..*remaining].concat();
                         output.push(RichInlineNode::Segment(RichSegment {
+                            run_index: 0,
                             decoration_runs: truncate_decoration_runs(
                                 &segment.decoration_runs,
                                 prefix.len(),
@@ -1806,7 +1831,7 @@ fn build_tokens(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
+) -> RichLayoutResult<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
     build_tokens_with_options(
         nodes,
         req,
@@ -1823,7 +1848,7 @@ fn build_ellipsis_tokens(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
+) -> RichLayoutResult<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
     build_tokens_with_options(
         nodes,
         req,
@@ -1841,7 +1866,7 @@ fn build_tokens_with_options(
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
     should_isolate_trailing_segment: bool,
-) -> Option<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
+) -> RichLayoutResult<(Vec<LayoutToken>, Vec<DecorationSpanMeta>)> {
     let mut flat_items = Vec::new();
     let mut decoration_spans: Vec<DecorationSpanMeta> = Vec::new();
     let mut next_span_id: u32 = 0;
@@ -1893,7 +1918,7 @@ fn build_tokens_with_options(
             .saturating_add(u32::try_from(grapheme_split(&token.text).len()).unwrap_or(u32::MAX));
     }
 
-    Some((tokens, decoration_spans))
+    Ok((tokens, decoration_spans))
 }
 
 fn offset_glyph_source_identity(
@@ -1944,7 +1969,7 @@ fn flatten_build_items<'a>(
     decoration_spans: &mut Vec<DecorationSpanMeta>,
     next_span_id: &mut u32,
     current_span_ids: &[u32],
-) -> Option<()> {
+) -> RichLayoutResult<()> {
     for node in nodes {
         match node {
             RichInlineNode::Segment(segment) => {
@@ -1965,7 +1990,9 @@ fn flatten_build_items<'a>(
             }
             RichInlineNode::DecoratedSpan(decorated_span) => {
                 let span_id = *next_span_id;
-                *next_span_id = next_span_id.checked_add(1)?;
+                *next_span_id = next_span_id
+                    .checked_add(1)
+                    .ok_or_else(rich_preparation_error)?;
                 decoration_spans.push(DecorationSpanMeta {
                     background: decorated_span.background.clone(),
                     border_color: decorated_span.border_color.clone(),
@@ -1989,20 +2016,22 @@ fn flatten_build_items<'a>(
                     let first_membership = items[first_item_index]
                         .memberships_mut()
                         .iter_mut()
-                        .find(|membership| membership.span_id == span_id)?;
+                        .find(|membership| membership.span_id == span_id)
+                        .ok_or_else(rich_preparation_error)?;
                     first_membership.start_advance =
                         decorated_span.padding_inline[0] + decorated_span.border_width;
                     let last_membership = items[last_item_index - 1]
                         .memberships_mut()
                         .iter_mut()
-                        .find(|membership| membership.span_id == span_id)?;
+                        .find(|membership| membership.span_id == span_id)
+                        .ok_or_else(rich_preparation_error)?;
                     last_membership.end_advance =
                         decorated_span.padding_inline[1] + decorated_span.border_width;
                 }
             }
         }
     }
-    Some(())
+    Ok(())
 }
 
 fn memberships_for_grapheme(
@@ -2032,7 +2061,7 @@ fn build_flat_items(
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
     should_isolate_trailing_segment: bool,
-) -> Option<Vec<LayoutToken>> {
+) -> RichLayoutResult<Vec<LayoutToken>> {
     let mut tokens = Vec::new();
     let mut item_index = 0usize;
     while item_index < items.len() {
@@ -2058,6 +2087,7 @@ fn build_flat_items(
                             font_registry,
                             fallback_registry,
                             default_style,
+                            segment.run_index,
                         )?;
                         token.trailing_tracking_px = segment.style.letter_spacing_px;
                         token
@@ -2121,7 +2151,7 @@ fn build_flat_items(
                     })
                     .collect::<Vec<_>>();
                 if segment_tokens.len() != expanded_memberships.len() {
-                    return None;
+                    return Err(rich_preparation_error());
                 }
                 for (token, memberships) in segment_tokens.iter_mut().zip(expanded_memberships) {
                     token.decoration_memberships = memberships;
@@ -2176,7 +2206,9 @@ fn build_flat_items(
                         fallback_registry,
                         req.is_vertical(),
                     ),
-                    RichInlineNode::Segment(_) | RichInlineNode::DecoratedSpan(_) => return None,
+                    RichInlineNode::Segment(_) | RichInlineNode::DecoratedSpan(_) => {
+                        return Err(rich_preparation_error());
+                    }
                 };
                 token.decoration_memberships.clone_from(memberships);
                 tokens.push(token);
@@ -2184,7 +2216,7 @@ fn build_flat_items(
         }
         item_index += 1;
     }
-    Some(tokens)
+    Ok(tokens)
 }
 
 fn build_fragmentable_segment_run(
@@ -2193,9 +2225,9 @@ fn build_fragmentable_segment_run(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<Vec<LayoutToken>> {
+) -> RichLayoutResult<Vec<LayoutToken>> {
     if segments.is_empty() {
-        return Some(Vec::new());
+        return Ok(Vec::new());
     }
 
     let segment_graphemes = segments
@@ -2206,6 +2238,7 @@ fn build_fragmentable_segment_run(
     let mut tokens = Vec::with_capacity(capacity);
     let mut chunk_graphemes = Vec::new();
     let mut chunk_styles = Vec::new();
+    let mut chunk_run_indices = Vec::new();
     for (segment, graphemes) in segments.iter().zip(segment_graphemes) {
         let paint_styles = segment_styles_for_graphemes(segment, &graphemes);
         for (grapheme, paint_style) in graphemes.into_iter().zip(paint_styles) {
@@ -2214,6 +2247,7 @@ fn build_fragmentable_segment_run(
                     &mut tokens,
                     &chunk_graphemes,
                     &chunk_styles,
+                    &chunk_run_indices,
                     req,
                     font_registry,
                     fallback_registry,
@@ -2221,6 +2255,7 @@ fn build_fragmentable_segment_run(
                 )?;
                 chunk_graphemes.clear();
                 chunk_styles.clear();
+                chunk_run_indices.clear();
                 let mut newline_token = if req.is_vertical() {
                     build_vertical_plain_token(
                         &grapheme,
@@ -2229,6 +2264,7 @@ fn build_fragmentable_segment_run(
                         font_registry,
                         fallback_registry,
                         default_style,
+                        segment.run_index,
                     )?
                 } else {
                     build_horizontal_plain_token(
@@ -2238,6 +2274,7 @@ fn build_fragmentable_segment_run(
                         font_registry,
                         fallback_registry,
                         default_style,
+                        segment.run_index,
                     )?
                 };
                 newline_token.trailing_tracking_px = paint_style.letter_spacing_px;
@@ -2245,6 +2282,7 @@ fn build_fragmentable_segment_run(
             } else {
                 chunk_graphemes.push(grapheme);
                 chunk_styles.push(paint_style);
+                chunk_run_indices.push(segment.run_index);
             }
         }
     }
@@ -2252,25 +2290,30 @@ fn build_fragmentable_segment_run(
         &mut tokens,
         &chunk_graphemes,
         &chunk_styles,
+        &chunk_run_indices,
         req,
         font_registry,
         fallback_registry,
         default_style,
     )?;
-    Some(tokens)
+    Ok(tokens)
 }
 
 fn append_fragmentable_mixed_chunk(
     tokens: &mut Vec<LayoutToken>,
     graphemes: &[String],
     styles: &[ResolvedStyle],
+    run_indices: &[usize],
     req: &TextLayoutRequest,
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<()> {
-    if graphemes.is_empty() || graphemes.len() != styles.len() {
-        return Some(());
+) -> RichLayoutResult<()> {
+    if graphemes.is_empty() {
+        return Ok(());
+    }
+    if graphemes.len() != styles.len() || graphemes.len() != run_indices.len() {
+        return Err(rich_preparation_error());
     }
 
     let text = graphemes.concat();
@@ -2278,15 +2321,16 @@ fn append_fragmentable_mixed_chunk(
         &text,
         graphemes,
         styles,
+        run_indices,
         req,
         font_registry,
         fallback_registry,
-    ) {
+    )? {
         tokens.extend(contextual_tokens);
-        return Some(());
+        return Ok(());
     }
 
-    for (grapheme, style) in graphemes.iter().zip(styles) {
+    for ((grapheme, style), run_index) in graphemes.iter().zip(styles).zip(run_indices) {
         let mut token = if req.is_vertical() {
             build_vertical_plain_token(
                 grapheme,
@@ -2295,6 +2339,7 @@ fn append_fragmentable_mixed_chunk(
                 font_registry,
                 fallback_registry,
                 default_style,
+                *run_index,
             )?
         } else {
             build_horizontal_plain_token(
@@ -2304,31 +2349,35 @@ fn append_fragmentable_mixed_chunk(
                 font_registry,
                 fallback_registry,
                 default_style,
+                *run_index,
             )?
         };
         token.trailing_tracking_px = style.letter_spacing_px;
         tokens.push(token);
     }
-    Some(())
+    Ok(())
 }
 
 fn build_contextually_shaped_mixed_tokens(
     text: &str,
     graphemes: &[String],
     styles: &[ResolvedStyle],
+    run_indices: &[usize],
     req: &TextLayoutRequest,
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
-) -> Option<Vec<LayoutToken>> {
-    let shaping_style = styles.first()?;
+) -> RichLayoutResult<Option<Vec<LayoutToken>>> {
+    let shaping_style = styles.first().ok_or_else(rich_preparation_error)?;
+    let run_index = *run_indices.first().ok_or_else(rich_preparation_error)?;
     let shaped = shape_text(
         font_registry,
         fallback_registry,
         shaping_style,
         text,
         req.is_vertical(),
+        run_index,
     )?;
-    distribute_contextually_shaped_mixed_tokens(
+    Ok(distribute_contextually_shaped_mixed_tokens(
         text,
         graphemes,
         styles,
@@ -2336,7 +2385,7 @@ fn build_contextually_shaped_mixed_tokens(
         font_registry,
         fallback_registry,
         &shaped,
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -2472,9 +2521,17 @@ fn build_horizontal_plain_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     _default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
-    let glyphs = shape_text(font_registry, fallback_registry, style, text, false)?;
-    Some(build_horizontal_plain_token_from_glyphs(
+    run_index: usize,
+) -> Result<LayoutToken, crate::TextLayoutError> {
+    let glyphs = shape_text(
+        font_registry,
+        fallback_registry,
+        style,
+        text,
+        false,
+        run_index,
+    )?;
+    Ok(build_horizontal_plain_token_from_glyphs(
         text,
         style,
         font_registry,
@@ -2551,9 +2608,17 @@ fn build_vertical_plain_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     _default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
-    let glyphs = shape_text(font_registry, fallback_registry, style, text, true)?;
-    Some(build_vertical_plain_token_from_glyphs(
+    run_index: usize,
+) -> Result<LayoutToken, crate::TextLayoutError> {
+    let glyphs = shape_text(
+        font_registry,
+        fallback_registry,
+        style,
+        text,
+        true,
+        run_index,
+    )?;
+    Ok(build_vertical_plain_token_from_glyphs(
         text,
         style,
         font_registry,
@@ -2597,7 +2662,7 @@ fn build_vertical_combine_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> Result<LayoutToken, crate::TextLayoutError> {
     let cell_advance = default_style.font_size_px;
     let column_width =
         resolve_style_line_metrics(font_registry, fallback_registry, default_style).line_height_px;
@@ -2608,6 +2673,7 @@ fn build_vertical_combine_token(
         &style,
         &segment.text,
         false,
+        segment.run_index,
     )?;
     let raw_width = raw.iter().map(|glyph| glyph.x_advance).sum::<f64>();
     if raw_width > 0.0 && raw_width > cell_advance {
@@ -2619,6 +2685,7 @@ fn build_vertical_combine_token(
         &style,
         &segment.text,
         false,
+        segment.run_index,
     )?;
     let width = glyphs.iter().map(|glyph| glyph.x_advance).sum::<f64>();
     let line_metrics = resolve_style_line_metrics(font_registry, fallback_registry, &style);
@@ -2637,7 +2704,7 @@ fn build_vertical_combine_token(
         glyph.outline_writing_mode = Some("horizontal-tb".to_string());
         glyph.text_decoration_geometry = Some(decoration_geometry);
     }
-    Some(LayoutToken {
+    Ok(LayoutToken {
         text: segment.text.clone(),
         kinsoku_start: Some(style_uses_ja_kinsoku(&segment.style)),
         kinsoku_end: Some(style_uses_ja_kinsoku(&segment.style)),
@@ -2662,7 +2729,7 @@ fn build_horizontal_ruby_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     _default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> RichLayoutResult<LayoutToken> {
     let base_metrics =
         resolve_segments_line_box_metrics(font_registry, fallback_registry, &ruby.base);
     let level_measures: Vec<(RubySide, f64, f64)> = ruby
@@ -2777,7 +2844,7 @@ fn build_horizontal_ruby_token(
     );
 
     let (kinsoku_start, kinsoku_end) = segment_kinsoku_edges(&ruby.base);
-    Some(LayoutToken {
+    Ok(LayoutToken {
         text: ruby
             .base
             .iter()
@@ -2812,7 +2879,7 @@ fn build_horizontal_atomic_decorated_span_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> RichLayoutResult<LayoutToken> {
     build_horizontal_atomic_decorated_token(
         &dspan.children,
         dspan.padding_inline,
@@ -2834,7 +2901,7 @@ fn build_vertical_atomic_decorated_span_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> RichLayoutResult<LayoutToken> {
     build_vertical_atomic_decorated_token(
         &dspan.children,
         dspan.padding_inline,
@@ -2866,7 +2933,7 @@ fn build_horizontal_atomic_decorated_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> RichLayoutResult<LayoutToken> {
     build_atomic_box_token_inner(
         children,
         padding_inline,
@@ -2899,7 +2966,7 @@ fn build_vertical_atomic_decorated_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> RichLayoutResult<LayoutToken> {
     build_atomic_box_token_inner(
         children,
         padding_inline,
@@ -2922,7 +2989,7 @@ fn build_horizontal_inline_box_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> RichLayoutResult<LayoutToken> {
     build_atomic_box_token_inner(
         &ibox.children,
         ibox.padding_inline,
@@ -2945,7 +3012,7 @@ fn build_vertical_inline_box_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> RichLayoutResult<LayoutToken> {
     build_atomic_box_token_inner(
         &ibox.children,
         ibox.padding_inline,
@@ -2976,7 +3043,7 @@ fn shape_atomic_box_segment(
     reference_offset: f64,
     after_reference: f64,
     cursor: f64,
-) -> Option<(Vec<PositionedGlyph>, f64, f64, f64)> {
+) -> RichLayoutResult<(Vec<PositionedGlyph>, f64, f64, f64)> {
     if is_vertical && segment.combine {
         let combine_token = build_vertical_combine_token(
             segment,
@@ -2989,7 +3056,7 @@ fn shape_atomic_box_segment(
         let combine_after_reference = combine_token.cross_size - combine_reference_offset;
         let mut combine_glyphs = combine_token.glyphs;
         shift_glyphs_y(&mut combine_glyphs, cursor);
-        return Some((
+        return Ok((
             combine_glyphs,
             combine_token.advance,
             combine_reference_offset,
@@ -3014,7 +3081,7 @@ fn shape_atomic_box_segment(
             cursor,
         )?
     };
-    Some((run_glyphs, run_advance, reference_offset, after_reference))
+    Ok((run_glyphs, run_advance, reference_offset, after_reference))
 }
 
 // Shared inner helper for `InlineBox` and atomic `DecoratedSpan` token
@@ -3037,7 +3104,7 @@ fn build_atomic_box_token_inner(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> RichLayoutResult<LayoutToken> {
     let default_metrics =
         resolve_style_line_metrics(font_registry, fallback_registry, default_style);
     let base_measure = default_metrics.line_height_px;
@@ -3306,7 +3373,7 @@ fn build_atomic_box_token_inner(
     let reserved = padding_inline[0] + padding_inline[1] + border_width * 2.0;
     let total_advance = children_advance + reserved;
 
-    Some(LayoutToken {
+    Ok(LayoutToken {
         text,
         kinsoku_start,
         kinsoku_end,
@@ -3341,7 +3408,7 @@ fn build_vertical_ruby_token(
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
     _default_style: &ResolvedStyle,
-) -> Option<LayoutToken> {
+) -> RichLayoutResult<LayoutToken> {
     let base_lane_width =
         resolve_segments_line_box_metrics(font_registry, fallback_registry, &ruby.base)
             .line_height_px;
@@ -3457,7 +3524,7 @@ fn build_vertical_ruby_token(
     );
 
     let (kinsoku_start, kinsoku_end) = segment_kinsoku_edges(&ruby.base);
-    Some(LayoutToken {
+    Ok(LayoutToken {
         text: ruby
             .base
             .iter()
@@ -4188,7 +4255,7 @@ fn shape_segment_run_horizontal(
     fallback_registry: Option<&FontRegistry>,
     baseline_y: f64,
     start_x: f64,
-) -> Option<(Vec<PositionedGlyph>, f64)> {
+) -> Result<(Vec<PositionedGlyph>, f64), crate::TextLayoutError> {
     let mut glyphs = Vec::new();
     let mut cursor_x = start_x;
     let mut source_cursor = 0_u32;
@@ -4200,6 +4267,7 @@ fn shape_segment_run_horizontal(
             &segment.style,
             &segment.text,
             false,
+            segment.run_index,
         )?;
         if segment_index + 1 < segments.len() && segment.style.letter_spacing_px != 0.0 {
             if let Some(last_glyph) = shaped.last_mut() {
@@ -4239,7 +4307,7 @@ fn shape_segment_run_horizontal(
         cursor_x += shaped.iter().map(|glyph| glyph.x_advance).sum::<f64>();
         glyphs.extend(positioned);
     }
-    Some((glyphs, cursor_x - start_x))
+    Ok((glyphs, cursor_x - start_x))
 }
 
 fn shape_segment_run_vertical(
@@ -4248,7 +4316,7 @@ fn shape_segment_run_vertical(
     fallback_registry: Option<&FontRegistry>,
     center_x: f64,
     start_y: f64,
-) -> Option<(Vec<PositionedGlyph>, f64)> {
+) -> Result<(Vec<PositionedGlyph>, f64), crate::TextLayoutError> {
     let mut glyphs = Vec::new();
     let mut cursor_y = start_y;
     let mut source_cursor = 0_u32;
@@ -4260,6 +4328,7 @@ fn shape_segment_run_vertical(
             &segment.style,
             &segment.text,
             true,
+            segment.run_index,
         )?;
         if segment_index + 1 < segments.len() && segment.style.letter_spacing_px != 0.0 {
             if let Some(last_glyph) = shaped.last_mut() {
@@ -4294,7 +4363,7 @@ fn shape_segment_run_vertical(
         cursor_y += shaped.iter().map(glyph_advance_in_vertical).sum::<f64>();
         glyphs.extend(positioned);
     }
-    Some((glyphs, cursor_y - start_y))
+    Ok((glyphs, cursor_y - start_y))
 }
 
 fn shape_text(
@@ -4303,11 +4372,8 @@ fn shape_text(
     style: &ResolvedStyle,
     text: &str,
     vertical: bool,
-) -> Option<Vec<GlyphInfo>> {
-    if text.is_empty() {
-        return Some(Vec::new());
-    }
-
+    run_index: usize,
+) -> Result<Vec<GlyphInfo>, crate::TextLayoutError> {
     let options = ShapeOptions {
         writing_mode: if vertical {
             Some("vertical-rl".to_string())
@@ -4339,70 +4405,15 @@ fn shape_text(
         weight: style.font_weight,
         style: &style.font_style,
     };
-
-    if style.font_families.len() > 1 {
-        let result = shaping::shape_with_fallback_and_options(
-            &font_ctx,
-            text,
-            style.font_size_px,
-            style.letter_spacing_px,
-            &options,
-        );
-        if !result.glyphs.is_empty() {
-            return Some(result.glyphs);
-        }
-        if let Some(fallback) = fallback_registry {
-            let fallback_ctx = FontContext {
-                registry: fallback,
-                fallback_registry: None,
-                families: &style.font_families,
-                weight: style.font_weight,
-                style: &style.font_style,
-            };
-            let result = shaping::shape_with_fallback_and_options(
-                &fallback_ctx,
-                text,
-                style.font_size_px,
-                style.letter_spacing_px,
-                &options,
-            );
-            if !result.glyphs.is_empty() {
-                return Some(result.glyphs);
-            }
-        }
-    }
-
-    let entry = resolve_font(
-        font_registry,
-        fallback_registry,
-        &style.font_families,
-        style.font_weight,
-        &style.font_style,
-    )?;
-    Some(shaping::shape_text_with_options(
-        font_registry,
-        entry,
+    crate::text::shape_checked_text_run(
+        &font_ctx,
         text,
         style.font_size_px,
         style.letter_spacing_px,
         &options,
-    ))
-}
-
-fn resolve_font<'a>(
-    font_registry: &'a FontRegistry,
-    fallback_registry: Option<&'a FontRegistry>,
-    aliases: &[String],
-    weight: u16,
-    style: &FontStyle,
-) -> Option<&'a crate::font::FontEntry> {
-    if let Some(entry) = font_registry.resolve_chain(aliases, weight, style) {
-        return Some(entry);
-    }
-    if let Some(fallback) = fallback_registry {
-        return fallback.resolve_chain(aliases, weight, style);
-    }
-    None
+        run_index,
+        crate::TextPreparationPhase::RichPreparation,
+    )
 }
 
 #[expect(
@@ -6614,6 +6625,7 @@ mod tests {
         let mut style = test_resolved_style(72.0);
         style.letter_spacing_px = 12.0;
         let nodes = [RichInlineNode::Segment(RichSegment {
+            run_index: 0,
             text: String::new(),
             style: style.clone(),
             combine: false,
@@ -6868,12 +6880,14 @@ mod tests {
         let make_segments = |style: &ResolvedStyle| {
             vec![
                 RichSegment {
+                    run_index: 0,
                     text: "A".to_string(),
                     style: style.clone(),
                     combine: false,
                     decoration_runs: Vec::new(),
                 },
                 RichSegment {
+                    run_index: 0,
                     text: "B".to_string(),
                     style: style.clone(),
                     combine: false,
@@ -6906,6 +6920,7 @@ mod tests {
         let mut combine_style = default_style.clone();
         combine_style.letter_spacing_px = 3.0;
         let segment = RichSegment {
+            run_index: 0,
             text: "12".to_string(),
             style: combine_style,
             combine: true,
@@ -6962,12 +6977,14 @@ mod tests {
         let mixed_segments = || {
             vec![
                 RichSegment {
+                    run_index: 0,
                     text: "A".to_string(),
                     style: neutral_style.clone(),
                     combine: false,
                     decoration_runs: Vec::new(),
                 },
                 RichSegment {
+                    run_index: 0,
                     text: "」".to_string(),
                     style: ja_style.clone(),
                     combine: false,
@@ -7025,6 +7042,7 @@ mod tests {
 
         let ibox = RichInlineBox {
             children: vec![RichInlineNode::Segment(RichSegment {
+                run_index: 0,
                 text: "test".to_string(),
                 style: test_resolved_style(16.0),
                 combine: false,
@@ -7693,6 +7711,7 @@ mod tests {
         let border_width = 2.0;
         let ibox = RichInlineBox {
             children: vec![RichInlineNode::Segment(RichSegment {
+                run_index: 0,
                 text: "東京".to_string(),
                 style: test_resolved_style(16.0),
                 combine: false,
@@ -7757,6 +7776,7 @@ mod tests {
         let border_width = 1.0;
         let make_inline_box = |combine| RichInlineBox {
             children: vec![RichInlineNode::Segment(RichSegment {
+                run_index: 0,
                 text: "12".to_string(),
                 style: test_resolved_style(font_size_px),
                 combine,
@@ -7829,6 +7849,7 @@ mod tests {
         let ibox = RichInlineBox {
             children: vec![
                 RichInlineNode::Segment(RichSegment {
+                    run_index: 0,
                     text: "東".to_string(),
                     style: style.clone(),
                     combine: false,
@@ -7841,12 +7862,14 @@ mod tests {
                     ruby_offset_px: 0.0,
                     ruby_line_sizing: RubyLineSizing::Stable,
                     base: vec![RichSegment {
+                        run_index: 0,
                         text: "京".to_string(),
                         style: style.clone(),
                         combine: false,
                         decoration_runs: Vec::new(),
                     }],
                     rt_levels: vec![vec![RichSegment {
+                        run_index: 0,
                         text: "きょう".to_string(),
                         style: rt_style,
                         combine: false,
@@ -9006,6 +9029,7 @@ mod tests {
     #[test]
     fn expand_tabs_in_segments() {
         let mut nodes = vec![RichInlineNode::Segment(RichSegment {
+            run_index: 0,
             text: "a\tb".to_string(),
             style: test_resolved_style(16.0),
             combine: false,
@@ -9156,6 +9180,7 @@ mod tests {
     #[test]
     fn word_ellipsis_prepares_uax14_boundaries_once_for_the_candidate_set() {
         let nodes = vec![RichInlineNode::Segment(RichSegment {
+            run_index: 0,
             text: "あ".repeat(1_025),
             style: test_resolved_style(16.0),
             combine: false,
@@ -9191,12 +9216,14 @@ mod tests {
     fn normal_whitespace_drops_the_collapsible_tail_before_the_marker() {
         let style = test_resolved_style(16.0);
         let nodes = vec![RichInlineNode::Segment(RichSegment {
+            run_index: 0,
             text: "hello ".to_string(),
             style: style.clone(),
             combine: false,
             decoration_runs: Vec::new(),
         })];
         let marker = RichSegment {
+            run_index: 0,
             text: "\u{2026}".to_string(),
             style,
             combine: false,

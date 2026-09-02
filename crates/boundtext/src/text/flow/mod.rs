@@ -7,7 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
-use crate::BoundtextError;
+use crate::TextLayoutError;
 use crate::font::FontContext;
 use crate::font::line_metrics::{LineMetrics, resolve_line_metrics_for_style};
 use crate::font::shaping::{
@@ -84,6 +84,30 @@ pub(super) fn resolve_flow_baseline_offset_px(
         .baseline_offset_px
 }
 
+fn flow_preparation_error(font_ctx: &FontContext<'_>) -> TextLayoutError {
+    let has_resolved_font = font_ctx
+        .registry
+        .resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style)
+        .or_else(|| {
+            font_ctx.fallback_registry.and_then(|fallback_registry| {
+                fallback_registry.resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style)
+            })
+        })
+        .is_some();
+    if has_resolved_font {
+        TextLayoutError::PreparationFailed {
+            phase: crate::TextPreparationPhase::FlowPreparation,
+        }
+    } else {
+        TextLayoutError::FontUnavailable {
+            run_index: 0,
+            families: font_ctx.families.to_vec(),
+            weight: font_ctx.weight,
+            style: font_ctx.style.clone(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Region providers
 // ---------------------------------------------------------------------------
@@ -132,13 +156,21 @@ pub trait RegionProvider {
     /// # Errors
     ///
     /// Returns a typed error when geometry cannot answer the complete query.
-    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, crate::BoundtextError>;
+    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, crate::RegionProviderError>;
 
     /// Declares whether font-size fit is proven monotone for this provider.
     /// The conservative default requires an exact descending grid.
     fn fit_search_kind(&self) -> FitSearchKind {
         FitSearchKind::Uncertified
     }
+}
+
+/// Operation-internal provider after public failures and deterministic budgets
+/// have been normalized into the single text-layout error.
+pub(crate) trait LayoutRegionProvider {
+    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, TextLayoutError>;
+
+    fn fit_search_kind(&self) -> FitSearchKind;
 }
 
 /// Maximum number of distinct geometry queries in one public flow layout.
@@ -180,7 +212,7 @@ impl From<RegionQuery> for RegionQueryKey {
 /// Per-layout deterministic cache and budget around an arbitrary provider.
 struct BudgetedRegionProvider<'a, P> {
     source: &'a P,
-    cache: RefCell<BTreeMap<RegionQueryKey, Result<Vec<FlowRegion>, BoundtextError>>>,
+    cache: RefCell<BTreeMap<RegionQueryKey, Result<Vec<FlowRegion>, TextLayoutError>>>,
     returned_region_count: Cell<usize>,
     max_query_count: usize,
     max_returned_regions: usize,
@@ -209,19 +241,22 @@ impl<'a, P> BudgetedRegionProvider<'a, P> {
     }
 }
 
-impl<P: RegionProvider> RegionProvider for BudgetedRegionProvider<'_, P> {
-    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, BoundtextError> {
+impl<P: RegionProvider> LayoutRegionProvider for BudgetedRegionProvider<'_, P> {
+    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, TextLayoutError> {
         let key = RegionQueryKey::from(query);
         if let Some(cached) = self.cache.borrow().get(&key) {
             return cached.clone();
         }
         if self.cache.borrow().len() >= self.max_query_count {
-            return Err(BoundtextError::RegionQueryLimit {
+            return Err(TextLayoutError::RegionQueryLimit {
                 limit: self.max_query_count,
             });
         }
 
-        let mut response = self.source.regions(query);
+        let mut response = self
+            .source
+            .regions(query)
+            .map_err(|reason| TextLayoutError::RegionProviderFailure { reason });
         #[cfg(any(test, feature = "phase-trace"))]
         crate::phase_trace::record_region_query(response.as_ref().map_or(0, std::vec::Vec::len));
         if let Ok(regions) = &response {
@@ -230,7 +265,7 @@ impl<P: RegionProvider> RegionProvider for BudgetedRegionProvider<'_, P> {
                 .get()
                 .saturating_add(regions.len());
             if required > self.max_returned_regions {
-                response = Err(BoundtextError::RegionIntervalLimit {
+                response = Err(TextLayoutError::RegionIntervalLimit {
                     required,
                     limit: self.max_returned_regions,
                 });
@@ -257,7 +292,10 @@ mod region_budget_tests {
     }
 
     impl RegionProvider for CountingProvider {
-        fn regions(&self, _query: RegionQuery) -> Result<Vec<FlowRegion>, BoundtextError> {
+        fn regions(
+            &self,
+            _query: RegionQuery,
+        ) -> Result<Vec<FlowRegion>, crate::RegionProviderError> {
             self.calls.set(self.calls.get() + 1);
             Ok((0..self.returned_regions)
                 .map(|index| FlowRegion {
@@ -293,7 +331,7 @@ mod region_budget_tests {
             .expect_err("third distinct query exceeds the budget");
 
         assert_eq!(source.calls.get(), 2);
-        assert_eq!(error, BoundtextError::RegionQueryLimit { limit: 2 });
+        assert_eq!(error, TextLayoutError::RegionQueryLimit { limit: 2 });
     }
 
     #[test]
@@ -318,7 +356,7 @@ mod region_budget_tests {
         };
         let provider = BudgetedRegionProvider::with_limits(&source, 2, 1);
 
-        let expected = BoundtextError::RegionIntervalLimit {
+        let expected = TextLayoutError::RegionIntervalLimit {
             required: 2,
             limit: 1,
         };
@@ -351,29 +389,49 @@ pub struct FlowBounds {
 /// Returns a typed error for invalid queries, provider failures, or invalid
 /// intervals.
 pub(crate) fn query_regions(
-    region_provider: &impl RegionProvider,
+    region_provider: &impl LayoutRegionProvider,
     writing_mode: WritingMode,
     flow_bounds: &FlowBounds,
     physical_cross_start_px: f64,
     physical_cross_end_px: f64,
     min_inline_size_px: f64,
-) -> Result<Vec<(f64, f64)>, crate::BoundtextError> {
-    if !flow_bounds.x.is_finite()
-        || !flow_bounds.y.is_finite()
-        || !flow_bounds.width.is_finite()
-        || !flow_bounds.height.is_finite()
-        || flow_bounds.width < 0.0
-        || flow_bounds.height < 0.0
-        || !physical_cross_start_px.is_finite()
-        || !physical_cross_end_px.is_finite()
-        || physical_cross_end_px < physical_cross_start_px
-        || !min_inline_size_px.is_finite()
-        || min_inline_size_px < 0.0
-    {
-        return Err(crate::BoundtextError::InvalidRegionQuery(
-            "flow bounds, cross-axis bounds, and minimum inline size must be finite and ordered"
-                .to_string(),
-        ));
+) -> Result<Vec<(f64, f64)>, crate::TextLayoutError> {
+    use crate::{RegionQueryError, RegionQueryField};
+
+    for (value, field) in [
+        (flow_bounds.x, RegionQueryField::FlowX),
+        (flow_bounds.y, RegionQueryField::FlowY),
+        (flow_bounds.width, RegionQueryField::FlowWidth),
+        (flow_bounds.height, RegionQueryField::FlowHeight),
+        (physical_cross_start_px, RegionQueryField::CrossStart),
+        (physical_cross_end_px, RegionQueryField::CrossEnd),
+        (min_inline_size_px, RegionQueryField::MinimumInlineSize),
+    ] {
+        if !value.is_finite() {
+            return Err(crate::TextLayoutError::InvalidRegionQuery {
+                reason: RegionQueryError::NonFiniteBounds { field },
+            });
+        }
+    }
+    for (value, field) in [
+        (flow_bounds.width, RegionQueryField::FlowWidth),
+        (flow_bounds.height, RegionQueryField::FlowHeight),
+    ] {
+        if value < 0.0 {
+            return Err(crate::TextLayoutError::InvalidRegionQuery {
+                reason: RegionQueryError::NegativeFlowExtent { field },
+            });
+        }
+    }
+    if physical_cross_end_px < physical_cross_start_px {
+        return Err(crate::TextLayoutError::InvalidRegionQuery {
+            reason: RegionQueryError::ReversedCrossRange,
+        });
+    }
+    if min_inline_size_px < 0.0 {
+        return Err(crate::TextLayoutError::InvalidRegionQuery {
+            reason: RegionQueryError::NegativeMinimumInlineSize,
+        });
     }
     let (cross_start_px, cross_end_px) = match writing_mode {
         WritingMode::HorizontalTb => (
@@ -397,29 +455,51 @@ pub(crate) fn query_regions(
         WritingMode::VerticalRl => (flow_bounds.y, flow_bounds.y + flow_bounds.height),
     };
     for (index, region) in regions.iter().enumerate() {
-        if !region.inline_start_px.is_finite() || !region.inline_size_px.is_finite() {
-            return Err(crate::BoundtextError::InvalidFlowRegion {
+        if !region.inline_start_px.is_finite() {
+            return Err(crate::TextLayoutError::InvalidFlowRegion {
                 index,
-                reason: "inline start and size must be finite".to_string(),
+                reason: crate::FlowRegionError::NonFiniteInterval {
+                    field: crate::FlowRegionField::InlineStart,
+                },
+            });
+        }
+        if !region.inline_size_px.is_finite() {
+            return Err(crate::TextLayoutError::InvalidFlowRegion {
+                index,
+                reason: crate::FlowRegionError::NonFiniteInterval {
+                    field: crate::FlowRegionField::InlineSize,
+                },
             });
         }
         if region.inline_size_px < min_inline_size_px {
-            return Err(crate::BoundtextError::InvalidFlowRegion {
+            return Err(crate::TextLayoutError::InvalidFlowRegion {
                 index,
-                reason: format!(
-                    "inline size {} is below the requested minimum {}",
-                    region.inline_size_px, min_inline_size_px
-                ),
+                reason: crate::FlowRegionError::IntervalBelowMinimum {
+                    actual: region.inline_size_px,
+                    minimum: min_inline_size_px,
+                },
             });
         }
         let region_end = region.inline_start_px + region.inline_size_px;
-        if !region_end.is_finite()
-            || region.inline_start_px < inline_frame_start - INLINE_CONTAINMENT_EPSILON
+        if !region_end.is_finite() {
+            return Err(crate::TextLayoutError::InvalidFlowRegion {
+                index,
+                reason: crate::FlowRegionError::NonFiniteInterval {
+                    field: crate::FlowRegionField::InlineEnd,
+                },
+            });
+        }
+        if region.inline_start_px < inline_frame_start - INLINE_CONTAINMENT_EPSILON
             || region_end > inline_frame_end + INLINE_CONTAINMENT_EPSILON
         {
-            return Err(crate::BoundtextError::InvalidFlowRegion {
+            return Err(crate::TextLayoutError::InvalidFlowRegion {
                 index,
-                reason: "region must be clipped to the flow frame's inline axis".to_string(),
+                reason: crate::FlowRegionError::IntervalOutsideFrame {
+                    start: region.inline_start_px,
+                    end: region_end,
+                    frame_start: inline_frame_start,
+                    frame_end: inline_frame_end,
+                },
             });
         }
     }
@@ -431,9 +511,12 @@ pub(crate) fn query_regions(
     for index in 1..regions.len() {
         let previous_end = regions[index - 1].inline_start_px + regions[index - 1].inline_size_px;
         if previous_end > regions[index].inline_start_px + INLINE_CONTAINMENT_EPSILON {
-            return Err(crate::BoundtextError::InvalidFlowRegion {
+            return Err(crate::TextLayoutError::InvalidFlowRegion {
                 index,
-                reason: "regions must not overlap".to_string(),
+                reason: crate::FlowRegionError::OverlappingIntervals {
+                    previous_end,
+                    current_start: regions[index].inline_start_px,
+                },
             });
         }
     }
@@ -730,7 +813,7 @@ fn run_flow_loop(
     font_size_px: f64,
     line_height_px: f64,
     fb: &FlowBounds,
-    region_provider: &impl RegionProvider,
+    region_provider: &impl LayoutRegionProvider,
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
@@ -741,7 +824,7 @@ fn run_flow_loop(
         &paragraph::LayoutLine,
         &paragraph::ShapedParagraph,
     ),
-) -> Result<BandLoopResult, crate::BoundtextError> {
+) -> Result<BandLoopResult, crate::TextLayoutError> {
     let mut cursor = BreakCursor::new();
     let mut band_index = 0usize;
     let mut emitted_line_count = 0usize;
@@ -988,7 +1071,7 @@ pub fn measure_flow(
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> Result<FlowMeasure, crate::BoundtextError> {
+) -> Result<FlowMeasure, crate::TextLayoutError> {
     let budgeted_region_provider = BudgetedRegionProvider::new(region_provider);
     measure_flow_with_budgeted_provider(
         pp,
@@ -1007,11 +1090,11 @@ fn measure_flow_with_budgeted_provider(
     font_size_px: f64,
     line_height_px: f64,
     fb: &FlowBounds,
-    region_provider: &impl RegionProvider,
+    region_provider: &impl LayoutRegionProvider,
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> Result<FlowMeasure, crate::BoundtextError> {
+) -> Result<FlowMeasure, crate::TextLayoutError> {
     let mut contained = true;
     let loop_result = run_flow_loop(
         pp,
@@ -1050,7 +1133,7 @@ pub fn measure_flow_vertical(
     min_region_height: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> Result<FlowMeasure, crate::BoundtextError> {
+) -> Result<FlowMeasure, crate::TextLayoutError> {
     let budgeted_region_provider = BudgetedRegionProvider::new(region_provider);
     measure_flow_vertical_with_budgeted_provider(
         pp,
@@ -1069,11 +1152,11 @@ fn measure_flow_vertical_with_budgeted_provider(
     font_size_px: f64,
     column_width: f64,
     fb: &FlowBounds,
-    region_provider: &impl RegionProvider,
+    region_provider: &impl LayoutRegionProvider,
     min_region_height: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> Result<FlowMeasure, crate::BoundtextError> {
+) -> Result<FlowMeasure, crate::TextLayoutError> {
     let mut cursor = BreakCursor::new();
     let mut column_index = 0usize;
     let mut emitted = 0usize;
@@ -1158,7 +1241,7 @@ pub fn measure_flow_inline_with_styles(
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> Result<FlowMeasure, crate::BoundtextError> {
+) -> Result<FlowMeasure, crate::TextLayoutError> {
     let budgeted_region_provider = BudgetedRegionProvider::new(region_provider);
     measure_flow_inline_with_styles_and_budgeted_provider(
         shaped_runs,
@@ -1185,11 +1268,11 @@ fn measure_flow_inline_with_styles_and_budgeted_provider(
     line_height: Option<f64>,
     explicit_line_height_px: Option<f64>,
     fb: &FlowBounds,
-    region_provider: &impl RegionProvider,
+    region_provider: &impl LayoutRegionProvider,
     min_region_width: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> Result<FlowMeasure, crate::BoundtextError> {
+) -> Result<FlowMeasure, crate::TextLayoutError> {
     let grapheme_count = shaped_runs.graphemes.len();
     let mut cursor = BreakCursor::new();
     let mut emitted = 0usize;
@@ -1330,7 +1413,7 @@ pub fn measure_flow_vertical_inline_with_styles(
     min_region_height: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> Result<FlowMeasure, crate::BoundtextError> {
+) -> Result<FlowMeasure, crate::TextLayoutError> {
     let budgeted_region_provider = BudgetedRegionProvider::new(region_provider);
     measure_flow_vertical_inline_with_styles_and_budgeted_provider(
         shaped_runs,
@@ -1357,11 +1440,11 @@ fn measure_flow_vertical_inline_with_styles_and_budgeted_provider(
     line_height: Option<f64>,
     explicit_line_height_px: Option<f64>,
     fb: &FlowBounds,
-    region_provider: &impl RegionProvider,
+    region_provider: &impl LayoutRegionProvider,
     min_region_height: f64,
     max_lines: Option<usize>,
     wrap: WrapMode,
-) -> Result<FlowMeasure, crate::BoundtextError> {
+) -> Result<FlowMeasure, crate::TextLayoutError> {
     let grapheme_count = shaped_runs.graphemes.len();
     let mut cursor = BreakCursor::new();
     let mut emitted = 0usize;
@@ -1525,9 +1608,11 @@ pub fn compute_ruby_overflow(flow_layout: &FlowLayoutResult) -> (f64, f64) {
 pub fn layout_flow_simple(
     req: &FlowSimpleRequest<'_>,
     font_ctx: &FontContext<'_>,
-) -> Result<FlowSimpleResult, String> {
+) -> Result<FlowSimpleResult, TextLayoutError> {
     if req.line_widths.is_empty() {
-        return Err("line_widths must not be empty".to_string());
+        return Err(TextLayoutError::InvalidRequest {
+            reason: crate::TextRequestError::MissingLineWidths,
+        });
     }
     if req.text.is_empty() {
         return Ok(FlowSimpleResult {
@@ -1556,19 +1641,7 @@ pub fn layout_flow_simple(
         font_feature_settings: req.font_feature_settings.clone(),
     };
 
-    // Verify font can be resolved
-    if font_ctx
-        .registry
-        .resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style)
-        .is_none()
-    {
-        return Err(format!(
-            "Font not found: family={:?}, weight={}, style={:?}",
-            font_ctx.families, font_ctx.weight, font_ctx.style
-        ));
-    }
-
-    let pp = paragraph::shape_paragraph_with_options(
+    let Some(pp) = paragraph::shape_paragraph_with_options(
         req.text,
         font_ctx,
         req.language,
@@ -1578,8 +1651,9 @@ pub fn layout_flow_simple(
         None,
         req.letter_spacing_px,
         true,
-    )
-    .ok_or_else(|| "Failed to prepare paragraph: shaping failed".to_string())?;
+    ) else {
+        return layout_flow_simple_fallback(req, font_ctx);
+    };
 
     let line_height_px =
         resolve_flow_line_height_px(font_ctx, req.font_size_px, req.line_height, None);
@@ -1604,7 +1678,9 @@ pub fn layout_flow_simple(
             break;
         };
         if cursor.char_index <= previous_char_index && !previous_pending_empty_line {
-            return Err("Simple flow layout made no forward progress".to_string());
+            return Err(TextLayoutError::InvariantViolation {
+                invariant: crate::TextLayoutInvariant::FlowMadeNoProgress,
+            });
         }
         let (char_start, char_end, inline_advance_px) =
             match (line.fragments.first(), line.fragments.last()) {
@@ -1642,7 +1718,7 @@ pub fn layout_flow_simple(
 fn layout_flow_simple_fallback(
     req: &FlowSimpleRequest<'_>,
     font_ctx: &FontContext<'_>,
-) -> Result<FlowSimpleResult, String> {
+) -> Result<FlowSimpleResult, TextLayoutError> {
     let spans = vec![TextSpanInput {
         text: req.text.to_string(),
         font_family: font_ctx.families.to_vec(),
@@ -1676,9 +1752,11 @@ fn layout_flow_simple_fallback(
         req.hanging_punctuation,
         &[None],
         vertical,
-    );
+    )?;
     if shaped.graphemes.is_empty() {
-        return Err("Failed to prepare fallback flow: shaping failed".to_string());
+        return Err(TextLayoutError::PreparationFailed {
+            phase: crate::TextPreparationPhase::FlowPreparation,
+        });
     }
 
     let mut cursor = BreakCursor::new();
@@ -1708,7 +1786,9 @@ fn layout_flow_simple_fallback(
             break;
         };
         if cursor.char_index <= previous_char_index && !previous_pending_empty_line {
-            return Err("Fallback flow layout made no forward progress".to_string());
+            return Err(TextLayoutError::InvariantViolation {
+                invariant: crate::TextLayoutInvariant::FlowMadeNoProgress,
+            });
         }
         let (Some(first_fragment), Some(last_fragment)) =
             (line.fragments.first(), line.fragments.last())
@@ -1749,7 +1829,7 @@ fn layout_flow_simple_fallback(
 fn layout_flow_simple_vertical(
     req: &FlowSimpleRequest<'_>,
     font_ctx: &FontContext<'_>,
-) -> Result<FlowSimpleResult, String> {
+) -> Result<FlowSimpleResult, TextLayoutError> {
     let shape_options = ShapeOptions {
         writing_mode: Some("vertical-rl".to_string()),
         language: match req.language {
@@ -1766,25 +1846,13 @@ fn layout_flow_simple_vertical(
         font_feature_settings: req.font_feature_settings.clone(),
     };
 
-    if font_ctx
-        .registry
-        .resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style)
-        .is_none()
-    {
-        return Err(format!(
-            "Font not found: family={:?}, weight={}, style={:?}",
-            font_ctx.families, font_ctx.weight, font_ctx.style
-        ));
-    }
-
     let glyphs = vertical::shape_text_vertical(
         font_ctx,
         req.text,
         req.font_size_px,
         req.letter_spacing_px,
         &shape_options,
-    )
-    .ok_or_else(|| "Failed to prepare vertical flow: shaping failed".to_string())?;
+    )?;
 
     let line_height_px =
         resolve_flow_line_height_px(font_ctx, req.font_size_px, req.line_height, None);
@@ -1848,7 +1916,7 @@ pub fn layout_flow_with_regions(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     region_provider: &impl RegionProvider,
-) -> Result<FlowLayoutResult, BoundtextError> {
+) -> Result<FlowLayoutResult, TextLayoutError> {
     validate_flow_request_resources(req)?;
     let budgeted_regions = BudgetedRegionProvider::new(region_provider);
     let flow_layout = layout_flow_with_regions_budgeted(req, font_ctx, &budgeted_regions)?;
@@ -1859,15 +1927,15 @@ pub fn layout_flow_with_regions(
 fn layout_flow_with_regions_budgeted(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl RegionProvider,
-) -> Result<FlowLayoutResult, BoundtextError> {
+    region_provider: &impl LayoutRegionProvider,
+) -> Result<FlowLayoutResult, TextLayoutError> {
     let has_spans = req.spans.is_some_and(|spans| !spans.is_empty());
     let has_rich_text = req.rich_text.is_some_and(|nodes| !nodes.is_empty());
 
     if has_spans && has_rich_text {
-        return Err(BoundtextError::FlowLayout(
-            "spans and richText are mutually exclusive".to_string(),
-        ));
+        return Err(TextLayoutError::InvalidRequest {
+            reason: crate::TextRequestError::ConflictingTextSources,
+        });
     }
 
     if has_rich_text {
@@ -1919,24 +1987,28 @@ fn layout_flow_with_regions_budgeted(
         return layout_flow_inline(req, font_ctx, region_provider);
     }
 
+    // The font-unit paragraph cache cannot represent per-grapheme fallback.
+    // Preserve the established inline-run path for a plain authored fallback
+    // chain without introducing a second font resolver.
+    if font_ctx.families.len() > 1 {
+        let fallback_spans = [FlowTextSpan::plain(req.text.to_string())];
+        let fallback_request = FlowLayoutRequest {
+            text: "",
+            spans: Some(&fallback_spans),
+            ..req.clone()
+        };
+        if req.writing_mode == WritingMode::VerticalRl {
+            return layout_flow_vertical_inline(&fallback_request, font_ctx, region_provider);
+        }
+        return layout_flow_inline(&fallback_request, font_ctx, region_provider);
+    }
+
     // Dispatch to vertical path when writing mode is vertical-rl
     if req.writing_mode == WritingMode::VerticalRl {
         return layout_flow_vertical(req, font_ctx, region_provider);
     }
 
     // --- Horizontal, single-font path ---
-
-    // Verify font can be resolved
-    if font_ctx
-        .registry
-        .resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style)
-        .is_none()
-    {
-        return Err(BoundtextError::FlowLayout(format!(
-            "Font not found: family={:?}, weight={}, style={:?}",
-            font_ctx.families, font_ctx.weight, font_ctx.style
-        )));
-    }
 
     let pp = paragraph::shape_paragraph_with_options(
         req.text,
@@ -1949,9 +2021,7 @@ fn layout_flow_with_regions_budgeted(
         req.letter_spacing_px,
         true,
     )
-    .ok_or_else(|| {
-        BoundtextError::FlowLayout("Failed to prepare paragraph: shaping failed".to_string())
-    })?;
+    .ok_or_else(|| flow_preparation_error(font_ctx))?;
 
     let min_region_width_fixed = req.min_region_width;
     let fb = &req.flow_bounds;
@@ -2107,7 +2177,7 @@ pub fn layout_resolved_flow_with_regions(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     region_provider: &impl RegionProvider,
-) -> Result<TextLayoutResult, BoundtextError> {
+) -> Result<TextLayoutResult, TextLayoutError> {
     validate_flow_request_resources(req)?;
     let budgeted_regions = BudgetedRegionProvider::new(region_provider);
     let layout_result =
@@ -2142,16 +2212,16 @@ fn record_flow_materialization(flow_layout: &FlowLayoutResult) {
     let _ = flow_layout;
 }
 
-fn validate_flow_request_resources(req: &FlowLayoutRequest<'_>) -> Result<(), BoundtextError> {
+fn validate_flow_request_resources(req: &FlowLayoutRequest<'_>) -> Result<(), TextLayoutError> {
     let Some(nodes) = req.rich_text else {
         return Ok(());
     };
     validate_rich_text_resources(nodes).map_err(|violation| match violation {
         RichTextResourceViolation::Depth { actual, limit } => {
-            BoundtextError::RichTextDepthLimit { actual, limit }
+            TextLayoutError::RichTextDepthLimit { actual, limit }
         }
         RichTextResourceViolation::InlineRects { required, limit } => {
-            BoundtextError::InlineRectLimit { required, limit }
+            TextLayoutError::InlineRectLimit { required, limit }
         }
     })
 }
@@ -2182,8 +2252,8 @@ fn record_resolved_flow_materialization(layout_result: &TextLayoutResult) {
 fn layout_resolved_flow_with_regions_budgeted(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl RegionProvider,
-) -> Result<TextLayoutResult, BoundtextError> {
+    region_provider: &impl LayoutRegionProvider,
+) -> Result<TextLayoutResult, TextLayoutError> {
     let mut resolved_req = req.clone();
     let resolved_spans;
     let resolved_rich_text;
@@ -2358,19 +2428,8 @@ fn layout_resolved_flow_with_regions_budgeted(
 fn layout_flow_vertical(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl RegionProvider,
-) -> Result<FlowLayoutResult, BoundtextError> {
-    if font_ctx
-        .registry
-        .resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style)
-        .is_none()
-    {
-        return Err(BoundtextError::FlowLayout(format!(
-            "Font not found: family={:?}, weight={}, style={:?}",
-            font_ctx.families, font_ctx.weight, font_ctx.style
-        )));
-    }
-
+    region_provider: &impl LayoutRegionProvider,
+) -> Result<FlowLayoutResult, TextLayoutError> {
     let pp = paragraph::shape_paragraph_with_options(
         req.text,
         font_ctx,
@@ -2382,9 +2441,7 @@ fn layout_flow_vertical(
         req.letter_spacing_px,
         true,
     )
-    .ok_or_else(|| {
-        BoundtextError::FlowLayout("Failed to prepare paragraph: shaping failed".to_string())
-    })?;
+    .ok_or_else(|| flow_preparation_error(font_ctx))?;
 
     let min_region_height_fixed = req.min_region_width;
     let fb = &req.flow_bounds;
@@ -2569,8 +2626,8 @@ fn layout_flow_vertical(
 fn layout_flow_inline(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl RegionProvider,
-) -> Result<FlowLayoutResult, BoundtextError> {
+    region_provider: &impl LayoutRegionProvider,
+) -> Result<FlowLayoutResult, TextLayoutError> {
     let (settled_font_size, fit_overflow) = match req.fit {
         Some("shrink") => {
             let min_size = req.min_font_size_px.unwrap_or(DEFAULT_MIN_FONT_SIZE);
@@ -2612,7 +2669,7 @@ fn layout_flow_inline(
     }?;
 
     let (_scaled_spans, text_spans, _ruby_info, shaped_runs) =
-        prepare_inline_flow_inputs(req, font_ctx, settled_font_size);
+        prepare_inline_flow_inputs(req, font_ctx, settled_font_size)?;
     let grapheme_count = shaped_runs.graphemes.len();
     let line_height_px = resolve_flow_line_height_px(
         font_ctx,
@@ -2775,8 +2832,8 @@ fn layout_flow_inline(
 fn layout_flow_vertical_inline(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl RegionProvider,
-) -> Result<FlowLayoutResult, BoundtextError> {
+    region_provider: &impl LayoutRegionProvider,
+) -> Result<FlowLayoutResult, TextLayoutError> {
     let (settled_font_size, fit_overflow) = match req.fit {
         Some("shrink") => {
             let min_size = req.min_font_size_px.unwrap_or(DEFAULT_MIN_FONT_SIZE);
@@ -2818,7 +2875,7 @@ fn layout_flow_vertical_inline(
     }?;
 
     let (_scaled_spans, text_spans, _ruby_info, shaped_runs) =
-        prepare_inline_flow_inputs(req, font_ctx, settled_font_size);
+        prepare_inline_flow_inputs(req, font_ctx, settled_font_size)?;
     let grapheme_count = shaped_runs.graphemes.len();
     let column_width = resolve_flow_line_height_px(
         font_ctx,

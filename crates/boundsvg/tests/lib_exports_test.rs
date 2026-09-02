@@ -147,3 +147,61 @@ fn layout_transition_has_one_production_operation_and_no_probe_export() {
     assert!(!source.contains("probe_layout_transition"));
     assert!(!source.contains("probeLayoutTransition"));
 }
+
+#[test]
+fn all_text_layout_exports_use_the_one_total_wasm_family_owner() {
+    const EXPECTED_EXPORTS: [&str; 6] = [
+        "layout_text_flow",
+        "layout_text_flow_with_exclusions",
+        "measure_text_block",
+        "shrinkwrap_text",
+        "shrinkwrap_flow",
+        "measure_intrinsic_inline_size",
+    ];
+
+    let source = include_str!("../src/lib.rs");
+    let mut discovered = source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("pub fn "))
+        .filter_map(|tail| tail.split('(').next())
+        .filter(|name| {
+            name.contains("text_flow")
+                || name.contains("measure_text")
+                || name.contains("shrinkwrap")
+                || name.contains("intrinsic_inline_size")
+        })
+        .collect::<Vec<_>>();
+    discovered.sort_unstable();
+    let mut expected = EXPECTED_EXPORTS.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        discovered, expected,
+        "update the family registry and raw fixture for a new route"
+    );
+
+    for export in EXPECTED_EXPORTS {
+        let signature = format!("pub fn {export}(");
+        let start = source.find(&signature).expect("text-layout export");
+        let after_signature = &source[start + signature.len()..];
+        let end = after_signature
+            .find("\n    pub fn ")
+            .unwrap_or(after_signature.len());
+        let body = &after_signature[..end];
+        assert_eq!(
+            body.matches("run_text_layout_wasm_operation(").count(),
+            1,
+            "{export} must delegate exactly once to the family owner"
+        );
+        for forbidden in [
+            "catch_unwind_to_js",
+            "JsValue::from_str",
+            "render_error_envelope(",
+            "format!(",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "{export} retains route-local {forbidden}"
+            );
+        }
+    }
+}

@@ -835,7 +835,15 @@ describe("TextOnPath real WASM pipeline", () => {
       ),
     );
     expect(() => engine.renderToIR(nestedMissingFont)).toThrow(
-      expect.objectContaining({ code: "FONT_ALIAS_NOT_REGISTERED" }),
+      expect.objectContaining({
+        code: "TEXT_FONT_UNAVAILABLE",
+        stage: "text",
+        context: expect.objectContaining({
+          operation: "renderTextLayout",
+          runIndex: 0,
+          requestedAliases: ["Missing"],
+        }),
+      }),
     );
 
     const invalidEmptyInline = createElement(

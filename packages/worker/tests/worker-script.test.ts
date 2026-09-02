@@ -1,3 +1,4 @@
+import { FatalError } from "@boundsvg/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkerRequest, WorkerResponse } from "../src/protocol.js";
 
@@ -198,6 +199,51 @@ describe("worker script measurement dispatch", () => {
         code: "WORKER_UNHANDLED_ERROR",
         message: "Unknown worker failure",
         stage: "engine",
+      },
+    });
+  });
+
+  it("serializes a known text-layout FatalError without changing any field", async () => {
+    scope.send({ id: 1, type: "init", fonts: [] });
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(1));
+
+    workerEngineMethods.layoutTextFlow.mockImplementationOnce(() => {
+      throw new FatalError(
+        "TEXT_FONT_UNAVAILABLE",
+        "No requested font is available for text layout.",
+        {
+          stage: "text",
+          context: {
+            operation: "layoutTextFlow",
+            runIndex: 0,
+            requestedAliases: ["Missing"],
+            omittedAliasCount: 0,
+            fontWeight: 400,
+            fontStyle: "normal",
+          },
+        },
+      );
+    });
+
+    scope.send({ id: 2, type: "layout-text-flow", input: { marker: 2 } as never });
+
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(2));
+    expect(scope.responses[1]).toEqual({
+      id: 2,
+      type: "error",
+      error: {
+        severity: "fatal",
+        code: "TEXT_FONT_UNAVAILABLE",
+        message: "No requested font is available for text layout.",
+        stage: "text",
+        context: {
+          operation: "layoutTextFlow",
+          runIndex: 0,
+          requestedAliases: ["Missing"],
+          omittedAliasCount: 0,
+          fontWeight: 400,
+          fontStyle: "normal",
+        },
       },
     });
   });

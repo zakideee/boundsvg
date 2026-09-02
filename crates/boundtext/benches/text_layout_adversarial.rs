@@ -237,7 +237,10 @@ fn benchmark_ellipsis_candidate_budget(font_context: &FontContext<'_>) -> Benchm
 struct UncertifiedRectProvider;
 
 impl RegionProvider for UncertifiedRectProvider {
-    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, boundtext::BoundtextError> {
+    fn regions(
+        &self,
+        query: RegionQuery,
+    ) -> Result<Vec<FlowRegion>, boundtext::RegionProviderError> {
         if query.cross_start_px >= 0.0 && query.cross_end_px <= 72.0 {
             Ok(vec![FlowRegion {
                 inline_start_px: 0.0,
@@ -256,7 +259,10 @@ impl RegionProvider for UncertifiedRectProvider {
 struct UncertifiedNarrowProvider;
 
 impl RegionProvider for UncertifiedNarrowProvider {
-    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, boundtext::BoundtextError> {
+    fn regions(
+        &self,
+        query: RegionQuery,
+    ) -> Result<Vec<FlowRegion>, boundtext::RegionProviderError> {
         if query.cross_start_px >= 0.0 && query.cross_end_px <= 2_000.0 {
             Ok(vec![FlowRegion {
                 inline_start_px: 0.0,

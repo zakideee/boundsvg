@@ -19,7 +19,10 @@ struct RectRegions {
 }
 
 impl RegionProvider for RectRegions {
-    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, boundtext::BoundtextError> {
+    fn regions(
+        &self,
+        query: RegionQuery,
+    ) -> Result<Vec<FlowRegion>, boundtext::RegionProviderError> {
         let (inline_size, cross_limit) = match query.writing_mode {
             WritingMode::HorizontalTb => (self.width, self.height),
             WritingMode::VerticalRl => (self.height, self.width),
@@ -422,7 +425,7 @@ fn rich_flow_rejects_an_unbounded_exact_candidate_set() {
         .expect_err("candidate budget must fail before flow projection");
     assert_eq!(
         error,
-        boundtext::BoundtextError::EllipsisCandidateLimit {
+        boundtext::TextLayoutError::EllipsisCandidateLimit {
             required: 1_026,
             limit: 1_024,
         }

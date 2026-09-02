@@ -8,6 +8,23 @@ mod tests {
     use crate::text::inline_runs::{RunSegment, apply_inline_fragments, shape_inline_runs};
     use crate::text::types::{Line, TextOrientation, TextSpanInput};
 
+    fn fixture_registry(alias: &str) -> FontRegistry {
+        let mut registry = FontRegistry::new();
+        registry
+            .register(
+                std::fs::read(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"
+                ))
+                .expect("fixture font"),
+                alias.to_string(),
+                400,
+                FontStyle::Normal,
+            )
+            .expect("register fixture font");
+        registry
+    }
+
     fn mock_span(text: &str, font_size_px: f64) -> TextSpanInput {
         TextSpanInput {
             text: text.to_string(),
@@ -40,17 +57,17 @@ mod tests {
             weight: 400,
             style: &FontStyle::Normal,
         };
-        let (glyphs, segments) = shape_inline_runs(&spans, &font_ctx, 0.0);
+        let (glyphs, segments) =
+            shape_inline_runs(&spans, &font_ctx, 0.0).expect("inline runs should shape");
         assert!(glyphs.is_empty());
         assert!(segments.is_empty());
     }
 
     #[test]
     fn test_run_segments_grapheme_tracking() {
-        // Without real fonts, glyphs will be empty, but segments should track graphemes correctly
         let spans = vec![mock_span("Hello", 16.0), mock_span(" World", 20.0)];
-        let registry = FontRegistry::new();
-        let families: Vec<String> = Vec::new();
+        let registry = fixture_registry("TestFont");
+        let families = vec!["TestFont".to_string()];
         let font_ctx = FontContext {
             registry: &registry,
             fallback_registry: None,
@@ -58,7 +75,8 @@ mod tests {
             weight: 400,
             style: &FontStyle::Normal,
         };
-        let (_glyphs, segments) = shape_inline_runs(&spans, &font_ctx, 0.0);
+        let (_glyphs, segments) =
+            shape_inline_runs(&spans, &font_ctx, 0.0).expect("inline runs should shape");
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].start, 0);
         assert_eq!(segments[0].end, 5); // "Hello" = 5 graphemes
@@ -78,7 +96,8 @@ mod tests {
         }];
         let segments: Vec<RunSegment> = Vec::new();
         let registry = FontRegistry::new();
-        apply_inline_fragments(&mut lines, &segments, &registry, None);
+        apply_inline_fragments(&mut lines, &segments, &registry, None)
+            .expect("inline fragments should shape");
         assert!(lines[0].fragments.is_none());
     }
 
@@ -101,8 +120,8 @@ mod tests {
             text_decoration: None,
             decoration_transport_only: false,
         }];
-        let registry = FontRegistry::new();
-        let families: Vec<String> = Vec::new();
+        let registry = fixture_registry("TestFont");
+        let families = vec!["TestFont".to_string()];
         let font_ctx = FontContext {
             registry: &registry,
             fallback_registry: None,
@@ -110,7 +129,8 @@ mod tests {
             weight: 400,
             style: &FontStyle::Normal,
         };
-        let (_glyphs, segments) = shape_inline_runs(&spans, &font_ctx, 0.0);
+        let (_glyphs, segments) =
+            shape_inline_runs(&spans, &font_ctx, 0.0).expect("inline runs should shape");
         let mut lines = vec![Line {
             text: "AB".to_string(),
             glyphs: Vec::new(),
@@ -120,7 +140,8 @@ mod tests {
             positioned_glyphs: None,
         }];
 
-        apply_inline_fragments(&mut lines, &segments, &registry, None);
+        apply_inline_fragments(&mut lines, &segments, &registry, None)
+            .expect("inline fragments should shape");
 
         let fragment = &lines[0]
             .fragments

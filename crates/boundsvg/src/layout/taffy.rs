@@ -107,10 +107,14 @@ pub(super) fn compute_layout_core(
             .text_errors
             .remove(&failed_node_id)
             .ok_or_else(|| EngineError::Layout("Text measurement failed".to_string()))?;
-        if let EngineError::Structured { node_id, .. } = &mut error
-            && node_id.is_none()
-        {
-            *node_id = Some(public_id);
+        match &mut error {
+            EngineError::Structured { node_id, .. }
+            | EngineError::StructuredContext { node_id, .. }
+                if node_id.is_none() =>
+            {
+                *node_id = Some(public_id);
+            }
+            _ => {}
         }
         return Err(error);
     }
@@ -141,10 +145,15 @@ fn validate_layout_tree_depth(root: &LayoutNodeInput) -> Result<(), EngineError>
                 .as_deref()
                 .and_then(first_excess_rich_text_depth)
         {
-            return Err(EngineError::Validation(format!(
-                "rich text exceeds max depth ({MAX_RICH_TEXT_DEPTH}) at node \"{}\" (actual depth {actual_depth})",
-                node.node_id
-            )));
+            return Err(crate::text_diagnostics::classify_text_layout_error(
+                &boundtext::TextLayoutError::RichTextDepthLimit {
+                    actual: actual_depth,
+                    limit: MAX_RICH_TEXT_DEPTH,
+                },
+                crate::text_diagnostics::TextLayoutOperation::RenderTextLayout,
+                Some(node.node_id.clone()),
+            )
+            .into_engine_error());
         }
         if let Some(text) = &node.text {
             validate_text_decorations(text, node.visual.as_ref(), &node.node_id)?;
@@ -1556,7 +1565,7 @@ fn build_text_path_layout_output(
         }),
     };
     let mut result = layout_text_on_path(&path_request, &font_context)
-        .map_err(|error| map_text_path_layout_error(error, node_id))?;
+        .map_err(|error| map_text_path_layout_error(&error, node_id))?;
     let unit_map = result.unit_map.take();
     let text_decorations = std::mem::take(&mut result.text_decorations);
     let warnings = result
@@ -1599,13 +1608,27 @@ fn build_text_path_layout_output(
     })
 }
 
-fn map_text_path_layout_error(
-    error: crate::text::path::TextOnPathError,
+pub(super) fn map_text_path_layout_error(
+    error: &crate::text::path::TextOnPathError,
     node_id: &str,
 ) -> EngineError {
     use crate::text::path::TextOnPathError;
 
     let code = match error {
+        TextOnPathError::TextLayout(error) => {
+            return crate::text_diagnostics::classify_text_layout_error(
+                error,
+                crate::text_diagnostics::TextLayoutOperation::RenderTextLayout,
+                Some(node_id.to_string()),
+            )
+            .into_engine_error();
+        }
+        TextOnPathError::LayoutUnavailable => {
+            return crate::text_diagnostics::classify_text_path_layout_unavailable(
+                node_id.to_string(),
+            )
+            .into_engine_error();
+        }
         TextOnPathError::Invalid => "TEXT_PATH_INVALID",
         TextOnPathError::InvalidData => "TEXT_PATH_INVALID_DATA",
         TextOnPathError::MultipleSubpathsUnsupported => "TEXT_PATH_MULTIPLE_SUBPATHS_UNSUPPORTED",
@@ -1623,7 +1646,6 @@ fn map_text_path_layout_error(
         TextOnPathError::DecorationGeometry => "TEXT_DECORATION_GEOMETRY",
         TextOnPathError::InlineClusterSplit => "TEXT_PATH_INLINE_CLUSTER_SPLIT",
         TextOnPathError::FitUnsatisfiable => "TEXT_PATH_FIT_UNSATISFIABLE",
-        TextOnPathError::LayoutUnavailable => "TEXT_NO_LAYOUT",
         TextOnPathError::UnitMapInvalid => "TEXT_UNIT_MAP_INVALID",
     };
     EngineError::Structured {

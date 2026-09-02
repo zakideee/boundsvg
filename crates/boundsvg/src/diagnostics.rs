@@ -425,7 +425,36 @@ fn validate_context(context: Option<&Value>) -> Result<(), DiagnosticContractErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::font::FontStyle;
+    use crate::text_diagnostics::{TextLayoutOperation, classify_text_layout_error};
+    use boundtext::{
+        FlowRegionError, FlowRegionField, RegionProviderError, RegionQueryError, RegionQueryField,
+        TextLayoutError, TextLayoutInvariant, TextPreparationPhase, TextRequestError,
+    };
     use serde_json::json;
+
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "catalog tests consume one-shot diagnostic fixtures for readability"
+    )]
+    fn assert_text_layout_diagnostic(
+        error: TextLayoutError,
+        expected_code: &str,
+        expected_message: &str,
+        expected_stage: PipelineStage,
+        expected_context: Value,
+    ) {
+        let diagnostic = classify_text_layout_error(
+            &error,
+            TextLayoutOperation::MeasureTextBlock,
+            Some("text-node".to_string()),
+        );
+        assert_eq!(diagnostic.code, expected_code);
+        assert_eq!(diagnostic.message, expected_message);
+        assert_eq!(diagnostic.stage, expected_stage);
+        assert_eq!(diagnostic.node_id.as_deref(), Some("text-node"));
+        assert_eq!(diagnostic.context, expected_context);
+    }
 
     #[test]
     fn pipeline_stage_serialization_matches_the_typescript_vocabulary() {
@@ -526,5 +555,243 @@ mod tests {
             );
         }
         SerializedFatalError::new("VALID_CODE_2", "failed", None, None, None).expect("valid code");
+    }
+
+    #[test]
+    fn text_layout_operation_vocabulary_is_closed_and_camel_case() {
+        let operations = [
+            TextLayoutOperation::LayoutTextFlow,
+            TextLayoutOperation::LayoutTextFlowWithExclusions,
+            TextLayoutOperation::MeasureTextBlock,
+            TextLayoutOperation::ShrinkwrapText,
+            TextLayoutOperation::ShrinkwrapFlow,
+            TextLayoutOperation::MeasureIntrinsicInlineSize,
+            TextLayoutOperation::RenderTextLayout,
+        ];
+        assert_eq!(
+            operations.map(TextLayoutOperation::as_str),
+            [
+                "layoutTextFlow",
+                "layoutTextFlowWithExclusions",
+                "measureTextBlock",
+                "shrinkwrapText",
+                "shrinkwrapFlow",
+                "measureIntrinsicInlineSize",
+                "renderTextLayout",
+            ]
+        );
+    }
+
+    #[test]
+    fn text_layout_projection_matches_the_stable_catalog() {
+        let operation = "measureTextBlock";
+        assert_text_layout_diagnostic(
+            TextLayoutError::InvalidRequest {
+                reason: TextRequestError::MissingLineWidths,
+            },
+            "TEXT_LAYOUT_INPUT_INVALID",
+            "Text layout request is invalid.",
+            PipelineStage::Validate,
+            json!({ "operation": operation, "reason": "missingLineWidths" }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::FontUnavailable {
+                run_index: 2,
+                families: vec!["Missing".to_string()],
+                weight: 500,
+                style: FontStyle::Italic,
+            },
+            "TEXT_FONT_UNAVAILABLE",
+            "No requested font is available for text layout.",
+            PipelineStage::Text,
+            json!({
+                "operation": operation,
+                "runIndex": 2,
+                "requestedAliases": ["Missing"],
+                "omittedAliasCount": 0,
+                "fontWeight": 500,
+                "fontStyle": "italic",
+            }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::PreparationFailed {
+                phase: TextPreparationPhase::RichPreparation,
+            },
+            "TEXT_LAYOUT_PREPARATION_FAILED",
+            "Text layout preparation failed.",
+            PipelineStage::Text,
+            json!({ "operation": operation, "phase": "richPreparation" }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::InvalidFitStep,
+            "TEXT_FIT_INVALID_STEP",
+            "Text fit step is invalid.",
+            PipelineStage::Text,
+            json!({ "operation": operation }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::FitProbeLimit {
+                required: 3,
+                limit: 2,
+            },
+            "TEXT_FIT_PROBE_LIMIT",
+            "Text fit probe limit was exceeded.",
+            PipelineStage::Text,
+            json!({ "operation": operation, "required": 3, "limit": 2 }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::EllipsisCandidateLimit {
+                required: 3,
+                limit: 2,
+            },
+            "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
+            "Text ellipsis candidate limit was exceeded.",
+            PipelineStage::Text,
+            json!({ "operation": operation, "required": 3, "limit": 2 }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::RichTextDepthLimit {
+                actual: 49,
+                limit: 48,
+            },
+            "RICH_TEXT_MAX_DEPTH",
+            "Rich text depth limit was exceeded.",
+            PipelineStage::Validate,
+            json!({ "operation": operation, "actual": 49, "limit": 48 }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::InlineRectLimit {
+                required: 4_097,
+                limit: 4_096,
+            },
+            "INLINE_RECT_COMPLEXITY_LIMIT",
+            "Inline rectangle limit was exceeded.",
+            PipelineStage::Text,
+            json!({ "operation": operation, "required": 4097, "limit": 4096 }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::InvalidRegionQuery {
+                reason: RegionQueryError::NonFiniteBounds {
+                    field: RegionQueryField::CrossStart,
+                },
+            },
+            "TEXT_REGION_QUERY_INVALID",
+            "Text region query is invalid.",
+            PipelineStage::Text,
+            json!({ "operation": operation, "reason": "nonFiniteBounds", "field": "crossStart" }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::RegionProviderFailure {
+                reason: RegionProviderError::UnsupportedQuery,
+            },
+            "TEXT_REGION_PROVIDER_FAILED",
+            "Text region provider failed.",
+            PipelineStage::Text,
+            json!({ "operation": operation, "reason": "unsupportedQuery" }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::InvalidFlowRegion {
+                index: 3,
+                reason: FlowRegionError::NonFiniteInterval {
+                    field: FlowRegionField::InlineStart,
+                },
+            },
+            "TEXT_FLOW_REGION_INVALID",
+            "Text flow region is invalid.",
+            PipelineStage::Text,
+            json!({
+                "operation": operation,
+                "reason": "nonFiniteInterval",
+                "index": 3,
+                "field": "inlineStart",
+            }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::InvalidFlowRegion {
+                index: 3,
+                reason: FlowRegionError::IntervalBelowMinimum {
+                    actual: 1.0,
+                    minimum: 2.0,
+                },
+            },
+            "TEXT_FLOW_REGION_INVALID",
+            "Text flow region is invalid.",
+            PipelineStage::Text,
+            json!({
+                "operation": operation,
+                "reason": "intervalBelowMinimum",
+                "index": 3,
+                "actual": 1.0,
+                "minimum": 2.0,
+            }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::InvalidFlowRegion {
+                index: 3,
+                reason: FlowRegionError::IntervalOutsideFrame {
+                    start: 1.0,
+                    end: 3.0,
+                    frame_start: 0.0,
+                    frame_end: 2.0,
+                },
+            },
+            "TEXT_FLOW_REGION_INVALID",
+            "Text flow region is invalid.",
+            PipelineStage::Text,
+            json!({
+                "operation": operation,
+                "reason": "intervalOutsideFrame",
+                "index": 3,
+                "start": 1.0,
+                "end": 3.0,
+                "frameStart": 0.0,
+                "frameEnd": 2.0,
+            }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::InvalidFlowRegion {
+                index: 3,
+                reason: FlowRegionError::OverlappingIntervals {
+                    previous_end: 2.0,
+                    current_start: 1.0,
+                },
+            },
+            "TEXT_FLOW_REGION_INVALID",
+            "Text flow region is invalid.",
+            PipelineStage::Text,
+            json!({
+                "operation": operation,
+                "reason": "overlappingIntervals",
+                "index": 3,
+                "previousEnd": 2.0,
+                "currentStart": 1.0,
+            }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::RegionQueryLimit { limit: 4 },
+            "TEXT_REGION_QUERY_LIMIT",
+            "Text region query limit was exceeded.",
+            PipelineStage::Text,
+            json!({ "operation": operation, "limit": 4 }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::RegionIntervalLimit {
+                required: 5,
+                limit: 4,
+            },
+            "TEXT_REGION_INTERVAL_LIMIT",
+            "Text region interval limit was exceeded.",
+            PipelineStage::Text,
+            json!({ "operation": operation, "required": 5, "limit": 4 }),
+        );
+        assert_text_layout_diagnostic(
+            TextLayoutError::InvariantViolation {
+                invariant: TextLayoutInvariant::LineRangeNotUtf8Boundary,
+            },
+            "TEXT_LAYOUT_INVARIANT",
+            "Text layout invariant failed.",
+            PipelineStage::Text,
+            json!({ "operation": operation, "invariant": "lineRangeNotUtf8Boundary" }),
+        );
     }
 }

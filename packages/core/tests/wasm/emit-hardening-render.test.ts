@@ -157,7 +157,7 @@ describe("renderToSvg scale", () => {
 });
 
 describe("font closest-match through the render path", () => {
-  it("renders an intermediate weight instead of failing with TEXT_NO_LAYOUT", async () => {
+  it("renders an intermediate weight without losing text layout", async () => {
     // Only weight 400 is registered; requesting 500 used to fail the whole
     // render because the registry did exact-match lookup only, contradicting
     // the documented "closest weight wins" contract.

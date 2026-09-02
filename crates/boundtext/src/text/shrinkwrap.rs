@@ -78,7 +78,7 @@ fn layout_text_at_inline_size(
     req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     inline_size_px: f64,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     let candidate_req = if req.is_vertical() {
         TextLayoutRequest {
             max_height: Some(inline_size_px),
@@ -91,13 +91,16 @@ fn layout_text_at_inline_size(
             ..req.clone()
         }
     };
-    layout_text(&candidate_req, font_ctx).ok()
+    layout_text(&candidate_req, font_ctx)
 }
 
 /// Shrinkwrap a horizontal span/rich-text request using the full text engine.
 /// This path preserves forced-newline and fallback shaping semantics that the
 /// paragraph-only shrinkwrap path cannot represent.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns the first authoritative text-layout failure from a search probe.
 pub fn shrinkwrap_text_layout_horizontal(
     req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
@@ -105,13 +108,13 @@ pub fn shrinkwrap_text_layout_horizontal(
     min_width: Option<f64>,
     max_width: f64,
     config: &ShrinkwrapConfig,
-) -> Option<ShrinkwrapResult> {
+) -> Result<ShrinkwrapResult, crate::TextLayoutError> {
     let max_layout = layout_text_at_inline_size(req, font_ctx, max_width)?;
     let target_line_count = target_line_count.unwrap_or(max_layout.lines.len());
     if max_layout.lines.len() > target_line_count
         || max_layout.bbox.w > max_width + CONTAINMENT_EPSILON_PX
     {
-        return Some(horizontal_layout_result(
+        return Ok(horizontal_layout_result(
             ShrinkwrapStatus::Infeasible,
             max_width,
             &max_layout,
@@ -128,14 +131,14 @@ pub fn shrinkwrap_text_layout_horizontal(
     if min_layout.lines.len() == target_line_count
         && min_layout.bbox.w <= effective_min_width + CONTAINMENT_EPSILON_PX
     {
-        return Some(horizontal_layout_result(
+        return Ok(horizontal_layout_result(
             ShrinkwrapStatus::Satisfied,
             effective_min_width,
             &min_layout,
         ));
     }
     if min_layout.lines.len() < target_line_count {
-        return Some(horizontal_layout_result(
+        return Ok(horizontal_layout_result(
             ShrinkwrapStatus::Infeasible,
             max_width,
             &max_layout,
@@ -177,7 +180,7 @@ pub fn shrinkwrap_text_layout_horizontal(
     } else {
         &max_layout
     };
-    Some(horizontal_layout_result(
+    Ok(horizontal_layout_result(
         status,
         chosen_width_px,
         result_layout,
@@ -199,7 +202,10 @@ fn horizontal_layout_result(
 }
 
 /// Vertical counterpart of [`shrinkwrap_text_layout_horizontal`].
-#[must_use]
+///
+/// # Errors
+///
+/// Returns the first authoritative text-layout failure from a search probe.
 pub fn shrinkwrap_text_layout_vertical(
     req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
@@ -208,14 +214,14 @@ pub fn shrinkwrap_text_layout_vertical(
     max_height: f64,
     max_width: f64,
     config: &ShrinkwrapConfig,
-) -> Option<VerticalShrinkwrapResult> {
+) -> Result<VerticalShrinkwrapResult, crate::TextLayoutError> {
     let max_layout = layout_text_at_inline_size(req, font_ctx, max_height)?;
     let target_line_count = target_line_count.unwrap_or(max_layout.lines.len());
     if max_layout.lines.len() > target_line_count
         || max_layout.bbox.w > max_width + CONTAINMENT_EPSILON_PX
         || max_layout.bbox.h > max_height + CONTAINMENT_EPSILON_PX
     {
-        return Some(vertical_layout_result(
+        return Ok(vertical_layout_result(
             ShrinkwrapStatus::Infeasible,
             max_height,
             &max_layout,
@@ -233,14 +239,14 @@ pub fn shrinkwrap_text_layout_vertical(
         && min_layout.bbox.w <= max_width + CONTAINMENT_EPSILON_PX
         && min_layout.bbox.h <= effective_min_height + CONTAINMENT_EPSILON_PX
     {
-        return Some(vertical_layout_result(
+        return Ok(vertical_layout_result(
             ShrinkwrapStatus::Satisfied,
             effective_min_height,
             &min_layout,
         ));
     }
     if min_layout.lines.len() < target_line_count {
-        return Some(vertical_layout_result(
+        return Ok(vertical_layout_result(
             ShrinkwrapStatus::Infeasible,
             max_height,
             &max_layout,
@@ -284,7 +290,7 @@ pub fn shrinkwrap_text_layout_vertical(
     } else {
         &max_layout
     };
-    Some(vertical_layout_result(
+    Ok(vertical_layout_result(
         status,
         chosen_height_px,
         result_layout,
@@ -325,7 +331,11 @@ pub fn min_possible_width(pp: &ShapedParagraph, font_size_px: f64) -> f64 {
         .fold(0.0_f64, f64::max)
 }
 
-#[must_use]
+/// Shrinkwrap pre-shaped vertical text.
+///
+/// # Errors
+///
+/// Returns a font or vertical-shaping failure.
 pub fn shrinkwrap_vertical_text(
     text: &str,
     font_ctx: &FontContext<'_>,
@@ -342,7 +352,7 @@ pub fn shrinkwrap_vertical_text(
     max_height: f64,
     config: &ShrinkwrapConfig,
     force_newline_breaks: bool,
-) -> Option<VerticalShrinkwrapResult> {
+) -> Result<VerticalShrinkwrapResult, crate::TextLayoutError> {
     let glyphs = vertical::shape_text_vertical(
         font_ctx,
         text,
@@ -373,7 +383,7 @@ pub fn shrinkwrap_vertical_text(
     let target_line_count = target_line_count.unwrap_or(m_max.line_count);
 
     if m_max.line_count > target_line_count || m_max.used_width > max_width {
-        return Some(VerticalShrinkwrapResult {
+        return Ok(VerticalShrinkwrapResult {
             status: ShrinkwrapStatus::Infeasible,
             chosen_height_px: max_height,
             line_count: m_max.line_count,
@@ -384,7 +394,7 @@ pub fn shrinkwrap_vertical_text(
 
     let m_min = measure_at(effective_min_height);
     if m_min.line_count == target_line_count && m_min.used_width <= max_width {
-        return Some(VerticalShrinkwrapResult {
+        return Ok(VerticalShrinkwrapResult {
             status: ShrinkwrapStatus::Satisfied,
             chosen_height_px: effective_min_height,
             line_count: m_min.line_count,
@@ -393,7 +403,7 @@ pub fn shrinkwrap_vertical_text(
         });
     }
     if m_min.line_count < target_line_count {
-        return Some(VerticalShrinkwrapResult {
+        return Ok(VerticalShrinkwrapResult {
             status: ShrinkwrapStatus::Infeasible,
             chosen_height_px: max_height,
             line_count: m_max.line_count,
@@ -419,7 +429,7 @@ pub fn shrinkwrap_vertical_text(
 
     let m_hi = measure_at(hi);
     if m_hi.line_count == target_line_count && m_hi.used_width <= max_width {
-        Some(VerticalShrinkwrapResult {
+        Ok(VerticalShrinkwrapResult {
             status: ShrinkwrapStatus::Satisfied,
             chosen_height_px: hi,
             line_count: m_hi.line_count,
@@ -427,7 +437,7 @@ pub fn shrinkwrap_vertical_text(
             used_height: m_hi.used_height,
         })
     } else {
-        Some(VerticalShrinkwrapResult {
+        Ok(VerticalShrinkwrapResult {
             status: ShrinkwrapStatus::Infeasible,
             chosen_height_px: max_height,
             line_count: m_max.line_count,

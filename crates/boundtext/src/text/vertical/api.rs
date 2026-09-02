@@ -20,7 +20,7 @@ fn shape_vertical_ellipsis_candidate(
     font_size_px: f64,
     letter_spacing_px: f64,
     shape_options: &ShapeOptions,
-) -> Option<Vec<crate::font::shaping::GlyphInfo>> {
+) -> Result<Vec<crate::font::shaping::GlyphInfo>, crate::TextLayoutError> {
     let mut prefix_glyphs = shape_text_vertical(
         font_ctx,
         prefix,
@@ -50,7 +50,7 @@ fn shape_vertical_ellipsis_candidate(
         marker_glyph.cluster = marker_glyph.cluster.saturating_add(marker_cluster_offset);
     }
     prefix_glyphs.extend(marker_glyphs);
-    Some(prefix_glyphs)
+    Ok(prefix_glyphs)
 }
 
 fn mark_vertical_ellipsis(columns: &mut [Line], marker_cluster_start: u32) {
@@ -75,17 +75,15 @@ fn mark_vertical_ellipsis(columns: &mut [Line], marker_cluster_start: u32) {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Perform legacy direct vertical layout: shaping -> column breaking -> result building.
+/// Perform direct vertical layout: shaping -> column breaking -> result building.
 ///
-/// Checked callers should use [`crate::text::engine::layout_text`], which routes
-/// fit and ellipsis through the canonical planner with typed work limits. This
-/// `Option`-returning helper retains its pre-existing direct behavior until a
-/// separate breaking Rust API migration.
-#[must_use]
+/// # Errors
+///
+/// Returns the first font, shaping, fit, or ellipsis failure.
 pub fn layout_vertical_text(
     req: &crate::text::types::TextLayoutRequest,
     font_ctx: &FontContext<'_>,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     // Handle fit=shrink/grow via vertical-specific binary search
     if req.fit == FitMode::Shrink {
         return fit_vertical_shrink(req, font_ctx);
@@ -186,7 +184,7 @@ pub fn layout_vertical_text(
                         )
                     })
                 });
-                let selected = crate::text::ellipsis_plan::select_longest_fitting(
+                let selected = crate::text::ellipsis_plan::try_select_longest_fitting(
                     legal_candidates,
                     |keep| {
                         let prefix = clusters[..keep].concat();
@@ -215,7 +213,7 @@ pub fn layout_vertical_text(
                             false,
                         );
                         mark_vertical_ellipsis(&mut columns, marker_cluster_start);
-                        Some((candidate, cand_glyphs, columns, kinsoku_unresolved))
+                        Ok(Some((candidate, cand_glyphs, columns, kinsoku_unresolved)))
                     },
                     |(_, _, candidate_columns, _)| {
                         candidate_columns.len() <= max
@@ -225,7 +223,7 @@ pub fn layout_vertical_text(
                             && candidate_columns.len() as f64 * line_height_px
                                 <= req.max_width + 0.01
                     },
-                );
+                )?;
                 if let Some((
                     _keep,
                     (display_text, cand_glyphs, mut columns, candidate_kinsoku_unresolved),
@@ -270,5 +268,5 @@ pub fn layout_vertical_text(
         layout_result.source_text = Some(text.to_string());
         layout_result.display_text = Some(display_text);
     }
-    Some(layout_result)
+    Ok(layout_result)
 }

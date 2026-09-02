@@ -16,4 +16,8 @@ pub mod phase_trace;
 pub mod schema;
 pub mod text;
 
-pub use error::{BoundtextError, TextLayoutError};
+pub use error::{
+    BoundtextError, FlowRegionError, FlowRegionField, RegionProviderError, RegionQueryError,
+    RegionQueryField, TextConstraintField, TextLayoutError, TextLayoutInvariant,
+    TextPreparationPhase, TextRequestError,
+};

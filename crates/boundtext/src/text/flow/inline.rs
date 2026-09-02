@@ -11,8 +11,8 @@ use crate::text::types::{
 };
 
 use super::{
-    FlowFragment, FlowFragmentStyle, FlowLayoutRequest, FlowMeasure, FlowTextSpan, RegionProvider,
-    measure_flow_inline_with_styles_and_budgeted_provider,
+    FlowFragment, FlowFragmentStyle, FlowLayoutRequest, FlowMeasure, FlowTextSpan,
+    LayoutRegionProvider, measure_flow_inline_with_styles_and_budgeted_provider,
     measure_flow_vertical_inline_with_styles_and_budgeted_provider,
 };
 
@@ -250,16 +250,18 @@ fn scale_flow_span(span: &FlowTextSpan, scale: f64) -> FlowTextSpan {
     }
 }
 
-pub(super) fn prepare_inline_flow_inputs(
-    req: &FlowLayoutRequest<'_>,
-    font_ctx: &FontContext<'_>,
-    chosen_font_size_px: f64,
-) -> (
+type PreparedInlineFlowInputs = (
     Vec<FlowTextSpan>,
     Vec<TextSpanInput>,
     Vec<Option<inline_runs::SpanRubyInfo>>,
     inline_runs::ShapedInlineRuns,
-) {
+);
+
+pub(super) fn prepare_inline_flow_inputs(
+    req: &FlowLayoutRequest<'_>,
+    font_ctx: &FontContext<'_>,
+    chosen_font_size_px: f64,
+) -> Result<PreparedInlineFlowInputs, crate::TextLayoutError> {
     // Callers dispatch here only when spans exist; an absent value degrades to
     // an empty inline flow rather than aborting the render.
     let spans_input = req.spans.unwrap_or_default();
@@ -290,8 +292,8 @@ pub(super) fn prepare_inline_flow_inputs(
         req.hanging_punctuation,
         &ruby_info,
         req.writing_mode == WritingMode::VerticalRl,
-    );
-    (spans, text_spans, ruby_info, shaped_runs)
+    )?;
+    Ok((spans, text_spans, ruby_info, shaped_runs))
 }
 
 /// Alphabetic baseline offset resolved from font metrics for flow fragments.
@@ -307,11 +309,11 @@ pub(super) fn default_alphabetic_baseline_offset_px(
 pub(super) fn measure_inline_flow_at_font_size(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-    region_provider: &impl RegionProvider,
+    region_provider: &impl LayoutRegionProvider,
     chosen_font_size_px: f64,
-) -> Result<FlowMeasure, crate::BoundtextError> {
+) -> Result<FlowMeasure, crate::TextLayoutError> {
     let (_, text_spans, _, shaped_runs) =
-        prepare_inline_flow_inputs(req, font_ctx, chosen_font_size_px);
+        prepare_inline_flow_inputs(req, font_ctx, chosen_font_size_px)?;
     let min_region_extent = req.min_region_width.unwrap_or(chosen_font_size_px);
 
     if req.writing_mode == WritingMode::VerticalRl {

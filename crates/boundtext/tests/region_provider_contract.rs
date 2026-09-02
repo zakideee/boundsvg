@@ -4,7 +4,6 @@
 
 use std::cell::RefCell;
 
-use boundtext::BoundtextError;
 use boundtext::font::shaping::ShapeOptions;
 use boundtext::font::{FontContext, FontRegistry, FontStyle};
 use boundtext::text::flow::{
@@ -14,6 +13,7 @@ use boundtext::text::flow::{
 use boundtext::text::paragraph::shape_paragraph_with_options;
 use boundtext::text::types::{Language, WhiteSpaceMode, WrapMode, WritingMode};
 use boundtext::text::types::{MAX_RICH_TEXT_DEPTH, RichTextNodeInput, RichTextStyleInput};
+use boundtext::{RegionProviderError, TextLayoutError};
 
 fn font_registry() -> FontRegistry {
     let mut registry = FontRegistry::new();
@@ -108,7 +108,7 @@ struct RecordingProvider {
 }
 
 impl RegionProvider for RecordingProvider {
-    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, BoundtextError> {
+    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, RegionProviderError> {
         self.queries.borrow_mut().push(query);
         let region = match query.writing_mode {
             WritingMode::HorizontalTb => FlowRegion {
@@ -154,7 +154,7 @@ fn provider_queries_use_logical_block_offsets_in_both_writing_modes() {
 struct OverlappingProvider;
 
 impl RegionProvider for OverlappingProvider {
-    fn regions(&self, _query: RegionQuery) -> Result<Vec<FlowRegion>, BoundtextError> {
+    fn regions(&self, _query: RegionQuery) -> Result<Vec<FlowRegion>, RegionProviderError> {
         Ok(vec![
             FlowRegion {
                 inline_start_px: 10.0,
@@ -189,15 +189,15 @@ fn overlapping_provider_output_is_a_typed_fatal_error() {
 
     assert!(matches!(
         error,
-        BoundtextError::InvalidFlowRegion { index: 1, .. }
+        TextLayoutError::InvalidFlowRegion { index: 1, .. }
     ));
 }
 
 struct FailingProvider;
 
 impl RegionProvider for FailingProvider {
-    fn regions(&self, _query: RegionQuery) -> Result<Vec<FlowRegion>, BoundtextError> {
-        Err(BoundtextError::InvalidRegionQuery("sentinel".to_string()))
+    fn regions(&self, _query: RegionQuery) -> Result<Vec<FlowRegion>, RegionProviderError> {
+        Err(RegionProviderError::Unavailable)
     }
 }
 
@@ -222,14 +222,16 @@ fn provider_failure_aborts_without_becoming_an_empty_region() {
 
     assert_eq!(
         error,
-        BoundtextError::InvalidRegionQuery("sentinel".to_string())
+        TextLayoutError::RegionProviderFailure {
+            reason: RegionProviderError::Unavailable,
+        }
     );
 }
 
 struct ExcessiveIntervalProvider;
 
 impl RegionProvider for ExcessiveIntervalProvider {
-    fn regions(&self, _query: RegionQuery) -> Result<Vec<FlowRegion>, BoundtextError> {
+    fn regions(&self, _query: RegionQuery) -> Result<Vec<FlowRegion>, RegionProviderError> {
         Ok(vec![
             FlowRegion {
                 inline_start_px: 10.0,
@@ -278,7 +280,7 @@ fn measurement_enforces_the_returned_interval_budget() {
 
     assert_eq!(
         error,
-        BoundtextError::RegionIntervalLimit {
+        TextLayoutError::RegionIntervalLimit {
             required: RETURNED_REGIONS_MAX + 1,
             limit: RETURNED_REGIONS_MAX,
         }
@@ -308,7 +310,7 @@ fn rich_resource_failure_precedes_every_region_query() {
         .expect_err("over-depth rich input must abort before geometry");
     assert_eq!(
         error,
-        BoundtextError::RichTextDepthLimit {
+        TextLayoutError::RichTextDepthLimit {
             actual: MAX_RICH_TEXT_DEPTH + 1,
             limit: MAX_RICH_TEXT_DEPTH,
         }

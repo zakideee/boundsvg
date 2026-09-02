@@ -826,7 +826,7 @@ describe("WASM protocol decoders", () => {
     const common = { text: "A", fontFamily: "Fixture", fontSizePx: 16 };
     expectCode(
       () => handle.layoutTextFlow({ ...common, letterSpacingPx: 0, lineWidths: [100] }),
-      "WASM_INVALID_FLOW_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
     expectCode(
       () =>
@@ -835,15 +835,15 @@ describe("WASM protocol decoders", () => {
           flowBox: { x: 0, y: 0, width: 100, height: 40 },
           exclusions: [],
         }),
-      "WASM_INVALID_EXCLUSION_FLOW_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
     expectCode(
       () => handle.measureTextBlock({ ...common, maxWidth: 100 }),
-      "WASM_INVALID_MEASURE_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
     expectCode(
       () => handle.shrinkwrapText({ ...common, maxWidth: 100 }),
-      "WASM_INVALID_SHRINKWRAP_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
     expectCode(
       () =>
@@ -852,12 +852,9 @@ describe("WASM protocol decoders", () => {
           flowBox: { x: 0, y: 0, width: 100, height: 40 },
           exclusions: [],
         }),
-      "WASM_INVALID_SHRINKWRAP_FLOW_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
-    expectCode(
-      () => handle.measureIntrinsicInlineSize(common),
-      "WASM_INVALID_INTRINSIC_INLINE_SIZE_OUTPUT",
-    );
+    expectCode(() => handle.measureIntrinsicInlineSize(common), "TEXT_LAYOUT_OUTPUT_INVALID");
     handle.dispose();
   });
 
@@ -871,8 +868,9 @@ describe("WASM protocol decoders", () => {
         throw JSON.stringify({
           severity: "fatal",
           code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
-          message: "exact candidate budget exceeded",
+          message: "Text ellipsis candidate limit was exceeded.",
           stage: "text",
+          context: { operation: method, required: 2, limit: 1 },
         });
       },
       free: () => undefined,
@@ -903,8 +901,9 @@ describe("WASM protocol decoders", () => {
       expect.objectContaining({
         name: "FatalError",
         code: "TEXT_ELLIPSIS_CANDIDATE_LIMIT",
-        message: "exact candidate budget exceeded",
+        message: "Text ellipsis candidate limit was exceeded.",
         stage: "text",
+        context: { operation: method, required: 2, limit: 1 },
       }),
     );
     handle.dispose();
@@ -913,7 +912,7 @@ describe("WASM protocol decoders", () => {
   it("rejects invalid measurement optional fields, array elements, and nested enums", () => {
     expectCode(
       () => decodeTextFlowResult(JSON.stringify({ lines: [null], exhausted: false })),
-      "WASM_INVALID_FLOW_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
     expectCode(
       () =>
@@ -927,14 +926,14 @@ describe("WASM protocol decoders", () => {
             bottomRubyOverflowPx: 0,
           }),
         ),
-      "WASM_INVALID_EXCLUSION_FLOW_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
     expectCode(
       () =>
         decodeMeasureTextBlockResult(
           JSON.stringify({ lineCount: 1, usedWidth: 10, usedHeight: 20, lines: [{ text: "A" }] }),
         ),
-      "WASM_INVALID_MEASURE_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
     expectCode(
       () =>
@@ -949,7 +948,7 @@ describe("WASM protocol decoders", () => {
             maxLineWidth: 10,
           }),
         ),
-      "WASM_INVALID_SHRINKWRAP_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
     expectCode(
       () =>
@@ -967,7 +966,7 @@ describe("WASM protocol decoders", () => {
             },
           }),
         ),
-      "WASM_INVALID_SHRINKWRAP_FLOW_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
     );
     expectCode(
       () =>
@@ -978,7 +977,41 @@ describe("WASM protocol decoders", () => {
             warnings: [{ severity: "info", code: "X", message: "x" }],
           }),
         ),
-      "WASM_INVALID_INTRINSIC_INLINE_SIZE_OUTPUT",
+      "TEXT_LAYOUT_OUTPUT_INVALID",
+    );
+  });
+
+  it("reports nested text-layout shape failures with a bounded safe descriptor", () => {
+    const privateValue = "private transport detail";
+    expect(() =>
+      decodeMeasureTextBlockResult(
+        JSON.stringify({
+          lineCount: 1,
+          usedWidth: 10,
+          usedHeight: 20,
+          lines: [
+            {
+              charStart: 0,
+              charEnd: 1,
+              text: "A",
+              inlineAdvancePx: privateValue,
+              kinsokuUnresolved: false,
+            },
+          ],
+        }),
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "TEXT_LAYOUT_OUTPUT_INVALID",
+        message: "Text layout transport returned an invalid result.",
+        stage: "wasm",
+        context: expect.objectContaining({
+          operation: "measureTextBlock",
+          phase: "decode",
+          protocolPath: "$.lines[0].inlineAdvancePx",
+          received: `string(length=${privateValue.length})`,
+        }),
+      }),
     );
   });
 });

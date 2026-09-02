@@ -328,7 +328,9 @@ fn inline_rect_wire_input(rich_text: &serde_json::Value) -> LayoutInput {
 fn assert_structured_error_code(error: crate::error::EngineError, expected_code: &str) {
     assert!(matches!(
         error,
-        crate::error::EngineError::Structured { code, .. } if code == expected_code
+        crate::error::EngineError::Structured { code, .. }
+            | crate::error::EngineError::StructuredContext { code, .. }
+            if code == expected_code
     ));
 }
 
@@ -455,12 +457,54 @@ fn rejects_rich_text_beyond_maximum_depth_before_layout() {
     let error = compute_full_layout(&rich_text_layout_input(MAX_RICH_TEXT_DEPTH + 1))
         .expect_err("over-depth rich text should be rejected");
     match error {
-        crate::error::EngineError::Validation(message) => {
-            assert!(message.contains("rich text exceeds max depth (48)"));
-            assert!(message.contains("text-boundary"));
-            assert!(message.contains("actual depth 49"));
+        crate::error::EngineError::StructuredContext {
+            code,
+            message,
+            stage,
+            node_id,
+            context,
+        } => {
+            assert_eq!(code, "RICH_TEXT_MAX_DEPTH");
+            assert_eq!(message, "Rich text depth limit was exceeded.");
+            assert_eq!(stage, Some(crate::diagnostics::PipelineStage::Validate));
+            assert_eq!(node_id.as_deref(), Some("text-boundary"));
+            assert_eq!(
+                *context,
+                serde_json::json!({
+                    "operation": "renderTextLayout",
+                    "actual": 49,
+                    "limit": 48,
+                })
+            );
         }
-        other => panic!("expected validation error, got {other:?}"),
+        other => panic!("expected structured rich-depth error, got {other:?}"),
+    }
+}
+
+#[test]
+fn text_path_layout_unavailable_keeps_render_operation_context() {
+    let error = super::taffy::map_text_path_layout_error(
+        &crate::text::path::TextOnPathError::LayoutUnavailable,
+        "path-text",
+    );
+    match error {
+        crate::error::EngineError::StructuredContext {
+            code,
+            message,
+            stage,
+            node_id,
+            context,
+        } => {
+            assert_eq!(code, "TEXT_PATH_LAYOUT_UNAVAILABLE");
+            assert_eq!(message, "Text-on-path layout is unavailable.");
+            assert_eq!(stage, Some(crate::diagnostics::PipelineStage::Text));
+            assert_eq!(node_id.as_deref(), Some("path-text"));
+            assert_eq!(
+                *context,
+                serde_json::json!({ "operation": "renderTextLayout" })
+            );
+        }
+        other => panic!("expected structured text-path error, got {other:?}"),
     }
 }
 
@@ -871,13 +915,13 @@ fn text_measurement_fails_before_unit_map_materialization() {
     input.fonts.clear();
     let error = compute_full_layout(&input).expect_err("unit metadata requires resolved text");
     match error {
-        crate::error::EngineError::Structured {
+        crate::error::EngineError::StructuredContext {
             code,
             stage,
             node_id,
             ..
         } => {
-            assert_eq!(code, "TEXT_NO_LAYOUT");
+            assert_eq!(code, "TEXT_FONT_UNAVAILABLE");
             assert_eq!(
                 stage.as_ref(),
                 Some(&crate::diagnostics::PipelineStage::Text)
@@ -2438,5 +2482,15 @@ fn test_grid_with_gap() {
     assert!(
         (gap_x - 20.0).abs() < 1.0,
         "Column gap should be ~20px, got {gap_x}"
+    );
+}
+
+#[test]
+fn taffy_intrinsic_failure_is_not_an_optional_bbox_fallback() {
+    let source = include_str!("measure.rs");
+    assert!(source.contains(") -> Result<IntrinsicInlineSizes, boundtext::TextLayoutError>"));
+    assert!(source.contains("measure_intrinsic_inline_sizes(text_input"));
+    assert!(
+        !source.contains("if let Some(intrinsic) =\n            measure_intrinsic_inline_sizes")
     );
 }

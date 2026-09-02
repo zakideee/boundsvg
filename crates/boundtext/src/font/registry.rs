@@ -4,6 +4,13 @@ use std::sync::{Arc, OnceLock};
 use crate::error::BoundtextError;
 
 use super::backend::{FontBackend, FontFace, ShapeVariation, Shaper, ShaperFace};
+
+pub(crate) fn is_css_generic_font_family(alias: &str) -> bool {
+    matches!(
+        alias.trim().to_ascii_lowercase().as_str(),
+        "serif" | "sans-serif" | "monospace" | "cursive" | "fantasy"
+    )
+}
 #[cfg(feature = "rustybuzz-backend")]
 use super::backend_rustybuzz::RustybuzzShaper;
 #[cfg(feature = "ttfparser-backend")]
@@ -270,7 +277,11 @@ impl FontRegistry {
         style: &FontStyle,
     ) -> Option<&FontEntry> {
         for alias in aliases {
-            if let Some(entry) = self.resolve(alias, weight, style) {
+            let normalized_alias = alias.trim();
+            if normalized_alias.is_empty() || is_css_generic_font_family(normalized_alias) {
+                continue;
+            }
+            if let Some(entry) = self.resolve(normalized_alias, weight, style) {
                 return Some(entry);
             }
         }

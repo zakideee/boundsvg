@@ -202,6 +202,36 @@ Complete-input fatal validation is not filtered by display selection. An
 invalid authored input remains invalid even when the invalid item would have
 been omitted.
 
+## Failure authority
+
+`TextLayoutError` is the single checked failure type for public text layout,
+flow, intrinsic measurement, and shrinkwrap operations. `BoundtextError` is
+limited to font registration, backend construction, and glyph-outline input;
+it is not a second text-layout failure hierarchy. Request, font, preparation,
+fit, ellipsis, depth, inline-rectangle, provider, region, budget, and checked
+invariant failures are closed `TextLayoutError` variants. A failed operation
+returns no partial layout.
+
+Font availability is owned by one `FontRegistry`. Resolution preserves the
+authored family order, treats empty and generic CSS family names as
+non-resolving candidates, and chooses the first registered alias using exact
+style, nearest weight, and the lower weight as a tie-breaker. Missing aliases
+before or after a resolved alias do not fail the request. Each effective plain,
+span, rich, or ruby run uses the same rule, and an entirely unresolved chain
+returns `FontUnavailable` with the first failing run index.
+
+Recursive rich input has one depth limit of 48. The Rust request boundary and
+the TypeScript render and measurement boundaries enforce the same acceptance
+set, including custom producers. Depth 49 fails before recursive preparation
+or transport invocation.
+
+`boundsvg` owns one exhaustive projection from `TextLayoutError` to structured
+render and measurement diagnostics. Every projection carries one of seven
+closed operation names, a fixed code/message/stage tuple, bounded context, and
+an authored node ID only when render has one. The six measurement WASM exports
+share one input/domain/output/panic envelope; Core and Worker rehydrate the
+same fatal value rather than classifying it again.
+
 ## Fit contract
 
 The existing `shrinkEpsilonPx`, `shrinkMaxIterations`, `growEpsilonPx`, and
@@ -260,10 +290,10 @@ consolidation requires a separate breaking Rust API decision. The limits are:
 | Distinct region queries                  |                                65,536 | `TEXT_REGION_QUERY_LIMIT`       |
 | Cumulative returned intervals            |                               262,144 | `TEXT_REGION_INTERVAL_LIMIT`    |
 
-Non-finite, negative, overlapping, out-of-frame, or otherwise invalid provider
-queries and intervals fail with `TEXT_REGION_PROVIDER_INVALID`. Region-query
-and interval accounting occurs after per-layout memoization, so identical
-queries consume one entry.
+Non-finite or invalid queries fail with `TEXT_REGION_QUERY_INVALID`; a provider
+failure uses `TEXT_REGION_PROVIDER_FAILED`; and invalid returned intervals use
+`TEXT_FLOW_REGION_INVALID`. Region-query and interval accounting occurs after
+per-layout memoization, so identical queries consume one entry.
 
 The public input variables are:
 
@@ -365,41 +395,29 @@ not normalize path geometry.
 ## Public and Rust migration
 
 - JSX and `RichTextNode` stay source-compatible.
-- TypeScript and the WASM request schema add only `fitMaxProbes`; the bundled
-  schema handshake advances from 25 to 26.
-- `boundtext::layout_text` and its metadata variant return
-  `Result<TextLayoutResult, TextLayoutError>` instead of `Option`. Rust callers
-  migrate `Some/None` handling to `Ok/Err`; existing `.expect(...)` callers
-  continue to compile.
-- Direct `TextLayoutRequest` and `FlowLayoutRequest` struct literals add
-  `fit_max_probes`. Exhaustive error matches add `InvalidFitStep` and
-  `FitProbeLimit`; ordinary and flow fit can both take the exact-grid path
-  when content is not monotone-certified.
-- Direct Rust layout and flow calls now enforce rich depth and inline-rectangle
-  limits before recursive preparation or provider queries. Exhaustive error
-  matches add `RichTextDepthLimit` and `InlineRectLimit`.
-- The two-method physical `FlowRegionSource` trait is replaced by the
-  logical-axis, fallible `RegionProvider` contract. Implementors normalize and
-  validate returned intervals or return a typed provider error.
-- Ordinary `TextSpanInput` requests now adapt to the canonical rich planner;
-  authored paint boundaries remain available on positioned glyphs but no
-  longer reset shaping. Text-on-path retains its separately prepared shaping
-  run/paint-range adapter.
-- `FlowLayoutResult` adds `inline_box_decorations`; consumers that construct
-  this public struct add an empty vector for plain flow or forward the
-  materialized rich-flow decorations.
-- Flow shrinkwrap measurement preserves `BoundtextError` geometry/resource
-  codes through the structured WASM error envelope. The older direct Rust
-  preformatted-text shrinkwrap helpers still return `Option`; changing those
-  signatures to preserve `TextLayoutError` is a separate SemVer decision.
-- The bundled WASM ABI is updated with TypeScript bridge types in the same
-  change. It is not a public compatibility boundary, and versions must not be
-  mixed.
+- The bundled Rust/TypeScript WASM schema handshake is version 30. Node and web
+  artifacts must come from the same build; schema 29 has no compatibility
+  decoder.
+- `measure_text_lines` now accepts `PlainTextMeasurementRequest` and returns
+  `Result<MeasuredTextBlock, TextLayoutError>` instead of `Option`.
+- Public flow layout, flow measurement, intrinsic measurement, and full-engine
+  shrinkwrap routes return `TextLayoutError`. Callers must replace generic
+  strings and layout variants of `BoundtextError` with exhaustive handling of
+  the closed text-layout variants and their reason enums.
+- `RegionProvider::regions` returns `RegionProviderError`; the layout boundary
+  wraps it in `TextLayoutError::RegionProviderFailure`. Invalid queries,
+  invalid intervals, and deterministic budgets have separate variants.
+- `TextLayoutError::PreparationFailed` carries a closed phase. Missing fonts
+  use `FontUnavailable`; failures are not inferred from formatted messages.
+- Built-in TypeScript render and measurement calls no longer preflight a
+  tracked alias set. Custom producers own their font semantics and preserve a
+  `FatalError`; only an unknown thrown value is normalized at the host boundary.
+- The bundled WASM ABI and TypeScript bridge types change together. Mixing
+  versions is unsupported.
 
 These Rust changes are breaking for the `0.x` crates and require a minor
-release migration note. The TypeScript addition is non-breaking. Rendered
-output changes are output-affecting and require a changeset; this work does not
-perform a version bump.
+release migration. The feature change records the pending Rust release but does
+not change package versions, dependency requirements, lockfiles, or changelogs.
 
 ## Rollback responsibilities
 

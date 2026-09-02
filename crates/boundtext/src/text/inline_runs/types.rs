@@ -8,6 +8,8 @@ use crate::font::FontStyle;
 
 /// A segment tracks which portion of the merged grapheme array belongs to which run.
 pub struct RunSegment {
+    /// Zero-based non-empty effective run identity in authored order.
+    pub(crate) run_index: usize,
     pub(crate) span: SpanRef,
     pub(crate) graphemes: Vec<String>,
     /// First grapheme index (inclusive).

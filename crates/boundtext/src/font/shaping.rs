@@ -639,15 +639,21 @@ fn resolve_fallback_entries<'a>(
         .families
         .iter()
         .filter_map(|alias| {
+            let normalized_alias = alias.trim();
+            if normalized_alias.is_empty()
+                || super::registry::is_css_generic_font_family(normalized_alias)
+            {
+                return None;
+            }
             font_ctx
                 .registry
-                .resolve(alias, weight, style)
+                .resolve(normalized_alias, weight, style)
                 .or_else(|| {
                     font_ctx
                         .fallback_registry
-                        .and_then(|fallback| fallback.resolve(alias, weight, style))
+                        .and_then(|fallback| fallback.resolve(normalized_alias, weight, style))
                 })
-                .map(|entry| (alias.clone(), entry))
+                .map(|entry| (normalized_alias.to_string(), entry))
         })
         .collect()
 }
@@ -664,9 +670,31 @@ pub fn shape_with_fallback_and_options(
     letter_spacing_px: f64,
     options: &ShapeOptions,
 ) -> FallbackShapeResult {
+    shape_with_fallback_and_options_checked(
+        font_ctx,
+        text,
+        font_size_px,
+        letter_spacing_px,
+        options,
+    )
+    .unwrap_or_default()
+}
+
+/// Shape with the same fallback algorithm while preserving whether the
+/// requested alias chain resolved at all.
+pub(crate) fn shape_with_fallback_and_options_checked(
+    font_ctx: &super::FontContext<'_>,
+    text: &str,
+    font_size_px: f64,
+    letter_spacing_px: f64,
+    options: &ShapeOptions,
+) -> Option<FallbackShapeResult> {
     let resolved_entries = resolve_fallback_entries(font_ctx, font_ctx.weight, font_ctx.style);
-    if resolved_entries.is_empty() || text.is_empty() {
-        return FallbackShapeResult::default();
+    if resolved_entries.is_empty() {
+        return None;
+    }
+    if text.is_empty() {
+        return Some(FallbackShapeResult::default());
     }
 
     let mut grapheme_offset = 0usize;
@@ -679,7 +707,7 @@ pub fn shape_with_fallback_and_options(
         })
         .collect();
     if graphemes.is_empty() {
-        return FallbackShapeResult::default();
+        return Some(FallbackShapeResult::default());
     }
 
     // Step 1: choose font per grapheme by probing glyph availability. This
@@ -771,10 +799,10 @@ pub fn shape_with_fallback_and_options(
         });
     }
 
-    FallbackShapeResult {
+    Some(FallbackShapeResult {
         glyphs: all_glyphs,
         runs,
-    }
+    })
 }
 
 /// Shape text with fallback chain: try each font in order

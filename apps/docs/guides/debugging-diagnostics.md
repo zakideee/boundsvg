@@ -77,6 +77,72 @@ value without changing `IR.warnings`, a compiled scene, or another callback.
 Warning order follows production order: native WASM warnings first, followed
 by warnings from later TypeScript-owned phases. Duplicate events are retained.
 
+## Text layout fatal contract
+
+Text layout failures use one structured contract across render and the six
+measurement methods: `layoutTextFlow`, `layoutTextFlowWithExclusions`,
+`measureTextBlock`, `shrinkwrapText`, `shrinkwrapFlow`, and
+`measureIntrinsicInlineSize`. Every diagnostic carries a closed operation name
+in `context.operation`; render uses `renderTextLayout`. Direct Engine calls,
+browser WASM, and Worker calls preserve the same code, message, stage, node ID,
+and context.
+
+| Code                             | Fixed message                                     | Stage      |
+| -------------------------------- | ------------------------------------------------- | ---------- |
+| `TEXT_LAYOUT_INPUT_INVALID`      | Text layout request is invalid.                   | `validate` |
+| `TEXT_FONT_UNAVAILABLE`          | No requested font is available for text layout.   | `text`     |
+| `TEXT_LAYOUT_PREPARATION_FAILED` | Text layout preparation failed.                   | `text`     |
+| `TEXT_FIT_INVALID_STEP`          | Text fit step is invalid.                         | `text`     |
+| `TEXT_FIT_PROBE_LIMIT`           | Text fit probe limit was exceeded.                | `text`     |
+| `TEXT_ELLIPSIS_CANDIDATE_LIMIT`  | Text ellipsis candidate limit was exceeded.       | `text`     |
+| `RICH_TEXT_MAX_DEPTH`            | Rich text depth limit was exceeded.               | `validate` |
+| `INLINE_RECT_COMPLEXITY_LIMIT`   | Inline rectangle limit was exceeded.              | `text`     |
+| `TEXT_REGION_QUERY_INVALID`      | Text region query is invalid.                     | `text`     |
+| `TEXT_REGION_PROVIDER_FAILED`    | Text region provider failed.                      | `text`     |
+| `TEXT_FLOW_REGION_INVALID`       | Text flow region is invalid.                      | `text`     |
+| `TEXT_REGION_QUERY_LIMIT`        | Text region query limit was exceeded.             | `text`     |
+| `TEXT_REGION_INTERVAL_LIMIT`     | Text region interval limit was exceeded.          | `text`     |
+| `TEXT_LAYOUT_INVARIANT`          | Text layout invariant failed.                     | `text`     |
+| `TEXT_LAYOUT_OUTPUT_INVALID`     | Text layout transport returned an invalid result. | `wasm`     |
+| `TEXT_LAYOUT_PANIC`              | Text layout failed unexpectedly.                  | `wasm`     |
+| `TEXT_LAYOUT_WASM_FAILED`        | Text layout WASM transport failed.                | `wasm`     |
+| `TEXT_LAYOUT_TRANSPORT_FAILED`   | Text layout transport failed.                     | `engine`   |
+| `TEXT_LAYOUT_RESULT_MISSING`     | Text layout result is missing required text data. | `text`     |
+| `TEXT_PATH_LAYOUT_UNAVAILABLE`   | Text-on-path layout is unavailable.               | `text`     |
+
+Font availability is decided by the registered Rust font registry, not by a
+JavaScript alias precheck. The resolver keeps the authored family order,
+ignores empty and generic CSS family names as non-resolving candidates, and
+uses the first registered alias with the closest matching face. A missing
+primary or unused missing fallback does not fail when another requested alias
+resolves. If no requested alias resolves, `TEXT_FONT_UNAVAILABLE` identifies
+the first failing effective run with a bounded alias list in `context`.
+
+Recursive rich text accepts a container depth of 48 and rejects depth 49 before
+calling a custom producer or WASM. Measurement errors have no node ID; render
+errors include an authored node ID when one exists. Both use
+`RICH_TEXT_MAX_DEPTH`, stage `validate`, and `context` containing `operation`,
+`actual`, and `limit`.
+
+Malformed output context reports a bounded `protocolPath` and a type descriptor
+such as `object` or `string(length=N)`, never the rejected value. Raw input,
+font bytes, thrown values, panic payloads, and registry contents are not copied
+into messages or context.
+
+### Migration from earlier text-layout errors
+
+| Earlier behavior or code                                                            | Current behavior or code                                                                     |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Built-in render or measurement precheck returned `FONT_ALIAS_NOT_REGISTERED`        | Rust registry resolution returns `TEXT_FONT_UNAVAILABLE` only if every requested alias fails |
+| Missing-font strings, `TEXT_LAYOUT_FAILED`, or `TEXT_LAYOUT_INVALID`                | `TEXT_FONT_UNAVAILABLE` with run and bounded alias context                                   |
+| `TEXT_REGION_PROVIDER_INVALID`                                                      | `TEXT_REGION_QUERY_INVALID`, `TEXT_REGION_PROVIDER_FAILED`, or `TEXT_FLOW_REGION_INVALID`    |
+| Six measurement `WASM_INVALID_*_OUTPUT` codes                                       | `TEXT_LAYOUT_OUTPUT_INVALID` with `phase: "decode"` and a safe descriptor                    |
+| Render preparation returned `TEXT_NO_LAYOUT`                                        | The exact domain code, usually `TEXT_LAYOUT_PREPARATION_FAILED` or `TEXT_FONT_UNAVAILABLE`   |
+| A custom render producer omitted required text layout and returned `TEXT_NO_LAYOUT` | `TEXT_LAYOUT_RESULT_MISSING`                                                                 |
+| Text-on-path layout returned `TEXT_NO_LAYOUT`                                       | `TEXT_PATH_LAYOUT_UNAVAILABLE`                                                               |
+| A malformed WASM throw was exposed as a generic layout failure                      | `TEXT_LAYOUT_WASM_FAILED`                                                                    |
+| An unknown custom producer throw was exposed as a generic layout failure            | `TEXT_LAYOUT_TRANSPORT_FAILED`                                                               |
+
 ## React Overlay
 
 Use `@boundsvg/react/inspect` for structured state and
@@ -128,7 +194,7 @@ function PreviewInspector({ vnode, selectedNodeId }) {
 
 The overlay is intentionally presentation-light. Style the wrapper and panel in your application, use `filter` to show only text nodes, interactive nodes, or a selected branch, and pass `highlightedBBoxes` when an editor needs to mark a crop box, hovered render-tree node, or custom validation region. The overlay keeps `pointer-events: none`, so selection and hover state should be controlled by your surrounding UI.
 
-## Diagnosing `WASM_INVALID_*` errors
+## Diagnosing non-text `WASM_INVALID_*` errors
 
 A `WASM_INVALID_*` `FatalError` means the JavaScript package could not accept
 the data returned by its WASM module. For protocol shape failures, the message
@@ -147,6 +213,10 @@ recoverable scene warning:
 3. If the matching, freshly built pair still fails, report a boundsvg bug with
    the error code, message, `stage`, `protocolPath`, and `received` context.
    Include the render method and the smallest scene that reproduces it.
+
+The six text measurement routes no longer use route-specific
+`WASM_INVALID_*_OUTPUT` codes. Use `TEXT_LAYOUT_OUTPUT_INVALID` and its
+`operation`, `phase`, `protocolPath`, and `received` context instead.
 
 ## CLI Reports
 

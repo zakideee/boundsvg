@@ -1,4 +1,3 @@
-use super::adapters::TextFlowLayoutError;
 use super::conversions::{
     ExclusionRegionProvider, convert_flow_result, convert_flow_span, convert_shrinkwrap_status,
 };
@@ -15,8 +14,9 @@ use crate::text::inline_runs;
 use crate::text::paragraph;
 use crate::text::shrinkwrap;
 use crate::text::types::{
-    FitMode, Language, RichTextNodeInput, TextLayoutRequest, TextOrientation, WhiteSpaceMode,
-    WrapMode, WritingMode, preprocess_span_texts_for_white_space, preprocess_text_for_white_space,
+    FitMode, Language, MAX_RICH_TEXT_DEPTH, RichTextNodeInput, TextLayoutRequest, TextOrientation,
+    WhiteSpaceMode, WrapMode, WritingMode, first_excess_rich_text_depth,
+    preprocess_span_texts_for_white_space, preprocess_text_for_white_space,
 };
 
 /// Headroom for synthesized unconstrained flow height. Tight authored line
@@ -185,8 +185,7 @@ fn compute_flow_used_height(
 pub(crate) fn shrinkwrap_text(
     input: &ShrinkwrapTextInput,
     registry: &FontRegistry,
-) -> Result<ShrinkwrapTextResult, TextFlowLayoutError> {
-    super::validate_rich_text_depth(input.rich_text.as_deref())?;
+) -> Result<ShrinkwrapTextResult, boundtext::TextLayoutError> {
     let font_families = super::build_font_families(&input.font_family, input.fallback.as_deref());
     let font_style = match input.font_style.as_deref() {
         Some("italic") => FontStyle::Italic,
@@ -246,9 +245,9 @@ pub(crate) fn shrinkwrap_text(
         .is_some_and(|nodes| !nodes.is_empty());
 
     if has_authored_spans && has_rich_text {
-        return Err("spans and richText are mutually exclusive"
-            .to_string()
-            .into());
+        return Err(boundtext::TextLayoutError::InvalidRequest {
+            reason: boundtext::TextRequestError::ConflictingTextSources,
+        });
     }
 
     let preprocessed = crate::text::types::preprocess_text_for_white_space(
@@ -274,6 +273,12 @@ pub(crate) fn shrinkwrap_text(
         );
     let bt_spans_ref = bt_spans.as_deref();
     let rich_text_ref = input.rich_text.as_deref().filter(|nodes| !nodes.is_empty());
+    if let Some(actual_depth) = rich_text_ref.and_then(first_excess_rich_text_depth) {
+        return Err(boundtext::TextLayoutError::RichTextDepthLimit {
+            actual: actual_depth,
+            limit: MAX_RICH_TEXT_DEPTH,
+        });
+    }
 
     let config = shrinkwrap::ShrinkwrapConfig {
         epsilon_px: input.epsilon_px.unwrap_or(0.25),
@@ -335,9 +340,14 @@ pub(crate) fn shrinkwrap_text(
             fit_max_probes: None,
         };
         if is_vertical {
-            let max_height = input
-                .max_height
-                .ok_or_else(|| "maxHeight is required for vertical shrinkwrapText".to_string())?;
+            let max_height =
+                input
+                    .max_height
+                    .ok_or(boundtext::TextLayoutError::InvalidRequest {
+                        reason: boundtext::TextRequestError::MissingInlineConstraint {
+                            field: boundtext::TextConstraintField::FlowBounds,
+                        },
+                    })?;
             let result = shrinkwrap::shrinkwrap_text_layout_vertical(
                 &layout_req,
                 &font_ctx,
@@ -346,8 +356,7 @@ pub(crate) fn shrinkwrap_text(
                 max_height,
                 input.max_width,
                 &config,
-            )
-            .ok_or_else(|| "Failed to layout preformatted text for shrinkwrap".to_string())?;
+            )?;
             return Ok(ShrinkwrapTextResult {
                 status: convert_shrinkwrap_status(result.status),
                 chosen_width_px: None,
@@ -366,8 +375,7 @@ pub(crate) fn shrinkwrap_text(
             input.min_width,
             input.max_width,
             &config,
-        )
-        .ok_or_else(|| "Failed to layout preformatted text for shrinkwrap".to_string())?;
+        )?;
         return Ok(ShrinkwrapTextResult {
             status: convert_shrinkwrap_status(result.status),
             chosen_width_px: Some(result.chosen_width_px),
@@ -435,7 +443,7 @@ pub(crate) fn shrinkwrap_text(
 
         let layout_at = |candidate: f64| -> Result<
             (bt_flow::FlowLayoutResult, bt_flow::FlowBounds),
-            TextFlowLayoutError,
+            boundtext::TextLayoutError,
         > {
             let flow_box = if is_vertical {
                 FlowBox {
@@ -470,7 +478,11 @@ pub(crate) fn shrinkwrap_text(
         let original_size = if is_vertical {
             input
                 .max_height
-                .ok_or_else(|| "maxHeight is required for vertical shrinkwrapText".to_string())?
+                .ok_or(boundtext::TextLayoutError::InvalidRequest {
+                    reason: boundtext::TextRequestError::MissingInlineConstraint {
+                        field: boundtext::TextConstraintField::FlowBounds,
+                    },
+                })?
         } else {
             input.max_width
         };
@@ -562,7 +574,11 @@ pub(crate) fn shrinkwrap_text(
     if is_vertical {
         let max_height = input
             .max_height
-            .ok_or_else(|| "maxHeight is required for vertical shrinkwrapText".to_string())?;
+            .ok_or(boundtext::TextLayoutError::InvalidRequest {
+                reason: boundtext::TextRequestError::MissingInlineConstraint {
+                    field: boundtext::TextConstraintField::FlowBounds,
+                },
+            })?;
         let result = shrinkwrap::shrinkwrap_vertical_text(
             text,
             &font_ctx,
@@ -590,8 +606,7 @@ pub(crate) fn shrinkwrap_text(
             max_height,
             &config,
             force_newline,
-        )
-        .ok_or_else(|| "Failed to shape vertical paragraph for shrinkwrap".to_string())?;
+        )?;
 
         Ok(ShrinkwrapTextResult {
             status: convert_shrinkwrap_status(result.status),
@@ -622,7 +637,13 @@ pub(crate) fn shrinkwrap_text(
             input.letter_spacing_px.unwrap_or(0.0),
             force_newline,
         )
-        .ok_or_else(|| "Failed to shape paragraph for shrinkwrap".to_string())?;
+        .ok_or_else(|| {
+            super::font_or_preparation_error(
+                &font_ctx,
+                0,
+                boundtext::TextPreparationPhase::PlainShaping,
+            )
+        })?;
 
         let target_line_count = if let Some(t) = input.target_line_count {
             t
@@ -673,8 +694,7 @@ pub(crate) fn shrinkwrap_text(
 pub(crate) fn shrinkwrap_flow(
     input: &ShrinkwrapFlowInput,
     registry: &FontRegistry,
-) -> Result<ShrinkwrapFlowResultDto, TextFlowLayoutError> {
-    super::validate_rich_text_depth(input.rich_text.as_deref())?;
+) -> Result<ShrinkwrapFlowResultDto, boundtext::TextLayoutError> {
     let font_families = super::build_font_families(&input.font_family, input.fallback.as_deref());
     let font_style = match input.font_style.as_deref() {
         Some("italic") => FontStyle::Italic,
@@ -741,9 +761,9 @@ pub(crate) fn shrinkwrap_flow(
         .as_ref()
         .is_some_and(|nodes| !nodes.is_empty());
     if has_authored_spans && has_rich_text {
-        return Err("spans and richText are mutually exclusive"
-            .to_string()
-            .into());
+        return Err(boundtext::TextLayoutError::InvalidRequest {
+            reason: boundtext::TextRequestError::ConflictingTextSources,
+        });
     }
     let synthetic_spans = if !has_authored_spans
         && !has_rich_text
@@ -798,7 +818,7 @@ pub(crate) fn shrinkwrap_flow(
             input.hanging_punctuation.unwrap_or(false),
             &ruby_info,
             is_vertical,
-        );
+        )?;
         Some((text_spans, shaped_runs))
     } else {
         None
@@ -817,7 +837,13 @@ pub(crate) fn shrinkwrap_flow(
                 input.letter_spacing_px.unwrap_or(0.0),
                 true,
             )
-            .ok_or_else(|| "Failed to shape paragraph for flow shrinkwrap".to_string())?,
+            .ok_or_else(|| {
+                super::font_or_preparation_error(
+                    &font_ctx,
+                    0,
+                    boundtext::TextPreparationPhase::PlainShaping,
+                )
+            })?,
         )
     } else {
         None
@@ -856,7 +882,7 @@ pub(crate) fn shrinkwrap_flow(
     };
 
     // Unified measure closure: delegates to inline, rich, or plain path.
-    let measure_at = |candidate: f64| -> Result<(usize, bool), TextFlowLayoutError> {
+    let measure_at = |candidate: f64| -> Result<(usize, bool), boundtext::TextLayoutError> {
         let fb = if is_vertical {
             FlowBox {
                 x: input.flow_box.x,
@@ -924,11 +950,9 @@ pub(crate) fn shrinkwrap_flow(
             Ok((result.used_line_count, fits))
         } else {
             let Some(pp) = pp.as_ref() else {
-                return Err(
-                    "Failed to measure flow shrinkwrap: paragraph was not shaped"
-                        .to_string()
-                        .into(),
-                );
+                return Err(boundtext::TextLayoutError::PreparationFailed {
+                    phase: boundtext::TextPreparationPhase::FlowPreparation,
+                });
             };
             let measurement = if is_vertical {
                 let column_width = line_height_px;

@@ -13,64 +13,6 @@ use crate::text::types::{
 };
 use crate::text::types::{preprocess_span_texts_for_white_space, preprocess_text_for_white_space};
 
-/// Preserve typed boundtext failures across boundsvg orchestration.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum TextFlowLayoutError {
-    #[error(transparent)]
-    Boundtext(#[from] boundtext::BoundtextError),
-    #[error("{0}")]
-    InvalidInput(String),
-}
-
-impl From<String> for TextFlowLayoutError {
-    fn from(message: String) -> Self {
-        Self::InvalidInput(message)
-    }
-}
-
-impl TextFlowLayoutError {
-    /// Map a typed layout failure to its stable engine error code.
-    pub(crate) fn code(&self) -> &'static str {
-        match self {
-            Self::Boundtext(boundtext::BoundtextError::FitProbeLimit { .. }) => {
-                "TEXT_FIT_PROBE_LIMIT"
-            }
-            Self::Boundtext(boundtext::BoundtextError::EllipsisCandidateLimit { .. }) => {
-                "TEXT_ELLIPSIS_CANDIDATE_LIMIT"
-            }
-            Self::Boundtext(boundtext::BoundtextError::RichTextDepthLimit { .. }) => {
-                "RICH_TEXT_MAX_DEPTH"
-            }
-            Self::Boundtext(boundtext::BoundtextError::InlineRectLimit { .. }) => {
-                "INLINE_RECT_COMPLEXITY_LIMIT"
-            }
-            Self::Boundtext(boundtext::BoundtextError::InvalidFitStep) => "TEXT_FIT_INVALID_STEP",
-            Self::Boundtext(boundtext::BoundtextError::RegionQueryLimit { .. }) => {
-                "TEXT_REGION_QUERY_LIMIT"
-            }
-            Self::Boundtext(boundtext::BoundtextError::RegionIntervalLimit { .. }) => {
-                "TEXT_REGION_INTERVAL_LIMIT"
-            }
-            Self::Boundtext(
-                boundtext::BoundtextError::InvalidRegionQuery(_)
-                | boundtext::BoundtextError::InvalidFlowRegion { .. },
-            ) => "TEXT_REGION_PROVIDER_INVALID",
-            Self::Boundtext(_) => "TEXT_LAYOUT_FAILED",
-            Self::InvalidInput(_) => "TEXT_LAYOUT_INVALID",
-        }
-    }
-
-    /// Attach rendering context without erasing the underlying text failure.
-    pub(crate) fn into_engine_error(self, node_id: Option<String>) -> crate::error::EngineError {
-        crate::error::EngineError::Structured {
-            code: self.code().to_string(),
-            message: self.to_string(),
-            stage: Some(crate::diagnostics::PipelineStage::Text),
-            node_id,
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Adapter: simple flow
 // ---------------------------------------------------------------------------
@@ -78,7 +20,7 @@ impl TextFlowLayoutError {
 pub(crate) fn layout_text_flow(
     input: &TextFlowInput,
     registry: &FontRegistry,
-) -> Result<TextFlowResult, String> {
+) -> Result<TextFlowResult, boundtext::TextLayoutError> {
     let font_families = super::build_font_families(&input.font_family, input.fallback.as_deref());
     let font_style = match input.font_style.as_deref() {
         Some("italic") => FontStyle::Italic,
@@ -143,8 +85,7 @@ pub(crate) fn layout_text_flow(
 pub(crate) fn layout_text_flow_with_exclusions(
     input: &TextFlowWithExclusionsInput,
     registry: &FontRegistry,
-) -> Result<TextFlowWithExclusionsResult, TextFlowLayoutError> {
-    super::validate_rich_text_depth(input.rich_text.as_deref())?;
+) -> Result<TextFlowWithExclusionsResult, boundtext::TextLayoutError> {
     let font_families = super::build_font_families(&input.font_family, input.fallback.as_deref());
     let font_style = match input.font_style.as_deref() {
         Some("italic") => FontStyle::Italic,
@@ -198,9 +139,9 @@ pub(crate) fn layout_text_flow_with_exclusions(
     }
     let bt_spans_ref = bt_spans.as_deref();
     if bt_spans_ref.is_some_and(|spans| !spans.is_empty()) && rich_text_ref.is_some() {
-        return Err(TextFlowLayoutError::InvalidInput(
-            "spans and richText are mutually exclusive".to_string(),
-        ));
+        return Err(boundtext::TextLayoutError::InvalidRequest {
+            reason: boundtext::TextRequestError::ConflictingTextSources,
+        });
     }
 
     let shape_options = crate::font::shaping::ShapeOptions {
@@ -279,12 +220,13 @@ pub(crate) fn layout_resolved_text_flow(
     height: f64,
     registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
-) -> Result<TextLayoutResult, TextFlowLayoutError> {
+) -> Result<TextLayoutResult, boundtext::TextLayoutError> {
     let flow = text_input
         .flow
         .as_ref()
-        .ok_or_else(|| "Resolved text flow requires flow configuration".to_string())?;
-    super::validate_rich_text_depth(text_input.rich_text.as_deref())?;
+        .ok_or(boundtext::TextLayoutError::InvalidRequest {
+            reason: boundtext::TextRequestError::InvalidRequestShape,
+        })?;
 
     let font_families = if text_input.font_family.is_empty() {
         vec!["default".to_string()]
