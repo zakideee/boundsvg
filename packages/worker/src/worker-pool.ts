@@ -1,9 +1,7 @@
 import {
-  assertSerializableSceneTransport,
   FatalError,
   type Frame,
   type GeometryDoc,
-  isSceneNode,
   type OutputCommonOptions,
   type RasterEmissionOptions,
   type RenderPngFramesOptions,
@@ -15,10 +13,7 @@ import {
   type SymbolDefinition,
 } from "@boundsvg/core";
 import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
-import {
-  snapshotWorkerLayoutTransitionInput,
-  type WorkerLayoutTransitionInput,
-} from "./layout-transition-transport.js";
+import type { WorkerLayoutTransitionInput } from "./layout-transition-transport.js";
 import type {
   FontTransfer,
   IndexedFrameTime,
@@ -29,6 +24,10 @@ import type {
 import {
   forwardWorkerWarnings,
   getWorkerPoolEndpoint,
+  type PreparedSceneDocument,
+  type PreparedWorkerLayoutTransition,
+  prepareSceneForTransport,
+  prepareWorkerLayoutTransitionForTransport,
   WorkerEngine,
   type WorkerLike,
   type WorkerPoolEndpoint,
@@ -130,8 +129,8 @@ type FrameCallbacks = {
 
 type RunFramesInput = {
   source:
-    | { kind: "scene"; scene: SceneNode }
-    | { kind: "layout-transition"; transition: WorkerLayoutTransitionInput };
+    | { kind: "scene"; scene: PreparedSceneDocument }
+    | { kind: "layout-transition"; transition: PreparedWorkerLayoutTransition };
   timesMs: readonly number[];
   workerOptions: WorkerFrameRenderOptions;
   callbacks: FrameCallbacks;
@@ -150,6 +149,11 @@ type RunMaterializedFramesInput = {
   workerOptions: WorkerMaterializedRenderOptions;
   callbacks: MaterializedCallbacks;
   signal?: AbortSignal;
+};
+
+type PreparedMaterializedFrameInput = {
+  readonly timeMs: number;
+  readonly scene: PreparedSceneDocument;
 };
 
 type MaterializedCompletion =
@@ -240,7 +244,7 @@ export class WorkerPool {
   renderFrames(scene: SceneNode, options: WorkerPoolRenderFramesOptions): AsyncIterable<Frame> {
     this.assertNotDisposed();
     const timesMs = validateFrameSchedule(options);
-    const sceneSnapshot = cloneStructuredAsset(scene, "scene");
+    const sceneSnapshot = prepareSceneForTransport(scene);
     const { signal, callbacks, workerOptions } = splitFrameOptions(options);
     return this.runFrames({
       source: { kind: "scene", scene: sceneSnapshot },
@@ -262,7 +266,7 @@ export class WorkerPool {
   ): AsyncIterable<Frame> {
     this.assertNotDisposed();
     const timesMs = validateFrameSchedule(options);
-    const transitionSnapshot = snapshotWorkerLayoutTransitionInput(transition);
+    const transitionSnapshot = prepareWorkerLayoutTransitionForTransport(transition);
     const { signal, callbacks, workerOptions } = splitFrameOptions(options);
     return this.runFrames({
       source: { kind: "layout-transition", transition: transitionSnapshot },
@@ -997,7 +1001,7 @@ function requestMaterializedFrame(input: {
   endpoint: WorkerPoolEndpoint;
   slot: number;
   index: number;
-  frameInput: MaterializedFrameInput;
+  frameInput: PreparedMaterializedFrameInput;
   format: "svg" | "png";
   workerOptions: WorkerMaterializedRenderOptions;
 }): Promise<MaterializedCompletion> {
@@ -1033,18 +1037,13 @@ function requestMaterializedFrame(input: {
     );
 }
 
-function validateMaterializedFrameInput(value: unknown, index: number): MaterializedFrameInput {
-  if (!isPlainObject(value)) {
-    throw materializedInputError(index, "input must be a plain object");
-  }
-  const timeDescriptor = Object.getOwnPropertyDescriptor(value, "timeMs");
-  const sceneDescriptor = Object.getOwnPropertyDescriptor(value, "scene");
-  if (!timeDescriptor || !("value" in timeDescriptor)) {
-    throw materializedInputError(index, "timeMs must be an own data property");
-  }
-  if (!sceneDescriptor || !("value" in sceneDescriptor)) {
-    throw materializedInputError(index, "scene must be an own data property");
-  }
+function validateMaterializedFrameInput(
+  value: unknown,
+  index: number,
+): PreparedMaterializedFrameInput {
+  const frameRecord = requireMaterializedFrameRecord(value, index);
+  const timeDescriptor = readMaterializedFrameDescriptor(frameRecord, "timeMs", index);
+  const sceneDescriptor = readMaterializedFrameDescriptor(frameRecord, "scene", index);
   const timeMs: unknown = timeDescriptor.value;
   if (typeof timeMs !== "number" || !Number.isFinite(timeMs) || timeMs < 0) {
     throw new FatalError(
@@ -1058,20 +1057,60 @@ function validateMaterializedFrameInput(value: unknown, index: number): Material
       },
     );
   }
-  const scene: unknown = sceneDescriptor.value;
-  if (!isSceneNode(scene)) {
-    throw materializedInputError(index, "scene must be a supported SceneNode");
+  try {
+    return { timeMs, scene: prepareSceneForTransport(sceneDescriptor.value) };
+  } catch (error) {
+    if (error instanceof FatalError) {
+      throw addMaterializedFrameContext(error, index);
+    }
+    throw error;
   }
-  assertSerializableSceneTransport(scene, index);
-  return { timeMs, scene };
 }
 
-function isPlainObject(value: unknown): value is object {
+function requireMaterializedFrameRecord(value: unknown, index: number): object {
   if (typeof value !== "object" || value === null) {
-    return false;
+    throw materializedInputError(index, "input must be a plain object");
   }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  let isArrayValue: boolean;
+  let prototype: object | null;
+  try {
+    isArrayValue = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    throw materializedInputError(index, "input could not be inspected");
+  }
+  if (isArrayValue || (prototype !== Object.prototype && prototype !== null)) {
+    throw materializedInputError(index, "input must be a plain object");
+  }
+  return value;
+}
+
+function readMaterializedFrameDescriptor(
+  value: object,
+  field: "timeMs" | "scene",
+  index: number,
+): PropertyDescriptor & { readonly value: unknown } {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, field);
+  } catch {
+    throw materializedInputError(index, `${field} could not be inspected`);
+  }
+  if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+    throw materializedInputError(index, `${field} must be an own enumerable data property`);
+  }
+  return descriptor as PropertyDescriptor & { readonly value: unknown };
+}
+
+function addMaterializedFrameContext(error: FatalError, frameIndex: number): FatalError {
+  return new FatalError(error.code, error.message, {
+    ...(error.stage !== undefined && { stage: error.stage }),
+    ...(error.nodeId !== undefined && { nodeId: error.nodeId }),
+    context: {
+      ...error.context,
+      frameIndex,
+    },
+  });
 }
 
 function materializedInputError(index: number, reason: string): FatalError {

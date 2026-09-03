@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { runExport } from "../src/export.js";
+import { parseExportArgs } from "../src/cli-export.js";
+import { buildExportVNode, runExport } from "../src/export.js";
 import type { CliIo } from "../src/types.js";
 
 function createTestIo(overrides: Partial<CliIo> = {}): CliIo & { stderr: string[] } {
@@ -25,6 +26,44 @@ function createTestIo(overrides: Partial<CliIo> = {}): CliIo & { stderr: string[
 }
 
 describe("runExport", () => {
+  it("keeps JSON syntax failure ahead of Scene structural decoding", () => {
+    const io = createTestIo();
+    const parsed = parseExportArgs([
+      "--input",
+      "card.scene.json",
+      "--font",
+      "NotoSansJP:400:normal:fixture.ttf",
+    ]);
+    expect(parsed).not.toBeNull();
+
+    const result = buildExportVNode(io, parsed!.options, "{");
+
+    expect(result).toEqual({ ok: false, exitCode: 1 });
+    expect(io.stderr.join("")).toBe("Error: Invalid JSON in input\n");
+  });
+
+  it("preserves the Core Scene Fatal code and message at the export boundary", () => {
+    const io = createTestIo();
+    const parsed = parseExportArgs([
+      "--input",
+      "card.scene.json",
+      "--font",
+      "NotoSansJP:400:normal:fixture.ttf",
+    ]);
+    expect(parsed).not.toBeNull();
+
+    const result = buildExportVNode(
+      io,
+      parsed!.options,
+      JSON.stringify({ type: "Canvas", width: 1, height: 1, children: [{}] }),
+    );
+
+    expect(result).toEqual({ ok: false, exitCode: 1 });
+    expect(io.stderr.join("")).toBe(
+      "Error: Invalid SceneDocument: [SCENE_DECODE_MISSING_FIELD] Scene document is missing a required field.\n",
+    );
+  });
+
   it("rejects layered-svg stdout output before engine initialization", async () => {
     const io = createTestIo();
 

@@ -75,9 +75,9 @@ describe("wasm render envelopes", () => {
 
     const error = captureFatal(() => engine.renderToSvg(scene, { skipValidation: true }));
     expect(error).toMatchObject({
-      code: "SCENE_NOT_SERIALIZABLE",
-      stage: "engine",
-      context: expect.objectContaining({ path: "scene.onTick" }),
+      code: "SCENE_DECODE_UNKNOWN_KEY",
+      stage: "validate",
+      context: { path: "/onTick", key: "onTick" },
     });
   });
 

@@ -38,6 +38,30 @@ boundsvg export \
 
 Use `--report <file>` when a CI job should keep the diagnostics as an artifact. Use `--inspect` when a local export should print the JSON report to stderr while still writing the rendered SVG or PNG.
 
+## Scene input validation
+
+For `.scene.json` input, file and option errors are handled first, followed by
+JSON syntax, recursive Scene structure, and then conversion or rendering. A
+syntax failure is reported as `Invalid JSON in input`. A structurally invalid
+document preserves the Core `FatalError` code and fixed message, for example:
+
+```text
+Error: Invalid SceneDocument: [SCENE_DECODE_MISSING_FIELD] Scene document is missing a required field.
+```
+
+The parsed document is decoded once and the resulting VNode is reused by the
+CLI operation. Library callers can use the direct converter, which also runs
+one recursive decode before code generation:
+
+```ts
+import { convertSceneToComponent } from "@boundsvg/cli";
+
+const { code, warnings } = convertSceneToComponent(scene, options);
+```
+
+This rejects malformed nested children, unknown fields, unsafe property
+descriptors, cycles, and resource-limit excesses before generation.
+
 ## WebP, GIF and MP4 Export
 
 ```bash

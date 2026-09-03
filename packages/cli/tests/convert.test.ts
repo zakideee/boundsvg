@@ -265,7 +265,9 @@ describe("runConvert", () => {
       ]);
 
       expect(exitCode).toBe(1);
-      expect(io.stderr.join("")).toContain("Error: Invalid SceneDocument:");
+      expect(io.stderr.join("")).toContain(
+        "Error: Invalid SceneDocument: [SCENE_DECODE_INVALID_VALUE] Scene document contains a value with an invalid structural type.",
+      );
     });
   });
 

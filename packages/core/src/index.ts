@@ -165,9 +165,16 @@ export {
 // Resources
 export type { FetchImageFn, ImageLoader, LoadedImage } from "./resources/image-loader.js";
 export { createImageLoader } from "./resources/image-loader.js";
+export {
+  decodeSceneDocument,
+  MAX_SCENE_DECODE_COLLECTION_LENGTH,
+  MAX_SCENE_DECODE_DEPTH,
+  MAX_SCENE_DECODE_JSON_BYTES,
+  MAX_SCENE_DECODE_NODES,
+  MAX_SCENE_DECODE_VALUES,
+} from "./scene/decoder.js";
 // SceneDocument
 export { fromSceneDocument, toSceneDocument } from "./scene/from-vnode.js";
-export { assertSerializableSceneTransport } from "./scene/serializable-transport.js";
 export type {
   BoxSceneNode,
   CanvasSceneNode,
@@ -188,7 +195,6 @@ export type {
   TextOnPathSceneNode,
   TextSceneNode,
 } from "./scene/types.js";
-export { isSceneNode } from "./scene/types.js";
 export {
   compileGeometryToSvgDocument,
   computeGeometryIntersections,

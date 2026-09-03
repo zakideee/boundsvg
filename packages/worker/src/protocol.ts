@@ -9,11 +9,11 @@
 import {
   FatalError,
   type Frame,
+  fromSceneDocument,
   type GeometryDoc,
   type IntrinsicInlineSizeInput,
   type IntrinsicInlineSizeResult,
   type IR,
-  isSceneNode,
   type LayeredPngOptions,
   type LayeredPngResult,
   type LayeredSvgOptions,
@@ -41,6 +41,7 @@ import {
   type TextFlowResult,
   type TextFlowWithExclusionsInput,
   type TextFlowWithExclusionsResult,
+  type VNode,
 } from "@boundsvg/core";
 import {
   isWasmIntrinsicInlineSizeResult,
@@ -52,7 +53,8 @@ import {
   validateStructuralIR,
 } from "@boundsvg/core/wasm";
 import {
-  isWorkerLayoutTransitionInput,
+  type DecodedWorkerLayoutTransitionInput,
+  decodeWorkerLayoutTransitionInput,
   type WorkerLayoutTransitionInput,
 } from "./layout-transition-transport.js";
 
@@ -303,6 +305,17 @@ export type WorkerRequest =
   | MeasureIntrinsicInlineSizeRequest
   | DisposeRequest;
 
+type DecodeWorkerRequest<Request> = Request extends { readonly scene: SceneNode }
+  ? Omit<Request, "scene"> & { readonly scene: VNode }
+  : Request extends { readonly transition: WorkerLayoutTransitionInput }
+    ? Omit<Request, "transition"> & {
+        readonly transition: DecodedWorkerLayoutTransitionInput;
+      }
+    : Request;
+
+/** Worker-local request after nested Scene values cross the Core boundary. */
+export type DecodedWorkerRequest = DecodeWorkerRequest<WorkerRequest>;
+
 // ---------------------------------------------------------------------------
 // Worker responses (Worker → main thread)
 // ---------------------------------------------------------------------------
@@ -532,6 +545,33 @@ const WORKER_REQUEST_KEYS = [
   "input",
 ] as const;
 
+const WORKER_REQUEST_TYPES = new Set<string>([
+  "init",
+  "render-svg",
+  "render-animated-svg",
+  "render-png",
+  "render-webp",
+  "render-animated-webp",
+  "render-animated-gif",
+  "render-layout-transition-animated-webp",
+  "render-layout-transition-animated-gif",
+  "render-layered-svg",
+  "render-layered-png",
+  "render-svg-and-ir",
+  "render-animated-svg-and-ir",
+  "open-frame-stream",
+  "open-layout-transition-frame-stream",
+  "next-frame-stream",
+  "close-frame-stream",
+  "layout-text-flow",
+  "layout-text-flow-with-exclusions",
+  "measure-text-block",
+  "shrinkwrap-text",
+  "shrinkwrap-flow",
+  "measure-intrinsic-inline-size",
+  "dispose",
+]);
+
 const WORKER_RESPONSE_KEYS = [
   "id",
   "type",
@@ -663,9 +703,87 @@ function snapshotArrayProperties(value: Record<string, unknown>, keys: readonly 
     if (arraySnapshot === undefined) {
       return false;
     }
-    value[key] = arraySnapshot;
+    const entrySnapshots: unknown[] = [];
+    for (const entry of arraySnapshot) {
+      const entrySnapshot = snapshotRequestArrayEntry(key, entry);
+      if (entrySnapshot === undefined) {
+        return false;
+      }
+      entrySnapshots.push(entrySnapshot);
+    }
+    value[key] = entrySnapshots;
   }
   return true;
+}
+
+function snapshotRequestArrayEntry(key: string, entry: unknown): unknown {
+  switch (key) {
+    case "fonts":
+      return snapshotFontTransfer(entry);
+    case "geometries":
+      return snapshotNamedObjectEntry(entry, "doc");
+    case "symbols":
+      return snapshotNamedObjectEntry(entry, "def");
+    case "schedule":
+      return snapshotIndexedFrameTime(entry);
+    default:
+      return undefined;
+  }
+}
+
+function snapshotFontTransfer(value: unknown): FontTransfer | undefined {
+  if (!isObjectLike(value)) {
+    return undefined;
+  }
+  const alias = getStringProperty(value, "alias");
+  const weight = getNumberProperty(value, "weight");
+  const style = getProperty(value, "style");
+  const data = getProperty(value, "data");
+  if (
+    alias === undefined ||
+    weight === undefined ||
+    (style !== "normal" && style !== "italic") ||
+    !(data instanceof ArrayBuffer)
+  ) {
+    return undefined;
+  }
+  return { alias, weight, style, data };
+}
+
+function snapshotNamedObjectEntry(
+  value: unknown,
+  valueKey: "doc" | "def",
+): { id: string; doc?: GeometryDoc; def?: SymbolDefinition } | undefined {
+  if (!isObjectLike(value)) {
+    return undefined;
+  }
+  const id = getStringProperty(value, "id");
+  const nestedValue = getProperty(value, valueKey);
+  if (id === undefined || !isObjectLike(nestedValue)) {
+    return undefined;
+  }
+  return valueKey === "doc"
+    ? { id, doc: nestedValue as GeometryDoc }
+    : { id, def: nestedValue as SymbolDefinition };
+}
+
+function snapshotIndexedFrameTime(value: unknown): IndexedFrameTime | undefined {
+  if (!isObjectLike(value)) {
+    return undefined;
+  }
+  const index = getNumberProperty(value, "index");
+  const timeMs = getNumberProperty(value, "timeMs");
+  if (
+    index === undefined ||
+    !Number.isInteger(index) ||
+    index < 0 ||
+    timeMs === undefined ||
+    !Number.isFinite(timeMs) ||
+    timeMs < 0
+  ) {
+    return undefined;
+  }
+  return { index, timeMs };
 }
 
 function snapshotRecoverableWarnings(value: unknown): SerializedRecoverableError[] | undefined {
@@ -990,6 +1108,7 @@ function snapshotResponseDiagnostics(value: Record<string, unknown>, type: strin
 type WorkerMessageDecodeResult<TMessage> = {
   readonly id: number | undefined;
   readonly message: TMessage | undefined;
+  readonly error?: FatalError;
 };
 
 /** Return whether a protocol ID can be correlated without precision loss. */
@@ -1065,13 +1184,7 @@ function isFrameStreamId(value: object): boolean {
   return isWorkerMessageId(streamId);
 }
 
-function isWorkerRequestSnapshot(value: object): value is WorkerRequest {
-  const id = getNumberProperty(value, "id");
-  const type = getStringProperty(value, "type");
-  if (!isWorkerMessageId(id) || type === undefined) {
-    return false;
-  }
-
+function isWorkerRequestOuterSnapshot(value: object, type: string): boolean {
   switch (type) {
     case "init": {
       const fonts = getProperty(value, "fonts");
@@ -1095,24 +1208,18 @@ function isWorkerRequestSnapshot(value: object): value is WorkerRequest {
     case "render-layered-svg":
     case "render-layered-png":
     case "render-svg-and-ir":
-      return isSceneNode(getProperty(value, "scene"));
+      return true;
     case "render-animated-svg":
     case "render-animated-svg-and-ir":
     case "render-animated-webp":
     case "render-animated-gif":
-      return (
-        isSceneNode(getProperty(value, "scene")) && isObjectLike(getProperty(value, "options"))
-      );
+      return isObjectLike(getProperty(value, "options"));
     case "render-layout-transition-animated-webp":
     case "render-layout-transition-animated-gif":
-      return (
-        isWorkerLayoutTransitionInput(getProperty(value, "transition")) &&
-        isObjectLike(getProperty(value, "options"))
-      );
+      return isObjectLike(getProperty(value, "options"));
     case "open-frame-stream": {
       const schedule = getProperty(value, "schedule");
       return (
-        isSceneNode(getProperty(value, "scene")) &&
         isDenseArrayOf(schedule, isIndexedFrameTime) &&
         isWorkerFrameRenderOptions(getProperty(value, "options"))
       );
@@ -1120,7 +1227,6 @@ function isWorkerRequestSnapshot(value: object): value is WorkerRequest {
     case "open-layout-transition-frame-stream": {
       const schedule = getProperty(value, "schedule");
       return (
-        isWorkerLayoutTransitionInput(getProperty(value, "transition")) &&
         isDenseArrayOf(schedule, isIndexedFrameTime) &&
         isWorkerFrameRenderOptions(getProperty(value, "options"))
       );
@@ -1142,31 +1248,83 @@ function isWorkerRequestSnapshot(value: object): value is WorkerRequest {
   }
 }
 
+function decodeNestedWorkerRequest(
+  snapshot: Record<string, unknown>,
+  type: string,
+  id: number,
+): WorkerMessageDecodeResult<DecodedWorkerRequest> {
+  switch (type) {
+    case "render-svg":
+    case "render-animated-svg":
+    case "render-png":
+    case "render-webp":
+    case "render-animated-webp":
+    case "render-animated-gif":
+    case "render-layered-svg":
+    case "render-layered-png":
+    case "render-svg-and-ir":
+    case "render-animated-svg-and-ir":
+    case "open-frame-stream": {
+      const scene = fromSceneDocument(getProperty(snapshot, "scene"));
+      Object.defineProperty(snapshot, "scene", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: scene,
+      });
+      return { id, message: snapshot as unknown as DecodedWorkerRequest };
+    }
+    case "render-layout-transition-animated-webp":
+    case "render-layout-transition-animated-gif":
+    case "open-layout-transition-frame-stream": {
+      const transition = decodeWorkerLayoutTransitionInput(getProperty(snapshot, "transition"));
+      Object.defineProperty(snapshot, "transition", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: transition,
+      });
+      return { id, message: snapshot as unknown as DecodedWorkerRequest };
+    }
+    default:
+      return { id, message: snapshot as unknown as DecodedWorkerRequest };
+  }
+}
+
 /** Decode one request and its correlation ID from the same getter-free snapshot. */
 export function decodeWorkerRequestMessage(
   value: unknown,
-): WorkerMessageDecodeResult<WorkerRequest> {
+): WorkerMessageDecodeResult<DecodedWorkerRequest> {
   const snapshot = snapshotKnownProperties(value, WORKER_REQUEST_KEYS);
   if (snapshot === undefined) {
     return { id: undefined, message: undefined };
   }
   const id = getWorkerMessageId(snapshot);
+  if (id === undefined) {
+    return { id: undefined, message: undefined };
+  }
   try {
     const type = getStringProperty(snapshot, "type");
-    if (type !== undefined && !snapshotArrayProperties(snapshot, requestArrayKeys(type))) {
+    if (type === undefined || !WORKER_REQUEST_TYPES.has(type)) {
       return { id, message: undefined };
     }
-    if (!isWorkerRequestSnapshot(snapshot)) {
+    if (!snapshotArrayProperties(snapshot, requestArrayKeys(type))) {
       return { id, message: undefined };
     }
-    return { id, message: snapshot };
-  } catch {
+    if (!isWorkerRequestOuterSnapshot(snapshot, type)) {
+      return { id, message: undefined };
+    }
+    return decodeNestedWorkerRequest(snapshot, type, id);
+  } catch (error) {
+    if (error instanceof FatalError) {
+      return { id, message: undefined, error };
+    }
     return { id, message: undefined };
   }
 }
 
 /** Decode one request into a getter-free top-level snapshot. */
-function decodeWorkerRequest(value: unknown): WorkerRequest | undefined {
+function decodeWorkerRequest(value: unknown): DecodedWorkerRequest | undefined {
   return decodeWorkerRequestMessage(value).message;
 }
 

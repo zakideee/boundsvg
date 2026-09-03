@@ -29,6 +29,15 @@ const utf8Encoder = new TextEncoder();
 // Preserve the literal baseline for pre-existing exports while the direct
 // guard below pins each intentional addition independently.
 const intentionalRuntimeExportAdditions = new Set(["snapshotCompiledIR"]);
+const replacedSceneRuntimeExports = new Set(["assertSerializableSceneTransport", "isSceneNode"]);
+const sceneDecoderRuntimeExports = [
+  "MAX_SCENE_DECODE_COLLECTION_LENGTH",
+  "MAX_SCENE_DECODE_DEPTH",
+  "MAX_SCENE_DECODE_JSON_BYTES",
+  "MAX_SCENE_DECODE_NODES",
+  "MAX_SCENE_DECODE_VALUES",
+  "decodeSceneDocument",
+] as const;
 
 type ReferenceManifest = {
   formatVersion: number;
@@ -51,7 +60,15 @@ function jsonBytes(value: unknown): Uint8Array {
 }
 
 function architectureIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
+  const previousRootExports = JSON.parse(
+    readFileSync(path.join(referenceRoot, "contracts/root-runtime-exports.json"), "utf8"),
+  ) as string[];
+  const currentRootExports = [
+    ...previousRootExports.filter((exportName) => !replacedSceneRuntimeExports.has(exportName)),
+    ...sceneDecoderRuntimeExports,
+  ].sort();
   return new Map([
+    ["contracts/root-runtime-exports.json", jsonBytes(currentRootExports)],
     ["contracts/wasm-schema-version.txt", utf8("31")],
     [
       "fallback/missing-glyph.warnings.json",
@@ -381,7 +398,7 @@ describe("refactor output parity", () => {
       expect(actualBytes, `${artifactName}: byte content`).toEqual(expectedBytes);
       unchangedCount += 1;
     }
-    expect(unchangedCount).toBe(19);
-    expect(intentionalCount).toBe(4);
+    expect(unchangedCount).toBe(18);
+    expect(intentionalCount).toBe(5);
   });
 });

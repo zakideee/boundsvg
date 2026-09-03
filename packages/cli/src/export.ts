@@ -10,7 +10,6 @@ import {
   type Engine,
   FatalError,
   formatLayerFileName,
-  fromSceneDocument,
   MAX_ANIMATION_FRAMES,
   type RecoverableError,
   type VNode,
@@ -86,16 +85,14 @@ export function buildExportVNode(
   if (options.inputFormat === "scene") {
     const sceneResult = parseSceneInput(inputContent);
     if (!sceneResult.ok) {
-      io.writeStderr(`Error: ${sceneResult.message}\n`);
+      const message =
+        sceneResult.kind === "syntax"
+          ? sceneResult.message
+          : `Invalid SceneDocument: ${formatError(sceneResult.error)}`;
+      io.writeStderr(`Error: ${message}\n`);
       return { ok: false, exitCode: 1 };
     }
-
-    try {
-      return { ok: true, vnode: fromSceneDocument(sceneResult.scene) };
-    } catch (err) {
-      io.writeStderr(`Error: Invalid SceneDocument: ${formatError(err)}\n`);
-      return { ok: false, exitCode: 1 };
-    }
+    return { ok: true, vnode: sceneResult.vnode };
   }
 
   const analyzeOptions: AnalyzeSvgOptions = {

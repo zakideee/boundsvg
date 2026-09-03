@@ -3,7 +3,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CliOptions } from "../src/cli.js";
 import { parseArgs, parseConvertArgs } from "../src/cli.js";
-import { convertSceneToComponent, convertSvgToComponent } from "../src/convert.js";
+import { convertSvgToComponent } from "../src/convert.js";
+import { convertSceneToComponent } from "../src/index.js";
 
 // Fixture path (reuse core's fixtures)
 const fixturesDir = resolve(__dirname, "../../core/tests/svg/fixtures");
@@ -463,6 +464,26 @@ describe("convertSceneToComponent", () => {
     expect(code).toContain("export default function FromScene");
     expect(code).toContain("BoundSvgProvider");
     expect(code).toContain("BoundSvg");
+  });
+
+  it("decodes a direct SceneDocument exactly once before component generation", () => {
+    let typeDescriptorCalls = 0;
+    const scene = new Proxy(
+      { type: "Canvas" as const, width: 1, height: 1, children: [] },
+      {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "type") {
+            typeDescriptorCalls += 1;
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      },
+    );
+
+    const { code } = convertSceneToComponent(scene, makeOptions({ name: "DirectScene" }));
+
+    expect(code).toContain("export default function DirectScene");
+    expect(typeDescriptorCalls).toBe(1);
   });
 
   it("round-trips SVG → Scene → Component preserving text content", () => {

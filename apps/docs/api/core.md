@@ -369,12 +369,41 @@ Fonts are registered inside the WASM engine instance. Pass the ones you know up 
 
 All render methods are **synchronous**: layout, text shaping, and rasterization run in WASM without async I/O.
 
-Direct `SceneNode` inputs are inspected recursively before rendering and must
-be lossless JSON transport objects. Functions, promises, accessors, sparse
-arrays, cycles, explicit `undefined`, non-finite numbers, and non-plain class
-instances fail with `SCENE_NOT_SERIALIZABLE`, even when `skipValidation` is
-enabled. `assertSerializableSceneTransport(scene)` exposes the same admission
-check for downstream materialized-scene generators.
+Use the Scene document boundary when input came from JSON, a cache, or another
+process:
+
+```ts
+import {
+  decodeSceneDocument,
+  fromSceneDocument,
+  toSceneDocument,
+} from "@boundsvg/core";
+
+const scene = decodeSceneDocument(untrustedValue); // detached SceneNode
+const vnode = fromSceneDocument(untrustedValue); // decodes once, then converts
+const authoredScene = toSceneDocument(authoredVNode); // trusted producer
+```
+
+`decodeSceneDocument(unknown)` recursively validates all Scene variants and
+their nested records, then returns an ordinary mutable tree detached from the
+input. `fromSceneDocument(unknown)` applies that same decode exactly once before
+converting to a VNode. Direct `SceneNode` Engine inputs use the same boundary,
+even when `skipValidation` is enabled.
+
+Records are closed except for documented string maps. Accessors,
+non-enumerable or symbol properties, sparse or non-canonical arrays, cycles,
+non-finite numbers, unsupported prototypes, and non-JSON values fail with a
+`SCENE_DECODE_*` `FatalError`. Decoding never invokes input getters,
+`toJSON`, coercion hooks, iterators, or callbacks. The public resource ceilings
+are:
+
+| Constant                             | Limit        | Counted unit                               |
+| ------------------------------------ | ------------ | ------------------------------------------ |
+| `MAX_SCENE_DECODE_DEPTH`             | `256`        | Container edges; the root is depth 0       |
+| `MAX_SCENE_DECODE_NODES`             | `65_536`     | Scene-node output occurrences              |
+| `MAX_SCENE_DECODE_VALUES`            | `262_144`    | All admitted output value occurrences      |
+| `MAX_SCENE_DECODE_COLLECTION_LENGTH` | `65_536`     | Record keys or canonical array length/keys |
+| `MAX_SCENE_DECODE_JSON_BYTES`        | `16_777_216` | Compact canonical Scene JSON UTF-8 bytes   |
 
 ```ts
 interface Engine {

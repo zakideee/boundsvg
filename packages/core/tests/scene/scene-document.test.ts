@@ -7,7 +7,6 @@ import type {
   TextOnPathSceneNode,
   TextSceneNode,
 } from "../../src/scene/types.js";
-import { isSceneNode } from "../../src/scene/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { CanvasVNode, RtVNode, RubyVNode, VNode } from "../../src/vnode/types.js";
 
@@ -273,12 +272,12 @@ describe("toSceneDocument", () => {
       children: [{ type: "Inline", background: "#000", children: ["bad"] }],
     } as unknown as TextOnPathSceneNode;
     expect(() => fromSceneDocument(invalidScene)).toThrow(
-      expect.objectContaining({ code: "TEXT_PATH_INLINE_PROP_UNSUPPORTED" }),
+      expect.objectContaining({ code: "SCENE_DECODE_UNKNOWN_KEY" }),
     );
 
     const removedPlainShape = { ...scene, children: "legacy" } as unknown as TextOnPathSceneNode;
     expect(() => fromSceneDocument(removedPlainShape)).toThrow(
-      expect.objectContaining({ code: "TEXT_PATH_CHILD_UNSUPPORTED" }),
+      expect.objectContaining({ code: "SCENE_DECODE_INVALID_VALUE" }),
     );
   });
 
@@ -294,7 +293,7 @@ describe("toSceneDocument", () => {
       normalOffsetPx: -4,
     } as unknown as TextOnPathSceneNode;
     expect(() => fromSceneDocument(base)).toThrow(
-      expect.objectContaining({ code: "TEXT_PATH_INVALID" }),
+      expect.objectContaining({ code: "SCENE_DECODE_UNKNOWN_KEY" }),
     );
 
     const vnode = {
@@ -1003,23 +1002,5 @@ describe("round-trip", () => {
     expect(roundTripped.props.height).toBe(original.props.height);
     expect(roundTripped.props.id).toBe(original.props.id);
     expect(roundTripped.children.length).toBe(original.children.length);
-  });
-});
-
-describe("isSceneNode", () => {
-  it("returns true for SceneNode", () => {
-    const scene: CanvasSceneNode = { type: "Canvas", width: 100, height: 100, children: [] };
-    expect(isSceneNode(scene)).toBe(true);
-  });
-
-  it("returns false for VNode (has props field)", () => {
-    const vnode = createElement("Canvas", { width: 100, height: 100 });
-    expect(isSceneNode(vnode)).toBe(false);
-  });
-
-  it("returns false for null/undefined/string", () => {
-    expect(isSceneNode(null)).toBe(false);
-    expect(isSceneNode(undefined)).toBe(false);
-    expect(isSceneNode("Canvas")).toBe(false);
   });
 });

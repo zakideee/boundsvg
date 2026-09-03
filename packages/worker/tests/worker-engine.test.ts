@@ -373,6 +373,69 @@ describe("WorkerEngine", () => {
       engine.dispose();
     });
 
+    it("detaches the queued Scene before caller mutation", async () => {
+      const engine = await createEngine(mockWorker);
+      const sceneSource: SceneNode = {
+        type: "Canvas",
+        width: 100,
+        height: 100,
+        children: [{ type: "Box", width: 20, height: 20, children: [] }],
+      };
+      let mainDecodeCount = 0;
+      const scene = new Proxy(sceneSource, {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "type") {
+            mainDecodeCount += 1;
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg") {
+          mockWorker.respond({
+            id: request.id,
+            type: "render-svg-ok",
+            svg: "<svg></svg>",
+            warnings: [],
+          });
+        }
+      });
+
+      const pending = engine.renderToSvg(scene);
+      scene.width = 999;
+      const child = sceneSource.children[0];
+      if (child?.type === "Box") {
+        child.width = 999;
+      }
+
+      await expect(pending).resolves.toBe("<svg></svg>");
+      expect(mainDecodeCount).toBe(1);
+      const request = mockWorker.lastRequest();
+      expect(request.type).toBe("render-svg");
+      if (request.type === "render-svg") {
+        expect(request.scene).toMatchObject({ width: 100 });
+        expect(request.scene.children[0]).toMatchObject({ width: 20 });
+        expect(request.scene).not.toBe(scene);
+      }
+      engine.dispose();
+    });
+
+    it("preserves a main-side Core Scene Fatal before enqueue", async () => {
+      const engine = await createEngine(mockWorker);
+      const postedBefore = mockWorker.postMessage.mock.calls.length;
+
+      await expect(
+        engine.renderToSvg({ type: "Unknown" } as unknown as SceneNode),
+      ).rejects.toMatchObject({
+        code: "SCENE_DECODE_UNKNOWN_DISCRIMINANT",
+        message: "Scene document contains an unknown discriminant.",
+        stage: "validate",
+        context: { path: "/type", discriminant: "type", received: "Unknown" },
+      });
+      expect(mockWorker.postMessage.mock.calls).toHaveLength(postedBefore);
+      engine.dispose();
+    });
+
     it("preserves animated InlineRect ownership in the SceneDocument request", async () => {
       const engine = await createEngine(mockWorker);
       const scene: SceneNode = {

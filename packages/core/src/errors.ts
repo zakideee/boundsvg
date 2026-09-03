@@ -61,7 +61,80 @@ export type PipelineStage =
   | "engine"
   | "analyzer";
 
-const PIPELINE_STAGES = new Set<string>([
+const CapturedMap = Map;
+const CapturedNumber = Number;
+const CapturedSet = Set;
+const CapturedString = String;
+const CapturedWeakSet = WeakSet;
+const arrayPrototype = Array.prototype;
+const arrayPrototypePop = Array.prototype.pop;
+const arrayPrototypePush = Array.prototype.push;
+const arrayIsArray = Array.isArray;
+const mapPrototypeGet = Map.prototype.get;
+const mapPrototypeHas = Map.prototype.has;
+const mapPrototypeSet = Map.prototype.set;
+const numberIsFinite = Number.isFinite;
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectIs = Object.is;
+const objectPrototype = Object.prototype;
+const reflectApply = Reflect.apply;
+const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const reflectOwnKeys = Reflect.ownKeys;
+const regexpPrototypeTest = RegExp.prototype.test;
+const setPrototypeHas = Set.prototype.has;
+const stringPrototypeTrim = String.prototype.trim;
+const weakSetPrototypeAdd = WeakSet.prototype.add;
+const weakSetPrototypeDelete = WeakSet.prototype.delete;
+const weakSetPrototypeHas = WeakSet.prototype.has;
+
+function arrayPop<Value>(target: Value[]): Value | undefined {
+  return reflectApply(arrayPrototypePop, target, []) as Value | undefined;
+}
+
+function arrayPush<Value>(target: Value[], value: Value): void {
+  reflectApply(arrayPrototypePush, target, [value]);
+}
+
+function mapGet<Key, Value>(target: ReadonlyMap<Key, Value>, key: Key): Value | undefined {
+  return reflectApply(mapPrototypeGet, target, [key]) as Value | undefined;
+}
+
+function mapHas<Key>(target: ReadonlyMap<Key, unknown>, key: Key): boolean {
+  return reflectApply(mapPrototypeHas, target, [key]) as boolean;
+}
+
+function mapSet<Key, Value>(target: Map<Key, Value>, key: Key, value: Value): void {
+  reflectApply(mapPrototypeSet, target, [key, value]);
+}
+
+function setHas<Value>(target: ReadonlySet<Value>, value: Value): boolean {
+  return reflectApply(setPrototypeHas, target, [value]) as boolean;
+}
+
+function stringTrim(value: string): string {
+  return reflectApply(stringPrototypeTrim, value, []) as string;
+}
+
+function testRegExp(expression: RegExp, value: string): boolean {
+  return reflectApply(regexpPrototypeTest, expression, [value]) as boolean;
+}
+
+function weakSetAdd<Value extends object>(target: WeakSet<Value>, value: Value): void {
+  reflectApply(weakSetPrototypeAdd, target, [value]);
+}
+
+function weakSetDelete<Value extends object>(target: WeakSet<Value>, value: Value): void {
+  reflectApply(weakSetPrototypeDelete, target, [value]);
+}
+
+function weakSetHas<Value extends object>(target: WeakSet<Value>, value: Value): boolean {
+  return reflectApply(weakSetPrototypeHas, target, [value]) as boolean;
+}
+
+const PIPELINE_STAGES = new CapturedSet<string>([
   "validate",
   "layout",
   "text",
@@ -74,7 +147,7 @@ const PIPELINE_STAGES = new Set<string>([
 ]);
 
 const DIAGNOSTIC_CODE_PATTERN = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
-const RESERVED_CONTEXT_KEYS = new Set([
+const RESERVED_CONTEXT_KEYS = new CapturedSet([
   "severity",
   "code",
   "message",
@@ -85,7 +158,7 @@ const RESERVED_CONTEXT_KEYS = new Set([
 
 /** Return whether a value belongs to the closed diagnostic pipeline stage set. */
 function isPipelineStage(value: unknown): value is PipelineStage {
-  return typeof value === "string" && PIPELINE_STAGES.has(value);
+  return typeof value === "string" && setHas(PIPELINE_STAGES, value);
 }
 
 function diagnosticTypeError(description: string): TypeError {
@@ -108,7 +181,7 @@ export function formatUnknownDiagnosticValue(value: unknown, fallback: string): 
 
   if ((typeof value === "object" && value !== null) || typeof value === "function") {
     try {
-      const descriptor = Reflect.getOwnPropertyDescriptor(value, "message");
+      const descriptor = reflectGetOwnPropertyDescriptor(value, "message");
       if (
         descriptor !== undefined &&
         "value" in descriptor &&
@@ -124,7 +197,7 @@ export function formatUnknownDiagnosticValue(value: unknown, fallback: string): 
   }
 
   try {
-    const text = String(value);
+    const text = CapturedString(value);
     return text.length > 0 ? text : fallback;
   } catch {
     return fallback;
@@ -133,7 +206,7 @@ export function formatUnknownDiagnosticValue(value: unknown, fallback: string): 
 
 function readObjectPrototype(value: object, description: string): object | null {
   try {
-    return Object.getPrototypeOf(value);
+    return objectGetPrototypeOf(value);
   } catch {
     throw diagnosticTypeError(`${description}: prototype is not readable`);
   }
@@ -141,7 +214,7 @@ function readObjectPrototype(value: object, description: string): object | null 
 
 function isArrayValue(value: object, description: string): boolean {
   try {
-    return Array.isArray(value);
+    return arrayIsArray(value);
   } catch {
     throw diagnosticTypeError(`${description}: array identity is not readable`);
   }
@@ -149,7 +222,7 @@ function isArrayValue(value: object, description: string): boolean {
 
 function readOwnKeys(value: object, description: string): (string | symbol)[] {
   try {
-    return Reflect.ownKeys(value);
+    return reflectOwnKeys(value);
   } catch {
     throw diagnosticTypeError(`${description}: own keys are not readable`);
   }
@@ -162,7 +235,7 @@ function readOwnDescriptor(
 ): PropertyDescriptor {
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    descriptor = reflectGetOwnPropertyDescriptor(value, key);
   } catch {
     throw diagnosticTypeError(`${description}: property descriptor is not readable`);
   }
@@ -198,15 +271,15 @@ function createDiagnosticContainer(source: object, isRoot: boolean): DiagnosticC
   }
   const prototype = readObjectPrototype(source, "context value");
   if (sourceIsArray) {
-    if (prototype !== Array.prototype) {
+    if (prototype !== arrayPrototype) {
       throw diagnosticTypeError("context: array subclasses are not supported");
     }
     return [];
   }
-  if (prototype !== Object.prototype && prototype !== null) {
+  if (prototype !== objectPrototype && prototype !== null) {
     throw diagnosticTypeError("context: values must be plain objects");
   }
-  return Object.create(prototype) as DiagnosticContext;
+  return objectCreate(prototype) as DiagnosticContext;
 }
 
 function cloneDiagnosticPrimitive(value: unknown): DiagnosticContextValue {
@@ -214,10 +287,10 @@ function cloneDiagnosticPrimitive(value: unknown): DiagnosticContextValue {
     return value;
   }
   if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
+    if (!numberIsFinite(value)) {
       throw diagnosticTypeError("context: numbers must be finite");
     }
-    return Object.is(value, -0) ? 0 : value;
+    return objectIs(value, -0) ? 0 : value;
   }
   throw diagnosticTypeError("context: value is not JSON-safe");
 }
@@ -227,7 +300,7 @@ function defineMutableDataProperty(
   key: string,
   value: DiagnosticContextValue,
 ): void {
-  Object.defineProperty(target, key, {
+  objectDefineProperty(target, key, {
     configurable: true,
     enumerable: true,
     writable: true,
@@ -243,25 +316,34 @@ function readDiagnosticArrayEntries(
 ): DiagnosticEntry[] {
   const lengthDescriptor = readOwnDescriptor(source, "length", "context array");
   const length = "value" in lengthDescriptor ? lengthDescriptor.value : undefined;
-  if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) {
+  if (typeof length !== "number" || !numberIsSafeInteger(length) || length < 0) {
     throw diagnosticTypeError("context: array length is invalid");
   }
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex];
+    if (key === undefined) {
+      continue;
+    }
     if (typeof key === "symbol") {
       throw diagnosticTypeError("context: symbol keys are not supported");
     }
     if (key === "length") {
       continue;
     }
-    const index = Number(key);
-    if (!Number.isSafeInteger(index) || index < 0 || String(index) !== key || index >= length) {
+    const index = CapturedNumber(key);
+    if (
+      !numberIsSafeInteger(index) ||
+      index < 0 ||
+      CapturedString(index) !== key ||
+      index >= length
+    ) {
       throw diagnosticTypeError("context: arrays cannot have extra properties");
     }
   }
   const entries: DiagnosticEntry[] = [];
   for (let index = 0; index < length; index += 1) {
-    const key = String(index);
-    entries.push({ key, value: readEnumerableDataValue(source, key, "context array") });
+    const key = CapturedString(index);
+    arrayPush(entries, { key, value: readEnumerableDataValue(source, key, "context array") });
   }
   return entries;
 }
@@ -272,14 +354,18 @@ function readDiagnosticObjectEntries(
   isRoot: boolean,
 ): DiagnosticEntry[] {
   const entries: DiagnosticEntry[] = [];
-  for (const key of keys) {
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex];
+    if (key === undefined) {
+      continue;
+    }
     if (typeof key === "symbol") {
       throw diagnosticTypeError("context: symbol keys are not supported");
     }
-    if (isRoot && RESERVED_CONTEXT_KEYS.has(key)) {
+    if (isRoot && setHas(RESERVED_CONTEXT_KEYS, key)) {
       throw diagnosticTypeError(`context: reserved root key ${key}`);
     }
-    entries.push({ key, value: readEnumerableDataValue(source, key, "context object") });
+    arrayPush(entries, { key, value: readEnumerableDataValue(source, key, "context object") });
   }
   return entries;
 }
@@ -296,18 +382,23 @@ function enterDiagnosticContainer(
   tasks: DiagnosticContainerTask[],
   activeContainers: WeakSet<object>,
 ): void {
-  if (activeContainers.has(task.source)) {
+  if (weakSetHas(activeContainers, task.source)) {
     throw diagnosticTypeError("context: cycles are not supported");
   }
-  activeContainers.add(task.source);
-  tasks.push({ action: "exit", source: task.source });
+  weakSetAdd(activeContainers, task.source);
+  arrayPush(tasks, { action: "exit", source: task.source });
 
   const childTasks: DiagnosticContainerTask[] = [];
-  for (const entry of readDiagnosticEntries(task.source, task.isRoot)) {
+  const entries = readDiagnosticEntries(task.source, task.isRoot);
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+    const entry = entries[entryIndex];
+    if (entry === undefined) {
+      continue;
+    }
     if (typeof entry.value === "object" && entry.value !== null) {
       const child = createDiagnosticContainer(entry.value, false);
       defineMutableDataProperty(task.target, entry.key, child);
-      childTasks.push({
+      arrayPush(childTasks, {
         action: "enter",
         source: entry.value,
         target: child,
@@ -320,7 +411,7 @@ function enterDiagnosticContainer(
   for (let index = childTasks.length - 1; index >= 0; index -= 1) {
     const childTask = childTasks[index];
     if (childTask) {
-      tasks.push(childTask);
+      arrayPush(tasks, childTask);
     }
   }
 }
@@ -331,7 +422,7 @@ function runDiagnosticContainerTask(
   activeContainers: WeakSet<object>,
 ): void {
   if (task.action === "exit") {
-    activeContainers.delete(task.source);
+    weakSetDelete(activeContainers, task.source);
     return;
   }
   enterDiagnosticContainer(task, tasks, activeContainers);
@@ -345,10 +436,10 @@ function cloneDiagnosticContext(value: unknown): DiagnosticContext {
   const tasks: DiagnosticContainerTask[] = [
     { action: "enter", source: value, target: root, isRoot: true },
   ];
-  const activeContainers = new WeakSet<object>();
+  const activeContainers = new CapturedWeakSet<object>();
 
   while (tasks.length > 0) {
-    const task = tasks.pop();
+    const task = arrayPop(tasks);
     if (task) {
       runDiagnosticContainerTask(task, tasks, activeContainers);
     }
@@ -359,7 +450,7 @@ function cloneDiagnosticContext(value: unknown): DiagnosticContext {
 
 type ExactFieldRules = {
   allowedFields: ReadonlySet<string>;
-  requiredFields: ReadonlySet<string>;
+  requiredFields: readonly string[];
   description: string;
 };
 
@@ -369,18 +460,24 @@ function readExactFields(value: unknown, rules: ExactFieldRules): Map<string, un
     throw diagnosticTypeError(`${description}: expected a plain object`);
   }
   const prototype = readObjectPrototype(value, description);
-  if (prototype !== Object.prototype && prototype !== null) {
+  if (prototype !== objectPrototype && prototype !== null) {
     throw diagnosticTypeError(`${description}: expected a plain object`);
   }
-  const fields = new Map<string, unknown>();
-  for (const key of readOwnKeys(value, description)) {
-    if (typeof key === "symbol" || !allowedFields.has(key)) {
+  const fields = new CapturedMap<string, unknown>();
+  const keys = readOwnKeys(value, description);
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex];
+    if (key === undefined) {
+      continue;
+    }
+    if (typeof key === "symbol" || !setHas(allowedFields, key)) {
       throw diagnosticTypeError(`${description}: unexpected field`);
     }
-    fields.set(key, readEnumerableDataValue(value, key, description));
+    mapSet(fields, key, readEnumerableDataValue(value, key, description));
   }
-  for (const field of requiredFields) {
-    if (!fields.has(field)) {
+  for (let fieldIndex = 0; fieldIndex < requiredFields.length; fieldIndex += 1) {
+    const field = requiredFields[fieldIndex];
+    if (field !== undefined && !mapHas(fields, field)) {
       throw diagnosticTypeError(`${description}: missing ${field}`);
     }
   }
@@ -388,7 +485,7 @@ function readExactFields(value: unknown, rules: ExactFieldRules): Map<string, un
 }
 
 function requireNonEmptyDiagnosticString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
+  if (typeof value !== "string" || stringTrim(value).length === 0) {
     throw diagnosticTypeError(`${field}: expected a non-empty string`);
   }
   return value;
@@ -396,17 +493,17 @@ function requireNonEmptyDiagnosticString(value: unknown, field: string): string 
 
 function requireDiagnosticCode(value: unknown): string {
   const code = requireNonEmptyDiagnosticString(value, "code");
-  if (!DIAGNOSTIC_CODE_PATTERN.test(code)) {
+  if (!testRegExp(DIAGNOSTIC_CODE_PATTERN, code)) {
     throw diagnosticTypeError("code: expected SCREAMING_SNAKE_CASE");
   }
   return code;
 }
 
 function readOptionalNodeId(fields: Map<string, unknown>): string | undefined {
-  if (!fields.has("nodeId")) {
+  if (!mapHas(fields, "nodeId")) {
     return undefined;
   }
-  const nodeId = fields.get("nodeId");
+  const nodeId = mapGet(fields, "nodeId");
   if (typeof nodeId !== "string") {
     throw diagnosticTypeError("nodeId: expected a string");
   }
@@ -414,10 +511,10 @@ function readOptionalNodeId(fields: Map<string, unknown>): string | undefined {
 }
 
 function readOptionalStage(fields: Map<string, unknown>): PipelineStage | undefined {
-  if (!fields.has("stage")) {
+  if (!mapHas(fields, "stage")) {
     return undefined;
   }
-  const stage = fields.get("stage");
+  const stage = mapGet(fields, "stage");
   if (!isPipelineStage(stage)) {
     throw diagnosticTypeError("stage: expected a closed pipeline stage");
   }
@@ -425,7 +522,7 @@ function readOptionalStage(fields: Map<string, unknown>): PipelineStage | undefi
 }
 
 function readRequiredStage(fields: Map<string, unknown>): PipelineStage {
-  const stage = fields.get("stage");
+  const stage = mapGet(fields, "stage");
   if (!isPipelineStage(stage)) {
     throw diagnosticTypeError("stage: expected a closed pipeline stage");
   }
@@ -433,10 +530,10 @@ function readRequiredStage(fields: Map<string, unknown>): PipelineStage {
 }
 
 function readOptionalContext(fields: Map<string, unknown>): DiagnosticContext | undefined {
-  if (!fields.has("context")) {
+  if (!mapHas(fields, "context")) {
     return undefined;
   }
-  return cloneDiagnosticContext(fields.get("context"));
+  return cloneDiagnosticContext(mapGet(fields, "context"));
 }
 
 type ApprovedRecoverablePolicy = {
@@ -552,8 +649,8 @@ export const INTERNAL_RECOVERABLE_POLICIES = [
 
 type InternalRecoverableCode = (typeof INTERNAL_RECOVERABLE_POLICIES)[number]["code"];
 
-const FATAL_OPTION_FIELDS = new Set(["stage", "nodeId", "context"]);
-const FATAL_SERIALIZED_FIELDS = new Set([
+const FATAL_OPTION_FIELDS = new CapturedSet(["stage", "nodeId", "context"]);
+const FATAL_SERIALIZED_FIELDS = new CapturedSet([
   "severity",
   "code",
   "message",
@@ -561,8 +658,8 @@ const FATAL_SERIALIZED_FIELDS = new Set([
   "nodeId",
   "context",
 ]);
-const RECOVERABLE_OPTION_FIELDS = new Set(["fallback", "stage", "nodeId", "context"]);
-const RECOVERABLE_SERIALIZED_FIELDS = new Set([
+const RECOVERABLE_OPTION_FIELDS = new CapturedSet(["fallback", "stage", "nodeId", "context"]);
+const RECOVERABLE_SERIALIZED_FIELDS = new CapturedSet([
   "severity",
   "code",
   "message",
@@ -597,7 +694,7 @@ function parseFatalOptions(
   }
   const fields = readExactFields(options, {
     allowedFields: FATAL_OPTION_FIELDS,
-    requiredFields: new Set(),
+    requiredFields: [],
     description: "fatal options",
   });
   const stage = readOptionalStage(fields);
@@ -615,10 +712,10 @@ function parseRecoverableOptions(
 ): Omit<ParsedRecoverableDiagnostic, "code" | "message"> {
   const fields = readExactFields(options, {
     allowedFields: RECOVERABLE_OPTION_FIELDS,
-    requiredFields: new Set(["fallback", "stage"]),
+    requiredFields: ["fallback", "stage"],
     description: "recoverable options",
   });
-  const fallback = requireNonEmptyDiagnosticString(fields.get("fallback"), "fallback");
+  const fallback = requireNonEmptyDiagnosticString(mapGet(fields, "fallback"), "fallback");
   const stage = readRequiredStage(fields);
   const nodeId = readOptionalNodeId(fields);
   const context = readOptionalContext(fields);
@@ -633,18 +730,18 @@ function parseRecoverableOptions(
 function parseSerializedFatal(value: unknown): ParsedFatalDiagnostic {
   const fields = readExactFields(value, {
     allowedFields: FATAL_SERIALIZED_FIELDS,
-    requiredFields: new Set(["severity", "code", "message"]),
+    requiredFields: ["severity", "code", "message"],
     description: "serialized fatal diagnostic",
   });
-  if (fields.get("severity") !== "fatal") {
+  if (mapGet(fields, "severity") !== "fatal") {
     throw diagnosticTypeError("severity: expected fatal");
   }
   const stage = readOptionalStage(fields);
   const nodeId = readOptionalNodeId(fields);
   const context = readOptionalContext(fields);
   return {
-    code: requireDiagnosticCode(fields.get("code")),
-    message: requireNonEmptyDiagnosticString(fields.get("message"), "message"),
+    code: requireDiagnosticCode(mapGet(fields, "code")),
+    message: requireNonEmptyDiagnosticString(mapGet(fields, "message"), "message"),
     ...(stage !== undefined && { stage }),
     ...(nodeId !== undefined && { nodeId }),
     ...(context !== undefined && { context }),
@@ -654,18 +751,18 @@ function parseSerializedFatal(value: unknown): ParsedFatalDiagnostic {
 function parseSerializedRecoverable(value: unknown): ParsedRecoverableDiagnostic {
   const fields = readExactFields(value, {
     allowedFields: RECOVERABLE_SERIALIZED_FIELDS,
-    requiredFields: new Set(["severity", "code", "message", "fallback", "stage"]),
+    requiredFields: ["severity", "code", "message", "fallback", "stage"],
     description: "serialized recoverable diagnostic",
   });
-  if (fields.get("severity") !== "recoverable") {
+  if (mapGet(fields, "severity") !== "recoverable") {
     throw diagnosticTypeError("severity: expected recoverable");
   }
   const nodeId = readOptionalNodeId(fields);
   const context = readOptionalContext(fields);
   return {
-    code: requireDiagnosticCode(fields.get("code")),
-    message: requireNonEmptyDiagnosticString(fields.get("message"), "message"),
-    fallback: requireNonEmptyDiagnosticString(fields.get("fallback"), "fallback"),
+    code: requireDiagnosticCode(mapGet(fields, "code")),
+    message: requireNonEmptyDiagnosticString(mapGet(fields, "message"), "message"),
+    fallback: requireNonEmptyDiagnosticString(mapGet(fields, "fallback"), "fallback"),
     stage: readRequiredStage(fields),
     ...(nodeId !== undefined && { nodeId }),
     ...(context !== undefined && { context }),
@@ -804,13 +901,13 @@ export function createInternalRecoverableError(
   if (!policy) {
     throw new TypeError(`Internal recoverable ${code} has no policy adjudication`);
   }
-  if (!DIAGNOSTIC_CODE_PATTERN.test(code)) {
+  if (!testRegExp(DIAGNOSTIC_CODE_PATTERN, code)) {
     throw new TypeError(`Internal recoverable code is not stable SCREAMING_SNAKE_CASE: ${code}`);
   }
-  if (message.trim().length === 0) {
+  if (stringTrim(message).length === 0) {
     throw new TypeError(`Internal recoverable ${code} requires a non-empty message`);
   }
-  if (options.fallback.trim().length === 0) {
+  if (stringTrim(options.fallback).length === 0) {
     throw new TypeError(`Internal recoverable ${code} requires a non-empty fallback`);
   }
   if (!isPipelineStage(options.stage)) {
@@ -821,12 +918,12 @@ export function createInternalRecoverableError(
       !policy.deterministicOutput ||
       !policy.sameOutputAcrossPublicPaths ||
       policy.numericApproximation ||
-      policy.normativeFallback.trim().length === 0 ||
-      policy.userAction.trim().length === 0
+      stringTrim(policy.normativeFallback).length === 0 ||
+      stringTrim(policy.userAction).length === 0
     ) {
       throw new TypeError(`Internal recoverable ${code} has an incomplete approved policy`);
     }
-  } else if (policy.debtId.trim().length === 0) {
+  } else if (stringTrim(policy.debtId).length === 0) {
     throw new TypeError(`Internal recoverable ${code} has untracked legacy debt`);
   }
   return new RecoverableError(code, message, options);

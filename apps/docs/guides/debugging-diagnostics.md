@@ -77,6 +77,30 @@ value without changing `IR.warnings`, a compiled scene, or another callback.
 Warning order follows production order: native WASM warnings first, followed
 by warnings from later TypeScript-owned phases. Duplicate events are retained.
 
+## Scene document structural failures
+
+`decodeSceneDocument()`, `fromSceneDocument()`, direct Engine Scene inputs,
+CLI Scene input, and Worker Scene transport share one structural error family.
+Every failure is a `FatalError` at stage `validate`, has no node ID, and keeps
+the same code, message, and bounded context across those routes.
+
+| Code                                | Message                                                             |
+| ----------------------------------- | ------------------------------------------------------------------- |
+| `SCENE_DECODE_INVALID_VALUE`        | Scene document contains a value with an invalid structural type.    |
+| `SCENE_DECODE_MISSING_FIELD`        | Scene document is missing a required field.                         |
+| `SCENE_DECODE_UNKNOWN_DISCRIMINANT` | Scene document contains an unknown discriminant.                    |
+| `SCENE_DECODE_UNKNOWN_KEY`          | Scene document contains an unsupported key.                         |
+| `SCENE_DECODE_UNSAFE_VALUE`         | Scene document contains a value that is not a safe JSON data value. |
+| `SCENE_DECODE_CYCLE`                | Scene document contains a cycle.                                    |
+| `SCENE_DECODE_RESOURCE_LIMIT`       | Scene document exceeds a decode resource limit.                     |
+
+`context.path` is an RFC 6901 pointer (the root is an empty string). Other
+fields identify only the closed expected/actual category, missing field,
+discriminant, key, safety reason, first cycle path, or resource count. Paths
+are limited to 512 UTF-8 bytes and copied key or discriminant snippets to 96
+UTF-8 bytes; truncation is reported explicitly. Rejected values, Proxy trap
+messages, stacks, and full requests are never copied into diagnostics.
+
 ## Text layout fatal contract
 
 Text layout failures use one structured contract across render and the six
