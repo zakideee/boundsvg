@@ -238,7 +238,7 @@ export type WasmModule = {
   grapheme_split(text: string): string;
   /** DTO schema version handshake; absent in pre-handshake builds. */
   wasm_schema_version?(): number;
-  /** Evaluate a geometry document into addressable parts; absent in older builds. */
+  /** Evaluate a geometry document into addressable parts. */
   evaluate_shape_parts?(jsonInput: string): string;
 
   /** Get UAX#14 line break opportunities (returns JSON array of byte offsets) */

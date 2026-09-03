@@ -32,7 +32,7 @@ fn path_doc(d: &str) -> GeometryDoc {
 }
 
 fn compiled(d: &str) -> String {
-    region_to_path(&evaluate_geometry(&path_doc(d)).expect(d))
+    region_to_path(&evaluate_geometry(&path_doc(d)).expect(d)).expect("serialize region")
 }
 
 #[test]

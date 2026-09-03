@@ -10,6 +10,11 @@ categories = ["graphics"]
 authors = ["zakideee"]
 repository = "https://github.com/zakideee/boundsvg"
 
+[package.metadata.boundsvg-release]
+pending-version = "0.3.0"
+change-kind = "breaking-public-api"
+obligation-id = "shape-failure-authority"
+
 [lints]
 workspace = true
 

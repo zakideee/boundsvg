@@ -781,7 +781,7 @@ describe("WorkerEngine", () => {
       engine.dispose();
     });
 
-    it("throws FatalError on error response", async () => {
+    it("rehydrates a rendered Shape FatalError without a Worker fallback", async () => {
       const engine = await createEngine(mockWorker);
 
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
@@ -789,12 +789,26 @@ describe("WorkerEngine", () => {
           mockWorker.respond({
             id: request.id,
             type: "error",
-            error: { severity: "fatal", code: "RENDER_FAIL", message: "boom" },
+            error: {
+              severity: "fatal",
+              code: "SHAPE_PATH_DATA_INVALID",
+              message: "Shape path data is invalid.",
+              stage: "validate",
+              nodeId: "invalid-shape",
+              context: { operation: "renderShape" },
+            },
           });
         }
       });
 
-      await expect(engine.renderToSvg(SCENE)).rejects.toThrow(FatalError);
+      await expect(engine.renderToSvg(SCENE)).rejects.toMatchObject({
+        name: "FatalError",
+        code: "SHAPE_PATH_DATA_INVALID",
+        message: "Shape path data is invalid.",
+        stage: "validate",
+        nodeId: "invalid-shape",
+        context: { operation: "renderShape" },
+      });
       engine.dispose();
     });
 

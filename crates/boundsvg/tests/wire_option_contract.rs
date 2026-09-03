@@ -78,6 +78,11 @@ const MANUAL_SERIALIZE_ALLOWLIST: &[SourceAllowance] = &[
         item: "LinesProjection",
         reason: "test-only projection exercises custom Line serialization without creating a bridge DTO",
     },
+    SourceAllowance {
+        source: "crates/boundsvg/src/shape_diagnostics.rs",
+        item: "SerializationFailure",
+        reason: "test-only failing serializer exercises output error handling without representing a wire DTO",
+    },
 ];
 
 // Item macros can emit DTOs invisible to syn's unexpanded AST. These three

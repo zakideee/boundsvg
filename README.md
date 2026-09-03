@@ -261,10 +261,6 @@ Full documentation lives at **[zakideee.github.io/boundsvg](https://zakideee.git
 - [Component Reference](https://zakideee.github.io/boundsvg/components/canvas)
 - [API Reference](https://zakideee.github.io/boundsvg/api/core)
 
-## Related projects
-
-- [svgent](https://github.com/zakideee/svgent) — composes agent sessions and exports them as SVG, images, and video, with boundsvg as its rendering engine
-
 ## License
 
 Licensed under either of

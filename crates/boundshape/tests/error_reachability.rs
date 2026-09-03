@@ -128,7 +128,36 @@ fn geometry_depth_limit_has_a_runtime_origin() {
     })
     .expect_err("geometry depth limit");
 
-    assert_eq!(depth_error, ShapeError::GeometryDepthLimit);
+    assert_eq!(
+        depth_error,
+        ShapeError::GeometryDepthLimit {
+            actual: MAX_GEOMETRY_TREE_DEPTH + 1,
+            limit: MAX_GEOMETRY_TREE_DEPTH,
+        }
+    );
+}
+
+#[test]
+fn numeric_output_has_a_runtime_origin() {
+    let output_error = boundshape::region_to_path(&boundshape::Region {
+        contours: vec![boundshape::Contour {
+            segments: vec![boundshape::CurveSegment::Line {
+                p0: boundshape::Point2D { x: 0.0, y: 0.0 },
+                p1: boundshape::Point2D {
+                    x: f64::INFINITY,
+                    y: 0.0,
+                },
+            }],
+            closed: false,
+        }],
+    })
+    .expect_err("non-finite path output");
+
+    assert_eq!(output_error, ShapeError::NonFiniteOutput);
+    assert_eq!(
+        output_error.to_string(),
+        "shape output contains a non-finite numeric value"
+    );
 }
 
 #[test]

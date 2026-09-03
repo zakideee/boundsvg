@@ -18,6 +18,17 @@ const packagesRoot = join(repoRoot, "packages");
 const workDir = mkdtempSync(join(tmpdir(), "boundsvg-pack-e2e-"));
 const fontPath = join(repoRoot, "fixtures", "fonts", "NotoSansJP-Regular.subset.ttf");
 const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
+const shapeWasmOperationExports = [
+  "wasmCompileShapePaths",
+  "wasmCompileShapeSvg",
+  "wasmComputeShapeIntersections",
+  "wasmDivideShapeRegions",
+  "wasmEvaluateShapeParts",
+  "wasmEvaluateShapeRegion",
+  "wasmHitTestShapeParts",
+  "wasmRenderShapeRegionSvg",
+  "wasmResolveSymbolGeometry",
+];
 function fail(message) {
   throw new Error(`[pack-e2e] ${message}`);
 }
@@ -406,6 +417,7 @@ function runtimeSource(specifiers, mode) {
     await load(specifier);
   }
   const core = await load('@boundsvg/core');
+  const coreWasm = await load('@boundsvg/core/wasm');
   const shape = await load('@boundsvg/shape');
   const extras = await load('@boundsvg/extras');
   const testing = await load('@boundsvg/testing');
@@ -414,6 +426,12 @@ function runtimeSource(specifiers, mode) {
   const provider = await load('@boundsvg/react/provider');
   const React = await load('react');
   const ReactDOMServer = await load('react-dom/server');
+  const shapeOperationExports = Object.keys(coreWasm)
+    .filter((name) => name.startsWith('wasm') && (name.includes('Shape') || name.includes('SymbolGeometry')))
+    .sort();
+  if (JSON.stringify(shapeOperationExports) !== ${JSON.stringify(JSON.stringify(shapeWasmOperationExports))}) {
+    throw new Error('core WASM shape operation export family is incomplete');
+  }
   const { readFileSync } = await load('node:fs');
   const geometry = shape.geometryDoc(
     { width: 10, height: 10 },

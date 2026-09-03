@@ -6,6 +6,7 @@ import {
   initWasm,
   isShapeWasmAvailable,
   isWasmInitialized,
+  wasmComputeShapeIntersections,
 } from "../../src/wasm/index.js";
 import type { WasmModule } from "../../src/wasm/types.js";
 
@@ -49,12 +50,49 @@ describe("WASM schema version handshake", () => {
   it("accepts one module idempotently and rejects a different module", () => {
     const accepted = mockModule({
       wasm_schema_version: () => EXPECTED_WASM_SCHEMA_VERSION,
+      compile_shape_svg: () => "<svg/>",
+      hit_test_shape_parts: () => "[]",
+      compile_shape_paths: () => "[]",
+      resolve_symbol_geometry: () =>
+        '{"viewBox":{"x":0,"y":0,"width":1,"height":1},"root":{"kind":"path","d":"M0 0Z"}}',
+      evaluate_shape_parts: () => "[]",
+      evaluate_shape_region: () => '{"contours":[]}',
+      render_shape_region_svg: () => "<svg/>",
+      divide_shape_regions: () => '{"subtract":{"contours":[]},"intersect":{"contours":[]}}',
     });
     initWasm(accepted);
     expect(() => initWasm(accepted)).not.toThrow();
     expect(isWasmInitialized()).toBe(true);
     expect(isShapeWasmAvailable()).toBe(false);
     expect(getWasm()).toBe(accepted);
+    expect(() =>
+      wasmComputeShapeIntersections(
+        { viewBox: { width: 1, height: 1 }, root: { kind: "path", d: "M0 0Z" } },
+        { viewBox: { width: 1, height: 1 }, root: { kind: "path", d: "M0 0Z" } },
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "SHAPE_WASM_CAPABILITY_MISSING",
+        message: "Required shape WASM capability is unavailable.",
+        stage: "wasm",
+        context: { operation: "computeShapeIntersections" },
+      }),
+    );
+    const unserializableGeometry = {
+      viewBox: { width: 1, height: 1 },
+      root: { kind: "path", d: "M0 0Z" },
+      extra: 1n,
+    } as unknown as Parameters<typeof wasmComputeShapeIntersections>[0];
+    expect(() =>
+      wasmComputeShapeIntersections(unserializableGeometry, unserializableGeometry),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "SHAPE_WASM_CAPABILITY_MISSING",
+        message: "Required shape WASM capability is unavailable.",
+        stage: "wasm",
+        context: { operation: "computeShapeIntersections" },
+      }),
+    );
 
     const different = mockModule({
       wasm_schema_version: () => EXPECTED_WASM_SCHEMA_VERSION,

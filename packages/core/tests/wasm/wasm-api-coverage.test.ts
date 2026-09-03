@@ -3,10 +3,13 @@ import { initNodeWasm } from "../../src/node.js";
 import {
   createWasmEngineInstance,
   type WasmEngineHandle,
+  wasmCompileShapePaths,
   wasmCompileShapeSvg,
   wasmComputeShapeIntersections,
   wasmDivideShapeRegions,
+  wasmEvaluateShapeParts,
   wasmEvaluateShapeRegion,
+  wasmHitTestShapeParts,
   wasmRenderShapeRegionSvg,
   wasmResolveSymbolGeometry,
   wasmUax14LineBreaks,
@@ -73,6 +76,24 @@ describe("WASM public API coverage", () => {
     expect(svg).toContain('viewBox="0 0 400 240"');
     expect(svg).toContain('<path d="M');
     expect(svg).toContain('stroke="#334155"');
+  });
+
+  it("returns compiled paths, evaluated parts, and hits through their public operations", () => {
+    const geometry = {
+      viewBox: { width: 20, height: 20 },
+      root: { kind: "path" as const, nodeId: "body", d: "M0 0H20V20H0Z" },
+    };
+
+    expect(wasmCompileShapePaths(geometry, { partIds: true })).toMatchObject([
+      { partId: "body", d: "M0,0L20,0L20,20L0,20Z" },
+    ]);
+    const parts = wasmEvaluateShapeParts(geometry);
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toMatchObject({ partId: "body" });
+    expect(parts[0]?.strokeRegion).toEqual(parts[0]?.region);
+    expect(wasmHitTestShapeParts(geometry, { x: 10, y: 10 })).toEqual([
+      { partId: "body", hit: "fill" },
+    ]);
   });
 
   it("adjusts viewport inset when stroke width changes through the WASM shape API", () => {

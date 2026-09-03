@@ -106,4 +106,49 @@ describe("runExport", () => {
       "Error: SVG rendering failed: [TEXT_FONT_UNAVAILABLE] No requested font is available for text layout.",
     );
   });
+
+  it("reports the stable Shape code and message from the render observer", async () => {
+    const io = createTestIo({
+      readBinaryFile: () =>
+        new Uint8Array(
+          readFileSync(
+            new URL("../../../fixtures/fonts/NotoSansJP-Regular.subset.ttf", import.meta.url),
+          ),
+        ),
+      readTextFile: () =>
+        JSON.stringify({
+          type: "Canvas",
+          width: 100,
+          height: 50,
+          children: [
+            {
+              type: "Shape",
+              id: "invalid-shape",
+              width: 50,
+              height: 50,
+              geometry: {
+                viewBox: { width: 10, height: 10 },
+                root: { kind: "path", d: "M0 0L" },
+              },
+            },
+          ],
+        }),
+    });
+
+    const exitCode = await runExport(io, [
+      "--input",
+      "invalid.scene.json",
+      "--output",
+      "-",
+      "--format",
+      "svg",
+      "--font",
+      "NotoSansJP:400:normal:fixture.ttf",
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(io.stderr.join("")).toContain(
+      "Error: SVG rendering failed: [SHAPE_PATH_DATA_INVALID] Shape path data is invalid.",
+    );
+  });
 });

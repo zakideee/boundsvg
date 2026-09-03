@@ -17,10 +17,12 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import webWasmInit, {
   BoundSvgEngine as WebBoundSvgEngine,
+  compile_shape_svg as webCompileShapeSvg,
   wasm_schema_version as webSchemaVersion,
 } from "../../../crates/boundsvg/pkg-web/boundsvg.js";
 import scalarWebWasmInit, {
   BoundSvgEngine as ScalarWebBoundSvgEngine,
+  compile_shape_svg as scalarWebCompileShapeSvg,
   wasm_schema_version as scalarWebSchemaVersion,
 } from "../../../crates/boundsvg/pkg-web/scalar/boundsvg.js";
 import {
@@ -30,6 +32,7 @@ import {
 
 type LowLevelWasmModule = {
   BoundSvgEngine: new () => WasmEngineInstance;
+  compile_shape_svg: (jsonInput: string) => string;
   wasm_schema_version: () => number;
 };
 
@@ -740,6 +743,79 @@ describe("nodejs/web WASM public parity", () => {
     expect(scalarNodeWasm.wasm_schema_version()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
     expect(webSchemaVersion()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
     expect(scalarWebSchemaVersion()).toBe(EXPECTED_WASM_SCHEMA_VERSION);
+  });
+
+  it("returns identical raw Shape diagnostic bytes from node and web artifacts", () => {
+    const rawOperations = [
+      nodeWasm.compile_shape_svg,
+      scalarNodeWasm.compile_shape_svg,
+      webCompileShapeSvg,
+      scalarWebCompileShapeSvg,
+    ];
+    const expected =
+      '{"severity":"fatal","code":"SHAPE_INPUT_INVALID","message":"Shape operation input is invalid.","stage":"validate","context":{"operation":"compileShapeSvg","reason":"malformedJson"}}';
+
+    for (const operation of rawOperations) {
+      let thrown: unknown;
+      try {
+        operation("{");
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBe(expected);
+    }
+  });
+
+  it("keeps rendered Shape and Symbol diagnostics identical across node and web artifacts", () => {
+    const invalidGeometry = {
+      viewBox: { width: 10, height: 10 },
+      root: { kind: "path" as const, d: "M0 0L" },
+    };
+    const cases = [
+      {
+        scene: createElement(
+          "Canvas",
+          { width: 20, height: 20 },
+          createElement("Shape", {
+            id: "invalid-shape",
+            geometry: invalidGeometry,
+            width: 10,
+            height: 10,
+          }),
+        ),
+        operation: "renderShape",
+        nodeId: "invalid-shape",
+      },
+      {
+        scene: createElement(
+          "Canvas",
+          { width: 20, height: 20 },
+          createElement("Symbol", {
+            id: "invalid-symbol",
+            symbol: { geometry: invalidGeometry, elasticSegments: [] },
+            width: 10,
+            height: 10,
+          }),
+        ),
+        operation: "renderSymbol",
+        nodeId: "invalid-symbol",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      for (const engine of timelineEngines) {
+        const error = captureThrown(() => engine.renderToSvg(testCase.scene));
+        expect(error).toBeInstanceOf(FatalError);
+        expect((error as FatalError).toJSON()).toEqual({
+          severity: "fatal",
+          code: "SHAPE_PATH_DATA_INVALID",
+          message: "Shape path data is invalid.",
+          stage: "validate",
+          nodeId: testCase.nodeId,
+          context: { operation: testCase.operation },
+        });
+      }
+    }
   });
 
   it("preserves all six raw text-layout success bytes in node and web artifacts", () => {

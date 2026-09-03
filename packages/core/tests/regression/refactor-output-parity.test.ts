@@ -52,7 +52,7 @@ function jsonBytes(value: unknown): Uint8Array {
 
 function architectureIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
   return new Map([
-    ["contracts/wasm-schema-version.txt", utf8("30")],
+    ["contracts/wasm-schema-version.txt", utf8("31")],
     [
       "fallback/missing-glyph.warnings.json",
       jsonBytes([

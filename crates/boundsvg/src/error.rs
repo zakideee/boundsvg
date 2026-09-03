@@ -42,10 +42,9 @@ pub enum EngineError {
 
     /// Structured render failure with a code-specific JSON context payload.
     ///
-    /// Most errors only need the common stage/node fields above. Timeline
-    /// compilation additionally exposes machine-readable representability,
-    /// precision, and budget details, so keeping this as a separate variant
-    /// avoids widening every existing constructor.
+    /// Most errors only need the common stage/node fields above. Errors with
+    /// machine-readable, code-specific details use this variant so the common
+    /// constructor does not need a context payload.
     #[error("{message}")]
     StructuredContext {
         code: String,

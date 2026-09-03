@@ -4,8 +4,6 @@ Status: implementation and WebKit regression completed; physical iOS verificatio
 
 Scope: `apps/playground-react` only
 
-Reference implementation: `../svgent`
-
 ## Objective
 
 The React playground is a sample viewer first. On phones it must prioritize:
@@ -55,10 +53,9 @@ The failures are structural rather than isolated component bugs:
 - every route is statically imported and all configured fonts are loaded by the
   root provider. The deployed cold start transferred about 9.5 MB.
 
-## Lessons confirmed in svgent
+## Reusable mobile-viewer lessons
 
-The `svgent` studio has already solved comparable iOS problems. The reusable
-decisions are:
+The following layout practices address the comparable iOS problems:
 
 - Below 820 px, the page is the only vertical scroller; panel scrollports are
   changed to visible overflow.

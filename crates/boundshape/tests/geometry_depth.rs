@@ -63,6 +63,13 @@ fn nested_boolean(depth: usize) -> GeometryDoc {
     geometry_doc(root)
 }
 
+fn over_depth_error() -> ShapeError {
+    ShapeError::GeometryDepthLimit {
+        actual: MAX_GEOMETRY_TREE_DEPTH + 1,
+        limit: MAX_GEOMETRY_TREE_DEPTH,
+    }
+}
+
 #[test]
 fn recursive_geometry_nodes_share_the_depth_boundary() {
     for build in [
@@ -74,7 +81,7 @@ fn recursive_geometry_nodes_share_the_depth_boundary() {
         evaluate_geometry(&build(MAX_GEOMETRY_TREE_DEPTH)).expect("limit should evaluate");
         assert_eq!(
             evaluate_geometry(&build(MAX_GEOMETRY_TREE_DEPTH + 1)),
-            Err(ShapeError::GeometryDepthLimit)
+            Err(over_depth_error())
         );
     }
 }
@@ -84,17 +91,14 @@ fn public_geometry_entry_points_reject_over_depth_trees() {
     let over_depth = nested_transform(MAX_GEOMETRY_TREE_DEPTH + 1, None);
     let shallow = geometry_doc(path_node(None));
 
-    assert_eq!(
-        evaluate_geometry(&over_depth),
-        Err(ShapeError::GeometryDepthLimit)
-    );
+    assert_eq!(evaluate_geometry(&over_depth), Err(over_depth_error()));
     assert_eq!(
         evaluate_geometry_parts(&over_depth),
-        Err(ShapeError::GeometryDepthLimit)
+        Err(over_depth_error())
     );
     assert_eq!(
         compile_geometry_paths(&over_depth, Some(&CompileGeometryOptions::default())),
-        Err(ShapeError::GeometryDepthLimit)
+        Err(over_depth_error())
     );
     assert_eq!(
         hit_test_geometry_parts(
@@ -102,11 +106,11 @@ fn public_geometry_entry_points_reject_over_depth_trees() {
             Point2D { x: 5.0, y: 5.0 },
             Some(&HitTestOptions::default()),
         ),
-        Err(ShapeError::GeometryDepthLimit)
+        Err(over_depth_error())
     );
     assert_eq!(
         intersections_between_geometries(&shallow, &over_depth),
-        Err(ShapeError::GeometryDepthLimit)
+        Err(over_depth_error())
     );
 
     let symbol = SymbolDefinition {
@@ -121,7 +125,7 @@ fn public_geometry_entry_points_reject_over_depth_trees() {
                 height: 10.0,
             },
         ),
-        Err(ShapeError::GeometryDepthLimit)
+        Err(over_depth_error())
     );
 }
 
@@ -150,7 +154,7 @@ fn symbol_resolution_checks_depth_added_by_elastic_mapping() {
                 height: 10.0,
             },
         ),
-        Err(ShapeError::GeometryDepthLimit)
+        Err(over_depth_error())
     );
 }
 
@@ -215,7 +219,7 @@ fn symbol_resolution_wrapper_rules_share_the_depth_boundary() {
             10.0,
             20.0,
         ),
-        Err(ShapeError::GeometryDepthLimit)
+        Err(over_depth_error())
     );
 }
 

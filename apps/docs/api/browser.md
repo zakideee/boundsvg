@@ -76,3 +76,26 @@ Concurrent loads of the same URL share one request, successful results are cache
 | `@boundsvg/browser/png`    | Convert PNG bytes to Blob, data URL, or object URL                                       |
 | `@boundsvg/browser/assets` | Inspect PNG dimensions and trigger user-initiated download                               |
 | `@boundsvg/browser/events` | Translate DOM client coordinates to SVG user space and resolve path-geometry hit targets |
+
+## WASM shape capabilities
+
+`loadWasmModule()` validates the generated browser adapter before returning
+it. In addition to the engine and text exports, these shape exports are all
+required:
+
+```text
+compile_shape_svg
+hit_test_shape_parts
+compile_shape_paths
+resolve_symbol_geometry
+evaluate_shape_parts
+evaluate_shape_region
+render_shape_region_svg
+divide_shape_regions
+compute_shape_intersections
+```
+
+If any export is missing, loading fails immediately with the missing export
+name. Pass the returned module to `initWasm()` from `@boundsvg/core/wasm`; its
+schema must match the Core package. Keep the browser package, Core package,
+and copied WASM artifacts on the same release.

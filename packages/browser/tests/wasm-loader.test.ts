@@ -1,4 +1,18 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const expectedShapeExports = [
+  "compile_shape_paths",
+  "compile_shape_svg",
+  "compute_shape_intersections",
+  "divide_shape_regions",
+  "evaluate_shape_parts",
+  "evaluate_shape_region",
+  "hit_test_shape_parts",
+  "render_shape_region_svg",
+  "resolve_symbol_geometry",
+] as const;
 
 afterEach(() => {
   vi.resetModules();
@@ -7,6 +21,21 @@ afterEach(() => {
 });
 
 describe("browser wasm loader", () => {
+  it("requires the complete shape operation export family", () => {
+    const source = readFileSync(resolve(__dirname, "../src/wasm.ts"), "utf8");
+    const requiredExports = [
+      ...source.matchAll(/requireWasmFunction\(\s*generatedWasm\.([a-z_]+),\s*"\1",?\s*\)/gu),
+    ]
+      .map((match) => match[1])
+      .filter(
+        (name): name is string =>
+          name !== undefined && (name.includes("_shape_") || name === "resolve_symbol_geometry"),
+      )
+      .sort();
+
+    expect(requiredExports).toEqual(expectedShapeExports);
+  });
+
   it("maps shape exports onto the browser WasmModule adapter", async () => {
     const wasmInit = vi.fn(async () => undefined);
     const getFontMetrics = vi.fn(() => '{"unitsPerEm":1000,"ascender":800,"descender":-200}');
@@ -17,6 +46,7 @@ describe("browser wasm loader", () => {
     const hitTestShapeParts = vi.fn((json: string) => json);
     const resolveSymbolGeometry = vi.fn((json: string) => json);
     const evaluateShapeRegion = vi.fn((json: string) => json);
+    const evaluateShapeParts = vi.fn((json: string) => json);
     const renderShapeRegionSvg = vi.fn((json: string) => json);
     const divideShapeRegions = vi.fn((json: string) => json);
     const computeShapeIntersections = vi.fn((json: string) => json);
@@ -32,6 +62,7 @@ describe("browser wasm loader", () => {
       hit_test_shape_parts: hitTestShapeParts,
       resolve_symbol_geometry: resolveSymbolGeometry,
       evaluate_shape_region: evaluateShapeRegion,
+      evaluate_shape_parts: evaluateShapeParts,
       render_shape_region_svg: renderShapeRegionSvg,
       divide_shape_regions: divideShapeRegions,
       compute_shape_intersections: computeShapeIntersections,
@@ -55,6 +86,7 @@ describe("browser wasm loader", () => {
     expect(typeof module.hit_test_shape_parts).toBe("function");
     expect(typeof module.resolve_symbol_geometry).toBe("function");
     expect(typeof module.evaluate_shape_region).toBe("function");
+    expect(typeof module.evaluate_shape_parts).toBe("function");
     expect(typeof module.render_shape_region_svg).toBe("function");
     expect(typeof module.divide_shape_regions).toBe("function");
     expect(typeof module.compute_shape_intersections).toBe("function");
@@ -62,6 +94,7 @@ describe("browser wasm loader", () => {
     expect(module.compile_shape_svg?.('{"shape":true}')).toBe('{"shape":true}');
     expect(module.resolve_symbol_geometry?.('{"symbol":true}')).toBe('{"symbol":true}');
     expect(module.evaluate_shape_region?.('{"region":true}')).toBe('{"region":true}');
+    expect(module.evaluate_shape_parts?.('{"parts":true}')).toBe('{"parts":true}');
     expect(module.render_shape_region_svg?.('{"svg":true}')).toBe('{"svg":true}');
     expect(module.divide_shape_regions?.('{"divide":true}')).toBe('{"divide":true}');
     expect(module.compute_shape_intersections?.('{"query":true}')).toBe('{"query":true}');
@@ -79,6 +112,7 @@ describe("browser wasm loader", () => {
       hit_test_shape_parts: vi.fn((json: string) => json),
       resolve_symbol_geometry: undefined,
       evaluate_shape_region: vi.fn((json: string) => json),
+      evaluate_shape_parts: vi.fn((json: string) => json),
       render_shape_region_svg: vi.fn((json: string) => json),
       divide_shape_regions: vi.fn((json: string) => json),
       compute_shape_intersections: vi.fn((json: string) => json),
@@ -112,6 +146,7 @@ describe("browser wasm loader", () => {
       hit_test_shape_parts: vi.fn((json: string) => json),
       resolve_symbol_geometry: vi.fn((json: string) => json),
       evaluate_shape_region: vi.fn((json: string) => json),
+      evaluate_shape_parts: vi.fn((json: string) => json),
       render_shape_region_svg: vi.fn((json: string) => json),
       divide_shape_regions: vi.fn((json: string) => json),
       compute_shape_intersections: vi.fn((json: string) => json),

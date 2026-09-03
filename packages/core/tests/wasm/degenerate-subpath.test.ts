@@ -72,7 +72,14 @@ describe("degenerate subpaths do not destroy a valid shape", () => {
   });
 
   it("non-finite numeric results are rejected before SVG emission", () => {
-    expect(() => render("non-finite")).toThrow(/invalid path data/i);
+    expect(() => render("non-finite")).toThrowError(
+      expect.objectContaining({
+        code: "SHAPE_PATH_DATA_INVALID",
+        message: "Shape path data is invalid.",
+        stage: "validate",
+        context: { operation: "renderShape" },
+      }),
+    );
   });
 
   it("an open subpath is implicitly closed for fill", () => {

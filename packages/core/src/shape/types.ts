@@ -105,6 +105,7 @@ export type GeometryPartBounds = {
 export type GeometryPart = {
   partId: string;
   region: Region;
+  strokeRegion: Region;
   bounds?: GeometryPartBounds;
 };
 

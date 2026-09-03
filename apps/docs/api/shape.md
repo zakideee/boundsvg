@@ -91,22 +91,44 @@ rejected after resolution.
 | -------------------------- | ------------------------------------------------------ |
 | `SHAPE_GEOMETRY_MAX_DEPTH` | An authored or resolved geometry node exceeds depth 48 |
 
-### Rust API migration
+### Rust error and serialization contract
 
-`boundshape::resolve_symbol_geometry` returns
-`Result<GeometryDoc, ShapeError>`. Propagate the error with `?` or handle it
-explicitly:
+`ShapeError` is a closed enum. Geometry-depth failures carry the observed and
+allowed depths as `GeometryDepthLimit { actual, limit }`, and generated output
+that cannot be represented with finite numbers returns `NonFiniteOutput`.
+Adding another variant is therefore a breaking Rust API change.
+
+The public string-producing helpers are fallible:
+
+```rust
+fn region_to_path(region: &Region) -> Result<String, ShapeError>;
+fn region_to_svg(
+    region: &Region,
+    options: Option<&CompileGeometryOptions>,
+) -> Result<String, ShapeError>;
+fn transform_to_svg(transform: &Transform2D) -> Result<String, ShapeError>;
+```
+
+Propagate these results, along with `resolve_symbol_geometry`, with `?` or
+handle the relevant variant explicitly:
 
 ```rust
 let geometry = boundshape::resolve_symbol_geometry(&definition, &options)?;
+let path_data = boundshape::region_to_path(&region)?;
 ```
 
-`ShapeError` is non-exhaustive so new error cases can be added compatibly.
-Downstream matches must include a wildcard arm:
+For example, a caller that wants to distinguish resource depth from output
+materialization can match their payloads directly:
 
 ```rust
 match error {
-    ShapeError::GeometryDepthLimit => handle_depth_limit(),
+    ShapeError::GeometryDepthLimit { actual, limit } => handle_depth_limit(actual, limit),
+    ShapeError::NonFiniteOutput => handle_invalid_output(),
     other => handle_shape_error(other),
 }
 ```
+
+`compile_geometry_paths` resolves each part's `d`, optional `stroke_d`, and
+optional bounds before returning it. A finite input whose derived bounds
+overflow, or a non-finite generated path/SVG/transform number, returns
+`NonFiniteOutput`; values are not clamped or emitted as `NaN`/`inf`.

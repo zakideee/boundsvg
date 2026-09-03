@@ -94,6 +94,10 @@ function createWasmModule(generatedWasm: GeneratedWasm): WasmModule {
     generatedWasm.evaluate_shape_region,
     "evaluate_shape_region",
   );
+  const evaluateShapeParts = requireWasmFunction(
+    generatedWasm.evaluate_shape_parts,
+    "evaluate_shape_parts",
+  );
   const renderShapeRegionSvg = requireWasmFunction(
     generatedWasm.render_shape_region_svg,
     "render_shape_region_svg",
@@ -135,9 +139,7 @@ function createWasmModule(generatedWasm: GeneratedWasm): WasmModule {
     hit_test_shape_parts: (json_input: string) => hitTestShapeParts(json_input),
     resolve_symbol_geometry: (json_input: string) => resolveSymbolGeometry(json_input),
     evaluate_shape_region: (json_input: string) => evaluateShapeRegion(json_input),
-    evaluate_shape_parts: generatedWasm.evaluate_shape_parts
-      ? (json_input: string) => generatedWasm.evaluate_shape_parts?.(json_input)
-      : undefined,
+    evaluate_shape_parts: (json_input: string) => evaluateShapeParts(json_input),
     render_shape_region_svg: (json_input: string) => renderShapeRegionSvg(json_input),
     divide_shape_regions: (json_input: string) => divideShapeRegions(json_input),
     compute_shape_intersections: (json_input: string) => computeShapeIntersections(json_input),

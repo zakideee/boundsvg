@@ -11,8 +11,8 @@
 use std::collections::{HashMap, HashSet};
 
 use boundshape::{
-    CompileGeometryOptions, GeometryDoc, GeometryNode, GeometryPaint, GeometryPreserveAspectRatio,
-    GeometryViewport, ShapeError, SymbolResolutionOptions, Transform2D,
+    CompileGeometryOptions, GeometryDoc, GeometryPaint, GeometryPreserveAspectRatio,
+    GeometryViewport, SymbolResolutionOptions, Transform2D,
 };
 
 use super::gradient::{is_supported_gradient_function, parse_gradient_for_box};
@@ -1191,58 +1191,6 @@ fn shape_node_label(node_id: &str, is_symbol: bool) -> String {
     }
 }
 
-fn validate_shape_geometry(geometry: &GeometryDoc, node_label: &str) -> Result<(), EngineError> {
-    fn visit(
-        node: &GeometryNode,
-        next_part_index: &mut usize,
-        seen: &mut HashSet<String>,
-    ) -> Option<String> {
-        match node {
-            GeometryNode::Group { children, .. } => {
-                for child in children {
-                    if let Some(duplicate) = visit(child, next_part_index, seen) {
-                        return Some(duplicate);
-                    }
-                }
-                None
-            }
-            GeometryNode::Transform { child, .. } => visit(child, next_part_index, seen),
-            GeometryNode::Path { node_id, .. } | GeometryNode::Boolean { node_id, .. } => {
-                let part_id = node_id
-                    .clone()
-                    .unwrap_or_else(|| format!("part:{next_part_index}"));
-                *next_part_index += 1;
-                if seen.insert(part_id.clone()) {
-                    None
-                } else {
-                    Some(part_id)
-                }
-            }
-        }
-    }
-
-    boundshape::validate_geometry_tree_depth(&geometry.root).map_err(|error| {
-        EngineError::Structured {
-            code: "SHAPE_GEOMETRY_MAX_DEPTH".to_string(),
-            message: error.to_string(),
-            stage: Some(crate::diagnostics::PipelineStage::Validate),
-            node_id: Some(node_label.to_string()),
-        }
-    })?;
-
-    let mut next_part_index = 0;
-    let mut seen = HashSet::new();
-    if let Some(part_id) = visit(&geometry.root, &mut next_part_index, &mut seen) {
-        return Err(EngineError::Structured {
-            code: "SHAPE_DUPLICATE_PART_ID".to_string(),
-            message: format!("Shape contains duplicate addressable part id \"{part_id}\"."),
-            stage: Some(crate::diagnostics::PipelineStage::Validate),
-            node_id: Some(node_label.to_string()),
-        });
-    }
-    Ok(())
-}
-
 fn resolve_shape_geometry(context: &ShapeChildContext) -> Result<GeometryDoc, EngineError> {
     let visual = context.visual;
     let label = shape_node_label(context.node_id, context.is_symbol);
@@ -1263,7 +1211,6 @@ fn resolve_shape_geometry(context: &ShapeChildContext) -> Result<GeometryDoc, En
                 },
             });
         };
-        validate_shape_geometry(&symbol.geometry, &label)?;
         boundshape::resolve_symbol_geometry(
             symbol,
             &SymbolResolutionOptions {
@@ -1272,17 +1219,11 @@ fn resolve_shape_geometry(context: &ShapeChildContext) -> Result<GeometryDoc, En
             },
         )
         .map_err(|error| {
-            let (code, stage) = if error == ShapeError::GeometryDepthLimit {
-                ("SHAPE_GEOMETRY_MAX_DEPTH", PipelineStage::Validate)
-            } else {
-                ("SHAPE_COMPILE_FAILED", PipelineStage::Ir)
-            };
-            EngineError::Structured {
-                code: code.to_string(),
-                message: error.to_string(),
-                stage: Some(stage),
-                node_id: Some(label),
-            }
+            crate::shape_diagnostics::shape_error_to_engine_error(
+                &error,
+                crate::shape_diagnostics::ShapeOperation::RenderSymbol,
+                context.node_id,
+            )
         })
     } else {
         let Some(geometry) = visual.shape_geometry.as_ref() else {
@@ -1301,7 +1242,6 @@ fn resolve_shape_geometry(context: &ShapeChildContext) -> Result<GeometryDoc, En
                 },
             });
         };
-        validate_shape_geometry(geometry, &label)?;
         Ok(geometry.clone())
     }
 }
@@ -1378,14 +1318,14 @@ fn build_shape_child(context: ShapeChildContext) -> Result<(), EngineError> {
         part_ids: emit_part_ids || part_paint.is_some(),
     };
 
+    let shape_operation = if context.is_symbol {
+        crate::shape_diagnostics::ShapeOperation::RenderSymbol
+    } else {
+        crate::shape_diagnostics::ShapeOperation::RenderShape
+    };
     let compiled_parts =
         boundshape::compile_geometry_paths(&geometry, Some(&options)).map_err(|error| {
-            EngineError::Structured {
-                code: "SHAPE_COMPILE_FAILED".to_string(),
-                message: error.to_string(),
-                stage: Some(crate::diagnostics::PipelineStage::Ir),
-                node_id: Some(node_id.to_string()),
-            }
+            crate::shape_diagnostics::shape_error_to_engine_error(&error, shape_operation, node_id)
         })?;
 
     // Unknown partPaint keys produce a warning and are ignored

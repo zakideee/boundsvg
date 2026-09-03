@@ -1,115 +1,147 @@
-import { FatalError } from "../errors.js";
-import type { ElasticSegment, GeometryDoc, GeometryNode, SymbolDefinition } from "./types.js";
+import {
+  SHAPE_GEOMETRY_DEPTH_LIMIT,
+  type ShapeOperand,
+  type ShapeOperation,
+  shapeDepthBoundaryFailure,
+  shapeInputBoundaryFailure,
+} from "../wasm/shape-fatal-decoder.js";
+import type { GeometryDoc, SymbolDefinition } from "./types.js";
 
 /** Geometry root is depth 0; recursive nodes through depth 48 are accepted. */
-export const MAX_GEOMETRY_TREE_DEPTH = 48;
+export const MAX_GEOMETRY_TREE_DEPTH = SHAPE_GEOMETRY_DEPTH_LIMIT;
+
+type GeometryDepthGuardContext = {
+  operation: ShapeOperation;
+  operand?: ShapeOperand;
+  nodeId?: string;
+};
 
 type GeometryDepthFrame = {
-  node: GeometryNode;
+  node: unknown;
   depth: number;
 };
 
-function throwGeometryDepthError(nodeId: string, actualDepth: number): never {
-  throw new FatalError(
-    "SHAPE_GEOMETRY_MAX_DEPTH",
-    `Validation error: shape geometry exceeds max depth (${MAX_GEOMETRY_TREE_DEPTH})`,
-    {
-      stage: "validate",
-      nodeId,
-      context: {
-        maxDepth: MAX_GEOMETRY_TREE_DEPTH,
-        actualDepth,
-      },
-    },
-  );
+function invalidGeometry(context: GeometryDepthGuardContext): never {
+  throw shapeInputBoundaryFailure(context.operation, "invalidRequestShape", context.nodeId);
 }
 
-function pushGeometryChildren(frame: GeometryDepthFrame, pending: GeometryDepthFrame[]): void {
-  switch (frame.node.kind) {
-    case "path":
-      break;
-    case "transform":
-      pending.push({ node: frame.node.child, depth: frame.depth + 1 });
-      break;
-    case "group":
-    case "boolean":
-      for (const child of frame.node.children) {
-        pending.push({ node: child, depth: frame.depth + 1 });
-      }
-      break;
+function unreadableGeometry(context: GeometryDepthGuardContext): never {
+  throw shapeInputBoundaryFailure(context.operation, "serializationFailed", context.nodeId);
+}
+
+function isObject(value: unknown, context: GeometryDepthGuardContext): value is object {
+  try {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  } catch {
+    unreadableGeometry(context);
+  }
+}
+
+function readProperty(
+  object: object,
+  property: string,
+  context: GeometryDepthGuardContext,
+): unknown {
+  try {
+    return Reflect.get(object, property);
+  } catch {
+    unreadableGeometry(context);
+  }
+}
+
+function pushArrayChildren(
+  value: unknown,
+  options: {
+    childDepth: number;
+    pending: GeometryDepthFrame[];
+    context: GeometryDepthGuardContext;
+  },
+): void {
+  const { childDepth, pending, context } = options;
+  let children: unknown[] | undefined;
+  try {
+    if (Array.isArray(value)) {
+      children = value;
+    }
+  } catch {
+    unreadableGeometry(context);
+  }
+  if (!children) {
+    invalidGeometry(context);
+  }
+  const length = readProperty(children, "length", context);
+  if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) {
+    invalidGeometry(context);
+  }
+  for (let childIndex = 0; childIndex < length; childIndex += 1) {
+    pending.push({
+      node: readProperty(children, String(childIndex), context),
+      depth: childDepth,
+    });
   }
 }
 
 /** Guard authored geometry before recursive validation or bridge serialization. */
-export function assertGeometryTreeDepth(geometry: GeometryDoc, nodeId = "<geometry>"): void {
-  const pending: GeometryDepthFrame[] = [{ node: geometry.root, depth: 0 }];
+export function assertGeometryTreeDepth(
+  geometry: unknown,
+  context: GeometryDepthGuardContext,
+): asserts geometry is GeometryDoc {
+  if (!isObject(geometry, context)) {
+    invalidGeometry(context);
+  }
+
+  const pending: GeometryDepthFrame[] = [
+    { node: readProperty(geometry, "root", context), depth: 0 },
+  ];
   while (pending.length > 0) {
     const frame = pending.pop();
     if (!frame) {
       break;
+    }
+    if (!isObject(frame.node, context)) {
+      invalidGeometry(context);
+    }
+
+    const kind = readProperty(frame.node, "kind", context);
+    if (kind !== "path" && kind !== "transform" && kind !== "group" && kind !== "boolean") {
+      invalidGeometry(context);
     }
     if (frame.depth > MAX_GEOMETRY_TREE_DEPTH) {
-      throwGeometryDepthError(nodeId, frame.depth);
+      throw shapeDepthBoundaryFailure({
+        operation: context.operation,
+        actual: frame.depth,
+        operand: context.operand,
+        nodeId: context.nodeId,
+      });
     }
-    pushGeometryChildren(frame, pending);
+    switch (kind) {
+      case "path":
+        break;
+      case "transform":
+        pending.push({
+          node: readProperty(frame.node, "child", context),
+          depth: frame.depth + 1,
+        });
+        break;
+      case "group":
+      case "boolean":
+        pushArrayChildren(readProperty(frame.node, "children", context), {
+          childDepth: frame.depth + 1,
+          pending,
+          context,
+        });
+        break;
+    }
   }
 }
 
-function segmentAddsWrapper(
-  segment: ElasticSegment,
-  widthDelta: number,
-  heightDelta: number,
-): boolean {
-  if (segment.role === "fixed-start") {
-    return false;
+/** Guard only the authored geometry contained by a symbol definition. */
+export function assertSymbolDefinitionGeometryDepth(
+  definition: unknown,
+  context: GeometryDepthGuardContext,
+): asserts definition is SymbolDefinition {
+  if (!isObject(definition, context)) {
+    invalidGeometry(context);
   }
-  const delta = segment.axis === "x" ? widthDelta : heightDelta;
-  if (delta === 0) {
-    return false;
-  }
-  if (segment.role === "fixed-end") {
-    return true;
-  }
-  const frameSize = segment.axis === "x" ? segment.frame.width : segment.frame.height;
-  if (frameSize <= 0) {
-    return false;
-  }
-  return true;
-}
-
-/** Guard the concrete tree produced when elastic symbol segments add transforms. */
-export function assertResolvedSymbolGeometryDepth(
-  definition: SymbolDefinition,
-  options: { width: number; height: number },
-  nodeId = "<Symbol>",
-): void {
-  const targetWidth = options.width > 0 ? options.width : definition.geometry.viewBox.width;
-  const targetHeight = options.height > 0 ? options.height : definition.geometry.viewBox.height;
-  const widthDelta = targetWidth - definition.geometry.viewBox.width;
-  const heightDelta = targetHeight - definition.geometry.viewBox.height;
-  const wrapperCountsByNodeId = new Map<string, number>();
-  for (const segment of definition.elasticSegments ?? []) {
-    if (segmentAddsWrapper(segment, widthDelta, heightDelta)) {
-      wrapperCountsByNodeId.set(
-        segment.nodeId,
-        (wrapperCountsByNodeId.get(segment.nodeId) ?? 0) + 1,
-      );
-    }
-  }
-  const pending: GeometryDepthFrame[] = [{ node: definition.geometry.root, depth: 0 }];
-
-  while (pending.length > 0) {
-    const frame = pending.pop();
-    if (!frame) {
-      break;
-    }
-    const currentNodeId = frame.node.nodeId;
-    const wrapperCount =
-      currentNodeId === undefined ? 0 : (wrapperCountsByNodeId.get(currentNodeId) ?? 0);
-    const resolvedDepth = frame.depth + wrapperCount;
-    if (resolvedDepth > MAX_GEOMETRY_TREE_DEPTH) {
-      throwGeometryDepthError(nodeId, resolvedDepth);
-    }
-    pushGeometryChildren({ node: frame.node, depth: resolvedDepth }, pending);
-  }
+  assertGeometryTreeDepth(readProperty(definition, "geometry", context), context);
 }

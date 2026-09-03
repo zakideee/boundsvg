@@ -30,7 +30,7 @@ fn golden_boolean_fixtures_match_expected_paths() {
     for fixture_name in ["subtract_rect_hole", "transformed_subtract_rect_hole"] {
         let geometry = load_geometry_fixture(fixture_name);
         let region = evaluate_geometry(&geometry).expect("fixture should evaluate");
-        let actual_path = region_to_path(&region);
+        let actual_path = region_to_path(&region).expect("serialize fixture");
         let expected_path = load_expected_path(fixture_name);
         assert_eq!(actual_path, expected_path, "fixture={fixture_name}");
     }
@@ -40,9 +40,11 @@ fn golden_boolean_fixtures_match_expected_paths() {
 fn repeated_evaluation_is_deterministic_for_golden_fixtures() {
     for fixture_name in ["subtract_rect_hole", "transformed_subtract_rect_hole"] {
         let geometry = load_geometry_fixture(fixture_name);
-        let first = region_to_path(&evaluate_geometry(&geometry).expect("first evaluation"));
+        let first = region_to_path(&evaluate_geometry(&geometry).expect("first evaluation"))
+            .expect("serialize first evaluation");
         for _ in 0..10 {
-            let next = region_to_path(&evaluate_geometry(&geometry).expect("repeat evaluation"));
+            let next = region_to_path(&evaluate_geometry(&geometry).expect("repeat evaluation"))
+                .expect("serialize repeat evaluation");
             assert_eq!(next, first, "fixture={fixture_name}");
         }
     }
@@ -79,11 +81,13 @@ fn tangent_touch_union_of_cubic_circles_is_stable() {
     })
     .expect("rhs should parse");
 
-    let first = region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("union"));
+    let first = region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("union"))
+        .expect("serialize union");
     assert!(!first.is_empty());
     for _ in 0..10 {
         let next =
-            region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("repeat union"));
+            region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("repeat union"))
+                .expect("serialize repeat union");
         assert_eq!(next, first);
     }
 }
@@ -119,11 +123,13 @@ fn near_coincident_shared_edge_union_stays_stable() {
     })
     .expect("rhs should parse");
 
-    let first = region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("union"));
+    let first = region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("union"))
+        .expect("serialize union");
     assert_eq!(first, "M0,0L80,0L80,40L0,40Z");
     for _ in 0..10 {
         let next =
-            region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("repeat union"));
+            region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("repeat union"))
+                .expect("serialize repeat union");
         assert_eq!(next, first);
     }
 }
@@ -159,11 +165,13 @@ fn collinear_partially_overlapping_rect_union_stays_stable() {
     })
     .expect("rhs should parse");
 
-    let first = region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("union"));
+    let first = region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("union"))
+        .expect("serialize union");
     assert_eq!(first, "M20,80L280,80L280,120L20,120Z");
     for _ in 0..10 {
         let next =
-            region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("repeat union"));
+            region_to_path(&boolean_regions(&lhs, &rhs, BooleanOp::Union).expect("repeat union"))
+                .expect("serialize repeat union");
         assert_eq!(next, first);
     }
 }
@@ -186,7 +194,7 @@ fn evenodd_nested_contours_keep_expected_island_hole_ordering() {
     .expect("evenodd path should parse");
 
     assert_eq!(
-        region_to_path(&region),
+        region_to_path(&region).expect("serialize region"),
         "M0,0L120,0L120,120L0,120Z M20,20L20,100L100,100L100,20Z M40,40L80,40L80,80L40,80Z",
     );
 }

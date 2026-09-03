@@ -6,7 +6,6 @@ import {
   hitTestGeometryParts,
   hitTestShapeAt,
 } from "../../src/shape/compiler.js";
-import { compileShapeParts } from "../../src/shape/expand.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
@@ -401,7 +400,7 @@ describe("partPaint", () => {
   });
 });
 
-describe("defs/use sharing and compile cache", () => {
+describe("defs/use sharing", () => {
   function renderTwoBadges(options?: { secondFill?: string; resourceIdPrefix?: string }): string {
     const engine = createEngineFromHandle(handle, {
       geometries: [{ id: "badge", doc: badgeGeometry }],
@@ -461,27 +460,6 @@ describe("defs/use sharing and compile cache", () => {
     const svg = renderTwoBadges({ resourceIdPrefix: "doc1-" });
     expect(svg).toMatch(/<path id="doc1-sp-/);
     expect(svg).toMatch(/<use href="#doc1-sp-/);
-  });
-
-  it("memoizes compiled parts per registry cache", () => {
-    const cache = new Map<string, never[]>();
-    const registry = {
-      geometries: new Map([["badge", badgeGeometry]]),
-      symbols: new Map(),
-      compileCache: cache as never,
-    };
-    const vnode = {
-      type: "Shape",
-      props: { geometryId: "badge", width: 300, height: 200, fill: "#1e293b" },
-      children: [],
-    } as never;
-    const first = compileShapeParts(vnode, registry as never, { width: 300, height: 200 });
-    const second = compileShapeParts(vnode, registry as never, { width: 300, height: 200 });
-    expect(cache.size).toBe(1);
-    expect(second).toBe(first);
-    const scaled = compileShapeParts(vnode, registry as never, { width: 150, height: 100 });
-    expect(scaled).not.toBe(first);
-    expect(cache.size).toBe(2);
   });
 });
 
