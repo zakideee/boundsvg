@@ -142,4 +142,22 @@ describe("Scene decode resource limits", () => {
       limit: MAX_SCENE_DECODE_JSON_BYTES,
     });
   });
+
+  it("stops a huge escaped open-map key at the JSON byte ceiling", () => {
+    const oversizedKey = "~".repeat(MAX_SCENE_DECODE_JSON_BYTES + 1);
+    const error = captureResourceError({
+      type: "Canvas",
+      width: 1,
+      height: 1,
+      children: [],
+      meta: { [oversizedKey]: "value" },
+    });
+    expect(error.context).toEqual({
+      path: "/meta",
+      pathTruncated: true,
+      resource: "json-bytes",
+      actual: MAX_SCENE_DECODE_JSON_BYTES + 1,
+      limit: MAX_SCENE_DECODE_JSON_BYTES,
+    });
+  }, 15_000);
 });

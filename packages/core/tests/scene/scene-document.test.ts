@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { FatalError } from "../../src/errors.js";
-import { fromSceneDocument, toSceneDocument } from "../../src/scene/from-vnode.js";
+import {
+  fromSceneDocument,
+  resolveSceneOrVNodeInput,
+  toSceneDocument,
+} from "../../src/scene/from-vnode.js";
 import type {
   CanvasSceneNode,
   SceneNode,
@@ -865,6 +869,81 @@ describe("toSceneDocument", () => {
 });
 
 describe("fromSceneDocument", () => {
+  it("uses module-initialized intrinsics while resolving the minimum VNode marker", () => {
+    let ordinaryGetCalls = 0;
+    const vnode = new Proxy(createElement("Box", {}), {
+      get(target, key, receiver) {
+        ordinaryGetCalls += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const invalidScene = new Proxy(
+      { type: "Box", children: [], extra: true },
+      {
+        get(target, key, receiver) {
+          ordinaryGetCalls += 1;
+          return Reflect.get(target, key, receiver);
+        },
+      },
+    );
+    const arrayIsArrayDescriptor = Reflect.getOwnPropertyDescriptor(Array, "isArray");
+    const getOwnPropertyDescriptorDescriptor = Reflect.getOwnPropertyDescriptor(
+      Reflect,
+      "getOwnPropertyDescriptor",
+    );
+    if (arrayIsArrayDescriptor === undefined || getOwnPropertyDescriptorDescriptor === undefined) {
+      throw new Error("Expected intrinsic descriptors");
+    }
+    const originalArrayIsArray = Array.isArray;
+    const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+    let arrayReplacementCalls = 0;
+    let descriptorReplacementCalls = 0;
+    let resolvedVNode: VNode | undefined;
+    let sceneError: unknown;
+    try {
+      Object.defineProperty(Array, "isArray", {
+        ...arrayIsArrayDescriptor,
+        value: (value: unknown) => {
+          arrayReplacementCalls += 1;
+          return originalArrayIsArray(value);
+        },
+      });
+      Object.defineProperty(Reflect, "getOwnPropertyDescriptor", {
+        ...getOwnPropertyDescriptorDescriptor,
+        value: (target: object, key: PropertyKey) => {
+          descriptorReplacementCalls += 1;
+          Reflect.get(target, key);
+          return originalGetOwnPropertyDescriptor(target, key);
+        },
+      });
+      resolvedVNode = resolveSceneOrVNodeInput(vnode);
+      try {
+        resolveSceneOrVNodeInput(invalidScene as unknown as SceneNode);
+      } catch (error) {
+        sceneError = error;
+      }
+    } finally {
+      Object.defineProperty(Array, "isArray", arrayIsArrayDescriptor);
+      Object.defineProperty(
+        Reflect,
+        "getOwnPropertyDescriptor",
+        getOwnPropertyDescriptorDescriptor,
+      );
+    }
+
+    expect(resolvedVNode).toBe(vnode);
+    expect(arrayReplacementCalls).toBe(0);
+    expect(descriptorReplacementCalls).toBe(0);
+    expect(ordinaryGetCalls).toBe(0);
+    expect(sceneError).toMatchObject({
+      code: "SCENE_DECODE_UNKNOWN_KEY",
+      message: "Scene document contains an unsupported key.",
+      stage: "validate",
+      nodeId: undefined,
+      context: { path: "/extra", key: "extra" },
+    });
+  });
+
   it("converts SceneNode back to VNode", () => {
     const scene: CanvasSceneNode = {
       type: "Canvas",

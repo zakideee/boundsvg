@@ -106,6 +106,38 @@ describe("layout transition Worker transport", () => {
     expect(snapshot.checkpoints[0]).not.toHaveProperty("ignored");
   });
 
+  it("uses each checkpoint index descriptor exactly once", () => {
+    const input = transitionInput();
+    const checkpointTarget = input.checkpoints;
+    const descriptorReads = new Map<PropertyKey, number>();
+    let ordinaryGetCalls = 0;
+    const checkpoints = new Proxy(checkpointTarget, {
+      get(target, key, receiver) {
+        ordinaryGetCalls += 1;
+        return Reflect.get(target, key, receiver);
+      },
+      getOwnPropertyDescriptor(target, key) {
+        const reads = (descriptorReads.get(key) ?? 0) + 1;
+        descriptorReads.set(key, reads);
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+        if (descriptor === undefined || key === "length" || reads === 1) {
+          return descriptor;
+        }
+        return {
+          ...descriptor,
+          value: { timeMs: 999, state: "B" },
+        };
+      },
+    });
+
+    const snapshot = snapshotWorkerLayoutTransitionInput({ ...input, checkpoints });
+
+    expect(snapshot.checkpoints).toEqual(input.checkpoints);
+    expect([0, 1, 2, 3].map((index) => descriptorReads.get(String(index)))).toEqual([1, 1, 1, 1]);
+    expect(descriptorReads.get("length")).toBe(1);
+    expect(ordinaryGetCalls).toBe(0);
+  });
+
   it("leaves safe schedule semantics to the receive-side Core owner", () => {
     const base = transitionInput();
     const input = {

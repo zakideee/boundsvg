@@ -27,6 +27,9 @@ import type {
   TextOnPathSceneChild,
 } from "./types.js";
 
+const arrayIsArray = Array.isArray;
+const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+
 // ---------------------------------------------------------------------------
 // VNode → SceneNode
 // ---------------------------------------------------------------------------
@@ -790,12 +793,12 @@ function hasTrustedVNodeMarker(input: VNode | SceneNode): input is VNode {
   let propsIsArray: boolean;
   let childrenIsArray: boolean;
   try {
-    propsIsArray = Array.isArray(props);
+    propsIsArray = arrayIsArray(props);
   } catch {
     throw vnodeMarkerReflectionError("/props", "array-check");
   }
   try {
-    childrenIsArray = Array.isArray(children);
+    childrenIsArray = arrayIsArray(children);
   } catch {
     throw vnodeMarkerReflectionError("/children", "array-check");
   }
@@ -805,7 +808,7 @@ function hasTrustedVNodeMarker(input: VNode | SceneNode): input is VNode {
 function readVNodeMarkerProperty(input: object, key: string): unknown | undefined {
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Reflect.getOwnPropertyDescriptor(input, key);
+    descriptor = reflectGetOwnPropertyDescriptor(input, key);
   } catch {
     throw vnodeMarkerReflectionError(`/${key}`, "get-own-property-descriptor");
   }

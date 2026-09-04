@@ -417,6 +417,107 @@ describe("Scene decode reflection safety", () => {
       context: { receivedTruncated: true },
     });
   });
+
+  it("rejects inherited discriminated-union names without consulting the prototype", () => {
+    const cases = [
+      {
+        input: {
+          type: "Text",
+          font: "F",
+          fontSizePx: 1,
+          flowExclusions: [{ kind: "__proto__" }],
+          children: [],
+        },
+        path: "/flowExclusions/0/kind",
+        discriminant: "kind",
+        received: "__proto__",
+      },
+      {
+        input: {
+          type: "Shape",
+          width: 1,
+          height: 1,
+          geometry: {
+            viewBox: { width: 1, height: 1 },
+            root: { kind: "constructor" },
+          },
+        },
+        path: "/geometry/root/kind",
+        discriminant: "kind",
+        received: "constructor",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const error = captureFatal(testCase.input);
+      expect(error).toMatchObject({
+        code: "SCENE_DECODE_UNKNOWN_DISCRIMINANT",
+        message: "Scene document contains an unknown discriminant.",
+        stage: "validate",
+        nodeId: undefined,
+        context: {
+          path: testCase.path,
+          discriminant: testCase.discriminant,
+          received: testCase.received,
+        },
+      });
+    }
+
+    const easingError = captureFatal({
+      type: "Box",
+      animate: {
+        keyframes: [],
+        durationMs: 1,
+        easing: { type: "toString" },
+      },
+      children: [],
+    });
+    expect(easingError).toMatchObject({
+      code: "SCENE_DECODE_INVALID_VALUE",
+      message: "Scene document contains a value with an invalid structural type.",
+      stage: "validate",
+      nodeId: undefined,
+      context: {
+        path: "/animate/easing",
+        expected: "animation-easing",
+        actual: "record",
+      },
+    });
+
+    const inheritedName = "hostileInheritedSceneVariant";
+    let prototypeGetterCalls = 0;
+    Object.defineProperty(Object.prototype, inheritedName, {
+      configurable: true,
+      get() {
+        prototypeGetterCalls += 1;
+        return "flowRect";
+      },
+    });
+    let inheritedError: FatalError;
+    try {
+      inheritedError = captureFatal({
+        type: "Text",
+        font: "F",
+        fontSizePx: 1,
+        flowExclusions: [{ kind: inheritedName }],
+        children: [],
+      });
+    } finally {
+      Reflect.deleteProperty(Object.prototype, inheritedName);
+    }
+    expect(prototypeGetterCalls).toBe(0);
+    expect(inheritedError).toMatchObject({
+      code: "SCENE_DECODE_UNKNOWN_DISCRIMINANT",
+      message: "Scene document contains an unknown discriminant.",
+      stage: "validate",
+      nodeId: undefined,
+      context: {
+        path: "/flowExclusions/0/kind",
+        discriminant: "kind",
+        received: inheritedName,
+      },
+    });
+  });
 });
 
 describe("Scene decode error precedence and privacy bounds", () => {
@@ -452,6 +553,37 @@ describe("Scene decode error precedence and privacy bounds", () => {
     });
     expect(excess.context?.path).toBe("");
     expect(excess.context?.pathTruncated).toBe(true);
+  });
+
+  it("counts escaped and surrogate pointer segments by UTF-8 bytes", () => {
+    const exactSegments = [
+      `~${"a".repeat(509)}`,
+      `${"/".repeat(255)}a`,
+      `${"é".repeat(255)}a`,
+      `${"😀".repeat(127)}abc`,
+      `${"\ud800".repeat(170)}a`,
+    ];
+    for (const segment of exactSegments) {
+      const error = captureFatal({ type: "Box", children: [], [segment]: true });
+      const expectedSegment = segment.replaceAll("~", "~0").replaceAll("/", "~1");
+      expect(new TextEncoder().encode(`/${expectedSegment}`).byteLength).toBe(512);
+      expect(error.context?.path).toBe(`/${expectedSegment}`);
+      expect(error.context?.pathTruncated).toBeUndefined();
+    }
+
+    const nestedSegment = "😀".repeat(127);
+    const nested = captureFatal({
+      type: "Canvas",
+      width: 1,
+      height: 1,
+      children: [],
+      meta: { [nestedSegment]: undefined },
+    });
+    expect(nested.context).toEqual({
+      path: "/meta",
+      pathTruncated: true,
+      reason: "unsupported-value-type",
+    });
   });
 
   it("bounds unknown discriminants without splitting a surrogate pair", () => {

@@ -174,12 +174,14 @@ function snapshotStateEntries(
 }
 
 function snapshotCheckpoints(value: unknown): readonly [unknown, unknown, unknown, unknown] {
-  const checkpoints = requireCanonicalArray(value, "/checkpoints", 4);
+  const checkpointEntries = requireCanonicalArray(value, "/checkpoints", 4);
   const snapshots: unknown[] = [];
   for (let index = 0; index < 4; index += 1) {
     const checkpointPath = appendPath("/checkpoints", String(index));
-    const descriptor = readRequiredDataDescriptor(checkpoints, String(index), checkpointPath);
-    snapshots.push(snapshotCheckpoint(descriptor.value, checkpointPath));
+    const entry = checkpointEntries[index];
+    if (entry !== undefined) {
+      snapshots.push(snapshotCheckpoint(entry.value, checkpointPath));
+    }
   }
   return [snapshots[0], snapshots[1], snapshots[2], snapshots[3]];
 }
@@ -437,7 +439,11 @@ function validateSafeArrayDescriptors(
   return entries;
 }
 
-function requireCanonicalArray(value: unknown, path: string, expectedLength: number): object {
+function requireCanonicalArray(
+  value: unknown,
+  path: string,
+  expectedLength: number,
+): Array<{ readonly key: string; readonly value: unknown }> {
   if (typeof value !== "object" || value === null || !readArrayIdentity(value, path)) {
     throw transitionInvalidError(path, "checkpoints", "expected-array");
   }
@@ -451,7 +457,7 @@ function requireCanonicalArray(value: unknown, path: string, expectedLength: num
   if (entries.length !== expectedLength) {
     throw transitionInvalidError(path, "checkpoints", "expected-four-checkpoints");
   }
-  return value;
+  return entries;
 }
 
 function requirePlainRecord(value: unknown, path: string): object {

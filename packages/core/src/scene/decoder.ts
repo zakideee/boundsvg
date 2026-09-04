@@ -733,6 +733,9 @@ function resolveDiscriminatedRecord(
   if (typeof descriptor.value !== "string") {
     invalidDiscriminantValue(appendPath(path, union.discriminant), descriptor.value);
   }
+  if (!objectHasOwn(union.variants, descriptor.value)) {
+    unknownDiscriminant(appendPath(path, union.discriminant), union.discriminant, descriptor.value);
+  }
   const recordName = union.variants[descriptor.value];
   if (recordName === undefined) {
     unknownDiscriminant(appendPath(path, union.discriminant), union.discriminant, descriptor.value);
@@ -1174,21 +1177,40 @@ function appendPath(parent: DecodePath, segment: string): DecodePath {
   if (parent.truncated) {
     return parent;
   }
-  const escaped = escapePointerSegment(segment);
-  const addition = `/${escaped}`;
-  if (utf8Length(parent.value) + utf8Length(addition) > MAX_PATH_BYTES) {
+  let pathBytes = utf8Length(parent.value) + 1;
+  if (pathBytes > MAX_PATH_BYTES) {
     return { value: parent.value, truncated: true };
   }
-  return { value: `${parent.value}${addition}`, truncated: false };
-}
-
-function escapePointerSegment(segment: string): string {
-  let result = "";
+  let escapedSegment = "";
   for (let index = 0; index < segment.length; index += 1) {
-    const character = segment[index];
-    result += character === "~" ? "~0" : character === "/" ? "~1" : character;
+    const first = stringCharCodeAt(segment, index);
+    let codeUnits = 1;
+    let escapedPart: string;
+    let partBytes: number;
+    if (first === 0x7e) {
+      escapedPart = "~0";
+      partBytes = 2;
+    } else if (first === 0x2f) {
+      escapedPart = "~1";
+      partBytes = 2;
+    } else {
+      const second = stringCharCodeAt(segment, index + 1);
+      if (first >= 0xd800 && first <= 0xdbff && second >= 0xdc00 && second <= 0xdfff) {
+        codeUnits = 2;
+        partBytes = 4;
+      } else {
+        partBytes = utf8BytesForCodeUnit(first);
+      }
+      escapedPart = stringSlice(segment, index, index + codeUnits);
+    }
+    if (pathBytes + partBytes > MAX_PATH_BYTES) {
+      return { value: parent.value, truncated: true };
+    }
+    escapedSegment += escapedPart;
+    pathBytes += partBytes;
+    index += codeUnits - 1;
   }
-  return result;
+  return { value: `${parent.value}/${escapedSegment}`, truncated: false };
 }
 
 function boundedSnippet(value: string): { value: string; truncated: boolean } {
