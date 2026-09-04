@@ -1418,8 +1418,7 @@ export class Engine {
     const requestedScale = stableRenderOpts?.scale ?? 1;
     assertPngScale(requestedScale);
 
-    const vnode = this.resolveInput(input);
-    assertRasterCanvasInput(vnode);
+    const vnode = this.resolveInput(input, assertRasterCanvasInput);
     if (!stableRenderOpts?.skipValidation) {
       validate(vnode);
     }
@@ -2143,9 +2142,11 @@ export class Engine {
     this.ensureNotDisposed();
     this.prunePreparedFrameScenes();
     const plan = this.createFrameRenderPlan(options, animationRasterPlan);
-    const vnode = this.resolveInput(input);
+    const vnode = this.resolveInput(
+      input,
+      plan.rasterPlan === undefined ? undefined : assertRasterCanvasInput,
+    );
     if (plan.rasterPlan !== undefined) {
-      assertRasterCanvasInput(vnode);
       this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
     }
     const compiled = this.compile(vnode, {
@@ -2779,8 +2780,7 @@ export class Engine {
     const encode = resolveEncoder();
     const requestedScale = stableRenderOpts?.scale ?? 1;
     assertPngScale(requestedScale);
-    const vnode = this.resolveInput(input);
-    assertRasterCanvasInput(vnode);
+    const vnode = this.resolveInput(input, assertRasterCanvasInput);
     if (!stableRenderOpts?.skipValidation) {
       validate(vnode);
     }
@@ -3216,8 +3216,12 @@ export class Engine {
     }
   }
 
-  private resolveInput(input: EngineInput): VNode {
+  private resolveInput(
+    input: EngineInput,
+    beforeResourceResolution?: (vnode: VNode) => void,
+  ): VNode {
     const vnode = resolveSceneOrVNodeInput(input);
+    beforeResourceResolution?.(vnode);
     // Shape/Symbol survive layout as leaf boxes; geometry compiles at IR
     // build. Registry references still fail here, at validate timing.
     assertShapeReferencesResolvable(vnode, this.shapeRegistry());

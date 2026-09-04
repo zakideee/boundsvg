@@ -750,6 +750,45 @@ describe("public render capability contract", () => {
     expect({ routeChecks, mismatches }).toEqual({ routeChecks: 36, mismatches: [] });
   }, 30_000);
 
+  it("checks raster dimensions before resolving Shape resources", () => {
+    const input = createElement(
+      "Canvas",
+      { width: Number.NaN, height: 10 },
+      createElement("Shape", { width: 5, height: 5 }),
+    );
+    const routes: Array<{ label: string; run: () => unknown }> = [
+      { label: "still PNG", run: () => engine.renderToPng(input) },
+      { label: "still WebP", run: () => engine.renderToWebp(input) },
+      {
+        label: "frame PNG",
+        run: () => [...engine.renderFrames(input, { format: "png", timesMs: [0] })],
+      },
+      { label: "layered PNG", run: () => engine.renderToLayeredPng(input) },
+      {
+        label: "animated GIF",
+        run: () =>
+          engine.renderToAnimatedGif(input, {
+            iterations: "infinite",
+            timesMs: [0],
+            frameDurationsMs: [20],
+          }),
+      },
+      {
+        label: "animated WebP",
+        run: () =>
+          engine.renderToAnimatedWebp(input, {
+            iterations: "infinite",
+            timesMs: [0],
+            frameDurationsMs: [20],
+          }),
+      },
+    ];
+
+    expect(routes.map(({ label, run }) => ({ label, ...captureFatalContract(run) }))).toEqual(
+      routes.map(({ label }) => ({ label, code: "INVALID_CANVAS_SIZE", stage: "emit" })),
+    );
+  }, 30_000);
+
   it("rejects a root Canvas accessor without reading it across every raster route", () => {
     let getterReadCount = 0;
     const sceneNode = {

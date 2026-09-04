@@ -188,6 +188,32 @@ describe("layout transition Worker transport", () => {
     );
   });
 
+  it("reserves the non-enumerable length property for canonical arrays", () => {
+    const recordEasing = { type: "spring", stiffness: 100 };
+    Object.defineProperty(recordEasing, "length", {
+      configurable: true,
+      enumerable: false,
+      value: 4,
+    });
+    const unsafeInput = {
+      ...transitionInput(),
+      easing: recordEasing,
+    } as unknown as WorkerLayoutTransitionInput;
+
+    expect(() => snapshotWorkerLayoutTransitionInput(unsafeInput)).toThrowError(
+      expect.objectContaining({
+        code: "WORKER_LAYOUT_TRANSITION_NOT_SERIALIZABLE",
+        message: "Layout transition request contains an unsafe data value.",
+        stage: "engine",
+        context: { path: "/easing/length", reason: "non-enumerable-property" },
+      }),
+    );
+
+    const frozenEasing = Object.freeze([0.25, 0.1, 0.25, 1] as const);
+    const safeInput = { ...transitionInput(), easing: frozenEasing };
+    expect(snapshotWorkerLayoutTransitionInput(safeInput).easing).toEqual(frozenEasing);
+  });
+
   it("accepts exactly the ceiling and rejects one byte over it", () => {
     const atCeiling = transitionInputWithExactByteSize(MAX_WORKER_LAYOUT_TRANSITION_PAYLOAD_BYTES);
     expect(serializedUtf8Bytes(atCeiling)).toBe(MAX_WORKER_LAYOUT_TRANSITION_PAYLOAD_BYTES);

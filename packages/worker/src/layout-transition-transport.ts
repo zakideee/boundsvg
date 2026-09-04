@@ -250,7 +250,10 @@ function snapshotSafeValue(task: SafeSnapshotValueTask, state: SafeSnapshotState
   const isArrayValue = readArrayIdentity(sourceObject, task.path);
   validateSafePrototype(sourceObject, isArrayValue, task.path);
   const keys = readOwnKeys(sourceObject, task.path);
-  const descriptors = snapshotSafeDescriptors(sourceObject, keys, task.path);
+  const descriptors = snapshotSafeDescriptors(sourceObject, keys, {
+    path: task.path,
+    isArrayValue,
+  });
   const output: unknown[] | Record<string, unknown> = isArrayValue ? [] : {};
   task.assign(output);
   state.active.set(sourceObject, task.path);
@@ -353,16 +356,24 @@ type SafeDescriptorEntry = {
   readonly descriptor: PropertyDescriptor & { readonly value: unknown };
 };
 
+type SafeDescriptorContext = {
+  readonly path: string;
+  readonly isArrayValue: boolean;
+};
+
 function snapshotSafeDescriptors(
   source: object,
   keys: readonly (string | symbol)[],
-  path: string,
+  context: SafeDescriptorContext,
 ): SafeDescriptorEntry[] {
   const entries: SafeDescriptorEntry[] = [];
   for (const key of keys) {
-    const descriptorPath = typeof key === "string" ? appendPath(path, key) : path;
+    const descriptorPath = typeof key === "string" ? appendPath(context.path, key) : context.path;
     const descriptor = readSafeDescriptor(source, key, descriptorPath);
-    validateSafeDescriptor(key, descriptor, descriptorPath);
+    validateSafeDescriptor(key, descriptor, {
+      path: descriptorPath,
+      isArrayValue: context.isArrayValue,
+    });
     entries.push({ key, descriptor });
   }
   return entries;
@@ -387,13 +398,13 @@ function readSafeDescriptor(
 function validateSafeDescriptor(
   key: string | symbol,
   descriptor: PropertyDescriptor,
-  path: string,
+  context: SafeDescriptorContext,
 ): asserts descriptor is PropertyDescriptor & { readonly value: unknown } {
   if (!("value" in descriptor)) {
-    throw transitionUnsafeError(path, "accessor-property");
+    throw transitionUnsafeError(context.path, "accessor-property");
   }
-  if (!descriptor.enumerable && key !== "length") {
-    throw transitionUnsafeError(path, "non-enumerable-property");
+  if (!descriptor.enumerable && !(context.isArrayValue && key === "length")) {
+    throw transitionUnsafeError(context.path, "non-enumerable-property");
   }
 }
 
@@ -452,7 +463,7 @@ function requireCanonicalArray(
     throw transitionUnsafeError(path, "unsupported-prototype");
   }
   const keys = readOwnKeys(value, path);
-  const descriptors = snapshotSafeDescriptors(value, keys, path);
+  const descriptors = snapshotSafeDescriptors(value, keys, { path, isArrayValue: true });
   const entries = validateSafeArrayDescriptors(descriptors, path);
   if (entries.length !== expectedLength) {
     throw transitionInvalidError(path, "checkpoints", "expected-four-checkpoints");

@@ -15,3 +15,10 @@ queued input and avoiding duplicate decodes within each trust boundary.
 
 CLI Scene files now distinguish JSON syntax failures from structural Scene
 failures and reuse the single decoded VNode for conversion and export.
+
+The former Core root exports `isSceneNode` and
+`assertSerializableSceneTransport` are removed. Replace them with
+`decodeSceneDocument`, handle its `SCENE_DECODE_*` `FatalError` on failure, and
+use the returned detached snapshot after success. Rejecting malformed Scene
+structure that a shallow check previously admitted is an intentional clean
+break; valid Scene rendering semantics are unchanged.

@@ -390,6 +390,14 @@ input. `fromSceneDocument(unknown)` applies that same decode exactly once before
 converting to a VNode. Direct `SceneNode` Engine inputs use the same boundary,
 even when `skipValidation` is enabled.
 
+The former root exports `isSceneNode` and
+`assertSerializableSceneTransport` are replaced by this boundary. Call
+`decodeSceneDocument` and, on success, use its returned detached snapshot for
+subsequent conversion or rendering. On failure, handle the thrown `FatalError`
+and its `SCENE_DECODE_*` code. Rejecting malformed Scene structure that a
+shallow check previously admitted is an intentional clean break; rendering
+semantics for valid Scene documents are unchanged.
+
 Records are closed except for documented string maps. Accessors,
 non-enumerable or symbol properties, sparse or non-canonical arrays, cycles,
 non-finite numbers, unsupported prototypes, and non-JSON values fail with a
