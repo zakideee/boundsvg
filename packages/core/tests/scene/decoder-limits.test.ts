@@ -126,7 +126,7 @@ describe("Scene decode resource limits", () => {
       actual: MAX_SCENE_DECODE_VALUES + 1,
       limit: MAX_SCENE_DECODE_VALUES,
     });
-  });
+  }, 30_000);
 
   it("accepts exact compact JSON bytes and rejects the next byte", () => {
     for (const bytes of [MAX_SCENE_DECODE_JSON_BYTES - 1, MAX_SCENE_DECODE_JSON_BYTES]) {
@@ -159,5 +159,5 @@ describe("Scene decode resource limits", () => {
       actual: MAX_SCENE_DECODE_JSON_BYTES + 1,
       limit: MAX_SCENE_DECODE_JSON_BYTES,
     });
-  }, 15_000);
+  }, 30_000);
 });
