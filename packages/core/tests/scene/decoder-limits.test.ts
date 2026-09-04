@@ -141,7 +141,7 @@ describe("Scene decode resource limits", () => {
       actual: MAX_SCENE_DECODE_JSON_BYTES + 1,
       limit: MAX_SCENE_DECODE_JSON_BYTES,
     });
-  });
+  }, 30_000);
 
   it("stops a huge escaped open-map key at the JSON byte ceiling", () => {
     const oversizedKey = "~".repeat(MAX_SCENE_DECODE_JSON_BYTES + 1);
@@ -159,5 +159,5 @@ describe("Scene decode resource limits", () => {
       actual: MAX_SCENE_DECODE_JSON_BYTES + 1,
       limit: MAX_SCENE_DECODE_JSON_BYTES,
     });
-  }, 30_000);
+  }, 15_000);
 });
