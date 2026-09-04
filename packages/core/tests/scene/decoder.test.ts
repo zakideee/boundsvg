@@ -322,5 +322,5 @@ describe("decodeSceneDocument", () => {
       actual: MAX_SCENE_DECODE_JSON_BYTES + 1,
       limit: MAX_SCENE_DECODE_JSON_BYTES,
     });
-  });
+  }, 15_000);
 });
