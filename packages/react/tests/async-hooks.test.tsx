@@ -35,7 +35,7 @@ const mockToSceneDocument = vi.fn((vnode: VNode) => {
   if ((vnode.type as string) === "UnknownWidget") {
     throw new Error(`Cannot convert VNode of unknown type "UnknownWidget" to SceneNode`);
   }
-  return { type: "canvas", width: 100, height: 100, children: [] };
+  return { type: "Canvas", width: 100, height: 100, children: [] };
 });
 
 vi.mock("@boundsvg/core", () => ({
@@ -805,7 +805,7 @@ describe("animated SVG Worker hooks", () => {
       ...renderOptions,
     });
     expect(workerRenderToAnimatedSvg).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "canvas" }),
+      expect.objectContaining({ type: "Canvas" }),
       {
         textPathMode: "merged",
         ...renderOptions,
@@ -831,7 +831,7 @@ describe("animated SVG Worker hooks", () => {
     await flush();
 
     expect(snapshot?.svg).toContain("animated");
-    expect(renderToAnimatedSvg).toHaveBeenCalledWith(expect.objectContaining({ type: "canvas" }), {
+    expect(renderToAnimatedSvg).toHaveBeenCalledWith(expect.objectContaining({ type: "Canvas" }), {
       textPathMode: "merged",
       playback: { mode: "independent" },
       resourceIdPrefix: "worker-animated-",
@@ -869,7 +869,7 @@ describe("animated SVG Worker hooks", () => {
 
     expect(snapshot?.ir).toBe(ir);
     expect(renderToAnimatedSvgAndIR).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "canvas" }),
+      expect.objectContaining({ type: "Canvas" }),
       expect.objectContaining({
         playback: { mode: "independent" },
         nodeIdMetadata: "include",

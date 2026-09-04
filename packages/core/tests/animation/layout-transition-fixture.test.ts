@@ -246,7 +246,7 @@ function createNestedResidualTransition(options: {
             height: childHeight,
             ...(options.canvasStroke
               ? { borderWidth: 2, borderColor: "#ffffff", strokeScaling: "canvas" as const }
-              : { backgroundColor: "#ffffff" }),
+              : { background: "#ffffff" }),
             ...(options.authoredTransform ? { transform: { translateX: 3 } } : {}),
             children: [],
           },

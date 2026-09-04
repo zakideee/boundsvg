@@ -1,8 +1,7 @@
 import { FatalError } from "./errors.js";
 import { generateNodeId } from "./ir/node-id.js";
-import { fromSceneDocument } from "./scene/from-vnode.js";
+import { resolveSceneOrVNodeInput } from "./scene/from-vnode.js";
 import type { SceneNode } from "./scene/types.js";
-import { isSceneNode } from "./scene/types.js";
 import type { VNode, VNodeType } from "./vnode/types.js";
 
 export type CollectedNodeIdSource = "explicit" | "auto" | "background" | "border";
@@ -32,7 +31,7 @@ export type NodeIdValidationResult = {
 type NodeIdInput = VNode | SceneNode;
 
 export function collectNodeIds(input: NodeIdInput): CollectedNodeId[] {
-  const vnode = isSceneNode(input) ? fromSceneDocument(input) : input;
+  const vnode = resolveSceneOrVNodeInput(input);
   const ids: CollectedNodeId[] = [];
   collectVNodeNodeIds(vnode, ids, {
     depth: 0,

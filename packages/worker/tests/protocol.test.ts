@@ -4,6 +4,7 @@ import type { WorkerLayoutTransitionInput } from "../src/layout-transition-trans
 import {
   collectRequestTransferables,
   collectResponseTransferables,
+  decodeWorkerRequestMessage,
   decodeWorkerResponse,
   type FontTransfer,
   getWorkerMessageId,
@@ -95,6 +96,104 @@ describe("formatUnknownWorkerFailure", () => {
 // ---------------------------------------------------------------------------
 
 describe("isWorkerRequest", () => {
+  it("decodes one Scene slot once and returns a prepared VNode", () => {
+    let typeDescriptorCalls = 0;
+    const scene = new Proxy({ type: "Canvas", width: 100, height: 100, children: [] } as const, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "type") {
+          typeDescriptorCalls += 1;
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    const decoded = decodeWorkerRequestMessage({ id: 2, type: "render-svg", scene });
+
+    expect(decoded.error).toBeUndefined();
+    expect(decoded.message).toMatchObject({
+      id: 2,
+      type: "render-svg",
+      scene: { type: "Canvas", props: { width: 100, height: 100 }, children: [] },
+    });
+    expect(typeDescriptorCalls).toBe(1);
+  });
+
+  it("validates active non-Scene envelope fields before nested Scene decode", () => {
+    let typeDescriptorCalls = 0;
+    const invalidScene = new Proxy(
+      { type: "Unknown", children: [] },
+      {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "type") {
+            typeDescriptorCalls += 1;
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      },
+    );
+
+    const outerInvalid = decodeWorkerRequestMessage({
+      id: 3,
+      type: "render-animated-svg",
+      scene: invalidScene,
+    });
+    expect(outerInvalid).toEqual({ id: 3, message: undefined });
+    expect(typeDescriptorCalls).toBe(0);
+
+    const sceneInvalid = decodeWorkerRequestMessage({
+      id: 3,
+      type: "render-animated-svg",
+      scene: invalidScene,
+      options: {},
+    });
+    expect(sceneInvalid.message).toBeUndefined();
+    expect(sceneInvalid.error).toMatchObject({
+      code: "SCENE_DECODE_UNKNOWN_DISCRIMINANT",
+      message: "Scene document contains an unknown discriminant.",
+      stage: "validate",
+      context: { path: "/type", discriminant: "type", received: "Unknown" },
+    });
+    expect(typeDescriptorCalls).toBe(1);
+  });
+
+  it("validates transition request options before decoding either state", () => {
+    let stateTypeDescriptorCalls = 0;
+    const invalidState = new Proxy(
+      { type: "Unknown", children: [] },
+      {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "type") {
+            stateTypeDescriptorCalls += 1;
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      },
+    );
+    const transition = {
+      ...TRANSITION,
+      states: { A: invalidState, B: TRANSITION.states.B },
+    };
+
+    expect(
+      decodeWorkerRequestMessage({
+        id: 4,
+        type: "render-layout-transition-animated-webp",
+        transition,
+      }),
+    ).toEqual({ id: 4, message: undefined });
+    expect(stateTypeDescriptorCalls).toBe(0);
+
+    const decoded = decodeWorkerRequestMessage({
+      id: 4,
+      type: "render-layout-transition-animated-webp",
+      transition,
+      options: {},
+    });
+    expect(decoded.message).toBeUndefined();
+    expect(decoded.error).toMatchObject({ code: "SCENE_DECODE_UNKNOWN_DISCRIMINANT" });
+    expect(stateTypeDescriptorCalls).toBe(1);
+  });
+
   it("returns true for valid init request", () => {
     const request: WorkerRequest = {
       id: 1,
@@ -397,6 +496,47 @@ describe("isWorkerRequest", () => {
     });
     expect(isWorkerRequest({ id: 1, type: "init", fonts: accessorFonts })).toBe(false);
     expect(getterCalls).toBe(0);
+  });
+
+  it("reconstructs validated request array entries without retaining their property access", () => {
+    let propertyReads = 0;
+    const descriptorOnly = <Value extends object>(value: Value): Value =>
+      new Proxy(value, {
+        get() {
+          propertyReads += 1;
+          throw new Error("request entry property was read");
+        },
+        getOwnPropertyDescriptor(target, key) {
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+    const fontData = new ArrayBuffer(8);
+    const init = decodeWorkerRequestMessage({
+      id: 8,
+      type: "init",
+      fonts: [
+        descriptorOnly({ alias: "sans", weight: 400, style: "normal" as const, data: fontData }),
+      ],
+      geometries: [descriptorOnly({ id: "geometry", doc: { viewBox: {}, root: {} } })],
+      symbols: [descriptorOnly({ id: "symbol", def: { geometry: {} } })],
+    });
+    expect(init.message).toMatchObject({
+      type: "init",
+      fonts: [{ alias: "sans", weight: 400, style: "normal", data: fontData }],
+      geometries: [{ id: "geometry", doc: { viewBox: {}, root: {} } }],
+      symbols: [{ id: "symbol", def: { geometry: {} } }],
+    });
+
+    const frameStream = decodeWorkerRequestMessage({
+      id: 9,
+      type: "open-frame-stream",
+      scene: { type: "Canvas", width: 1, height: 1, children: [] },
+      schedule: [descriptorOnly({ index: 0, timeMs: 0 })],
+      options: { format: "svg" },
+    });
+    expect(frameStream.message).toMatchObject({ schedule: [{ index: 0, timeMs: 0 }] });
+    expect(propertyReads).toBe(0);
   });
 
   it("returns false for render-svg without scene", () => {

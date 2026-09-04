@@ -74,8 +74,10 @@ representative assets before opting into a larger pool.
 
 For fixed-layout sampling, each Worker prepares the same scene and samples its
 assigned times without repeating layout, shaping, outline resolution, or IR
-parsing for every frame. `scene` must be a transport-safe `SceneNode`; convert
-a VNode with `toSceneDocument` from `@boundsvg/core` before starting the stream.
+parsing for every frame. `scene` is recursively decoded into a detached
+`SceneNode` once before pool fan-out; each active Worker decodes its received
+copy at its own trust boundary. Convert a VNode with `toSceneDocument` from
+`@boundsvg/core` before starting the stream.
 
 ```ts
 const abortController = new AbortController();
@@ -181,22 +183,13 @@ immediately before that frame is yielded in input order. Supply `onWarning` in
 the format-specific options to receive them. SVG-only namespace/metadata keys
 are rejected on PNG streams, and raster-only keys are rejected on SVG streams.
 
-Materialized scenes use a strict JSON-lossless transport contract. Plain
-objects, arrays, strings, booleans, finite numbers, and `null` are accepted.
-Functions, promises, class instances, accessors, symbol keys, explicit
-`undefined`, non-finite numbers, sparse arrays, cycles, and excessive nesting
-are rejected before a Worker request is sent. Do not rely on `JSON.stringify`
-silently dropping unsupported values.
-
-A companion benchmark measures both frame time and sampled heap allocation
-for the recursive predicate by scene size. In a standalone reference run
-(isolated from other suites to avoid a warmed runtime), 10/100/1,000-node
-scenes took 0.019/0.149/1.344 ms and allocated
-32.15/295.60/2,902.08 KiB per validation. That was 6.1/10.7/12.3% of direct SVG
-render time and 20.0/25.1/31.4% of its sampled allocation, respectively. Timing
-and allocation operations receive equal warmup and sample counts. The benchmark
-uses the Node inspector sampling profiler and is intended for comparative
-regression measurements, not exact per-object accounting.
+Materialized input remains lazy: a scene is not decoded until its frame is
+pulled. The `{ timeMs, scene }` envelope and time are checked before the Scene
+value. Structural Scene failures keep their exact Core `SCENE_DECODE_*` code,
+message, stage, and context, with only that input's `frameIndex` added. The same
+recursive schema, descriptor safety, and resource ceilings apply as for direct
+Core input; do not rely on `JSON.stringify` silently dropping unsupported
+values.
 
 ## Fixed-layout and materialized rendering
 
@@ -282,6 +275,14 @@ detached copy to each callback. Layered responses also use only the top-level
 list. Structured fatal errors and unknown/legacy option rejection match the
 direct Engine.
 
+Every public Scene request is detached before it is queued, so mutating the
+caller's original object after the method returns cannot change the request.
+The Worker receive boundary independently decodes the transported copy and
+preserves any Core Scene Fatal instead of replacing it with a generic protocol
+error. Layout-transition requests decode each of their two states separately;
+the Worker additionally limits the compact reconstructed two-state envelope to
+`MAX_WORKER_LAYOUT_TRANSITION_PAYLOAD_BYTES` (`16_777_216`).
+
 The protocol accepts only the severity-specific Core diagnostic shapes. A
 malformed response with a valid pending request ID rejects that request with
 `WORKER_PROTOCOL_INVALID_RESPONSE`. A malformed response whose ID cannot be
@@ -297,28 +298,30 @@ inventory. "Retry" describes whether repeating the same operation is
 appropriate; rows that require a new engine or pool cannot be retried on the
 disposed or failed instance.
 
-| Code                                         | Meaning                                                                                                                              | Retry                                                                                               |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `WORKER_CRASHED`                             | The Worker emitted an error event and its `WorkerEngine` was disposed.                                                               | Create a new engine or pool, then retry. Report repeated crashes.                                   |
-| `WORKER_CREATION_FAILED`                     | The Worker constructor failed, for example because of its URL, CSP, or runtime environment.                                          | Fix the environment or Worker URL, then retry creation.                                             |
-| `WORKER_ENGINE_DISPOSED`                     | A request targeted a disposed `WorkerEngine`.                                                                                        | Not on that instance; create a new engine.                                                          |
-| `WORKER_FRAME_ENDPOINT_UNAVAILABLE`          | An engine without the internal frame endpoint was used by a pool.                                                                    | No automatic retry; recreate the pool and report if it repeats.                                     |
-| `WORKER_FRAME_STREAM_CORRUPT`                | A frame stream returned an index or time that does not match its prepared schedule, or the pool's assignment state was inconsistent. | No automatic retry; recreate the pool and report the protocol failure.                              |
-| `WORKER_FRAME_STREAM_EXISTS`                 | The Worker received a duplicate open request for an active stream ID.                                                                | No automatic retry; recreate the pool and report the protocol failure.                              |
-| `WORKER_FRAME_STREAM_NOT_FOUND`              | The Worker received a next or close request for an unknown stream ID.                                                                | Restart the frame operation; report if it repeats.                                                  |
-| `WORKER_INVALID_MESSAGE`                     | The Worker received a value that is not a valid boundsvg Worker request.                                                             | Verify matching package versions and rebuild the Worker bundle before retrying.                     |
-| `WORKER_MATERIALIZED_FRAME_INVALID`          | A materialized item is not the required `{ timeMs, scene }` data shape.                                                              | Fix the item, then retry.                                                                           |
-| `WORKER_MATERIALIZED_FRAME_NOT_SERIALIZABLE` | A materialized scene is not losslessly transferable under the documented JSON transport contract.                                    | Fix the reported path in the scene, then retry.                                                     |
-| `WORKER_MATERIALIZED_SOURCE_NOT_ITERABLE`    | The materialized frame source is neither an `Iterable` nor an `AsyncIterable`.                                                       | Supply a supported source, then retry.                                                              |
-| `WORKER_NOT_INITIALIZED`                     | A render request reached the Worker before successful initialization.                                                                | Initialize through `WorkerEngine.create()` or recreate the pool, then retry.                        |
-| `WORKER_POOL_ASSET_SNAPSHOT_FAILED`          | The pool could not copy a font, geometry, or symbol snapshot.                                                                        | Replace the invalid or detached asset data, then retry creation.                                    |
-| `WORKER_POOL_DISPOSED`                       | Work targeted a disposed pool, or active pool work was cancelled by disposal.                                                        | Not on that pool; create a new pool.                                                                |
-| `WORKER_POOL_DUPLICATE_WORKER`               | A pool factory returned the same Worker instance for more than one slot.                                                             | Fix the factory to return a new Worker for every call, then retry creation.                         |
-| `WORKER_POOL_INVALID_CONCURRENCY`            | Pool concurrency is not an integer from 1 through 8.                                                                                 | Fix `concurrency`, then retry creation.                                                             |
-| `WORKER_POOL_WARNING_MISMATCH`               | Pool Workers returned different preparation warnings for the same scene.                                                             | No automatic retry; verify assets and package versions, then recreate the pool.                     |
-| `WORKER_PROTOCOL_INVALID_RESPONSE`           | A response has no valid Worker protocol shape for its request ID.                                                                    | Verify package versions and rebuild the Worker bundle; report if it persists.                       |
-| `WORKER_PROTOCOL_UNEXPECTED_RESPONSE`        | A valid response type does not match the request that was sent.                                                                      | Verify package versions and rebuild the Worker bundle; report if it persists.                       |
-| `WORKER_PROTOCOL_WARNING_SEVERITY`           | The Worker returned a non-recoverable entry in a warning list.                                                                       | No automatic retry; report the protocol failure.                                                    |
-| `WORKER_REQUEST_TIMEOUT`                     | Initialization or a request exceeded the configured timeout.                                                                         | Check workload and timeout; retry if the render is safe to repeat, or recreate an unhealthy Worker. |
-| `WORKER_TRANSPORT_FAILED`                    | `postMessage` failed before the request could be transported.                                                                        | Fix invalid or detached transfer data; recreate the Worker if needed, then retry.                   |
-| `WORKER_UNHANDLED_ERROR`                     | An exception not represented by a boundsvg `FatalError` escaped inside the Worker.                                                   | No automatic retry; inspect the message and report the underlying error.                            |
+| Code                                        | Meaning                                                                                                                              | Retry                                                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `WORKER_CRASHED`                            | The Worker emitted an error event and its `WorkerEngine` was disposed.                                                               | Create a new engine or pool, then retry. Report repeated crashes.                                   |
+| `WORKER_CREATION_FAILED`                    | The Worker constructor failed, for example because of its URL, CSP, or runtime environment.                                          | Fix the environment or Worker URL, then retry creation.                                             |
+| `WORKER_ENGINE_DISPOSED`                    | A request targeted a disposed `WorkerEngine`.                                                                                        | Not on that instance; create a new engine.                                                          |
+| `WORKER_FRAME_ENDPOINT_UNAVAILABLE`         | An engine without the internal frame endpoint was used by a pool.                                                                    | No automatic retry; recreate the pool and report if it repeats.                                     |
+| `WORKER_FRAME_STREAM_CORRUPT`               | A frame stream returned an index or time that does not match its prepared schedule, or the pool's assignment state was inconsistent. | No automatic retry; recreate the pool and report the protocol failure.                              |
+| `WORKER_FRAME_STREAM_EXISTS`                | The Worker received a duplicate open request for an active stream ID.                                                                | No automatic retry; recreate the pool and report the protocol failure.                              |
+| `WORKER_FRAME_STREAM_NOT_FOUND`             | The Worker received a next or close request for an unknown stream ID.                                                                | Restart the frame operation; report if it repeats.                                                  |
+| `WORKER_INVALID_MESSAGE`                    | The request envelope is invalid (`Worker received an invalid request message.`, stage `engine`, no context).                         | Verify matching package versions and rebuild the Worker bundle before retrying.                     |
+| `WORKER_LAYOUT_TRANSITION_INVALID`          | `Layout transition request has an invalid structural shape.`                                                                         | Fix the transition envelope, then retry.                                                            |
+| `WORKER_LAYOUT_TRANSITION_NOT_SERIALIZABLE` | `Layout transition request contains an unsafe data value.`                                                                           | Fix the bounded reported path and reason, then retry.                                               |
+| `WORKER_LAYOUT_TRANSITION_PAYLOAD_LIMIT`    | `Layout transition request exceeds the Worker payload limit.`                                                                        | Reduce the two states or transition data, then retry.                                               |
+| `WORKER_MATERIALIZED_FRAME_INVALID`         | A materialized item is not the required `{ timeMs, scene }` data shape.                                                              | Fix the item, then retry.                                                                           |
+| `WORKER_MATERIALIZED_SOURCE_NOT_ITERABLE`   | The materialized frame source is neither an `Iterable` nor an `AsyncIterable`.                                                       | Supply a supported source, then retry.                                                              |
+| `WORKER_NOT_INITIALIZED`                    | A render request reached the Worker before successful initialization.                                                                | Initialize through `WorkerEngine.create()` or recreate the pool, then retry.                        |
+| `WORKER_POOL_ASSET_SNAPSHOT_FAILED`         | The pool could not copy a font, geometry, or symbol snapshot.                                                                        | Replace the invalid or detached asset data, then retry creation.                                    |
+| `WORKER_POOL_DISPOSED`                      | Work targeted a disposed pool, or active pool work was cancelled by disposal.                                                        | Not on that pool; create a new pool.                                                                |
+| `WORKER_POOL_DUPLICATE_WORKER`              | A pool factory returned the same Worker instance for more than one slot.                                                             | Fix the factory to return a new Worker for every call, then retry creation.                         |
+| `WORKER_POOL_INVALID_CONCURRENCY`           | Pool concurrency is not an integer from 1 through 8.                                                                                 | Fix `concurrency`, then retry creation.                                                             |
+| `WORKER_POOL_WARNING_MISMATCH`              | Pool Workers returned different preparation warnings for the same scene.                                                             | No automatic retry; verify assets and package versions, then recreate the pool.                     |
+| `WORKER_PROTOCOL_INVALID_RESPONSE`          | A response has no valid Worker protocol shape for its request ID.                                                                    | Verify package versions and rebuild the Worker bundle; report if it persists.                       |
+| `WORKER_PROTOCOL_UNEXPECTED_RESPONSE`       | A valid response type does not match the request that was sent.                                                                      | Verify package versions and rebuild the Worker bundle; report if it persists.                       |
+| `WORKER_PROTOCOL_WARNING_SEVERITY`          | The Worker returned a non-recoverable entry in a warning list.                                                                       | No automatic retry; report the protocol failure.                                                    |
+| `WORKER_REQUEST_TIMEOUT`                    | Initialization or a request exceeded the configured timeout.                                                                         | Check workload and timeout; retry if the render is safe to repeat, or recreate an unhealthy Worker. |
+| `WORKER_TRANSPORT_FAILED`                   | `postMessage` failed before the request could be transported.                                                                        | Fix invalid or detached transfer data; recreate the Worker if needed, then retry.                   |
+| `WORKER_UNHANDLED_ERROR`                    | An exception not represented by a boundsvg `FatalError` escaped inside the Worker.                                                   | No automatic retry; inspect the message and report the underlying error.                            |

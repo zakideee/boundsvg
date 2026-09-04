@@ -9,6 +9,7 @@ import {
   type RecoverableError,
   type SceneNode,
   toSceneDocument,
+  type VNode,
 } from "@boundsvg/core";
 import { type GenerateComponentOptions, generateReactComponent } from "@boundsvg/core/codegen";
 import { type AnalyzeSvgOptions, analyzeSvg, buildHybridVNode } from "@boundsvg/core/svg";
@@ -76,8 +77,10 @@ export function convertSvgToComponent(svgString: string, options: CliOptions): C
  * Convert a SceneDocument JSON into a React component source.
  */
 export function convertSceneToComponent(scene: SceneNode, options: CliOptions): ConvertResult {
-  const vnode = fromSceneDocument(scene);
+  return generateComponentFromVNode(fromSceneDocument(scene), options);
+}
 
+function generateComponentFromVNode(vnode: VNode, options: CliOptions): ConvertResult {
   const codegenOptions: GenerateComponentOptions = {
     componentName: options.name,
     renderer: options.renderer,
@@ -196,11 +199,15 @@ function convertSingleFile(io: CliIo, options: CliOptions): number {
   if (options.inputFormat === "scene") {
     const sceneResult = parseSceneInput(inputResult.content);
     if (!sceneResult.ok) {
-      io.writeStderr(`Error: ${sceneResult.message}\n`);
+      const message =
+        sceneResult.kind === "syntax"
+          ? sceneResult.message
+          : `Invalid SceneDocument: ${formatError(sceneResult.error)}`;
+      io.writeStderr(`Error: ${message}\n`);
       return 1;
     }
     try {
-      const result = convertSceneToComponent(sceneResult.scene, options);
+      const result = generateComponentFromVNode(sceneResult.vnode, options);
       code = result.code;
       warnings = result.warnings;
     } catch (err) {

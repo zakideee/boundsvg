@@ -1,27 +1,21 @@
-import { fromSceneDocument, isSceneNode, type SceneNode } from "@boundsvg/core";
+import { fromSceneDocument, type VNode } from "@boundsvg/core";
 
-type ParsedSceneInput = { ok: true; scene: SceneNode } | { ok: false; message: string };
+type ParsedSceneInput =
+  | { ok: true; vnode: VNode }
+  | { ok: false; kind: "syntax"; message: string }
+  | { ok: false; kind: "scene"; error: unknown };
 
 export function parseSceneInput(content: string): ParsedSceneInput {
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
   } catch {
-    return { ok: false, message: "Invalid JSON in input" };
-  }
-
-  if (!isSceneNode(parsed)) {
-    return { ok: false, message: "Invalid SceneDocument: input does not match SceneNode shape" };
+    return { ok: false, kind: "syntax", message: "Invalid JSON in input" };
   }
 
   try {
-    fromSceneDocument(parsed);
-  } catch (err) {
-    return {
-      ok: false,
-      message: `Invalid SceneDocument: ${err instanceof Error ? err.message : String(err)}`,
-    };
+    return { ok: true, vnode: fromSceneDocument(parsed) };
+  } catch (error) {
+    return { ok: false, kind: "scene", error };
   }
-
-  return { ok: true, scene: parsed };
 }

@@ -63,11 +63,17 @@ like otherwise:
 ## Scene documents
 
 Serialized scene documents (`toSceneDocument()` output, `.scene.json` files)
-do not currently carry a format version field. **A scene document without a
-`version` field is interpreted as format version 1.** If the format ever
-changes incompatibly, the new format will introduce an explicit `version`
-field and a documented migration path; version-1 documents will remain
-readable.
+do not carry a format version field or envelope. A `version` property is not a
+compatibility marker; the closed Scene schema rejects it as an unsupported
+key. Decode external values with `decodeSceneDocument()` when a detached
+`SceneNode` is needed, or `fromSceneDocument()` when a VNode is needed. Both
+APIs validate the complete recursive structure, and `fromSceneDocument()`
+decodes exactly once.
+
+The current WASM schema remains version 31. That internal bridge number is not
+a Scene document field and must not be added to `.scene.json` files. Any future
+incompatible Scene format would require a separately documented migration;
+there is no runtime version-dispatch mode today.
 
 ## What is never stable
 

@@ -5,6 +5,7 @@ import type { HandlersRef, IR, IRGroupNode, IRNode, IRNodeType, IRTextNode } fro
 import type { LayoutNode, LayoutResult } from "./layout/types.js";
 import type { NodeIdValidationResult } from "./node-ids.js";
 import { validateNodeIds } from "./node-ids.js";
+import { resolveSceneOrVNodeInput } from "./scene/from-vnode.js";
 import { buildHandlerMap, buildNodeTypeMap, buildTextMap } from "./scene.js";
 import {
   applyAffineMatrixToPoint,
@@ -94,15 +95,16 @@ export function inspectScene(
   input: EngineInput,
   options?: RenderIrOptions,
 ): SceneInspection {
+  const vnode = resolveSceneOrVNodeInput(input);
   const layoutOptions =
     options?.skipValidation === undefined ? undefined : { skipValidation: options.skipValidation };
-  const layout = engine.renderToLayoutTree(input, layoutOptions);
-  const ir = engine.renderToIR(input, options);
+  const layout = engine.renderToLayoutTree(vnode, layoutOptions);
+  const ir = engine.renderToIR(vnode, options);
   const bboxes = collectInspectionBBoxes(ir);
   const textMap = buildTextMap(ir);
   const handlerMap = buildHandlerMap(ir);
   const nodeTypeMap = buildNodeTypeMap(ir);
-  const nodeIds = validateNodeIds(input);
+  const nodeIds = validateNodeIds(vnode);
 
   return {
     nodeIds,

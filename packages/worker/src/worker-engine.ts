@@ -53,7 +53,7 @@ import type {
   TextFlowWithExclusionsInput,
   TextFlowWithExclusionsResult,
 } from "@boundsvg/core";
-import { FatalError, RecoverableError } from "@boundsvg/core";
+import { decodeSceneDocument, FatalError, RecoverableError } from "@boundsvg/core";
 import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import {
   snapshotWorkerLayoutTransitionInput,
@@ -144,21 +144,52 @@ export type WorkerRenderedFrame =
   | { format: "svg"; data: string; warnings: SerializedRecoverableError[] }
   | { format: "png"; data: Uint8Array; warnings: SerializedRecoverableError[] };
 
+const preparedSceneDocumentBrand: unique symbol = Symbol("prepared-scene-document");
+const preparedLayoutTransitionBrand: unique symbol = Symbol("prepared-layout-transition");
+
+/** Package-internal proof that one Scene snapshot already crossed the main boundary. */
+export type PreparedSceneDocument = {
+  readonly scene: SceneNode;
+  readonly [preparedSceneDocumentBrand]: true;
+};
+
+/** Package-internal proof that both transition states already crossed the main boundary. */
+export type PreparedWorkerLayoutTransition = {
+  readonly transition: WorkerLayoutTransitionInput;
+  readonly [preparedLayoutTransitionBrand]: true;
+};
+
+export function prepareSceneForTransport(input: unknown): PreparedSceneDocument {
+  return {
+    scene: decodeSceneDocument(input),
+    [preparedSceneDocumentBrand]: true,
+  };
+}
+
+export function prepareWorkerLayoutTransitionForTransport(
+  input: WorkerLayoutTransitionInput,
+): PreparedWorkerLayoutTransition {
+  return {
+    transition: snapshotWorkerLayoutTransitionInput(input),
+    [preparedLayoutTransitionBrand]: true,
+  };
+}
+
 export type WorkerPoolEndpoint = {
   open(
-    scene: SceneNode,
+    scene: PreparedSceneDocument,
     schedule: IndexedFrameTime[],
     options: WorkerFrameRenderOptions,
   ): Promise<{ streamId: number; warnings: SerializedRecoverableError[] }>;
   openLayoutTransition(
-    transition: WorkerLayoutTransitionInput,
+    transition: PreparedWorkerLayoutTransition,
     schedule: IndexedFrameTime[],
     options: WorkerFrameRenderOptions,
   ): Promise<{ streamId: number; warnings: SerializedRecoverableError[] }>;
   next(streamId: number): Promise<Frame | undefined>;
   close(streamId: number): Promise<void>;
   render(
-    scene: SceneNode,
+    scene: PreparedSceneDocument,
     format: "svg" | "png",
     options: WorkerRenderSvgOptions | WorkerRenderPngOptions,
   ): Promise<WorkerRenderedFrame>;
@@ -262,7 +293,7 @@ export class WorkerEngine {
           response = await this.send({
             id: streamId,
             type: "open-frame-stream",
-            scene,
+            scene: scene.scene,
             schedule,
             options,
           });
@@ -288,7 +319,7 @@ export class WorkerEngine {
           response = await this.send({
             id: streamId,
             type: "open-layout-transition-frame-stream",
-            transition,
+            transition: transition.transition,
             schedule,
             options,
           });
@@ -342,13 +373,13 @@ export class WorkerEngine {
             ? {
                 id: this.nextRequestId(),
                 type: "render-svg",
-                scene,
+                scene: scene.scene,
                 options: options as WorkerRenderSvgOptions,
               }
             : {
                 id: this.nextRequestId(),
                 type: "render-png",
-                scene,
+                scene: scene.scene,
                 options: options as WorkerRenderPngOptions,
               },
         );
@@ -433,13 +464,14 @@ export class WorkerEngine {
    */
   async renderToSvg(scene: SceneNode, options?: RenderSvgOptions): Promise<string> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning } = splitOptions(options);
 
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-svg",
-      scene,
+      scene: preparedScene.scene,
       ...(workerOptions && { options: workerOptions }),
     };
 
@@ -459,12 +491,13 @@ export class WorkerEngine {
   /** Render authored animation tracks to animated SVG inside the Worker. */
   async renderToAnimatedSvg(scene: SceneNode, options: RenderAnimatedSvgOptions): Promise<string> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning } = splitOptions(options);
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-animated-svg",
-      scene,
+      scene: preparedScene.scene,
       options: workerOptions as WorkerRenderAnimatedSvgOptions,
     };
     const response = await this.send(request);
@@ -490,13 +523,14 @@ export class WorkerEngine {
     options?: RenderSvgOptions,
   ): Promise<WorkerRenderSvgAndIrResult> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning } = splitOptions(options);
 
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-svg-and-ir",
-      scene,
+      scene: preparedScene.scene,
       ...(workerOptions && { options: workerOptions }),
     };
 
@@ -526,12 +560,13 @@ export class WorkerEngine {
     options: RenderAnimatedSvgOptions,
   ): Promise<{ svg: string; ir: IR }> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning } = splitOptions(options);
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-animated-svg-and-ir",
-      scene,
+      scene: preparedScene.scene,
       options: workerOptions as WorkerRenderAnimatedSvgOptions,
     };
     const response = await this.send(request);
@@ -560,13 +595,14 @@ export class WorkerEngine {
    */
   async renderToPng(scene: SceneNode, options?: RenderPngOptions): Promise<Uint8Array> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
 
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-png",
-      scene,
+      scene: preparedScene.scene,
       ...(workerOptions && { options: workerOptions }),
     };
 
@@ -591,13 +627,14 @@ export class WorkerEngine {
    */
   async renderToWebp(scene: SceneNode, options?: RenderWebpOptions): Promise<Uint8Array> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
 
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-webp",
-      scene,
+      scene: preparedScene.scene,
       ...(workerOptions && { options: workerOptions }),
     };
 
@@ -623,13 +660,14 @@ export class WorkerEngine {
     options: RenderAnimatedWebpOptions,
   ): Promise<Uint8Array> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
 
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-animated-webp",
-      scene,
+      scene: preparedScene.scene,
       options: { ...workerOptions, iterations: options.iterations },
     };
 
@@ -655,12 +693,12 @@ export class WorkerEngine {
     options: RenderAnimatedWebpOptions,
   ): Promise<Uint8Array> {
     this.assertNotDisposed();
-    const transition = snapshotWorkerLayoutTransitionInput(input);
+    const preparedTransition = prepareWorkerLayoutTransitionForTransport(input);
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-layout-transition-animated-webp",
-      transition,
+      transition: preparedTransition.transition,
       options: { ...workerOptions, iterations: options.iterations },
     };
     const response = await this.send(request);
@@ -683,13 +721,14 @@ export class WorkerEngine {
     options: RenderAnimatedGifOptions,
   ): Promise<Uint8Array> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
 
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-animated-gif",
-      scene,
+      scene: preparedScene.scene,
       options: { ...workerOptions, iterations: options.iterations },
     };
 
@@ -715,12 +754,12 @@ export class WorkerEngine {
     options: RenderAnimatedGifOptions,
   ): Promise<Uint8Array> {
     this.assertNotDisposed();
-    const transition = snapshotWorkerLayoutTransitionInput(input);
+    const preparedTransition = prepareWorkerLayoutTransitionForTransport(input);
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-layout-transition-animated-gif",
-      transition,
+      transition: preparedTransition.transition,
       options: { ...workerOptions, iterations: options.iterations },
     };
     const response = await this.send(request);
@@ -739,13 +778,14 @@ export class WorkerEngine {
     options?: LayeredSvgOptions,
   ): Promise<LayeredSvgResult> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning } = splitLayeredSvgOptions(options);
 
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-layered-svg",
-      scene,
+      scene: preparedScene.scene,
       ...(workerOptions ? { options: workerOptions } : {}),
     };
 
@@ -767,13 +807,14 @@ export class WorkerEngine {
     options?: LayeredPngOptions,
   ): Promise<LayeredPngResult> {
     this.assertNotDisposed();
+    const preparedScene = prepareSceneForTransport(scene);
 
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitLayeredPngOptions(options);
 
     const request: WorkerRequest = {
       id: this.nextRequestId(),
       type: "render-layered-png",
-      scene,
+      scene: preparedScene.scene,
       ...(workerOptions ? { options: workerOptions } : {}),
     };
 

@@ -17,18 +17,19 @@ import {
   type IntrinsicInlineSizeInput,
   type MeasureTextBlockInput,
   type RecoverableError,
-  type SceneNode,
   type SerializedFatalError,
   type SerializedRecoverableError,
   type ShrinkwrapFlowInput,
   type ShrinkwrapTextInput,
   type TextFlowInput,
   type TextFlowWithExclusionsInput,
+  type VNode,
 } from "@boundsvg/core";
 import { initWasm } from "@boundsvg/core/wasm";
 import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import {
   collectResponseTransferables,
+  type DecodedWorkerRequest,
   decodeWorkerRequestMessage,
   type WorkerAnimatedGifRenderOptions,
   type WorkerAnimatedWebpRenderOptions,
@@ -38,7 +39,6 @@ import {
   type WorkerRenderPngOptions,
   type WorkerRenderSvgOptions,
   type WorkerRenderWebpOptions,
-  type WorkerRequest,
   type WorkerResponse,
 } from "./protocol.js";
 
@@ -64,7 +64,7 @@ declare const self: DedicatedWorkerGlobalScope;
 
 self.onmessage = (event: MessageEvent) => {
   const data: unknown = event.data;
-  const { id: requestId, message: request } = decodeWorkerRequestMessage(data);
+  const { id: requestId, message: request, error: decodeError } = decodeWorkerRequestMessage(data);
 
   if (request === undefined) {
     // Preserve the correlation ID captured by the failed decode, or fall back to -1.
@@ -72,12 +72,14 @@ self.onmessage = (event: MessageEvent) => {
     const response: WorkerResponse = {
       id: fallbackId,
       type: "error",
-      error: {
-        severity: "fatal",
-        code: "WORKER_INVALID_MESSAGE",
-        message: `Invalid worker message: ${safeStringify(data)}`,
-        stage: "engine",
-      },
+      error:
+        decodeError?.toJSON() ??
+        ({
+          severity: "fatal",
+          code: "WORKER_INVALID_MESSAGE",
+          message: "Worker received an invalid request message.",
+          stage: "engine",
+        } as const),
     };
     self.postMessage(response);
     return;
@@ -86,7 +88,7 @@ self.onmessage = (event: MessageEvent) => {
   void handleMessage(request);
 };
 
-async function handleMessage(request: WorkerRequest): Promise<void> {
+async function handleMessage(request: DecodedWorkerRequest): Promise<void> {
   try {
     switch (request.type) {
       case "init":
@@ -175,7 +177,7 @@ async function handleMessage(request: WorkerRequest): Promise<void> {
 // Handlers
 // ---------------------------------------------------------------------------
 
-async function handleInit(request: Extract<WorkerRequest, { type: "init" }>): Promise<void> {
+async function handleInit(request: Extract<DecodedWorkerRequest, { type: "init" }>): Promise<void> {
   closeAllFrameStreams();
   if (engine) {
     engine.dispose();
@@ -204,7 +206,7 @@ async function handleInit(request: Extract<WorkerRequest, { type: "init" }>): Pr
   respond({ id: request.id, type: "init-ok" });
 }
 
-function handleRenderSvg(id: number, scene: SceneNode, options?: WorkerRenderSvgOptions): void {
+function handleRenderSvg(id: number, scene: VNode, options?: WorkerRenderSvgOptions): void {
   const eng = requireEngine(id);
   if (!eng) {
     return;
@@ -220,7 +222,7 @@ function handleRenderSvg(id: number, scene: SceneNode, options?: WorkerRenderSvg
 
 function handleRenderAnimatedSvg(
   id: number,
-  scene: SceneNode,
+  scene: VNode,
   options: WorkerRenderAnimatedSvgOptions,
 ): void {
   const eng = requireEngine(id);
@@ -236,11 +238,7 @@ function handleRenderAnimatedSvg(
   respond({ id, type: "render-animated-svg-ok", svg, warnings });
 }
 
-function handleRenderSvgAndIr(
-  id: number,
-  scene: SceneNode,
-  options?: WorkerRenderSvgOptions,
-): void {
+function handleRenderSvgAndIr(id: number, scene: VNode, options?: WorkerRenderSvgOptions): void {
   const eng = requireEngine(id);
   if (!eng) {
     return;
@@ -254,7 +252,7 @@ function handleRenderSvgAndIr(
 
 function handleRenderAnimatedSvgAndIr(
   id: number,
-  scene: SceneNode,
+  scene: VNode,
   options: WorkerRenderAnimatedSvgOptions,
 ): void {
   const eng = requireEngine(id);
@@ -268,7 +266,7 @@ function handleRenderAnimatedSvgAndIr(
   respond({ id, type: "render-animated-svg-and-ir-ok", svg, ir: serializableIr, warnings });
 }
 
-function handleRenderPng(id: number, scene: SceneNode, options?: WorkerRenderPngOptions): void {
+function handleRenderPng(id: number, scene: VNode, options?: WorkerRenderPngOptions): void {
   const eng = requireEngine(id);
   if (!eng) {
     return;
@@ -284,7 +282,7 @@ function handleRenderPng(id: number, scene: SceneNode, options?: WorkerRenderPng
   self.postMessage(response, collectResponseTransferables(response));
 }
 
-function handleRenderWebp(id: number, scene: SceneNode, options?: WorkerRenderWebpOptions): void {
+function handleRenderWebp(id: number, scene: VNode, options?: WorkerRenderWebpOptions): void {
   const eng = requireEngine(id);
   if (!eng) {
     return;
@@ -302,7 +300,7 @@ function handleRenderWebp(id: number, scene: SceneNode, options?: WorkerRenderWe
 
 function handleRenderAnimatedWebp(
   id: number,
-  scene: SceneNode,
+  scene: VNode,
   options: WorkerAnimatedWebpRenderOptions,
 ): void {
   const eng = requireEngine(id);
@@ -322,7 +320,7 @@ function handleRenderAnimatedWebp(
 
 function handleRenderAnimatedGif(
   id: number,
-  scene: SceneNode,
+  scene: VNode,
   options: WorkerAnimatedGifRenderOptions,
 ): void {
   const eng = requireEngine(id);
@@ -343,7 +341,7 @@ function handleRenderAnimatedGif(
 function handleRenderLayoutTransitionAnimatedWebp(
   id: number,
   transition: Extract<
-    WorkerRequest,
+    DecodedWorkerRequest,
     { type: "render-layout-transition-animated-webp" }
   >["transition"],
   options: WorkerAnimatedWebpRenderOptions,
@@ -366,7 +364,7 @@ function handleRenderLayoutTransitionAnimatedWebp(
 function handleRenderLayoutTransitionAnimatedGif(
   id: number,
   transition: Extract<
-    WorkerRequest,
+    DecodedWorkerRequest,
     { type: "render-layout-transition-animated-gif" }
   >["transition"],
   options: WorkerAnimatedGifRenderOptions,
@@ -388,7 +386,7 @@ function handleRenderLayoutTransitionAnimatedGif(
 
 function handleRenderLayeredSvg(
   id: number,
-  scene: SceneNode,
+  scene: VNode,
   options?: WorkerLayeredSvgRenderOptions,
 ): void {
   const eng = requireEngine(id);
@@ -411,7 +409,7 @@ function handleRenderLayeredSvg(
 
 function handleRenderLayeredPng(
   id: number,
-  scene: SceneNode,
+  scene: VNode,
   options?: WorkerLayeredPngRenderOptions,
 ): void {
   const eng = requireEngine(id);
@@ -434,7 +432,7 @@ function handleRenderLayeredPng(
 }
 
 function handleOpenFrameStream(
-  request: Extract<WorkerRequest, { type: "open-frame-stream" }>,
+  request: Extract<DecodedWorkerRequest, { type: "open-frame-stream" }>,
 ): void {
   const eng = requireEngine(request.id);
   if (!eng) {
@@ -468,7 +466,7 @@ function handleOpenFrameStream(
 }
 
 function handleOpenLayoutTransitionFrameStream(
-  request: Extract<WorkerRequest, { type: "open-layout-transition-frame-stream" }>,
+  request: Extract<DecodedWorkerRequest, { type: "open-layout-transition-frame-stream" }>,
 ): void {
   const eng = requireEngine(request.id);
   if (!eng) {
@@ -674,9 +672,4 @@ function toSerializedFatalError(err: unknown): SerializedFatalError {
     message: formatUnknownWorkerFailure(err, "Unknown worker failure"),
     stage: "engine",
   };
-}
-
-/** JSON.stringify that never throws (handles circular refs, BigInt, etc.). */
-function safeStringify(value: unknown): string {
-  return formatUnknownWorkerFailure(value, "unprintable value");
 }

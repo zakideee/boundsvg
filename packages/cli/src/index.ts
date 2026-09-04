@@ -11,6 +11,7 @@ import { runExport } from "./export.js";
 import { runInspect } from "./inspect.js";
 import type { CliIo } from "./types.js";
 
+export { convertSceneToComponent } from "./convert.js";
 export type { CliIo } from "./types.js";
 
 function createDefaultIo(): CliIo {

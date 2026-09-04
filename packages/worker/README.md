@@ -22,6 +22,12 @@ const svg = await engine.renderToSvg(scene);
 engine.dispose();
 ```
 
+Scene inputs are recursively decoded and detached before queueing, then decoded
+again inside the Worker because receipt is a separate trust boundary. Core
+`SCENE_DECODE_*` fatal codes, messages, stages, and contexts are preserved.
+`WorkerPool` prepares a declarative Scene once before fan-out, while
+materialized Scenes stay lazy until their frame is pulled.
+
 The worker entry point is available at `@boundsvg/worker/worker` for bundler configuration.
 
 `WorkerEngine` also exposes async text measurement methods matching the core engine:

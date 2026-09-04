@@ -680,7 +680,7 @@ describe("public render capability contract", () => {
     }
   }, 30_000);
 
-  it("reports the same non-finite Canvas contract across both source input kinds", () => {
+  it("decodes Scene numbers before applying VNode raster dimension checks", () => {
     const nonFiniteValues = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
     const mismatches: Array<{
       inputKind: "VNode" | "SceneNode";
@@ -698,7 +698,11 @@ describe("public render capability contract", () => {
     ): void => {
       const actual = captureFatalContract(run);
       routeChecks += 1;
-      if (actual.code !== "INVALID_CANVAS_SIZE" || actual.stage !== "emit") {
+      const expected =
+        inputKind === "SceneNode"
+          ? { code: "SCENE_DECODE_UNSAFE_VALUE", stage: "validate" }
+          : { code: "INVALID_CANVAS_SIZE", stage: "emit" };
+      if (actual.code !== expected.code || actual.stage !== expected.stage) {
         mismatches.push({ inputKind, route, value: String(value), actual });
       }
     };
@@ -744,6 +748,45 @@ describe("public render capability contract", () => {
     }
 
     expect({ routeChecks, mismatches }).toEqual({ routeChecks: 36, mismatches: [] });
+  }, 30_000);
+
+  it("checks raster dimensions before resolving Shape resources", () => {
+    const input = createElement(
+      "Canvas",
+      { width: Number.NaN, height: 10 },
+      createElement("Shape", { width: 5, height: 5 }),
+    );
+    const routes: Array<{ label: string; run: () => unknown }> = [
+      { label: "still PNG", run: () => engine.renderToPng(input) },
+      { label: "still WebP", run: () => engine.renderToWebp(input) },
+      {
+        label: "frame PNG",
+        run: () => [...engine.renderFrames(input, { format: "png", timesMs: [0] })],
+      },
+      { label: "layered PNG", run: () => engine.renderToLayeredPng(input) },
+      {
+        label: "animated GIF",
+        run: () =>
+          engine.renderToAnimatedGif(input, {
+            iterations: "infinite",
+            timesMs: [0],
+            frameDurationsMs: [20],
+          }),
+      },
+      {
+        label: "animated WebP",
+        run: () =>
+          engine.renderToAnimatedWebp(input, {
+            iterations: "infinite",
+            timesMs: [0],
+            frameDurationsMs: [20],
+          }),
+      },
+    ];
+
+    expect(routes.map(({ label, run }) => ({ label, ...captureFatalContract(run) }))).toEqual(
+      routes.map(({ label }) => ({ label, code: "INVALID_CANVAS_SIZE", stage: "emit" })),
+    );
   }, 30_000);
 
   it("rejects a root Canvas accessor without reading it across every raster route", () => {
@@ -807,8 +850,8 @@ describe("public render capability contract", () => {
       getterReadCount: 0,
       results: routes.map(({ label }) => ({
         label,
-        code: "SCENE_NOT_SERIALIZABLE",
-        stage: "engine",
+        code: "SCENE_DECODE_UNSAFE_VALUE",
+        stage: "validate",
       })),
     });
   }, 30_000);

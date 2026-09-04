@@ -1,4 +1,4 @@
-import { FatalError } from "@boundsvg/core";
+import { FatalError, fromSceneDocument } from "@boundsvg/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkerRequest, WorkerResponse } from "../src/protocol.js";
 
@@ -301,7 +301,7 @@ describe("worker script measurement dispatch", () => {
       error: {
         severity: "fatal",
         code: "WORKER_INVALID_MESSAGE",
-        message: "Invalid worker message: unprintable value",
+        message: "Worker received an invalid request message.",
         stage: "engine",
       },
     });
@@ -350,9 +350,46 @@ describe("worker script measurement dispatch", () => {
     expect(scope.responses[0]).toMatchObject({
       id: 2,
       type: "error",
-      error: { code: "WORKER_INVALID_MESSAGE" },
+      error: { code: "SCENE_DECODE_INVALID_VALUE" },
     });
     expect(idDescriptorCalls).toBe(1);
+  });
+
+  it("reports an invalid active envelope before a nested Scene defect", () => {
+    scope.sendRaw({
+      id: 7,
+      type: "open-frame-stream",
+      scene: { type: "Unknown" },
+      schedule: [{ index: -1, timeMs: 0 }],
+      options: { format: "svg" },
+    });
+
+    expect(scope.responses[0]).toEqual({
+      id: 7,
+      type: "error",
+      error: {
+        severity: "fatal",
+        code: "WORKER_INVALID_MESSAGE",
+        message: "Worker received an invalid request message.",
+        stage: "engine",
+      },
+    });
+  });
+
+  it("preserves the complete Core Fatal when the active envelope is valid", () => {
+    scope.sendRaw({ id: 8, type: "render-svg", scene: { type: "Unknown" } });
+
+    expect(scope.responses[0]).toEqual({
+      id: 8,
+      type: "error",
+      error: {
+        severity: "fatal",
+        code: "SCENE_DECODE_UNKNOWN_DISCRIMINANT",
+        message: "Scene document contains an unknown discriminant.",
+        stage: "validate",
+        context: { path: "/type", discriminant: "type", received: "Unknown" },
+      },
+    });
   });
 
   it("dispatches static and animated SVG direct and SVG+IR request families", async () => {
@@ -380,6 +417,7 @@ describe("worker script measurement dispatch", () => {
     });
 
     await vi.waitFor(() => expect(scope.responses).toHaveLength(5));
+    const vnode = fromSceneDocument(scene);
     expect(scope.responses.slice(1).map((response) => response.type)).toEqual([
       "render-svg-ok",
       "render-animated-svg-ok",
@@ -387,11 +425,11 @@ describe("worker script measurement dispatch", () => {
       "render-animated-svg-and-ir-ok",
     ]);
     expect(workerEngineMethods.renderToSvg).toHaveBeenCalledWith(
-      scene,
+      vnode,
       expect.objectContaining({ nodeIdMetadata: "omit" }),
     );
     expect(workerEngineMethods.renderToAnimatedSvg).toHaveBeenCalledWith(
-      scene,
+      vnode,
       expect.objectContaining({
         playback: { mode: "timeline", durationMs: 800, iterations: 2.25 },
         timeMs: 950,
@@ -508,14 +546,25 @@ describe("worker script measurement dispatch", () => {
     });
 
     await vi.waitFor(() => expect(scope.responses).toHaveLength(3));
+    const decodedTransition = {
+      ...transition,
+      states: {
+        A: fromSceneDocument(transition.states.A),
+        B: fromSceneDocument(transition.states.B),
+      },
+    };
     expect(scope.responses.slice(1).map((response) => response.type)).toEqual([
       "render-animated-webp-ok",
       "render-animated-gif-ok",
     ]);
-    expect(workerEngineMethods.compileLayoutTransition).toHaveBeenNthCalledWith(1, transition, {
-      skipValidation: undefined,
-      textPathMode: "glyphs",
-    });
+    expect(workerEngineMethods.compileLayoutTransition).toHaveBeenNthCalledWith(
+      1,
+      decodedTransition,
+      {
+        skipValidation: undefined,
+        textPathMode: "glyphs",
+      },
+    );
     expect(workerEngineMethods.renderCompiledToAnimatedWebp).toHaveBeenCalledWith(
       { marker: "compiled-transition" },
       expect.objectContaining({ durationMs: 300, onWarning: expect.any(Function) }),
@@ -552,8 +601,15 @@ describe("worker script measurement dispatch", () => {
     await vi.waitFor(() => expect(scope.responses).toHaveLength(2));
     scope.send({ id: 3, type: "next-frame-stream", streamId: 2 });
     await vi.waitFor(() => expect(scope.responses).toHaveLength(3));
+    const decodedTransition = {
+      ...transition,
+      states: {
+        A: fromSceneDocument(transition.states.A),
+        B: fromSceneDocument(transition.states.B),
+      },
+    };
 
-    expect(workerEngineMethods.compileLayoutTransition).toHaveBeenCalledWith(transition, {
+    expect(workerEngineMethods.compileLayoutTransition).toHaveBeenCalledWith(decodedTransition, {
       skipValidation: undefined,
       textPathMode: undefined,
     });

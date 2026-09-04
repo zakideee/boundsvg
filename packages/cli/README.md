@@ -20,6 +20,11 @@ boundsvg convert input.svg -o OutputComponent.tsx --default-font Inter
 boundsvg export input.svg -o output.png --format png --default-font Inter --font Inter:400:normal:./fonts/Inter.ttf
 ```
 
+`.scene.json` input is parsed in a fixed order: file/options, JSON syntax,
+recursive Scene structure, then conversion or generation. Structural failures
+retain the Core `[SCENE_DECODE_*]` code and message. Successful file input is
+converted to one VNode and reused, rather than decoding the Scene a second time.
+
 ## Diagnostics
 
 ```bash

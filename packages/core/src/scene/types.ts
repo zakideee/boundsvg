@@ -569,16 +569,3 @@ export type SceneNode =
   | SvgSceneNode
   | ShapeSceneNode
   | SymbolSceneNode;
-
-function hasStringType(value: object): value is { type: string } {
-  return "type" in value && typeof value.type === "string";
-}
-
-/** Type guard: checks if a value is a SceneNode (has `type` but no `props` field) */
-export function isSceneNode(value: unknown): value is SceneNode {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  return hasStringType(value) && !("props" in value);
-}

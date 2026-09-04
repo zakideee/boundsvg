@@ -1,9 +1,8 @@
 import { FatalError } from "./errors.js";
 import { generateNodeId } from "./ir/node-id.js";
 import { hasWasmLayoutChildren } from "./layout/taffy-layout-adapter.js";
-import { fromSceneDocument } from "./scene/from-vnode.js";
+import { resolveSceneOrVNodeInput } from "./scene/from-vnode.js";
 import type { SceneNode } from "./scene/types.js";
-import { isSceneNode } from "./scene/types.js";
 import type { VNode } from "./vnode/types.js";
 
 type SemanticIdMismatch = {
@@ -31,7 +30,7 @@ function layoutTransitionSemanticIdError(details: SemanticIdMismatch): FatalErro
 
 /** Fast precheck; Rust repeats these checks authoritatively during compile. */
 export function assertLayoutTransitionSemanticIds(input: VNode | SceneNode): void {
-  const rootVNode = isSceneNode(input) ? fromSceneDocument(input) : input;
+  const rootVNode = resolveSceneOrVNodeInput(input);
   const authoredIds = new Set<string>();
 
   const visit = (

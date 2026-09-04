@@ -39,6 +39,21 @@ const png = engine.renderCompiledToPng(compiled, { scale: 2 });
 const inspectionIr = engine.snapshotCompiledIR(compiled);
 ```
 
+Decode Scene documents received from JSON, caches, or another process at the
+public structural boundary:
+
+```ts
+import { decodeSceneDocument, fromSceneDocument } from "@boundsvg/core";
+
+const scene = decodeSceneDocument(value); // detached mutable SceneNode
+const vnode = fromSceneDocument(value); // the same decode, then VNode conversion
+```
+
+The decoder covers every recursive Scene variant and nested record without
+invoking input getters, serialization hooks, coercion, iterators, or callbacks.
+Malformed structure and resource-limit excesses throw stable
+`SCENE_DECODE_*` `FatalError` diagnostics at stage `validate`.
+
 `CompiledScene` is an opaque, immutable runtime artifact owned by the exact
 `Engine` that created it. It exposes readonly `width`, `height`, and
 `textPathMode` metadata; it has no public `.ir`. Do not clone, persist,

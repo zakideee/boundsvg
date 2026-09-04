@@ -14,6 +14,8 @@ import type {
   VNode,
   VNodeFor,
 } from "../vnode/types.js";
+import { decodeSceneDocument } from "./decoder.js";
+import { isSceneNodeType } from "./schema.js";
 import type {
   InlineBoxSceneNode,
   InlineRectSceneNode,
@@ -24,6 +26,9 @@ import type {
   TextOnPathInlineSceneNode,
   TextOnPathSceneChild,
 } from "./types.js";
+
+const arrayIsArray = Array.isArray;
+const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 
 // ---------------------------------------------------------------------------
 // VNode → SceneNode
@@ -758,11 +763,73 @@ function uint8ToBase64(data: Uint8Array): string {
 /**
  * Convert a SceneNode tree back to a VNode tree.
  */
-export function fromSceneDocument(scene: SceneNode): VNode {
-  return sceneToVNode(scene);
+export function fromSceneDocument(scene: unknown): VNode {
+  return decodedSceneToVNode(decodeSceneDocument(scene));
 }
 
-function sceneToVNode(scene: SceneNode): VNode {
+/** Resolve the trusted VNode marker before treating an input as untrusted Scene data. */
+export function resolveSceneOrVNodeInput(input: VNode | SceneNode): VNode {
+  return hasTrustedVNodeMarker(input) ? input : decodedSceneToVNode(decodeSceneDocument(input));
+}
+
+function hasTrustedVNodeMarker(input: VNode | SceneNode): input is VNode {
+  if (typeof input !== "object" || input === null) {
+    return false;
+  }
+  const type = readVNodeMarkerProperty(input, "type");
+  const props = readVNodeMarkerProperty(input, "props");
+  const children = readVNodeMarkerProperty(input, "children");
+  if (
+    type === undefined ||
+    props === undefined ||
+    children === undefined ||
+    typeof type !== "string" ||
+    !isSceneNodeType(type) ||
+    typeof props !== "object" ||
+    props === null
+  ) {
+    return false;
+  }
+  let propsIsArray: boolean;
+  let childrenIsArray: boolean;
+  try {
+    propsIsArray = arrayIsArray(props);
+  } catch {
+    throw vnodeMarkerReflectionError("/props", "array-check");
+  }
+  try {
+    childrenIsArray = arrayIsArray(children);
+  } catch {
+    throw vnodeMarkerReflectionError("/children", "array-check");
+  }
+  return !propsIsArray && childrenIsArray;
+}
+
+function readVNodeMarkerProperty(input: object, key: string): unknown | undefined {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = reflectGetOwnPropertyDescriptor(input, key);
+  } catch {
+    throw vnodeMarkerReflectionError(`/${key}`, "get-own-property-descriptor");
+  }
+  if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+    return undefined;
+  }
+  return descriptor.value;
+}
+
+function vnodeMarkerReflectionError(path: string, operation: string): FatalError {
+  return new FatalError(
+    "SCENE_DECODE_UNSAFE_VALUE",
+    "Scene document contains a value that is not a safe JSON data value.",
+    {
+      stage: "validate",
+      context: { path, reason: "reflection-failed", operation },
+    },
+  );
+}
+
+function decodedSceneToVNode(scene: SceneNode): VNode {
   switch (scene.type) {
     case "Canvas": {
       const props: CanvasProps = {
@@ -914,7 +981,6 @@ function sceneToVNode(scene: SceneNode): VNode {
       });
 
     case "TextOnPath":
-      rejectLegacyTextPathNormalOffset(scene, scene.id ?? "<TextOnPath>");
       return createElement("TextOnPath", {
         d: scene.d,
         width: scene.width,
@@ -962,107 +1028,19 @@ function sceneToVNode(scene: SceneNode): VNode {
       });
 
     case "Inline":
-      return createElement("Inline", {
-        ...pickDefined(
-          scene,
-          "font",
-          "fallback",
-          "fontWeight",
-          "fontStyle",
-          "fontVariationSettings",
-          "fontFeatureSettings",
-          "textOrientation",
-          "textCombineUpright",
-          "fontSizePx",
-          "letterSpacingPx",
-          "color",
-          "textStrokes",
-          "textShadows",
-          "textDecoration",
-          "language",
-          "paddingInline",
-          "background",
-          "borderColor",
-          "borderWidth",
-          "borderRadius",
-          "animate",
-        ),
-        children: sceneChildrenToInlineVNodeChildren(scene.children),
-      });
+      return decodedInlineToVNode(scene);
 
     case "InlineBox":
-      return createElement("InlineBox", {
-        ...pickDefined(
-          scene,
-          "font",
-          "fallback",
-          "fontWeight",
-          "fontStyle",
-          "fontSizePx",
-          "letterSpacingPx",
-          "color",
-          "textDecoration",
-          "language",
-          "paddingInline",
-          "background",
-          "borderColor",
-          "borderWidth",
-          "borderRadius",
-          "animate",
-        ),
-        children: sceneChildrenToInlineBoxVNodeChildren(scene.children),
-      });
+      return decodedInlineBoxToVNode(scene);
 
     case "InlineRect":
-      return createElement("InlineRect", {
-        ...pickDefined(
-          scene,
-          "blockSizePx",
-          "advancePx",
-          "blockAlign",
-          "borderRadiusPx",
-          "opacity",
-          "paintOrder",
-          "animate",
-        ),
-        inlineSizePx: scene.inlineSizePx,
-        color: scene.color,
-      });
+      return decodedInlineRectToVNode(scene);
 
     case "Ruby":
-      return createElement("Ruby", {
-        ...pickDefined(
-          scene,
-          "rubyPosition",
-          "rubyAlign",
-          "rubyGapPx",
-          "rubyOffsetPx",
-          "rubyLineSizing",
-        ),
-        children: sceneChildrenToRubyVNodeChildren(scene.children),
-      });
+      return decodedRubyToVNode(scene);
 
     case "Rt":
-      return createElement("Rt", {
-        ...pickDefined(
-          scene,
-          "font",
-          "fallback",
-          "fontWeight",
-          "fontStyle",
-          "fontVariationSettings",
-          "fontFeatureSettings",
-          "fontSizePx",
-          "lineHeight",
-          "lineHeightPx",
-          "letterSpacingPx",
-          "color",
-          "textDecoration",
-          "language",
-          "textOrientation",
-        ),
-        children: sceneChildrenToRtVNodeChildren(scene.children),
-      });
+      return decodedRtToVNode(scene);
 
     case "Image":
       return createElement("Image", {
@@ -1213,6 +1191,116 @@ function sceneToVNode(scene: SceneNode): VNode {
         ...pickHandlers(scene),
       });
   }
+
+  return unreachableDecodedScene(scene);
+}
+
+function decodedInlineToVNode(scene: InlineSceneNode): VNodeFor<"Inline"> {
+  return createElement("Inline", {
+    ...pickDefined(
+      scene,
+      "font",
+      "fallback",
+      "fontWeight",
+      "fontStyle",
+      "fontVariationSettings",
+      "fontFeatureSettings",
+      "textOrientation",
+      "textCombineUpright",
+      "fontSizePx",
+      "letterSpacingPx",
+      "color",
+      "textStrokes",
+      "textShadows",
+      "textDecoration",
+      "language",
+      "paddingInline",
+      "background",
+      "borderColor",
+      "borderWidth",
+      "borderRadius",
+      "animate",
+    ),
+    children: sceneChildrenToInlineVNodeChildren(scene.children),
+  });
+}
+
+function decodedInlineBoxToVNode(scene: InlineBoxSceneNode): VNodeFor<"InlineBox"> {
+  return createElement("InlineBox", {
+    ...pickDefined(
+      scene,
+      "font",
+      "fallback",
+      "fontWeight",
+      "fontStyle",
+      "fontSizePx",
+      "letterSpacingPx",
+      "color",
+      "textDecoration",
+      "language",
+      "paddingInline",
+      "background",
+      "borderColor",
+      "borderWidth",
+      "borderRadius",
+      "animate",
+    ),
+    children: sceneChildrenToInlineBoxVNodeChildren(scene.children),
+  });
+}
+
+function decodedInlineRectToVNode(scene: InlineRectSceneNode): VNodeFor<"InlineRect"> {
+  return createElement("InlineRect", {
+    ...pickDefined(
+      scene,
+      "blockSizePx",
+      "advancePx",
+      "blockAlign",
+      "borderRadiusPx",
+      "opacity",
+      "paintOrder",
+      "animate",
+    ),
+    inlineSizePx: scene.inlineSizePx,
+    color: scene.color,
+  });
+}
+
+function decodedRubyToVNode(scene: RubySceneNode): VNodeFor<"Ruby"> {
+  return createElement("Ruby", {
+    ...pickDefined(
+      scene,
+      "rubyPosition",
+      "rubyAlign",
+      "rubyGapPx",
+      "rubyOffsetPx",
+      "rubyLineSizing",
+    ),
+    children: sceneChildrenToRubyVNodeChildren(scene.children),
+  });
+}
+
+function decodedRtToVNode(scene: RtSceneNode): VNodeFor<"Rt"> {
+  return createElement("Rt", {
+    ...pickDefined(
+      scene,
+      "font",
+      "fallback",
+      "fontWeight",
+      "fontStyle",
+      "fontVariationSettings",
+      "fontFeatureSettings",
+      "fontSizePx",
+      "lineHeight",
+      "lineHeightPx",
+      "letterSpacingPx",
+      "color",
+      "textDecoration",
+      "language",
+      "textOrientation",
+    ),
+    children: sceneChildrenToRtVNodeChildren(scene.children),
+  });
 }
 
 function sceneChildToTextVNodeChild(
@@ -1222,21 +1310,16 @@ function sceneChildToTextVNodeChild(
     return child;
   }
 
-  const vnode = sceneToVNode(child);
-  if (
-    vnode.type === "Inline" ||
-    vnode.type === "InlineBox" ||
-    vnode.type === "InlineRect" ||
-    vnode.type === "Ruby"
-  ) {
-    return vnode;
+  switch (child.type) {
+    case "Inline":
+      return decodedInlineToVNode(child);
+    case "InlineBox":
+      return decodedInlineBoxToVNode(child);
+    case "InlineRect":
+      return decodedInlineRectToVNode(child);
+    case "Ruby":
+      return decodedRubyToVNode(child);
   }
-
-  throw new FatalError(
-    "SCENE_INVALID_TEXT_CHILD",
-    `Text children must be strings, Inline, InlineBox, InlineRect, or Ruby nodes, got "${vnode.type}"`,
-    { stage: "validate", nodeId: `<${vnode.type}>` },
-  );
 }
 
 function sceneChildToRubyVNodeChild(
@@ -1246,16 +1329,12 @@ function sceneChildToRubyVNodeChild(
     return child;
   }
 
-  const vnode = sceneToVNode(child);
-  if (vnode.type === "Inline" || vnode.type === "Rt") {
-    return vnode;
+  switch (child.type) {
+    case "Inline":
+      return decodedInlineToVNode(child);
+    case "Rt":
+      return decodedRtToVNode(child);
   }
-
-  throw new FatalError(
-    "SCENE_INVALID_RUBY_CHILD",
-    `Ruby children must be strings, Inline, or Rt nodes, got "${vnode.type}"`,
-    { stage: "validate", nodeId: `<${vnode.type}>` },
-  );
 }
 
 function sceneChildToRtVNodeChild(child: string | InlineSceneNode): string | VNodeFor<"Inline"> {
@@ -1263,62 +1342,19 @@ function sceneChildToRtVNodeChild(child: string | InlineSceneNode): string | VNo
     return child;
   }
 
-  const vnode = sceneToVNode(child);
-  if (vnode.type === "Inline") {
-    return vnode;
-  }
-
-  throw new FatalError(
-    "SCENE_INVALID_RT_CHILD",
-    `Rt children must be strings or Inline nodes, got "${vnode.type}"`,
-    { stage: "validate", nodeId: `<${vnode.type}>` },
-  );
+  return decodedInlineToVNode(child);
 }
 
 function sceneChildrenToContainerVNodeChildren(children: SceneNode[]): VNode[] {
-  return children.map(sceneToVNode);
+  return children.map(decodedSceneToVNode);
 }
 
 function sceneChildrenToTextOnPathVNodeChildren(
   children: TextOnPathSceneChild[],
 ): Array<string | VNodeFor<"Inline">> {
-  if (!Array.isArray(children)) {
-    throw new FatalError(
-      "TEXT_PATH_CHILD_UNSUPPORTED",
-      "TextOnPath children must be an array of strings or Inline nodes.",
-      { stage: "validate", nodeId: "<TextOnPath>" },
-    );
-  }
   return children.map((child) => {
     if (typeof child === "string") {
       return child;
-    }
-    if (!child || typeof child !== "object" || child.type !== "Inline") {
-      throw new FatalError(
-        "TEXT_PATH_CHILD_UNSUPPORTED",
-        "TextOnPath children must be strings or Inline nodes.",
-        { stage: "validate", nodeId: "<TextOnPath>" },
-      );
-    }
-    if (!Array.isArray(child.children)) {
-      throw new FatalError(
-        "TEXT_PATH_CHILD_UNSUPPORTED",
-        "TextOnPath Inline children must be an array of strings or Inline nodes.",
-        { stage: "validate", nodeId: "<Inline>" },
-      );
-    }
-    for (const propName of Object.keys(child)) {
-      if (
-        propName !== "type" &&
-        propName !== "children" &&
-        !TEXT_PATH_INLINE_SHAPING_PROPS.has(propName)
-      ) {
-        throw new FatalError(
-          "TEXT_PATH_INLINE_PROP_UNSUPPORTED",
-          `TextOnPath Inline does not support prop "${propName}".`,
-          { stage: "validate", nodeId: "<Inline>" },
-        );
-      }
     }
     return createElement("Inline", {
       ...pickDefined(
@@ -1359,15 +1395,15 @@ function sceneChildrenToInlineVNodeChildren(
     if (typeof child === "string") {
       return child;
     }
-    const vnode = sceneToVNode(child);
-    if (vnode.type === "Inline" || vnode.type === "InlineRect" || vnode.type === "Ruby") {
-      return vnode;
+    switch (child.type) {
+      case "Inline":
+        return decodedInlineToVNode(child);
+      case "InlineRect":
+        return decodedInlineRectToVNode(child);
+      case "Ruby":
+        return decodedRubyToVNode(child);
     }
-    throw new FatalError(
-      "SCENE_INVALID_INLINE_CHILD",
-      `Inline children must be strings, Inline, InlineRect, or Ruby nodes, got "${vnode.type}"`,
-      { stage: "validate", nodeId: `<${vnode.type}>` },
-    );
+    return unreachableDecodedScene(child);
   });
 }
 
@@ -1394,12 +1430,29 @@ function sceneChildrenToInlineBoxVNodeChildren(
     if (typeof child === "string") {
       return child;
     }
-    return sceneToVNode(child) as
-      | VNodeFor<"Inline">
-      | VNodeFor<"InlineBox">
-      | VNodeFor<"InlineRect">
-      | VNodeFor<"Ruby">;
+    switch (child.type) {
+      case "Inline":
+        return decodedInlineToVNode(child);
+      case "InlineBox":
+        return decodedInlineBoxToVNode(child);
+      case "InlineRect":
+        return decodedInlineRectToVNode(child);
+      case "Ruby":
+        return decodedRubyToVNode(child);
+    }
+    return unreachableDecodedScene(child);
   });
+}
+
+function unreachableDecodedScene(_scene: never): never {
+  throw new FatalError(
+    "SCENE_DECODE_INVALID_VALUE",
+    "Scene document contains a value with an invalid structural type.",
+    {
+      stage: "validate",
+      context: { path: "", expected: "scene-node", actual: "record" },
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

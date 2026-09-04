@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { FatalError } from "../../src/errors.js";
-import { fromSceneDocument, toSceneDocument } from "../../src/scene/from-vnode.js";
+import {
+  fromSceneDocument,
+  resolveSceneOrVNodeInput,
+  toSceneDocument,
+} from "../../src/scene/from-vnode.js";
 import type {
   CanvasSceneNode,
   SceneNode,
   TextOnPathSceneNode,
   TextSceneNode,
 } from "../../src/scene/types.js";
-import { isSceneNode } from "../../src/scene/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { CanvasVNode, RtVNode, RubyVNode, VNode } from "../../src/vnode/types.js";
 
@@ -273,12 +276,12 @@ describe("toSceneDocument", () => {
       children: [{ type: "Inline", background: "#000", children: ["bad"] }],
     } as unknown as TextOnPathSceneNode;
     expect(() => fromSceneDocument(invalidScene)).toThrow(
-      expect.objectContaining({ code: "TEXT_PATH_INLINE_PROP_UNSUPPORTED" }),
+      expect.objectContaining({ code: "SCENE_DECODE_UNKNOWN_KEY" }),
     );
 
     const removedPlainShape = { ...scene, children: "legacy" } as unknown as TextOnPathSceneNode;
     expect(() => fromSceneDocument(removedPlainShape)).toThrow(
-      expect.objectContaining({ code: "TEXT_PATH_CHILD_UNSUPPORTED" }),
+      expect.objectContaining({ code: "SCENE_DECODE_INVALID_VALUE" }),
     );
   });
 
@@ -294,7 +297,7 @@ describe("toSceneDocument", () => {
       normalOffsetPx: -4,
     } as unknown as TextOnPathSceneNode;
     expect(() => fromSceneDocument(base)).toThrow(
-      expect.objectContaining({ code: "TEXT_PATH_INVALID" }),
+      expect.objectContaining({ code: "SCENE_DECODE_UNKNOWN_KEY" }),
     );
 
     const vnode = {
@@ -866,6 +869,81 @@ describe("toSceneDocument", () => {
 });
 
 describe("fromSceneDocument", () => {
+  it("uses module-initialized intrinsics while resolving the minimum VNode marker", () => {
+    let ordinaryGetCalls = 0;
+    const vnode = new Proxy(createElement("Box", {}), {
+      get(target, key, receiver) {
+        ordinaryGetCalls += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const invalidScene = new Proxy(
+      { type: "Box", children: [], extra: true },
+      {
+        get(target, key, receiver) {
+          ordinaryGetCalls += 1;
+          return Reflect.get(target, key, receiver);
+        },
+      },
+    );
+    const arrayIsArrayDescriptor = Reflect.getOwnPropertyDescriptor(Array, "isArray");
+    const getOwnPropertyDescriptorDescriptor = Reflect.getOwnPropertyDescriptor(
+      Reflect,
+      "getOwnPropertyDescriptor",
+    );
+    if (arrayIsArrayDescriptor === undefined || getOwnPropertyDescriptorDescriptor === undefined) {
+      throw new Error("Expected intrinsic descriptors");
+    }
+    const originalArrayIsArray = Array.isArray;
+    const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+    let arrayReplacementCalls = 0;
+    let descriptorReplacementCalls = 0;
+    let resolvedVNode: VNode | undefined;
+    let sceneError: unknown;
+    try {
+      Object.defineProperty(Array, "isArray", {
+        ...arrayIsArrayDescriptor,
+        value: (value: unknown) => {
+          arrayReplacementCalls += 1;
+          return originalArrayIsArray(value);
+        },
+      });
+      Object.defineProperty(Reflect, "getOwnPropertyDescriptor", {
+        ...getOwnPropertyDescriptorDescriptor,
+        value: (target: object, key: PropertyKey) => {
+          descriptorReplacementCalls += 1;
+          Reflect.get(target, key);
+          return originalGetOwnPropertyDescriptor(target, key);
+        },
+      });
+      resolvedVNode = resolveSceneOrVNodeInput(vnode);
+      try {
+        resolveSceneOrVNodeInput(invalidScene as unknown as SceneNode);
+      } catch (error) {
+        sceneError = error;
+      }
+    } finally {
+      Object.defineProperty(Array, "isArray", arrayIsArrayDescriptor);
+      Object.defineProperty(
+        Reflect,
+        "getOwnPropertyDescriptor",
+        getOwnPropertyDescriptorDescriptor,
+      );
+    }
+
+    expect(resolvedVNode).toBe(vnode);
+    expect(arrayReplacementCalls).toBe(0);
+    expect(descriptorReplacementCalls).toBe(0);
+    expect(ordinaryGetCalls).toBe(0);
+    expect(sceneError).toMatchObject({
+      code: "SCENE_DECODE_UNKNOWN_KEY",
+      message: "Scene document contains an unsupported key.",
+      stage: "validate",
+      nodeId: undefined,
+      context: { path: "/extra", key: "extra" },
+    });
+  });
+
   it("converts SceneNode back to VNode", () => {
     const scene: CanvasSceneNode = {
       type: "Canvas",
@@ -1003,23 +1081,5 @@ describe("round-trip", () => {
     expect(roundTripped.props.height).toBe(original.props.height);
     expect(roundTripped.props.id).toBe(original.props.id);
     expect(roundTripped.children.length).toBe(original.children.length);
-  });
-});
-
-describe("isSceneNode", () => {
-  it("returns true for SceneNode", () => {
-    const scene: CanvasSceneNode = { type: "Canvas", width: 100, height: 100, children: [] };
-    expect(isSceneNode(scene)).toBe(true);
-  });
-
-  it("returns false for VNode (has props field)", () => {
-    const vnode = createElement("Canvas", { width: 100, height: 100 });
-    expect(isSceneNode(vnode)).toBe(false);
-  });
-
-  it("returns false for null/undefined/string", () => {
-    expect(isSceneNode(null)).toBe(false);
-    expect(isSceneNode(undefined)).toBe(false);
-    expect(isSceneNode("Canvas")).toBe(false);
   });
 });

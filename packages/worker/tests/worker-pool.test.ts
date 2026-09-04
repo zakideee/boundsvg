@@ -1,11 +1,13 @@
 import { FatalError, type SceneNode, type SerializedRecoverableError } from "@boundsvg/core";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkerLayoutTransitionInput } from "../src/layout-transition-transport.js";
-import type {
-  IndexedFrameTime,
-  WorkerFrameRenderOptions,
-  WorkerRequest,
-  WorkerResponse,
+import {
+  type DecodedWorkerRequest,
+  decodeWorkerRequestMessage,
+  type IndexedFrameTime,
+  type WorkerFrameRenderOptions,
+  type WorkerRequest,
+  type WorkerResponse,
 } from "../src/protocol.js";
 import {
   DEFAULT_WORKER_POOL_CONCURRENCY,
@@ -42,11 +44,17 @@ class PoolMockWorker {
   renderDelayForTime: (timeMs: number) => number = () => 0;
   warningsForTime: (timeMs: number) => SerializedRecoverableError[] = () => this.warnings;
   failRenderTime: number | undefined;
+  receiveSceneDecodeCount = 0;
 
   private readonly listeners = new Map<string, Set<MockEventListener>>();
   private readonly streams = new Map<number, MockFrameStream>();
 
+  constructor(private readonly decodeOnReceive = false) {}
+
   readonly postMessage = vi.fn((request: WorkerRequest) => {
+    if (this.decodeOnReceive) {
+      this.decodeReceivedSceneSlots(request);
+    }
     switch (request.type) {
       case "init":
         this.initRequests.push(structuredClone(request));
@@ -212,6 +220,60 @@ class PoolMockWorker {
 
   removeEventListener(type: string, listener: MockEventListener): void {
     this.listeners.get(type)?.delete(listener);
+  }
+
+  private decodeReceivedSceneSlots(request: WorkerRequest): void {
+    let candidate: unknown;
+    const countScene = (scene: SceneNode): SceneNode =>
+      new Proxy(scene, {
+        getOwnPropertyDescriptor: (target, key) => {
+          if (key === "type") {
+            this.receiveSceneDecodeCount += 1;
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+    switch (request.type) {
+      case "render-svg":
+      case "render-animated-svg":
+      case "render-png":
+      case "render-webp":
+      case "render-animated-webp":
+      case "render-animated-gif":
+      case "render-layered-svg":
+      case "render-layered-png":
+      case "render-svg-and-ir":
+      case "render-animated-svg-and-ir":
+      case "open-frame-stream":
+        candidate = { ...request, scene: countScene(request.scene) };
+        break;
+      case "render-layout-transition-animated-webp":
+      case "render-layout-transition-animated-gif":
+      case "open-layout-transition-frame-stream": {
+        const states: Record<string, SceneNode> = {};
+        for (const [stateName, state] of Object.entries(request.transition.states)) {
+          Object.defineProperty(states, stateName, {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: countScene(state),
+          });
+        }
+        candidate = {
+          ...request,
+          transition: { ...request.transition, states },
+        };
+        break;
+      }
+      default:
+        return;
+    }
+
+    const decoded: DecodedWorkerRequest | undefined = decodeWorkerRequestMessage(candidate).message;
+    if (decoded === undefined) {
+      throw new TypeError("Mock Worker received an undecodable request");
+    }
   }
 
   private respond(response: WorkerResponse): void {
@@ -384,6 +446,80 @@ describe("WorkerPool", () => {
     pool.dispose();
   });
 
+  it.each([
+    1, 2, 4,
+  ])("decodes one declarative Scene on main and once per active Worker at concurrency %i", async (concurrency) => {
+    const workers = Array.from({ length: concurrency }, () => new PoolMockWorker(true));
+    const pool = await createPool(workers);
+    let mainDecodeCount = 0;
+    const scene = new Proxy(sceneWithWidth(80), {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "type") {
+          mainDecodeCount += 1;
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    const timesMs = Array.from({ length: concurrency }, (_, index) => index * 100);
+
+    await collectFrames(pool.renderFrames(scene, { timesMs, format: "svg" }));
+
+    expect(mainDecodeCount).toBe(1);
+    expect(workers.reduce((sum, worker) => sum + worker.receiveSceneDecodeCount, 0)).toBe(
+      concurrency,
+    );
+    pool.dispose();
+  });
+
+  it.each([
+    1, 2, 4,
+  ])("decodes two transition states on main and twice per active Worker at concurrency %i", async (concurrency) => {
+    const workers = Array.from({ length: concurrency }, () => new PoolMockWorker(true));
+    const pool = await createPool(workers);
+    let mainDecodeCount = 0;
+    const transition = transitionInput();
+    const countedStates: Record<string, SceneNode> = {};
+    for (const [stateName, state] of Object.entries(transition.states)) {
+      Object.defineProperty(countedStates, stateName, {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: new Proxy(state, {
+          getOwnPropertyDescriptor(target, key) {
+            if (key === "type") {
+              mainDecodeCount += 1;
+            }
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        }),
+      });
+    }
+    const countedTransition = { ...transition, states: countedStates };
+    const timesMs = Array.from({ length: concurrency }, (_, index) => index * 100);
+
+    await collectFrames(
+      pool.renderLayoutTransitionFrames(countedTransition, { timesMs, format: "svg" }),
+    );
+
+    expect(mainDecodeCount).toBe(2);
+    expect(workers.reduce((sum, worker) => sum + worker.receiveSceneDecodeCount, 0)).toBe(
+      2 * concurrency,
+    );
+    pool.dispose();
+  });
+
+  it("uses one active Worker for an empty declarative schedule", async () => {
+    const workers = Array.from({ length: 4 }, () => new PoolMockWorker(true));
+    const pool = await createPool(workers);
+
+    await collectFrames(pool.renderFrames(SCENE, { timesMs: [], format: "svg" }));
+
+    expect(workers.map((worker) => worker.receiveSceneDecodeCount)).toEqual([1, 0, 0, 0]);
+    await collectFrames(pool.renderFrames(SCENE, { timesMs: [0, 100], format: "svg" }));
+    expect(workers.map((worker) => worker.receiveSceneDecodeCount)).toEqual([2, 1, 0, 0]);
+    pool.dispose();
+  });
+
   it("snapshots and partitions a transition across bounded frame streams", async () => {
     const workers = [new PoolMockWorker(), new PoolMockWorker()];
     const pool = await createPool(workers);
@@ -423,8 +559,7 @@ describe("WorkerPool", () => {
   it("rejects invalid transition transport before opening a stream", async () => {
     const workers = [new PoolMockWorker(), new PoolMockWorker()];
     const pool = await createPool(workers);
-    const transition = transitionInput() as unknown as { hidden: undefined };
-    transition.hidden = undefined;
+    const transition = { ...transitionInput(), easing: undefined };
 
     expect(() =>
       pool.renderLayoutTransitionFrames(transition as unknown as WorkerLayoutTransitionInput, {
@@ -834,6 +969,40 @@ function sceneWithWidth(width: number): SceneNode {
 }
 
 describe("WorkerPool materialized frames", () => {
+  it("decodes each materialized Scene only when pulled and once on each side", async () => {
+    const worker = new PoolMockWorker(true);
+    const pool = await createPool([worker]);
+    let mainDecodeCount = 0;
+    const countedScene = (width: number): SceneNode =>
+      new Proxy(sceneWithWidth(width), {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "type") {
+            mainDecodeCount += 1;
+          }
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+    const frames = pool.renderMaterializedFrames(
+      [
+        { timeMs: 0, scene: countedScene(80) },
+        { timeMs: 100, scene: countedScene(120) },
+      ],
+      { format: "svg" },
+    );
+    const iterator = frames[Symbol.asyncIterator]();
+
+    expect(mainDecodeCount).toBe(0);
+    expect(worker.receiveSceneDecodeCount).toBe(0);
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { index: 0 } });
+    expect(mainDecodeCount).toBe(1);
+    expect(worker.receiveSceneDecodeCount).toBe(1);
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { index: 1 } });
+    expect(mainDecodeCount).toBe(2);
+    expect(worker.receiveSceneDecodeCount).toBe(2);
+    await iterator.return?.();
+    pool.dispose();
+  });
+
   it("renders sync materialized scenes in input order with static sampling", async () => {
     const workers = [new PoolMockWorker(), new PoolMockWorker(), new PoolMockWorker()];
     workers[0]!.renderDelayForTime = (timeMs) => (timeMs === 600 ? 25 : 1);
@@ -971,6 +1140,24 @@ describe("WorkerPool materialized frames", () => {
     pool.dispose();
   });
 
+  it("reports the materialized time envelope before a nested Scene defect", async () => {
+    const worker = new PoolMockWorker();
+    const pool = await createPool([worker]);
+    const scene = { ...sceneWithWidth(80), callback: () => undefined } as unknown as SceneNode;
+
+    await expect(
+      collectFrames(
+        pool.renderMaterializedFrames([{ timeMs: Number.NaN, scene }], { format: "svg" }),
+      ),
+    ).rejects.toMatchObject({
+      code: "ANIMATION_INVALID_TIME",
+      stage: "emit",
+      context: { frameIndex: 0 },
+    });
+    expect(worker.renderRequests).toHaveLength(0);
+    pool.dispose();
+  });
+
   it("rejects non-serializable scenes before sending a Worker request", async () => {
     const worker = new PoolMockWorker();
     const pool = await createPool([worker]);
@@ -978,7 +1165,11 @@ describe("WorkerPool materialized frames", () => {
 
     await expect(
       collectFrames(pool.renderMaterializedFrames([{ timeMs: 0, scene }], { format: "svg" })),
-    ).rejects.toMatchObject({ code: "WORKER_MATERIALIZED_FRAME_NOT_SERIALIZABLE" });
+    ).rejects.toMatchObject({
+      code: "SCENE_DECODE_UNKNOWN_KEY",
+      stage: "validate",
+      context: expect.objectContaining({ frameIndex: 0, path: "/callback" }),
+    });
     expect(worker.renderRequests).toHaveLength(0);
     pool.dispose();
   });

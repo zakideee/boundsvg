@@ -61,10 +61,8 @@ import {
   type ResolvedRasterScale,
   resolveRasterScale,
 } from "./render-capabilities.js";
-import { fromSceneDocument } from "./scene/from-vnode.js";
-import { assertSerializableSceneTransport } from "./scene/serializable-transport.js";
+import { resolveSceneOrVNodeInput } from "./scene/from-vnode.js";
 import type { SceneNode } from "./scene/types.js";
-import { isSceneNode } from "./scene/types.js";
 import { assertShapeReferencesResolvable, type ShapeRegistry } from "./shape/expand.js";
 import type { GeometryDoc, SymbolDefinition } from "./shape/types.js";
 import { toCssSafeResourceId } from "./svg/resource-id.js";
@@ -136,33 +134,6 @@ function assertRenderableCanvas(ir: IR): void {
   }
 }
 
-function sceneNodeRasterDimensions(
-  input: SceneNode,
-): { width: unknown; height: unknown } | undefined {
-  let descriptors: PropertyDescriptorMap;
-  try {
-    descriptors = Object.getOwnPropertyDescriptors(input);
-  } catch {
-    // Let the serializability guard turn failed descriptor inspection into its
-    // structured engine-stage error instead of leaking an object trap error.
-    return undefined;
-  }
-  const widthDescriptor = descriptors.width;
-  const heightDescriptor = descriptors.height;
-  if (
-    (widthDescriptor !== undefined && !("value" in widthDescriptor)) ||
-    (heightDescriptor !== undefined && !("value" in heightDescriptor))
-  ) {
-    // Accessors are not SceneNode transport data. Do not execute them here;
-    // resolveInput() reports SCENE_NOT_SERIALIZABLE from the existing guard.
-    return undefined;
-  }
-  return {
-    width: widthDescriptor?.value,
-    height: heightDescriptor?.value,
-  };
-}
-
 function vnodeRasterDimensions(input: VNode): { width: unknown; height: unknown } {
   return {
     width: Reflect.get(input.props, "width"),
@@ -170,13 +141,8 @@ function vnodeRasterDimensions(input: VNode): { width: unknown; height: unknown 
   };
 }
 
-function assertRasterCanvasInput(input: EngineInput): void {
-  const dimensions = isSceneNode(input)
-    ? sceneNodeRasterDimensions(input)
-    : vnodeRasterDimensions(input);
-  if (dimensions === undefined) {
-    return;
-  }
+function assertRasterCanvasInput(input: VNode): void {
+  const dimensions = vnodeRasterDimensions(input);
   for (const name of ["width", "height"] as const) {
     const value = dimensions[name];
     if (
@@ -1452,8 +1418,7 @@ export class Engine {
     const requestedScale = stableRenderOpts?.scale ?? 1;
     assertPngScale(requestedScale);
 
-    assertRasterCanvasInput(input);
-    const vnode = this.resolveInput(input);
+    const vnode = this.resolveInput(input, assertRasterCanvasInput);
     if (!stableRenderOpts?.skipValidation) {
       validate(vnode);
     }
@@ -2177,11 +2142,14 @@ export class Engine {
     this.ensureNotDisposed();
     this.prunePreparedFrameScenes();
     const plan = this.createFrameRenderPlan(options, animationRasterPlan);
+    const vnode = this.resolveInput(
+      input,
+      plan.rasterPlan === undefined ? undefined : assertRasterCanvasInput,
+    );
     if (plan.rasterPlan !== undefined) {
-      assertRasterCanvasInput(input);
       this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
     }
-    const compiled = this.compile(input, {
+    const compiled = this.compile(vnode, {
       skipValidation: plan.stableOptions.skipValidation,
       textPathMode: plan.stableOptions.textPathMode,
     });
@@ -2812,8 +2780,7 @@ export class Engine {
     const encode = resolveEncoder();
     const requestedScale = stableRenderOpts?.scale ?? 1;
     assertPngScale(requestedScale);
-    assertRasterCanvasInput(input);
-    const vnode = this.resolveInput(input);
+    const vnode = this.resolveInput(input, assertRasterCanvasInput);
     if (!stableRenderOpts?.skipValidation) {
       validate(vnode);
     }
@@ -3249,14 +3216,12 @@ export class Engine {
     }
   }
 
-  private resolveInput(input: EngineInput): VNode {
-    let vnode: VNode;
-    if (isSceneNode(input)) {
-      assertSerializableSceneTransport(input);
-      vnode = fromSceneDocument(input);
-    } else {
-      vnode = input;
-    }
+  private resolveInput(
+    input: EngineInput,
+    beforeResourceResolution?: (vnode: VNode) => void,
+  ): VNode {
+    const vnode = resolveSceneOrVNodeInput(input);
+    beforeResourceResolution?.(vnode);
     // Shape/Symbol survive layout as leaf boxes; geometry compiles at IR
     // build. Registry references still fail here, at validate timing.
     assertShapeReferencesResolvable(vnode, this.shapeRegistry());
