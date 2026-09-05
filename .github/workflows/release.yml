@@ -1,67 +1,71 @@
 name: Release
 
+env:
+  RELEASE_NPM_CLI_SHA512: 48377f8478372aa1c4e47b763475b135836da82436a5700f2e5e8eb5084fc840f93c7b117eb3ad3b5f7d3194c81b6710a10d59448f6ddbcb21ac3fb672bdc003
+  RELEASE_NPM_CLI_VERSION: 11.19.0
+
 on:
-  # Auto trigger is intentionally disabled.
   workflow_dispatch:
     inputs:
-      publish:
-        description: "Publish unpublished package versions to npm"
-        type: boolean
-        default: false
-      publish-crates:
-        description: "Publish unpublished crate versions to crates.io"
-        type: boolean
-        default: false
+      target:
+        description: "Registry to audit or advance"
+        required: true
+        type: choice
+        default: select-target
+        options:
+          - select-target
+          - npm
+          - crates
+      release-commit:
+        description: "Reviewed single-parent version squash commit (40 lowercase hex)"
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
-  release:
-    if: ${{ !inputs.publish && !inputs['publish-crates'] }}
+  admission:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - name: Create release PR
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
-        with:
-          title: "chore: version packages"
-          commit: "chore: version packages"
-          version: pnpm run version
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Publishes every package version that is not yet on the registry, in
-  # dependency order, with provenance. Gated by the npm-publish environment
-  # (required reviewer) and runs without caches; installs skip lifecycle
-  # scripts. Tags are created and pushed by the maintainer afterwards with
-  # `pnpm changeset tag`. Publishing goes through `pnpm -r publish` so
-  # workspace: ranges are rewritten to real versions.
-  npm-publish:
-    if: ${{ inputs.publish }}
-    runs-on: ubuntu-latest
-    environment: npm-publish
+    timeout-minutes: 120
     permissions:
       contents: read
-      id-token: write
+    outputs:
+      target: ${{ steps.admit.outputs.target }}
+      report-sha256: ${{ steps.admit.outputs.report-sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.release-commit }}
+          path: release-source
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Resolve the trusted pre-version controller source
+        id: trust-source
+        working-directory: release-source
+        env:
+          EVENT_COMMIT: ${{ github.sha }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EVENT_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test "$(git rev-list --parents -n 1 "$RELEASE_COMMIT" | awk '{print NF}')" -eq 2
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "$EVENT_COMMIT"
+          parent="$(git rev-parse "${RELEASE_COMMIT}^")"
+          [[ "$parent" =~ ^[0-9a-f]{40}$ ]]
+          printf 'parent=%s\n' "$parent" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.trust-source.outputs.parent }}
+          path: trusted-source
+          persist-credentials: false
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
@@ -73,42 +77,150 @@ jobs:
           tool: wasm-pack@0.13.1
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.29.3
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22.14.0
 
-      # Trusted publishing requires npm 11.5.1 or newer. Do not pass
-      # registry-url to setup-node here: it writes an empty-token entry that
-      # takes precedence over npm's OIDC exchange when no classic token exists.
-      - name: Install OIDC-capable npm CLI
-        run: npm install --global npm@11.19.0
+      - name: Install the exact audited npm CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_cli_archive="$RUNNER_TEMP/npm-${RELEASE_NPM_CLI_VERSION}.tgz"
+          npm_cli_bin="$RUNNER_TEMP/npm-bin-${RELEASE_NPM_CLI_VERSION}"
+          npm_cli_root="$RUNNER_TEMP/npm-cli-${RELEASE_NPM_CLI_VERSION}"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 10 --max-time 60 --max-filesize 33554432 \
+            "https://registry.npmjs.org/npm/-/npm-${RELEASE_NPM_CLI_VERSION}.tgz" \
+            --output "$npm_cli_archive"
+          printf '%s  %s\n' "$RELEASE_NPM_CLI_SHA512" "$npm_cli_archive" | sha512sum --check --strict
+          mkdir "$npm_cli_bin" "$npm_cli_root"
+          tar --extract --gzip --file "$npm_cli_archive" --directory "$npm_cli_root" \
+            --strip-components=1 --no-same-owner
+          ln -s "$npm_cli_root/bin/npm-cli.js" "$npm_cli_bin/npm"
+          test "$("$npm_cli_bin/npm" --version)" = "$RELEASE_NPM_CLI_VERSION"
+          printf '%s\n' "$npm_cli_bin" >> "$GITHUB_PATH"
 
       - run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: release-source
 
-      - name: Build WASM (all targets)
-        run: |
-          pnpm build:wasm
-          pnpm build:wasm:web
-          pnpm build:wasm:mp4
-
-      - name: Build every package
-        run: pnpm typecheck
-
-      - name: Packaging gate
-        run: node scripts/pack-e2e.mjs
-
-      # pnpm rewrites workspace: ranges to real versions at publish time and
-      # publishes in dependency order; npm-based publishers do neither for a
-      # pnpm workspace.
-      - name: Publish to npm
-        run: pnpm -r publish --no-git-checks
+      - name: Reconstruct admission projection and audited artifacts
+        id: admit
+        working-directory: trusted-source
         env:
-          NPM_CONFIG_PROVENANCE: "true"
+          BUNDLE_DIRECTORY: ${{ runner.temp }}/release-bundle
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
+          RELEASE_REPOSITORY_ROOT: ${{ github.workspace }}/release-source
+          RELEASE_TARGET: ${{ inputs.target }}
+        run: node scripts/release-runtime/workflow-release.mjs admission --target "$RELEASE_TARGET" --release-commit "$RELEASE_COMMIT" --bundle "$BUNDLE_DIRECTORY"
+
+      - name: Carry the exact admission report and audited artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-bundle
+          if-no-files-found: error
+          retention-days: 1
+
+  npm-publish:
+    needs: admission
+    if: ${{ needs.admission.result == 'success' && needs.admission.outputs.target == 'npm' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.release-commit }}
+          path: release-source
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Resolve the trusted pre-version controller source
+        id: trust-source
+        working-directory: release-source
+        env:
+          EVENT_COMMIT: ${{ github.sha }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EVENT_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test "$(git rev-list --parents -n 1 "$RELEASE_COMMIT" | awk '{print NF}')" -eq 2
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "$EVENT_COMMIT"
+          parent="$(git rev-parse "${RELEASE_COMMIT}^")"
+          [[ "$parent" =~ ^[0-9a-f]{40}$ ]]
+          printf 'parent=%s\n' "$parent" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.trust-source.outputs.parent }}
+          path: trusted-source
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.97.0
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.29.3
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.14.0
+
+      - name: Install OIDC-capable npm CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm_cli_archive="$RUNNER_TEMP/npm-${RELEASE_NPM_CLI_VERSION}.tgz"
+          npm_cli_bin="$RUNNER_TEMP/npm-bin-${RELEASE_NPM_CLI_VERSION}"
+          npm_cli_root="$RUNNER_TEMP/npm-cli-${RELEASE_NPM_CLI_VERSION}"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 10 --max-time 60 --max-filesize 33554432 \
+            "https://registry.npmjs.org/npm/-/npm-${RELEASE_NPM_CLI_VERSION}.tgz" \
+            --output "$npm_cli_archive"
+          printf '%s  %s\n' "$RELEASE_NPM_CLI_SHA512" "$npm_cli_archive" | sha512sum --check --strict
+          mkdir "$npm_cli_bin" "$npm_cli_root"
+          tar --extract --gzip --file "$npm_cli_archive" --directory "$npm_cli_root" \
+            --strip-components=1 --no-same-owner
+          ln -s "$npm_cli_root/bin/npm-cli.js" "$npm_cli_bin/npm"
+          test "$("$npm_cli_bin/npm" --version)" = "$RELEASE_NPM_CLI_VERSION"
+          printf '%s\n' "$npm_cli_bin" >> "$GITHUB_PATH"
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: release-source
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-bundle
+
+      - name: Recheck authority, publish missing npm artifacts, and audit all
+        working-directory: trusted-source
+        env:
+          BUNDLE_DIRECTORY: ${{ runner.temp }}/release-bundle
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
+          RELEASE_REPOSITORY_ROOT: ${{ github.workspace }}/release-source
+          REPORT_SHA256: ${{ needs.admission.outputs.report-sha256 }}
+        run: node scripts/release-runtime/workflow-release.mjs npm --release-commit "$RELEASE_COMMIT" --bundle "$BUNDLE_DIRECTORY" --report-sha256 "$REPORT_SHA256"
 
   crates-publish:
-    if: ${{ inputs['publish-crates'] }}
+    needs: admission
+    if: ${{ needs.admission.result == 'success' && needs.admission.outputs.target == 'crates' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     environment: crates-publish
     permissions:
       contents: read
@@ -116,62 +228,86 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.release-commit }}
+          path: release-source
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Resolve the trusted pre-version controller source
+        id: trust-source
+        working-directory: release-source
+        env:
+          EVENT_COMMIT: ${{ github.sha }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EVENT_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test "$(git rev-list --parents -n 1 "$RELEASE_COMMIT" | awk '{print NF}')" -eq 2
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "$EVENT_COMMIT"
+          parent="$(git rev-parse "${RELEASE_COMMIT}^")"
+          [[ "$parent" =~ ^[0-9a-f]{40}$ ]]
+          printf 'parent=%s\n' "$parent" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.trust-source.outputs.parent }}
+          path: trusted-source
+          persist-credentials: false
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.97.0
 
-      - name: Authenticate with crates.io
-        id: auth
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.29.3
 
-      - name: Publish crates in dependency order
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.14.0
+
+      - name: Install the exact audited npm CLI
         shell: bash
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           set -euo pipefail
+          npm_cli_archive="$RUNNER_TEMP/npm-${RELEASE_NPM_CLI_VERSION}.tgz"
+          npm_cli_bin="$RUNNER_TEMP/npm-bin-${RELEASE_NPM_CLI_VERSION}"
+          npm_cli_root="$RUNNER_TEMP/npm-cli-${RELEASE_NPM_CLI_VERSION}"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 10 --max-time 60 --max-filesize 33554432 \
+            "https://registry.npmjs.org/npm/-/npm-${RELEASE_NPM_CLI_VERSION}.tgz" \
+            --output "$npm_cli_archive"
+          printf '%s  %s\n' "$RELEASE_NPM_CLI_SHA512" "$npm_cli_archive" | sha512sum --check --strict
+          mkdir "$npm_cli_bin" "$npm_cli_root"
+          tar --extract --gzip --file "$npm_cli_archive" --directory "$npm_cli_root" \
+            --strip-components=1 --no-same-owner
+          ln -s "$npm_cli_root/bin/npm-cli.js" "$npm_cli_bin/npm"
+          test "$("$npm_cli_bin/npm" --version)" = "$RELEASE_NPM_CLI_VERSION"
+          printf '%s\n' "$npm_cli_bin" >> "$GITHUB_PATH"
 
-          crate_version() {
-            cargo metadata --locked --no-deps --format-version 1 \
-              | jq -er --arg crate "$1" '.packages[] | select(.name == $crate) | .version'
-          }
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: release-source
 
-          crate_available() {
-            cargo info --registry crates-io "$1@$2" >/dev/null 2>&1
-          }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-control-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-bundle
 
-          wait_for_crate() {
-            local crate="$1"
-            local version="$2"
-            local attempt
+      - name: Authenticate with crates.io
+        id: crates-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-            for attempt in {1..30}; do
-              if crate_available "$crate" "$version"; then
-                return 0
-              fi
-              sleep 10
-            done
-
-            echo "${crate}@${version} did not become available from the crates.io index" >&2
-            return 1
-          }
-
-          publish_crate() {
-            local crate="$1"
-            local version
-            version="$(crate_version "$crate")"
-
-            if crate_available "$crate" "$version"; then
-              echo "${crate}@${version} is already published; skipping"
-              return 0
-            fi
-
-            cargo publish --locked --package "$crate"
-            wait_for_crate "$crate" "$version"
-          }
-
-          publish_crate boundshape
-          publish_crate boundtext
-          publish_crate boundsvg
+      - name: Recheck authority, publish missing crates, and audit all
+        working-directory: trusted-source
+        env:
+          BUNDLE_DIRECTORY: ${{ runner.temp }}/release-bundle
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
+          RELEASE_REPOSITORY_ROOT: ${{ github.workspace }}/release-source
+          REPORT_SHA256: ${{ needs.admission.outputs.report-sha256 }}
+        run: node scripts/release-runtime/workflow-release.mjs crates --release-commit "$RELEASE_COMMIT" --bundle "$BUNDLE_DIRECTORY" --report-sha256 "$REPORT_SHA256"

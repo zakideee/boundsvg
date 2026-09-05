@@ -75,6 +75,58 @@ a Scene document field and must not be added to `.scene.json` files. Any future
 incompatible Scene format would require a separately documented migration;
 there is no runtime version-dispatch mode today.
 
+## Maintainer release flow
+
+Version selection and publication are separate manual decisions. Start from a
+clean, freshly fetched `main` commit and provide every npm and Rust target
+explicitly. `current` means that an unchanged artifact must match the live
+registry exactly.
+
+```bash
+pnpm release:prepare -- preview --source <S> --npm-version <stable|current> \
+  --crate-version boundshape=<stable|current> \
+  --crate-version boundtext=<stable|current> \
+  --crate-version boundsvg=<stable|current> \
+  --output <path-outside-worktree>
+```
+
+Preview writes only the external plan. Review its prospective tree and the
+separately printed SHA-256, then apply and verify the exact planned bytes:
+
+```bash
+pnpm release:prepare -- apply --plan <path> --plan-sha256 <64-lowercase-hex>
+pnpm release:prepare -- verify --plan <path> --plan-sha256 <64-lowercase-hex>
+```
+
+Submit those generated version surfaces as one version PR. After its
+single-parent squash is merged, run the post-merge verifier from the retained
+clean source checkout:
+
+```bash
+pnpm release:verify --commit <R> --plan <path> --plan-sha256 <64-lowercase-hex>
+```
+
+The release workflow takes the verified commit and exactly one target registry.
+It cannot create a version PR. Publish npm before crates, with the protected
+environment approving each registry independently. Run the read-only audit at
+every boundary:
+
+```bash
+pnpm release:audit -- --phase <pre-npm|post-npm|pre-crates|post-crates|pre-tag> \
+  --release-commit <R> [--report <path>]
+```
+
+Only after the pre-tag audit verifies npm, crates.io, provenance, and docs.rs may
+the npm package tags be created locally:
+
+```bash
+pnpm release:tag -- --release-commit <R>
+```
+
+The tag command never pushes. Remote tag publication remains a separate
+maintainer operation. The contributor-facing `pnpm changeset` command creates
+feature declarations only; it is not a versioning or tagging frontdoor.
+
 ## What is never stable
 
 - Anything under `internal` subpaths (blocked from import) or types marked

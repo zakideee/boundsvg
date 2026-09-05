@@ -49,6 +49,7 @@
     "typecheck": "pnpm --filter @boundsvg/shape build && pnpm --filter @boundsvg/core build && pnpm --filter @boundsvg/browser build && pnpm --filter @boundsvg/worker build && pnpm --filter @boundsvg/video build && pnpm --filter @boundsvg/react build && pnpm --filter @boundsvg/cli build && pnpm --filter @boundsvg/extras build && pnpm --filter @boundsvg/testing build && pnpm --filter @boundsvg/bench typecheck && pnpm check:public-declarations && tsc --build --noEmit tsconfig.check.json && tsc -p packages/core/tsconfig.type-tests.json --noEmit && tsc -p packages/react/tsconfig.type-tests.json --noEmit",
     "check:public-declarations": "node scripts/check-public-declarations.mjs",
     "check:release-coherence": "node scripts/check-release-coherence.mjs",
+    "check:release-control": "node --test scripts/check-release-coherence.test.mjs scripts/prepare-release.test.mjs scripts/tag-release.test.mjs scripts/release-runtime/*.test.mjs",
     "check:third-party-source-overrides": "node scripts/check-third-party-source-overrides.mjs",
     "test:third-party-source-overrides": "node --test scripts/check-third-party-source-overrides.test.mjs",
     "knip": "knip",
@@ -59,7 +60,10 @@
     "format": "biome format --write . && prettier --write '**/*.md' '**/*.yml' '**/*.yaml' '**/*.html' --ignore-unknown",
     "format:check": "biome check . && prettier --check '**/*.md' '**/*.yml' '**/*.yaml' '**/*.html' --ignore-unknown",
     "changeset": "changeset",
-    "version": "changeset version"
+    "release:prepare": "node scripts/prepare-release.mjs",
+    "release:verify": "node scripts/prepare-release.mjs post-merge",
+    "release:audit": "node scripts/release-runtime/audit-cli.mjs",
+    "release:tag": "node scripts/tag-release.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.2",

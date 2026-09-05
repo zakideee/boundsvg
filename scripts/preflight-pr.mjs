@@ -99,6 +99,7 @@ const STATIC_CHECK_IDS = new Set([
   "biome",
   "prettier",
   "release-coherence",
+  "release-control-tests",
   "typecheck-build-chain",
   "third-party-source-overrides",
 ]);
@@ -128,7 +129,11 @@ addTask("third-party-source-overrides", "third-party source policy applies to ev
 ]);
 
 addTask("release-coherence", "release metadata must remain internally consistent", [
-  ["pnpm", ["check:release-coherence"]],
+  ["pnpm", ["check:release-coherence", "--base", base]],
+]);
+
+addTask("release-control-tests", "release-control contracts must remain fail-closed", [
+  ["pnpm", ["check:release-control"]],
 ]);
 
 if (all) {

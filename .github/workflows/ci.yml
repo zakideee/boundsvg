@@ -174,8 +174,27 @@ jobs:
 
   lint-and-typecheck:
     needs: changes
+    if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Require a valid change-detection result
+        env:
+          BASE_REF: ${{ needs.changes.outputs.base_ref }}
+          CHANGE_RESULT: ${{ needs.changes.result }}
+          E2E_CHANGED: ${{ needs.changes.outputs.e2e }}
+          FULL_RUN: ${{ needs.changes.outputs.full }}
+          PACK_CHANGED: ${{ needs.changes.outputs.pack }}
+          RUST_CHANGED: ${{ needs.changes.outputs.rust }}
+          TS_CHANGED: ${{ needs.changes.outputs.ts }}
+        run: |
+          set -euo pipefail
+          [[ "${CHANGE_RESULT}" == "success" ]]
+          [[ "${BASE_REF}" =~ ^origin/[A-Za-z0-9._/-]+$ ]]
+          [[ "${BASE_REF}" != *..* ]]
+          for value in "${E2E_CHANGED}" "${FULL_RUN}" "${PACK_CHANGED}" "${RUST_CHANGED}" "${TS_CHANGED}"; do
+            [[ "${value}" == "true" || "${value}" == "false" ]]
+          done
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
