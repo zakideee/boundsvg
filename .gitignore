@@ -41,9 +41,6 @@ _build/
 **/.vitepress/cache/
 **/.vitepress/.temp/
 
-# Generated rustdoc (built by scripts/generate-rustdoc.sh, deployed via CI)
-apps/docs/public/rustdoc/
-
 # Playwright
 e2e/test-results/
 e2e/playwright-report/

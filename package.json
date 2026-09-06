@@ -25,7 +25,6 @@
     "build:wasm:mp4": "cd crates/boundmp4 && RUSTFLAGS=\"--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=${RUSTUP_HOME:-$HOME/.rustup}=/rustup --remap-path-prefix=$PWD=/build\" wasm-pack build --target web --out-dir ../../packages/video/wasm-pkg && rm -f ../../packages/video/wasm-pkg/.gitignore",
     "build:docs": "pnpm --filter @boundsvg/docs build",
     "generate:docs": "pnpm --filter @boundsvg/docs generate",
-    "generate:rustdoc": "bash scripts/generate-rustdoc.sh",
     "generate:ir-schema": "node scripts/generate-ir-schema.mjs",
     "check:ir-schema": "node scripts/generate-ir-schema.mjs --check",
     "preflight": "node scripts/preflight-pr.mjs",

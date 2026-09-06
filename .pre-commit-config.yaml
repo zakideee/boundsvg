@@ -7,7 +7,7 @@ repos:
         language: system
         entry: pnpm exec biome check --write --no-errors-on-unmatched
         files: \.(ts|tsx|js|jsx|mjs|cjs|json|css)$
-        exclude: ^(apps/docs/public/rustdoc/|vendor/)
+        exclude: ^vendor/
 
       # ── rustfmt: all Rust files ─────────────────────────────────
       - id: rustfmt
@@ -40,7 +40,7 @@ repos:
         language: system
         entry: pnpm exec prettier --write --ignore-unknown
         files: \.(md|yml|yaml|html)$
-        exclude: ^(apps/docs/public/rustdoc/|vendor/)
+        exclude: ^vendor/
 
       # ── TypeScript: project references ──────────────────────────
       - id: typecheck

@@ -10,7 +10,6 @@
     "ignoreUnknown": true,
     "includes": [
       "**",
-      "!apps/docs/public/rustdoc",
       "!packages/core/src/generated/ir",
       "!packages/core/tests/regression/fixtures/refactor-output-parity-base"
     ]

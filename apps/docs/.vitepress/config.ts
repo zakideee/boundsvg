@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import { defineConfig } from "vitepress";
 
 const guideSidebar = [
@@ -53,41 +51,6 @@ export default defineConfig({
   // (e.g. "/" for a user/organization site or custom domain at the root).
   base: process.env.DOCS_BASE ?? "/boundsvg/",
 
-  // Exclude rustdoc paths from dead-link checking (built and deployed separately)
-  ignoreDeadLinks: [/^\/rustdoc\//],
-
-  vite: {
-    plugins: [
-      {
-        name: "serve-rustdoc-html",
-        configureServer(server) {
-          // VitePress SPA router intercepts HTML requests, causing 404 for
-          // static Rustdoc pages in public/rustdoc/. This middleware serves
-          // .html files directly. Non-HTML assets (CSS/JS/fonts) are already
-          // served correctly by Vite's static file handler.
-          server.middlewares.use((request, response, next) => {
-            if (!request.url?.startsWith("/rustdoc/")) {
-              return next();
-            }
-            const url = request.url.split("?")[0];
-            let filePath: string | undefined;
-            if (url.endsWith(".html")) {
-              filePath = path.join(server.config.publicDir, url);
-            } else if (url.endsWith("/")) {
-              filePath = path.join(server.config.publicDir, url, "index.html");
-            }
-            if (filePath && fs.existsSync(filePath)) {
-              response.setHeader("content-type", "text/html; charset=utf-8");
-              fs.createReadStream(filePath).pipe(response);
-              return;
-            }
-            next();
-          });
-        },
-      },
-    ],
-  },
-
   themeConfig: {
     nav: [
       {
@@ -117,7 +80,9 @@ export default defineConfig({
         text: "Links",
         items: [
           { text: "GitHub", link: "https://github.com/zakideee/boundsvg" },
-          { text: "Rustdoc", link: "/rustdoc/boundsvg/" },
+          { text: "boundsvg Rust API", link: "https://docs.rs/boundsvg/latest/boundsvg/" },
+          { text: "boundtext Rust API", link: "https://docs.rs/boundtext/latest/boundtext/" },
+          { text: "boundshape Rust API", link: "https://docs.rs/boundshape/latest/boundshape/" },
         ],
       },
     ],
@@ -156,7 +121,7 @@ export default defineConfig({
             { text: "@boundsvg/extras", link: "/api/extras" },
             { text: "@boundsvg/shape", link: "/api/shape" },
             { text: "CLI Diagnostics", link: "/api/cli" },
-            { text: "WASM Engine (Rust)", link: "/api/engine" },
+            { text: "Rust crates", link: "/api/engine" },
           ],
         },
       ],
