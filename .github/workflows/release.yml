@@ -1,177 +1,197 @@
 name: Release
 
 on:
-  # Auto trigger is intentionally disabled.
   workflow_dispatch:
     inputs:
-      publish:
-        description: "Publish unpublished package versions to npm"
-        type: boolean
-        default: false
-      publish-crates:
-        description: "Publish unpublished crate versions to crates.io"
-        type: boolean
-        default: false
+      target:
+        description: "Artifact set to publish"
+        required: true
+        type: choice
+        default: select-target
+        options:
+          - select-target
+          - npm
+          - crate-boundshape
+          - crate-boundtext
+          - crate-boundsvg
+      release-commit:
+        description: "Reviewed version commit on main (40 lowercase hex)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
+env:
+  REQUIRED_CHECKS: |-
+    lint-and-typecheck
+    test-ts
+    test-rust
+    Baseline Checks
+
 jobs:
-  release:
-    if: ${{ !inputs.publish && !inputs['publish-crates'] }}
+  validate:
+    name: Validate release request
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
-      contents: write
-      pull-requests: write
+      checks: read
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
-          cache: pnpm
+          ref: ${{ inputs.release-commit }}
+          persist-credentials: false
+          fetch-depth: 0
 
-      - run: pnpm install --frozen-lockfile
-
-      - name: Create release PR
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
-        with:
-          title: "chore: version packages"
-          commit: "chore: version packages"
-          version: pnpm run version
+      - name: Require an exact reviewed main commit
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
+          RELEASE_TARGET: ${{ inputs.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REPOSITORY" = "zakideee/boundsvg"
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$RELEASE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test "$(git rev-list --parents -n 1 HEAD | awk '{print NF}')" -eq 2
+          case "$RELEASE_TARGET" in
+            npm | crate-boundshape | crate-boundtext | crate-boundsvg) ;;
+            *) exit 2 ;;
+          esac
+          git fetch --no-tags --prune origin refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$RELEASE_COMMIT"
 
-  # Publishes every package version that is not yet on the registry, in
-  # dependency order, with provenance. Gated by the npm-publish environment
-  # (required reviewer) and runs without caches; installs skip lifecycle
-  # scripts. Tags are created and pushed by the maintainer afterwards with
-  # `pnpm changeset tag`. Publishing goes through `pnpm -r publish` so
-  # workspace: ranges are rewritten to real versions.
-  npm-publish:
-    if: ${{ inputs.publish }}
+      - name: Require current successful checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          check_pages="$(gh api --paginate --slurp \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/commits/${RELEASE_COMMIT}/check-runs?per_page=100")"
+          while IFS= read -r required_check; do
+            latest="$(jq -cer --arg name "$required_check" '
+              [.[].check_runs[] | select(.name == $name)]
+              | if length == 0 then error("required check is missing")
+                else max_by([.started_at, .id]) end
+            ' <<<"$check_pages")"
+            jq -e '
+              .status == "completed" and
+              .conclusion == "success" and
+              .app.slug == "github-actions"
+            ' <<<"$latest" >/dev/null
+          done <<<"$REQUIRED_CHECKS"
+
+  publish:
+    name: Publish ${{ inputs.target }}
+    needs: validate
     runs-on: ubuntu-latest
-    environment: npm-publish
+    timeout-minutes: 90
+    environment:
+      name: ${{ inputs.target == 'npm' && 'npm-publish' || 'crates-publish' }}
     permissions:
+      checks: read
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.release-commit }}
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.97.0
 
       - name: Install wasm-pack
+        if: inputs.target == 'npm'
         uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
         with:
           tool: wasm-pack@0.13.1
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - if: inputs.target == 'npm'
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - if: inputs.target == 'npm'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22.14.0
+          cache: pnpm
 
-      # Trusted publishing requires npm 11.5.1 or newer. Do not pass
-      # registry-url to setup-node here: it writes an empty-token entry that
-      # takes precedence over npm's OIDC exchange when no classic token exists.
-      - name: Install OIDC-capable npm CLI
+      - name: Install the npm trusted-publishing client
+        if: inputs.target == 'npm'
         run: npm install --global npm@11.19.0
 
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-
-      - name: Build WASM (all targets)
+      - name: Build npm publication artifacts
+        if: inputs.target == 'npm'
         run: |
+          pnpm install --frozen-lockfile --ignore-scripts
           pnpm build:wasm
           pnpm build:wasm:web
           pnpm build:wasm:mp4
+          pnpm typecheck
+          node scripts/pack-e2e.mjs
 
-      - name: Build every package
-        run: pnpm typecheck
-
-      - name: Packaging gate
-        run: node scripts/pack-e2e.mjs
-
-      # pnpm rewrites workspace: ranges to real versions at publish time and
-      # publishes in dependency order; npm-based publishers do neither for a
-      # pnpm workspace.
-      - name: Publish to npm
-        run: pnpm -r publish --no-git-checks
+      - name: Refresh source and check authority
         env:
-          NPM_CONFIG_PROVENANCE: "true"
-
-  crates-publish:
-    if: ${{ inputs['publish-crates'] }}
-    runs-on: ubuntu-latest
-    environment: crates-publish
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: 1.97.0
-
-      - name: Authenticate with crates.io
-        id: auth
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
-
-      - name: Publish crates in dependency order
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
         shell: bash
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git fetch --no-tags --prune origin refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$RELEASE_COMMIT"
+          check_pages="$(gh api --paginate --slurp \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/commits/${RELEASE_COMMIT}/check-runs?per_page=100")"
+          while IFS= read -r required_check; do
+            latest="$(jq -cer --arg name "$required_check" '
+              [.[].check_runs[] | select(.name == $name)]
+              | if length == 0 then error("required check is missing")
+                else max_by([.started_at, .id]) end
+            ' <<<"$check_pages")"
+            jq -e '
+              .status == "completed" and
+              .conclusion == "success" and
+              .app.slug == "github-actions"
+            ' <<<"$latest" >/dev/null
+          done <<<"$REQUIRED_CHECKS"
 
-          crate_version() {
-            cargo metadata --locked --no-deps --format-version 1 \
-              | jq -er --arg crate "$1" '.packages[] | select(.name == $crate) | .version'
-          }
+      - name: Authenticate with crates.io
+        if: startsWith(inputs.target, 'crate-')
+        id: crates-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-          crate_available() {
-            cargo info --registry crates-io "$1@$2" >/dev/null 2>&1
-          }
+      - name: Publish npm packages
+        if: inputs.target == 'npm'
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+        run: pnpm -r publish --no-git-checks
 
-          wait_for_crate() {
-            local crate="$1"
-            local version="$2"
-            local attempt
-
-            for attempt in {1..30}; do
-              if crate_available "$crate" "$version"; then
-                return 0
-              fi
-              sleep 10
-            done
-
-            echo "${crate}@${version} did not become available from the crates.io index" >&2
-            return 1
-          }
-
-          publish_crate() {
-            local crate="$1"
-            local version
-            version="$(crate_version "$crate")"
-
-            if crate_available "$crate" "$version"; then
-              echo "${crate}@${version} is already published; skipping"
-              return 0
-            fi
-
-            cargo publish --locked --package "$crate"
-            wait_for_crate "$crate" "$version"
-          }
-
-          publish_crate boundshape
-          publish_crate boundtext
-          publish_crate boundsvg
+      - name: Publish one Rust crate
+        if: startsWith(inputs.target, 'crate-')
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+          RELEASE_TARGET: ${{ inputs.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate="${RELEASE_TARGET#crate-}"
+          case "$crate" in
+            boundshape | boundtext | boundsvg) ;;
+            *) exit 2 ;;
+          esac
+          cargo publish --locked --package "$crate"
