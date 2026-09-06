@@ -84,8 +84,7 @@ jobs:
         env:
           PAGES_BASE: "${{ env.SITE_BASE }}playground/cli/"
 
-      # --- Docs (Rustdoc is generated, not committed) ---
-      - run: pnpm generate:rustdoc
+      # --- Documentation site ---
       - name: Build docs
         run: pnpm --filter @boundsvg/docs build
         env:

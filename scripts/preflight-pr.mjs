@@ -129,6 +129,7 @@ addTask("third-party-source-overrides", "third-party source policy applies to ev
 
 addTask("release-coherence", "release metadata must remain internally consistent", [
   ["pnpm", ["check:release-coherence"]],
+  ["node", ["--test", "scripts/check-release-coherence.test.mjs"]],
 ]);
 
 if (all) {
