@@ -1,3 +1,5 @@
+//! Text layout integration and renderer boundary regressions.
+
 use super::measure::measure_text_node;
 use super::*;
 use crate::font::{FontRegistry, FontStyle};
@@ -1002,7 +1004,8 @@ fn text_measure_cache_separates_fit_probe_budgets() {
     let mut measure_cache = HashMap::new();
     let mut measure_cache_hits = 0;
     let mut shrink_to_fit_widths = HashMap::new();
-    let mut shaped_cache = HashMap::new();
+    let mut measure_cache_clear_count = 0;
+    let mut legacy_projections = HashMap::new();
     let mut text_results = HashMap::new();
 
     measure_text_node(
@@ -1014,7 +1017,9 @@ fn text_measure_cache_separates_fit_probe_budgets() {
         &mut measure_cache,
         &mut measure_cache_hits,
         &mut shrink_to_fit_widths,
-        &mut shaped_cache,
+        &mut measure_cache_clear_count,
+        &mut legacy_projections,
+        &mut crate::text::engine::TextLayoutSession::new(&registry, None),
         NodeId::new(1),
         &mut text_results,
     )
@@ -1029,7 +1034,9 @@ fn text_measure_cache_separates_fit_probe_budgets() {
         &mut measure_cache,
         &mut measure_cache_hits,
         &mut shrink_to_fit_widths,
-        &mut shaped_cache,
+        &mut measure_cache_clear_count,
+        &mut legacy_projections,
+        &mut crate::text::engine::TextLayoutSession::new(&registry, None),
         NodeId::new(2),
         &mut text_results,
     )
@@ -1254,7 +1261,8 @@ fn test_preferred_frame_does_not_clamp_min_content_queries() {
         let mut measure_cache = HashMap::new();
         let mut measure_cache_hits = 0;
         let mut shrink_to_fit_widths = HashMap::new();
-        let mut shaped_cache = HashMap::new();
+        let mut measure_cache_clear_count = 0;
+        let mut legacy_projections = HashMap::new();
         let mut text_results = HashMap::new();
 
         measure_text_node(
@@ -1266,7 +1274,9 @@ fn test_preferred_frame_does_not_clamp_min_content_queries() {
             &mut measure_cache,
             &mut measure_cache_hits,
             &mut shrink_to_fit_widths,
-            &mut shaped_cache,
+            &mut measure_cache_clear_count,
+            &mut legacy_projections,
+            &mut crate::text::engine::TextLayoutSession::new(&font_registry, None),
             NodeId::new(1),
             &mut text_results,
         )
@@ -2493,4 +2503,194 @@ fn taffy_intrinsic_failure_is_not_an_optional_bbox_fallback() {
     assert!(
         !source.contains("if let Some(intrinsic) =\n            measure_intrinsic_inline_sizes")
     );
+}
+
+#[test]
+fn sibling_measurements_match_isolated_nodes_in_either_child_order() {
+    let mut registry = FontRegistry::new();
+    registry
+        .register(
+            test_font_data(),
+            "NotoSansJP".into(),
+            400,
+            FontStyle::Normal,
+        )
+        .expect("register fixture");
+    let variations = [
+        ("baseline", serde_json::json!({})),
+        ("line-height", serde_json::json!({"lineHeight": 2.0})),
+        (
+            "fit",
+            serde_json::json!({"fit": "shrink", "minFontSizePx": 10.0}),
+        ),
+        (
+            "ellipsis",
+            serde_json::json!({"ellipsis": true, "maxLines": 1}),
+        ),
+        ("hanging", serde_json::json!({"hangingPunctuation": true})),
+        ("line-limit", serde_json::json!({"maxLines": 2})),
+    ];
+    let children = variations.into_iter().map(|(node_id, overrides)| {
+        let mut text = serde_json::json!({"content": "Hello world、あいうえお。Hello world、あいうえお。", "fontFamily": ["NotoSansJP"],
+            "fontSizePx": 20.0, "lineHeight": 1.5, "whiteSpace": "normal", "language": "ja", "wrap": "char", "preferredFrame": {"w": 80.0, "h": 60.0}});
+        text.as_object_mut().expect("text object").extend(overrides.as_object().expect("override object").clone());
+        serde_json::json!({"nodeId": node_id, "nodeType": "text", "authoredId": true, "style": {"width": 80.0, "flexShrink": 0.0}, "text": text})
+    }).collect::<Vec<_>>();
+    let layout = |nodes: Vec<serde_json::Value>| {
+        let input: LayoutInput = serde_json::from_value(serde_json::json!({"root": {"nodeId": "canvas", "nodeType": "canvas", "authoredId": true,
+            "style": {"width": 120.0, "height": 20000.0, "flexDirection": "column", "alignItems": "start"}, "children": nodes}})).expect("valid sibling layout");
+        compute_full_layout_with_registry(&input, &registry)
+            .expect("sibling layout")
+            .nodes
+            .into_iter()
+            .filter_map(|node| {
+                node.text_layout.map(|text_layout| {
+                    (
+                        node.node_id,
+                        serde_json::to_value(text_layout).expect("serialize text output"),
+                    )
+                })
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let isolated = children
+        .iter()
+        .flat_map(|node| layout(vec![node.clone()]))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(layout(children.clone()), isolated);
+    assert_eq!(layout(children.into_iter().rev().collect()), isolated);
+}
+
+#[test]
+fn completed_measurements_hit_exact_constraints_and_clear_all_at_capacity() {
+    let mut registry = FontRegistry::new();
+    registry
+        .register(
+            test_font_data(),
+            "NotoSansJP".into(),
+            400,
+            FontStyle::Normal,
+        )
+        .expect("register fixture");
+    let text_input = plain_text_input("Hello", 20.0, "char");
+    let mut measure_cache = HashMap::new();
+    let mut hits = 0;
+    let mut feedback_widths = HashMap::new();
+    let mut clears = 0;
+    let mut projections = HashMap::new();
+    let mut owner_session = crate::text::engine::TextLayoutSession::new(&registry, None);
+    let mut text_results = HashMap::new();
+    let available = Size {
+        width: AvailableSpace::Definite(80.0),
+        height: AvailableSpace::Definite(100.0),
+    };
+    for _ in 0..3 {
+        measure_text_node(
+            &text_input,
+            &registry,
+            None,
+            Size::NONE,
+            available,
+            &mut measure_cache,
+            &mut hits,
+            &mut feedback_widths,
+            &mut clears,
+            &mut projections,
+            &mut owner_session,
+            NodeId::new(0),
+            &mut text_results,
+        )
+        .expect("repeated measurement");
+    }
+    assert_eq!(
+        hits, 1,
+        "the recorded feedback state distinguishes the second query"
+    );
+    assert_eq!(measure_cache.len(), 2);
+    let original_keys = measure_cache.keys().copied().collect::<Vec<_>>();
+    for node_index in 1..=super::types::MEASURE_CACHE_MAX {
+        let node_id = NodeId::new(u64::try_from(node_index).expect("bounded node index"));
+        measure_text_node(
+            &text_input,
+            &registry,
+            None,
+            Size::NONE,
+            available,
+            &mut measure_cache,
+            &mut hits,
+            &mut feedback_widths,
+            &mut clears,
+            &mut projections,
+            &mut owner_session,
+            node_id,
+            &mut text_results,
+        )
+        .expect("distinct node measurement");
+    }
+    assert_eq!(
+        hits, 1,
+        "identical siblings must not borrow another node's result"
+    );
+    assert_eq!(clears, 1);
+    assert_eq!(measure_cache.len(), 2);
+    assert!(
+        original_keys
+            .iter()
+            .all(|key| !measure_cache.contains_key(key))
+    );
+}
+
+#[test]
+fn text_path_legacy_glyphs_keep_the_authoritative_first_line() {
+    let input: LayoutInput = serde_json::from_value(serde_json::json!({
+        "root": {
+            "nodeId": "canvas", "nodeType": "canvas", "authoredId": true,
+            "style": {"width": 200, "height": 250, "alignItems": "start"},
+            "children": [{
+                "nodeId": "text", "nodeType": "text", "authoredId": true,
+                "style": {"width": 180, "height": 60},
+                "textPath": {
+                    "spans": [{"text": " A  Hello ", "fontSizePx": 20, "fontFamily": ["NotoSansJP"], "color": "#000000", "textStrokes": [], "textShadows": []}],
+                    "decorationOwnerIds": [null], "sourceItemCount": 1, "inlineCount": 0,
+                    "d": "M 0 30 L 180 30", "fontSizePx": 20, "fontFamily": ["NotoSansJP"], "language": "ja"
+                }
+            }]
+        }
+    })).expect("text path input");
+    let mut registry = FontRegistry::new();
+    registry
+        .register(
+            test_font_data(),
+            "NotoSansJP".into(),
+            400,
+            FontStyle::Normal,
+        )
+        .expect("fixture font");
+    let output = compute_full_layout_with_registry(&input, &registry).expect("text path layout");
+    let layout = output
+        .nodes
+        .iter()
+        .find(|node| node.node_id == "text")
+        .and_then(|node| node.text_layout.as_ref())
+        .expect("text path result");
+    let lines = layout.lines.as_ref().expect("owner lines");
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].text, " A  Hello ");
+    assert_eq!(
+        serde_json::to_value(&layout.glyphs).expect("legacy glyphs"),
+        serde_json::to_value(&lines[0].glyphs).expect("owner glyphs")
+    );
+    assert_eq!(
+        layout
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.glyph_id)
+            .collect::<Vec<_>>(),
+        vec![1, 34, 1, 1, 41, 70, 77, 77, 80, 1]
+    );
+    assert_eq!(layout.measured_width, 79.2);
+    assert_eq!(layout.measured_height, 24.0);
+    assert_eq!(layout.source_text.as_deref(), Some(" A  Hello "));
+    assert_eq!(layout.display_text.as_deref(), Some(" A  Hello "));
+    assert!(layout.warnings.is_empty());
 }

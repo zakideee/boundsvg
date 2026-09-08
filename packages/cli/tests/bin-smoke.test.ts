@@ -129,6 +129,8 @@ describe("render warning delivery", () => {
 
       expect(exitCode).toBe(0);
       expect(stderr.join("")).toContain("MISSING_GLYPH");
+      expect(stderr.join("")).toContain('Font "NotoSansJP" is missing glyphs for: U+1F389 (🎉)');
+      expect(readFileSync(outputPath, "utf8")).toContain("<svg");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

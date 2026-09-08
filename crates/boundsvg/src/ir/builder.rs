@@ -457,27 +457,6 @@ struct TextChildContext<'a> {
     warnings: &'a mut Vec<SerializedRecoverableError>,
 }
 
-/// Collect characters rendered with .notdef (`glyph_id` 0), excluding control
-/// characters and whitespace. Fallback path when the engine did not bridge
-/// structured text warnings.
-fn collect_notdef_chars(lines: &[crate::text::types::Line]) -> Vec<String> {
-    let mut chars: Vec<String> = Vec::new();
-    for line in lines {
-        let Some(positioned) = &line.positioned_glyphs else {
-            continue;
-        };
-        for glyph in positioned {
-            if glyph.glyph_id == 0 && !glyph.text.is_empty() && !chars.contains(&glyph.text) {
-                let code = glyph.text.chars().next().map_or(0, |ch| ch as u32);
-                if code > 0x20 && code != 0x7f && !(0x80..=0x9f).contains(&code) {
-                    chars.push(glyph.text.clone());
-                }
-            }
-        }
-    }
-    chars
-}
-
 fn resolve_aligned_text_bbox(
     layout_box: BBox,
     measured: &crate::text::types::TextBBox,
@@ -511,39 +490,7 @@ fn resolve_aligned_text_bbox(
 }
 
 fn append_text_warnings(context: &mut TextChildContext, layout: &TextLayoutOutput) {
-    if layout.warnings.is_empty() {
-        let notdef_chars = layout
-            .lines
-            .as_deref()
-            .map(collect_notdef_chars)
-            .unwrap_or_default();
-        if !notdef_chars.is_empty() {
-            let font_name = context
-                .text_input
-                .and_then(|text| text.font_family.first())
-                .or_else(|| {
-                    context
-                        .text_path_input
-                        .and_then(|text| text.font_family.first())
-                })
-                .filter(|name| !name.is_empty())
-                .map_or("unknown font", |name| name.as_str());
-            context
-                .warnings
-                .push(SerializedRecoverableError::recoverable(
-                    RecoverableCode::MissingGlyph,
-                    format!(
-                        "Font \"{font_name}\" is missing glyphs for: {}",
-                        notdef_chars.join(", ")
-                    ),
-                    PipelineStage::Text,
-                    Some(context.node_id.to_string()),
-                    "blank",
-                ));
-        }
-    } else {
-        context.warnings.extend(layout.warnings.iter().cloned());
-    }
+    context.warnings.extend(layout.warnings.iter().cloned());
 
     if let Some(overflow) = &layout.overflow {
         if overflow.overflow_type == "kinsoku_unresolved" {

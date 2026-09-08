@@ -500,4 +500,3 @@ pub struct TextLayoutOutput {
 }
 
 pub(super) const MEASURE_CACHE_MAX: usize = 256;
-pub(super) const SHAPED_CACHE_MAX: usize = 128;

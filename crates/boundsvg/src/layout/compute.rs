@@ -1,3 +1,5 @@
+//! Per-layout font contexts and result collection entry points.
+
 use std::collections::HashMap;
 
 use crate::error::EngineError;
@@ -62,6 +64,7 @@ fn compute_layout_inner_combined(
     fallback: &FontRegistry,
 ) -> Result<LayoutOutput, EngineError> {
     let context = MeasureContext {
+        owner_session: crate::text::engine::TextLayoutSession::new(primary, Some(fallback)),
         font_registry: primary,
         fallback_registry: Some(fallback),
         text_inputs: HashMap::new(),
@@ -71,7 +74,8 @@ fn compute_layout_inner_combined(
         measure_cache: HashMap::new(),
         measure_cache_hits: 0,
         shrink_to_fit_widths: HashMap::new(),
-        shaped_cache: HashMap::new(),
+        measure_cache_clear_count: 0,
+        legacy_projections: HashMap::new(),
         text_results: HashMap::new(),
         text_errors: HashMap::new(),
     };
@@ -83,6 +87,7 @@ fn compute_layout_inner(
     font_registry: &FontRegistry,
 ) -> Result<LayoutOutput, EngineError> {
     let context = MeasureContext {
+        owner_session: crate::text::engine::TextLayoutSession::new(font_registry, None),
         font_registry,
         fallback_registry: None,
         text_inputs: HashMap::new(),
@@ -92,7 +97,8 @@ fn compute_layout_inner(
         measure_cache: HashMap::new(),
         measure_cache_hits: 0,
         shrink_to_fit_widths: HashMap::new(),
-        shaped_cache: HashMap::new(),
+        measure_cache_clear_count: 0,
+        legacy_projections: HashMap::new(),
         text_results: HashMap::new(),
         text_errors: HashMap::new(),
     };

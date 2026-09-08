@@ -1,3 +1,5 @@
+//! Raw-flow DTO mapping and renderer-owned exclusion geometry.
+
 use super::conversions::{
     ExclusionRegionProvider, convert_flow_result, convert_flow_span, convert_simple_result,
 };
@@ -11,7 +13,6 @@ use crate::text::types::{
     FitMode, Language, TextLayoutRequest, TextLayoutResult, TextOrientation, WhiteSpaceMode,
     WrapMode, WritingMode,
 };
-use crate::text::types::{preprocess_span_texts_for_white_space, preprocess_text_for_white_space};
 
 // ---------------------------------------------------------------------------
 // Adapter: simple flow
@@ -47,11 +48,9 @@ pub(crate) fn layout_text_flow(
         raw_wrap
     };
     let writing_mode = WritingMode::from_option(input.writing_mode.as_deref());
-    let normalized_text =
-        preprocess_text_for_white_space(&input.text, white_space, input.tab_size.unwrap_or(4));
 
     let req = bt_flow::FlowSimpleRequest {
-        text: &normalized_text,
+        text: &input.text,
         font_size_px: input.font_size_px,
         line_height: input.line_height,
         letter_spacing_px: input.letter_spacing_px.unwrap_or(0.0),
@@ -69,7 +68,12 @@ pub(crate) fn layout_text_flow(
         font_feature_settings: parse_feature_settings_opt(input.font_feature_settings.as_deref()),
     };
 
-    let flow_layout = bt_flow::layout_flow_simple(&req, &font_ctx)?;
+    let request = bt_flow::RawFlowSimpleRequest {
+        flow: req,
+        white_space,
+        tab_size: input.tab_size.unwrap_or(4),
+    };
+    let flow_layout = bt_flow::layout_raw_flow_simple(&request, &font_ctx)?;
     Ok(convert_simple_result(flow_layout))
 }
 
@@ -114,7 +118,7 @@ pub(crate) fn layout_text_flow_with_exclusions(
     let writing_mode = WritingMode::from_option(input.writing_mode.as_deref());
 
     let rich_text_ref = input.rich_text.as_deref().filter(|nodes| !nodes.is_empty());
-    let mut bt_spans: Option<Vec<bt_flow::FlowTextSpan>> =
+    let bt_spans: Option<Vec<bt_flow::FlowTextSpan>> =
         if let Some(spans) = input.spans.as_ref().filter(|spans| !spans.is_empty()) {
             Some(spans.iter().map(convert_flow_span).collect())
         } else if rich_text_ref.is_none() && !input.text.is_empty() && font_families.len() > 1 {
@@ -122,21 +126,6 @@ pub(crate) fn layout_text_flow_with_exclusions(
         } else {
             None
         };
-    if let Some(spans) = bt_spans.as_mut() {
-        let span_texts = spans
-            .iter()
-            .map(|span| span.text.as_str())
-            .collect::<Vec<_>>();
-        if let Some(normalized_span_texts) = preprocess_span_texts_for_white_space(
-            &span_texts,
-            white_space,
-            input.tab_size.unwrap_or(4),
-        ) {
-            for (span, normalized_text) in spans.iter_mut().zip(normalized_span_texts) {
-                span.text = normalized_text;
-            }
-        }
-    }
     let bt_spans_ref = bt_spans.as_deref();
     if bt_spans_ref.is_some_and(|spans| !spans.is_empty()) && rich_text_ref.is_some() {
         return Err(boundtext::TextLayoutError::InvalidRequest {
@@ -170,14 +159,12 @@ pub(crate) fn layout_text_flow_with_exclusions(
         flow_box: &input.flow_box,
         exclusions: &input.exclusions,
     };
-    let normalized_text =
-        preprocess_text_for_white_space(&input.text, white_space, input.tab_size.unwrap_or(4));
 
     let req = bt_flow::FlowLayoutRequest {
         text: if bt_spans_ref.is_some() || rich_text_ref.is_some() {
             ""
         } else {
-            &normalized_text
+            &input.text
         },
         font_size_px: input.font_size_px,
         line_height: input.line_height,

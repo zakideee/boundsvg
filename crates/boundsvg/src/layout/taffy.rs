@@ -1,9 +1,10 @@
+//! Taffy tree construction and renderer layout collection.
+
 use std::collections::HashMap;
 use taffy::prelude::*;
 
 use crate::error::EngineError;
 use crate::font::line_metrics::resolve_line_metrics_for_style;
-use crate::font::shaping;
 use crate::text::decoration::MAX_TEXT_DECORATION_RANGES;
 use crate::text::types::{
     InlineRectBlockSizeInput, InlineRectInput, MAX_INLINE_RECTS, MAX_RICH_TEXT_DEPTH,
@@ -16,7 +17,7 @@ use crate::text::types::{
 use taffy::{Overflow, Point, TaffyTree};
 
 use super::MAX_LAYOUT_TREE_DEPTH;
-use super::measure::{MeasureContext, measure_text_node, resolve_font_from_registries};
+use super::measure::{MeasureContext, build_legacy_projection, measure_text_node};
 use super::types::{
     ImageInput, LayoutInput, LayoutNodeInput, LayoutNodeOutput, LayoutOutput, PreferredFrame,
     TaffyStyleInput, TextInput, TextLayoutOutput, TextPathInput, parse_feature_settings_opt,
@@ -57,7 +58,9 @@ pub(super) fn compute_layout_core(
                     &mut context.measure_cache,
                     &mut context.measure_cache_hits,
                     &mut context.shrink_to_fit_widths,
-                    &mut context.shaped_cache,
+                    &mut context.measure_cache_clear_count,
+                    &mut context.legacy_projections,
+                    &mut context.owner_session,
                     node_id,
                     &mut context.text_results,
                 ) {
@@ -121,7 +124,15 @@ pub(super) fn compute_layout_core(
 
     // Collect results
     let mut nodes = Vec::new();
-    collect_layout_results(&tree, root, 0.0, 0.0, &node_id_map, &context, &mut nodes)?;
+    collect_layout_results(
+        &tree,
+        root,
+        0.0,
+        0.0,
+        &node_id_map,
+        &mut context,
+        &mut nodes,
+    )?;
 
     Ok(LayoutOutput {
         nodes,
@@ -1236,7 +1247,7 @@ fn collect_layout_results(
     parent_x: f32,
     parent_y: f32,
     node_id_map: &HashMap<NodeId, String>,
-    context: &MeasureContext,
+    context: &mut MeasureContext,
     results: &mut Vec<LayoutNodeOutput>,
 ) -> Result<(), EngineError> {
     let layout = tree
@@ -1250,7 +1261,6 @@ fn collect_layout_results(
     let string_id = node_id_map.get(&node_id).cloned().unwrap_or_default();
 
     let text_layout = if let Some(text_input) = context.text_inputs.get(&node_id) {
-        let letter_spacing = text_input.letter_spacing_px.unwrap_or(0.0);
         let font_families: Vec<String> = if text_input.font_family.is_empty() {
             vec!["default".to_string()]
         } else {
@@ -1268,34 +1278,19 @@ fn collect_layout_results(
         if text_input.unit_map.is_some() && rust_result.is_none() {
             return Err(unit_map_unavailable_error());
         }
-        if let Some(font_entry) = resolve_font_from_registries(
-            context.font_registry,
-            context.fallback_registry,
-            &font_families,
-            text_input.font_weight,
-            &text_input.font_style,
-        ) {
-            let shape_options = shaping::ShapeOptions {
-                writing_mode: text_input.writing_mode.clone(),
-                language: text_input.language.clone(),
-                vertical_feature_priority: None,
-                text_orientation: text_input.text_orientation.clone(),
-                font_variation_settings: parse_variation_settings_opt(
-                    text_input.font_variation_settings.as_deref(),
-                ),
-                font_feature_settings: parse_feature_settings_opt(
-                    text_input.font_feature_settings.as_deref(),
-                ),
-            };
-            let glyphs = shaping::shape_text_with_options(
-                context.font_registry,
-                font_entry,
-                &text_input.content,
-                text_input.font_size_px,
-                letter_spacing,
-                &shape_options,
-            );
-            let measured_width = shaping::measure_width(&glyphs);
+        let legacy_projection = context
+            .legacy_projections
+            .remove(&node_id)
+            .unwrap_or_else(|| {
+                build_legacy_projection(
+                    text_input,
+                    context.font_registry,
+                    context.fallback_registry,
+                )
+            });
+        if let Some(legacy_projection) = legacy_projection {
+            let glyphs = legacy_projection.glyphs;
+            let measured_width = legacy_projection.measured_width;
 
             let unit_map = if let Some(request) = text_input.unit_map {
                 let result = rust_result.ok_or_else(unit_map_unavailable_error)?;
@@ -1653,5 +1648,158 @@ pub(super) fn map_text_path_layout_error(
         message: error.to_string(),
         stage: Some(crate::diagnostics::PipelineStage::Text),
         node_id: Some(node_id.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+    use crate::font::{FontRegistry, FontStyle};
+    use serde_json::json;
+
+    fn collect_without_measurement(
+        text: serde_json::Value,
+        registry: &FontRegistry,
+    ) -> Result<LayoutOutput, EngineError> {
+        let input: LayoutInput = serde_json::from_value(json!({
+            "root": {
+                "nodeId": "canvas", "nodeType": "canvas", "authoredId": true,
+                "style": {"width": 200, "height": 250},
+                "children": [{
+                    "nodeId": "text", "nodeType": "text", "authoredId": true,
+                    "style": {"width": 140, "height": 80}, "text": text
+                }]
+            }
+        }))
+        .expect("fixed-size input");
+        let mut context = MeasureContext {
+            owner_session: crate::text::engine::TextLayoutSession::new(registry, None),
+            font_registry: registry,
+            fallback_registry: None,
+            text_inputs: HashMap::new(),
+            text_path_inputs: HashMap::new(),
+            image_inputs: HashMap::new(),
+            measure_call_count: 0,
+            measure_cache: HashMap::new(),
+            measure_cache_hits: 0,
+            measure_cache_clear_count: 0,
+            shrink_to_fit_widths: HashMap::new(),
+            legacy_projections: HashMap::new(),
+            text_results: HashMap::new(),
+            text_errors: HashMap::new(),
+        };
+        let mut tree: TaffyTree<String> = TaffyTree::new();
+        let mut node_ids = HashMap::new();
+        let root = build_taffy_node(&mut tree, &input.root, &mut context, &mut node_ids)?;
+        // Exercise collection independently of Taffy's decision to invoke the measure callback.
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(250.0),
+            },
+        )
+        .expect("fixed geometry");
+        let mut nodes = Vec::new();
+        let outcome =
+            collect_layout_results(&tree, root, 0.0, 0.0, &node_ids, &mut context, &mut nodes);
+        assert!(context.text_results.is_empty());
+        assert!(context.measure_cache.is_empty());
+        assert_eq!(context.measure_call_count, 0);
+        outcome?;
+        Ok(LayoutOutput {
+            nodes,
+            measure_call_count: 0,
+            measure_cache_hits: 0,
+        })
+    }
+
+    #[test]
+    fn resultless_collection_preserves_raw_projection_and_absence() {
+        let mut registry = FontRegistry::new();
+        registry
+            .register(
+                include_bytes!("../../../../fixtures/fonts/NotoSansJP-Regular.subset.ttf").to_vec(),
+                "NotoSansJP".into(),
+                400,
+                FontStyle::Normal,
+            )
+            .expect("licensed fixture");
+        let plain = json!({
+            "content": " A\t B\r\nHello あいうえお  ", "fontFamily": ["NotoSansJP"],
+            "fontSizePx": 20, "lineHeight": 1.5, "wrap": "char", "whiteSpace": "normal", "language": "ja"
+        });
+        for source in [
+            json!({}),
+            json!({"spans": [{"text": "Shown span", "fontSizePx": 20, "fontFamily": ["NotoSansJP"]}]}),
+            json!({"richText": [{"kind": "text", "text": "Shown rich"}]}),
+        ] {
+            let mut text = plain.clone();
+            text.as_object_mut()
+                .expect("text object")
+                .extend(source.as_object().expect("source object").clone());
+            let output = collect_without_measurement(text, &registry).expect("collection");
+            let layout = output
+                .nodes
+                .iter()
+                .find(|node| node.node_id == "text")
+                .and_then(|node| node.text_layout.as_ref())
+                .expect("legacy projection");
+            assert_eq!(layout.measured_width, 256.82);
+            assert_eq!(layout.measured_height, 30.0);
+            assert_eq!(
+                layout
+                    .glyphs
+                    .iter()
+                    .map(|glyph| glyph.glyph_id)
+                    .collect::<Vec<_>>(),
+                vec![
+                    1, 34, 0, 1, 35, 0, 0, 41, 70, 77, 77, 80, 1, 311, 313, 315, 317, 319, 1, 1
+                ]
+            );
+            assert!(layout.lines.is_none());
+            assert!(layout.bbox.is_none());
+            assert!(layout.chosen_font_size_px.is_none());
+            assert!(layout.overflow.is_none());
+            assert!(layout.source_text.is_none());
+            assert!(layout.display_text.is_none());
+            assert!(layout.unit_map.is_none());
+            assert!(layout.warnings.is_empty());
+            assert!(layout.inline_box_decorations.is_empty());
+            assert!(layout.text_decorations.is_empty());
+            assert!(layout.inline_rects.is_empty());
+        }
+        let empty_registry = FontRegistry::new();
+        let unresolved = collect_without_measurement(plain.clone(), &empty_registry)
+            .expect("unresolved collection");
+        assert!(
+            unresolved
+                .nodes
+                .iter()
+                .all(|node| node.text_layout.is_none())
+        );
+        for font_registry in [&registry, &empty_registry] {
+            let mut requested = plain.clone();
+            requested["unitMap"] = json!({"kind": "cluster", "ruby": "with-base"});
+            match collect_without_measurement(requested, font_registry)
+                .expect_err("unit map needs owner result")
+            {
+                EngineError::Structured {
+                    code,
+                    message,
+                    stage,
+                    node_id,
+                } => {
+                    assert_eq!(code, "TEXT_UNIT_MAP_UNAVAILABLE");
+                    assert_eq!(
+                        message,
+                        "Text unit metadata was requested for node \"text\", but resolved positioned glyphs are unavailable."
+                    );
+                    assert_eq!(stage, Some(crate::diagnostics::PipelineStage::Text));
+                    assert_eq!(node_id.as_deref(), Some("text"));
+                }
+                error => panic!("unexpected collection error: {error:?}"),
+            }
+        }
     }
 }
