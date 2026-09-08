@@ -38,21 +38,18 @@ impl ShrinkwrapRegionProvider for CandidateRegions {
     }
 }
 
-fn registry() -> FontRegistry {
+fn registry() -> Result<FontRegistry, Box<dyn std::error::Error>> {
     let mut registry = FontRegistry::new();
-    registry
-        .register(
-            std::fs::read(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"
-            ))
-            .expect("licensed text fixture"),
-            "NotoSansJP".into(),
-            400,
-            FontStyle::Normal,
-        )
-        .expect("register fixture");
-    registry
+    registry.register(
+        std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"
+        ))?,
+        "NotoSansJP".into(),
+        400,
+        FontStyle::Normal,
+    )?;
+    Ok(registry)
 }
 
 fn request(text: &str) -> TextShrinkwrapRequest<'_> {
@@ -81,8 +78,9 @@ fn request(text: &str) -> TextShrinkwrapRequest<'_> {
 }
 
 #[test]
-fn paragraph_non_applicability_uses_full_layout_without_a_geometry_probe() {
-    let registry = registry();
+fn paragraph_non_applicability_uses_full_layout_without_a_geometry_probe()
+-> Result<(), Box<dyn std::error::Error>> {
+    let registry = registry()?;
     let families = ["NotoSansJP".into()];
     let font_context = FontContext {
         registry: &registry,
@@ -115,16 +113,18 @@ fn paragraph_non_applicability_uses_full_layout_without_a_geometry_probe() {
         assert_eq!(layout_result.chosen_width_px, Some(73.75));
         assert_eq!(layout_result.line_count, 1);
         assert_eq!(layout_result.used_height, 24.0);
-        assert_eq!(layout_result.max_line_width, Some(73.60000000000001));
+        assert_eq!(layout_result.max_line_width, Some(73.600_000_000_000_01));
         assert!(layout_result.chosen_height_px.is_none());
         assert!(layout_result.used_width.is_none());
     }
     assert_eq!(regions.queries.get(), 0);
+    Ok(())
 }
 
 #[test]
-fn explicit_language_tag_changes_only_the_applicable_paragraph_shaping() {
-    let registry = registry();
+fn explicit_language_tag_changes_only_the_applicable_paragraph_shaping()
+-> Result<(), Box<dyn std::error::Error>> {
+    let registry = registry()?;
     let families = ["NotoSansJP".into()];
     let font_context = FontContext {
         registry: &registry,
@@ -167,11 +167,65 @@ fn explicit_language_tag_changes_only_the_applicable_paragraph_shaping() {
         assert_eq!(layout_result.max_line_width, Some(expected_advance));
     }
     assert_eq!(regions.queries.get(), 0);
+    Ok(())
 }
 
+/// Preserve the source/orientation matrix and its exact search expectations.
+const SOURCE_ROUTE_CASES: [(bool, WhiteSpaceMode, WritingMode, f64, usize, f64); 6] = [
+    (
+        false,
+        WhiteSpaceMode::Normal,
+        WritingMode::HorizontalTb,
+        132.03125,
+        2,
+        60.0,
+    ),
+    (
+        false,
+        WhiteSpaceMode::Normal,
+        WritingMode::VerticalRl,
+        132.1875,
+        2,
+        132.08,
+    ),
+    (
+        true,
+        WhiteSpaceMode::Normal,
+        WritingMode::HorizontalTb,
+        152.03125,
+        2,
+        60.0,
+    ),
+    (
+        true,
+        WhiteSpaceMode::Normal,
+        WritingMode::VerticalRl,
+        152.1875,
+        2,
+        152.080_000_000_000_04,
+    ),
+    (
+        true,
+        WhiteSpaceMode::PreWrap,
+        WritingMode::HorizontalTb,
+        107.5,
+        3,
+        90.0,
+    ),
+    (
+        true,
+        WhiteSpaceMode::PreWrap,
+        WritingMode::VerticalRl,
+        107.65625,
+        3,
+        107.600_000_000_000_02,
+    ),
+];
+
 #[test]
-fn source_and_orientation_routes_retain_their_search_results() {
-    let registry = registry();
+fn source_and_orientation_routes_retain_their_search_results()
+-> Result<(), Box<dyn std::error::Error>> {
+    let registry = registry()?;
     let families = ["NotoSansJP".into()];
     let font_context = FontContext {
         registry: &registry,
@@ -182,56 +236,9 @@ fn source_and_orientation_routes_retain_their_search_results() {
     };
     let text = "A\t B\r\nあいうえお Hello world";
     let spans = [FlowTextSpan::plain(text.into())];
-    for (has_spans, white_space, writing_mode, chosen_size, line_count, used_height) in [
-        (
-            false,
-            WhiteSpaceMode::Normal,
-            WritingMode::HorizontalTb,
-            132.03125,
-            2,
-            60.0,
-        ),
-        (
-            false,
-            WhiteSpaceMode::Normal,
-            WritingMode::VerticalRl,
-            132.1875,
-            2,
-            132.08,
-        ),
-        (
-            true,
-            WhiteSpaceMode::Normal,
-            WritingMode::HorizontalTb,
-            152.03125,
-            2,
-            60.0,
-        ),
-        (
-            true,
-            WhiteSpaceMode::Normal,
-            WritingMode::VerticalRl,
-            152.1875,
-            2,
-            152.08000000000004,
-        ),
-        (
-            true,
-            WhiteSpaceMode::PreWrap,
-            WritingMode::HorizontalTb,
-            107.5,
-            3,
-            90.0,
-        ),
-        (
-            true,
-            WhiteSpaceMode::PreWrap,
-            WritingMode::VerticalRl,
-            107.65625,
-            3,
-            107.60000000000002,
-        ),
-    ] {
+    for (has_spans, white_space, writing_mode, chosen_size, line_count, used_height) in
+        SOURCE_ROUTE_CASES
+    {
         let regions = CandidateRegions {
             queries: Cell::new(0),
         };
@@ -280,4 +287,5 @@ fn source_and_orientation_routes_retain_their_search_results() {
             writing_mode == WritingMode::VerticalRl
         );
     }
+    Ok(())
 }

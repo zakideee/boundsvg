@@ -5764,7 +5764,7 @@ fn measure_text_block_missing_glyphs_use_owner_line_ranges() {
         let measurement =
             measure_text_block(&input, &registry).expect("fallback-capable owner measurement");
         assert_eq!(measurement.line_count, 1);
-        assert_eq!(measurement.used_width, 73.60000000000001);
+        assert_eq!(measurement.used_width, 73.600_000_000_000_01);
         assert_eq!(measurement.used_height, 24.0);
         let lines = measurement.lines.expect("horizontal line ranges");
         assert_eq!(lines[0].text, text);

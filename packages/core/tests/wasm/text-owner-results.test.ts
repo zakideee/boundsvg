@@ -69,11 +69,7 @@ describe("text owner results at the public engine boundary", () => {
       );
     const layout = (indices: number[]) =>
       engine.renderToLayoutTree(
-        createElement(
-          "Canvas",
-          { width: 120, height: 2000, flexDirection: "column", alignItems: "start" },
-          ...indices.map(textNode),
-        ),
+        createElement("Canvas", { width: 120, height: 2000 }, ...indices.map(textNode)),
       ).root.children;
     const indices = styles.map((_, index) => index);
     const isolated = indices.map((index) => layout([index])[0]?.textLayout);

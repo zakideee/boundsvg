@@ -6,22 +6,20 @@ use boundtext::text::engine::project_legacy_unwrapped_glyphs;
 use boundtext::text::flow::{FlowSimpleRequest, RawFlowSimpleRequest, layout_raw_flow_simple};
 use boundtext::text::types::{Language, TextOrientation, WhiteSpaceMode, WrapMode, WritingMode};
 
-fn font_registry() -> FontRegistry {
+fn font_registry() -> Result<FontRegistry, Box<dyn std::error::Error>> {
     let font_bytes = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/fonts/NotoSansJP-Regular.subset.ttf"
-    ))
-    .expect("licensed text fixture");
+    ))?;
     let mut registry = FontRegistry::new();
-    registry
-        .register(font_bytes, "NotoSansJP".into(), 400, FontStyle::Normal)
-        .expect("register text fixture");
-    registry
+    registry.register(font_bytes, "NotoSansJP".into(), 400, FontStyle::Normal)?;
+    Ok(registry)
 }
 
 #[test]
-fn raw_flow_preserves_whitespace_policy_and_normalized_ranges() {
-    let registry = font_registry();
+fn raw_flow_preserves_whitespace_policy_and_normalized_ranges()
+-> Result<(), Box<dyn std::error::Error>> {
+    let registry = font_registry()?;
     let families = ["NotoSansJP".into()];
     let font_context = FontContext {
         registry: &registry,
@@ -80,11 +78,13 @@ fn raw_flow_preserves_whitespace_policy_and_normalized_ranges() {
         assert_eq!(actual, expected);
         assert!(flow_layout.exhausted);
     }
+    Ok(())
 }
 
 #[test]
-fn legacy_projection_preserves_raw_controls_and_authored_advance() {
-    let registry = font_registry();
+fn legacy_projection_preserves_raw_controls_and_authored_advance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let registry = font_registry()?;
     let primary_registry = FontRegistry::new();
     let families = ["AbsentFamily".into(), "NotoSansJP".into()];
     let font_context = FontContext {
@@ -132,11 +132,13 @@ fn legacy_projection_preserves_raw_controls_and_authored_advance() {
         )
         .is_none()
     );
+    Ok(())
 }
 
 #[test]
-fn legacy_projection_does_not_select_a_fallback_face_per_glyph() {
-    let mut registry = font_registry();
+fn legacy_projection_does_not_select_a_fallback_face_per_glyph()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut registry = font_registry()?;
     registry
         .register(
             std::fs::read(concat!(
@@ -167,4 +169,5 @@ fn legacy_projection_does_not_select_a_fallback_face_per_glyph() {
             .iter()
             .all(|glyph| glyph.font_alias.as_deref() == Some("Inter"))
     );
+    Ok(())
 }

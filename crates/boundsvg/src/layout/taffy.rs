@@ -1658,7 +1658,7 @@ mod collection_tests {
     use serde_json::json;
 
     fn collect_without_measurement(
-        text: serde_json::Value,
+        text: &serde_json::Value,
         registry: &FontRegistry,
     ) -> Result<LayoutOutput, EngineError> {
         let input: LayoutInput = serde_json::from_value(json!({
@@ -1738,7 +1738,7 @@ mod collection_tests {
             text.as_object_mut()
                 .expect("text object")
                 .extend(source.as_object().expect("source object").clone());
-            let output = collect_without_measurement(text, &registry).expect("collection");
+            let output = collect_without_measurement(&text, &registry).expect("collection");
             let layout = output
                 .nodes
                 .iter()
@@ -1770,8 +1770,8 @@ mod collection_tests {
             assert!(layout.inline_rects.is_empty());
         }
         let empty_registry = FontRegistry::new();
-        let unresolved = collect_without_measurement(plain.clone(), &empty_registry)
-            .expect("unresolved collection");
+        let unresolved =
+            collect_without_measurement(&plain, &empty_registry).expect("unresolved collection");
         assert!(
             unresolved
                 .nodes
@@ -1781,7 +1781,7 @@ mod collection_tests {
         for font_registry in [&registry, &empty_registry] {
             let mut requested = plain.clone();
             requested["unitMap"] = json!({"kind": "cluster", "ruby": "with-base"});
-            match collect_without_measurement(requested, font_registry)
+            match collect_without_measurement(&requested, font_registry)
                 .expect_err("unit map needs owner result")
             {
                 EngineError::Structured {
