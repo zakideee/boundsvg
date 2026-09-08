@@ -24,40 +24,6 @@ fn build_font_families(primary: &str, fallback: Option<&[String]>) -> Vec<String
     families
 }
 
-fn font_or_preparation_error(
-    font_context: &crate::font::FontContext<'_>,
-    run_index: usize,
-    phase: boundtext::TextPreparationPhase,
-) -> boundtext::TextLayoutError {
-    let font_is_available = font_context
-        .registry
-        .resolve_chain(
-            font_context.families,
-            font_context.weight,
-            font_context.style,
-        )
-        .is_some()
-        || font_context.fallback_registry.is_some_and(|fallback| {
-            fallback
-                .resolve_chain(
-                    font_context.families,
-                    font_context.weight,
-                    font_context.style,
-                )
-                .is_some()
-        });
-    if font_is_available {
-        boundtext::TextLayoutError::PreparationFailed { phase }
-    } else {
-        boundtext::TextLayoutError::FontUnavailable {
-            run_index,
-            families: font_context.families.to_vec(),
-            weight: font_context.weight,
-            style: font_context.style.clone(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests;
 

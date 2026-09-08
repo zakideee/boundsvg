@@ -29,6 +29,7 @@ import {
   type TextLayoutRawSuccessFixture,
   textLayoutRawSuccessFixtures,
 } from "../../core/tests/wasm/text-layout-success-fixtures.js";
+import { textOwnerResultFixtures } from "../../core/tests/wasm/text-owner-result-fixtures.js";
 
 type LowLevelWasmModule = {
   BoundSvgEngine: new () => WasmEngineInstance;
@@ -823,6 +824,16 @@ describe("nodejs/web WASM public parity", () => {
     for (const fixture of textLayoutRawSuccessFixtures) {
       for (const instance of textLayoutWasmInstances) {
         expect(invokeRawTextLayout(instance, fixture), fixture.operation).toBe(
+          fixture.expectedOutputJson,
+        );
+      }
+    }
+  });
+
+  it("preserves fallback and explicit language results across all WASM artifacts", () => {
+    for (const fixture of textOwnerResultFixtures) {
+      for (const instance of textLayoutWasmInstances) {
+        expect(invokeRawTextLayout(instance, fixture), fixture.inputJson).toBe(
           fixture.expectedOutputJson,
         );
       }

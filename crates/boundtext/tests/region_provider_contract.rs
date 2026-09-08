@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use boundtext::font::shaping::ShapeOptions;
 use boundtext::font::{FontContext, FontRegistry, FontStyle};
 use boundtext::text::flow::{
-    FlowBounds, FlowLayoutRequest, FlowRegion, RETURNED_REGIONS_MAX, RegionProvider, RegionQuery,
-    layout_flow_with_regions, measure_flow,
+    FlowBounds, FlowLayoutRequest, FlowRegion, FlowTextSpan, RETURNED_REGIONS_MAX, RegionProvider,
+    RegionQuery, layout_flow_with_regions, layout_resolved_flow_with_regions, measure_flow,
 };
 use boundtext::text::paragraph::shape_paragraph_with_options;
 use boundtext::text::types::{Language, WhiteSpaceMode, WrapMode, WritingMode};
@@ -314,6 +314,87 @@ fn rich_resource_failure_precedes_every_region_query() {
             actual: MAX_RICH_TEXT_DEPTH + 1,
             limit: MAX_RICH_TEXT_DEPTH,
         }
+    );
+    assert!(provider.queries.borrow().is_empty());
+}
+
+#[test]
+fn raw_sources_share_owner_whitespace_normalization_in_both_flow_projections() {
+    let registry = font_registry();
+    let families = ["Noto".into()];
+    let font_context = FontContext {
+        registry: &registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let spans = [
+        FlowTextSpan::plain("A\t".into()),
+        FlowTextSpan::plain(" B".into()),
+    ];
+    let rich_nodes = [
+        RichTextNodeInput::Text { text: "A\t".into() },
+        RichTextNodeInput::Text { text: " B".into() },
+    ];
+    for (white_space, expected) in [
+        (WhiteSpaceMode::Normal, "A B"),
+        (WhiteSpaceMode::NoWrap, "A B"),
+        (WhiteSpaceMode::PreWrap, "A     B"),
+    ] {
+        for source_kind in ["plain", "span", "rich"] {
+            let provider = RecordingProvider {
+                queries: RefCell::new(Vec::new()),
+            };
+            let raw_request = FlowLayoutRequest {
+                text: if source_kind == "plain" { "A\t B" } else { "" },
+                spans: (source_kind == "span").then_some(spans.as_slice()),
+                rich_text: (source_kind == "rich").then_some(rich_nodes.as_slice()),
+                white_space,
+                max_lines: None,
+                ..request(WritingMode::HorizontalTb)
+            };
+            let flow_layout = layout_flow_with_regions(&raw_request, &font_context, &provider)
+                .expect("raw diagnostic flow");
+            let visible_text = flow_layout
+                .lines
+                .iter()
+                .flat_map(|line| &line.fragments)
+                .map(|fragment| fragment.text.as_str())
+                .collect::<String>();
+            assert_eq!(visible_text, expected, "diagnostic source {source_kind}");
+            let resolved_layout =
+                layout_resolved_flow_with_regions(&raw_request, &font_context, &provider)
+                    .expect("raw resolved flow");
+            let resolved_text = resolved_layout
+                .lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<String>();
+            assert_eq!(resolved_text, expected, "resolved source {source_kind}");
+        }
+    }
+    let conflicting_request = FlowLayoutRequest {
+        text: "",
+        spans: Some(&spans),
+        rich_text: Some(&rich_nodes),
+        ..request(WritingMode::HorizontalTb)
+    };
+    let provider = RecordingProvider {
+        queries: RefCell::new(Vec::new()),
+    };
+    let expected_error = TextLayoutError::InvalidRequest {
+        reason: boundtext::TextRequestError::ConflictingTextSources,
+    };
+    assert_eq!(
+        layout_flow_with_regions(&conflicting_request, &font_context, &provider)
+            .expect_err("conflicting diagnostic sources"),
+        expected_error
+    );
+    assert_eq!(
+        layout_resolved_flow_with_regions(&conflicting_request, &font_context, &provider)
+            .expect_err("conflicting resolved sources"),
+        expected_error
     );
     assert!(provider.queries.borrow().is_empty());
 }

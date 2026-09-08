@@ -4,6 +4,7 @@
 //! [`RegionProvider`] trait. The geometry computation (SVG paths, circles,
 //! etc.) is handled by the consumer -- this module only deals with text.
 
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
@@ -210,7 +211,7 @@ impl From<RegionQuery> for RegionQueryKey {
 }
 
 /// Per-layout deterministic cache and budget around an arbitrary provider.
-struct BudgetedRegionProvider<'a, P> {
+pub(crate) struct BudgetedRegionProvider<'a, P> {
     source: &'a P,
     cache: RefCell<BTreeMap<RegionQueryKey, Result<Vec<FlowRegion>, TextLayoutError>>>,
     returned_region_count: Cell<usize>,
@@ -219,7 +220,7 @@ struct BudgetedRegionProvider<'a, P> {
 }
 
 impl<'a, P> BudgetedRegionProvider<'a, P> {
-    fn new(source: &'a P) -> Self {
+    pub(crate) fn new(source: &'a P) -> Self {
         Self {
             source,
             cache: RefCell::new(BTreeMap::new()),
@@ -765,6 +766,7 @@ impl FlowTextSpan {
 }
 
 /// Input for simple flow layout (line-widths, no exclusions).
+#[derive(Clone)]
 pub struct FlowSimpleRequest<'a> {
     pub text: &'a str,
     pub font_size_px: f64,
@@ -778,6 +780,40 @@ pub struct FlowSimpleRequest<'a> {
     pub text_orientation: TextOrientation,
     pub font_variation_settings: Vec<VariationSetting>,
     pub font_feature_settings: Vec<FeatureSetting>,
+}
+
+/// Raw simple-flow input whose whitespace policy is owned by the text engine.
+pub struct RawFlowSimpleRequest<'a> {
+    pub flow: FlowSimpleRequest<'a>,
+    pub white_space: WhiteSpaceMode,
+    pub tab_size: u32,
+}
+
+/// Lay out raw text under a whitespace policy without changing the lower-level
+/// [`FlowSimpleRequest`] contract for callers that already supply prepared text.
+///
+/// # Errors
+///
+/// Returns the existing missing-width, font, shaping, or flow-layout failure.
+pub fn layout_raw_flow_simple(
+    request: &RawFlowSimpleRequest<'_>,
+    font_context: &FontContext<'_>,
+) -> Result<FlowSimpleResult, TextLayoutError> {
+    let normalized_text = crate::text::types::preprocess_text_for_white_space(
+        request.flow.text,
+        request.white_space,
+        request.tab_size,
+    );
+    let prepared_request = FlowSimpleRequest {
+        text: &normalized_text,
+        wrap: if request.white_space == WhiteSpaceMode::NoWrap {
+            WrapMode::None
+        } else {
+            request.flow.wrap
+        },
+        ..request.flow.clone()
+    };
+    layout_flow_simple(&prepared_request, font_context)
 }
 
 // ---------------------------------------------------------------------------
@@ -1918,13 +1954,85 @@ pub fn layout_flow_with_regions(
     region_provider: &impl RegionProvider,
 ) -> Result<FlowLayoutResult, TextLayoutError> {
     validate_flow_request_resources(req)?;
+    let normalized_source = NormalizedFlowSource::new(req)?;
+    let normalized_request = FlowLayoutRequest {
+        text: &normalized_source.text,
+        spans: normalized_source.spans.as_deref(),
+        wrap: if req.white_space == WhiteSpaceMode::NoWrap {
+            WrapMode::None
+        } else {
+            req.wrap
+        },
+        ..req.clone()
+    };
     let budgeted_regions = BudgetedRegionProvider::new(region_provider);
-    let flow_layout = layout_flow_with_regions_budgeted(req, font_ctx, &budgeted_regions)?;
+    let flow_layout =
+        layout_flow_with_regions_budgeted(&normalized_request, font_ctx, &budgeted_regions)?;
     record_flow_materialization(&flow_layout);
     Ok(flow_layout)
 }
 
-fn layout_flow_with_regions_budgeted(
+struct NormalizedFlowSource<'a> {
+    text: Cow<'a, str>,
+    spans: Option<Cow<'a, [FlowTextSpan]>>,
+}
+
+impl<'a> NormalizedFlowSource<'a> {
+    fn new(request: &FlowLayoutRequest<'a>) -> Result<Self, TextLayoutError> {
+        let spans = request.spans.filter(|spans| !spans.is_empty());
+        let has_rich_text = request.rich_text.is_some_and(|nodes| !nodes.is_empty());
+        if spans.is_some() && has_rich_text {
+            return Err(TextLayoutError::InvalidRequest {
+                reason: crate::TextRequestError::ConflictingTextSources,
+            });
+        }
+        // Rich preparation owns whitespace for rich, fit, and ellipsis paths.
+        // Normalizing those sources here would repeat that preparation.
+        if has_rich_text || request.fit.is_some() || request.ellipsis {
+            return Ok(Self {
+                text: Cow::Borrowed(request.text),
+                spans: spans.map(Cow::Borrowed),
+            });
+        }
+        if let Some(spans) = spans {
+            let span_texts = spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<Vec<_>>();
+            let normalized_spans = crate::text::types::preprocess_span_texts_for_white_space(
+                &span_texts,
+                request.white_space,
+                request.tab_size,
+            )
+            .map_or(Cow::Borrowed(spans), |normalized_texts| {
+                Cow::Owned(
+                    spans
+                        .iter()
+                        .zip(normalized_texts)
+                        .map(|(span, text)| FlowTextSpan {
+                            text,
+                            ..span.clone()
+                        })
+                        .collect(),
+                )
+            });
+            return Ok(Self {
+                text: Cow::Borrowed(request.text),
+                spans: Some(normalized_spans),
+            });
+        }
+        Ok(Self {
+            text: Cow::Owned(crate::text::types::preprocess_text_for_white_space(
+                request.text,
+                request.white_space,
+                request.tab_size,
+            )),
+            spans: None,
+        })
+    }
+}
+
+pub(crate) fn layout_flow_with_regions_budgeted(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     region_provider: &impl LayoutRegionProvider,
@@ -2179,6 +2287,15 @@ pub fn layout_resolved_flow_with_regions(
     region_provider: &impl RegionProvider,
 ) -> Result<TextLayoutResult, TextLayoutError> {
     validate_flow_request_resources(req)?;
+    if req.spans.is_some_and(|spans| !spans.is_empty())
+        && req.rich_text.is_some_and(|nodes| !nodes.is_empty())
+    {
+        return Err(TextLayoutError::InvalidRequest {
+            reason: crate::TextRequestError::ConflictingTextSources,
+        });
+    }
+    // Resolved flow prepares every source through the rich owner pipeline,
+    // which must see the raw text to preserve source/display projections.
     let budgeted_regions = BudgetedRegionProvider::new(region_provider);
     let layout_result =
         layout_resolved_flow_with_regions_budgeted(req, font_ctx, &budgeted_regions)?;
@@ -2186,7 +2303,7 @@ pub fn layout_resolved_flow_with_regions(
     Ok(layout_result)
 }
 
-fn record_flow_materialization(flow_layout: &FlowLayoutResult) {
+pub(crate) fn record_flow_materialization(flow_layout: &FlowLayoutResult) {
     #[cfg(any(test, feature = "phase-trace"))]
     {
         let glyph_count = flow_layout
@@ -2212,7 +2329,9 @@ fn record_flow_materialization(flow_layout: &FlowLayoutResult) {
     let _ = flow_layout;
 }
 
-fn validate_flow_request_resources(req: &FlowLayoutRequest<'_>) -> Result<(), TextLayoutError> {
+pub(crate) fn validate_flow_request_resources(
+    req: &FlowLayoutRequest<'_>,
+) -> Result<(), TextLayoutError> {
     let Some(nodes) = req.rich_text else {
         return Ok(());
     };

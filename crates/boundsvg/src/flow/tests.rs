@@ -5751,3 +5751,47 @@ fn ruby_shrinkwrap_uses_css_line_boxes_and_contains_atomic_bases() {
     assert!(fragment.inline_advance_px <= fragment.available_inline_size_px + 1e-6);
     assert!(flow.chosen_width_px.unwrap() >= fragment.inline_advance_px);
 }
+
+#[test]
+fn measure_text_block_missing_glyphs_use_owner_line_ranges() {
+    let registry = make_registry();
+    for text in ["Hello 🎉", "Hello 龘"] {
+        let input: MeasureTextBlockInput = serde_json::from_value(serde_json::json!({
+            "text": text, "fontFamily": "NotoSansJP", "fontSizePx": 20.0,
+            "maxWidth": 180.0, "whiteSpace": "normal"
+        }))
+        .expect("valid missing glyph request");
+        let measurement =
+            measure_text_block(&input, &registry).expect("fallback-capable owner measurement");
+        assert_eq!(measurement.line_count, 1);
+        assert_eq!(measurement.used_width, 73.600_000_000_000_01);
+        assert_eq!(measurement.used_height, 24.0);
+        let lines = measurement.lines.expect("horizontal line ranges");
+        assert_eq!(lines[0].text, text);
+        assert_eq!((lines[0].char_start, lines[0].char_end), (0, 7));
+        assert!(!lines[0].kinsoku_unresolved);
+    }
+}
+
+#[test]
+fn measurement_and_shrinkwrap_use_explicit_backend_language() {
+    let registry = make_registry();
+    for (language, line_count, used_width) in
+        [("auto", 1, 31.28), ("en", 1, 31.28), ("ja", 2, 21.66)]
+    {
+        let input_json = serde_json::json!({"text": "A\"A", "fontFamily": "NotoSansJP", "fontSizePx": 20.0, "lineHeight": 1.5,
+            "maxWidth": 32.8, "whiteSpace": "normal", "language": language});
+        let measurement_input: MeasureTextBlockInput =
+            serde_json::from_value(input_json.clone()).expect("valid measurement input");
+        let shrinkwrap_input: ShrinkwrapTextInput =
+            serde_json::from_value(input_json).expect("valid shrinkwrap input");
+        let measurement =
+            measure_text_block(&measurement_input, &registry).expect("language measurement");
+        let shrinkwrap_result =
+            shrinkwrap_text(&shrinkwrap_input, &registry).expect("language shrinkwrap");
+        assert_eq!(measurement.line_count, line_count);
+        assert_eq!(measurement.used_width, used_width);
+        assert_eq!(shrinkwrap_result.line_count, line_count);
+        assert_eq!(shrinkwrap_result.max_line_width, Some(used_width));
+    }
+}

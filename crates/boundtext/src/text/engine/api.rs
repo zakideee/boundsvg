@@ -129,7 +129,7 @@ pub fn layout_text(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
 ) -> Result<TextLayoutResult, crate::TextLayoutError> {
-    layout_text_with_options(req, font_ctx, false)
+    layout_text_with_options(req, font_ctx, false, None)
 }
 
 /// Perform text layout while retaining the synthetic positioned glyphs needed
@@ -144,13 +144,14 @@ pub fn layout_text_with_unit_metadata(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
 ) -> Result<TextLayoutResult, crate::TextLayoutError> {
-    layout_text_with_options(req, font_ctx, true)
+    layout_text_with_options(req, font_ctx, true, None)
 }
 
-fn layout_text_with_options(
+pub(super) fn layout_text_with_options(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     should_include_unit_metadata: bool,
+    mut session: Option<&mut super::session::TextLayoutSession<'_>>,
 ) -> Result<TextLayoutResult, crate::TextLayoutError> {
     validate_layout_request_resources(req)?;
     let coalesced_spans = req
@@ -167,8 +168,12 @@ fn layout_text_with_options(
         ..req.clone()
     });
     let layout_request = coalesced_request.as_ref().unwrap_or(req);
-    let mut layout_result =
-        layout_text_inner_authoritative(layout_request, font_ctx, should_include_unit_metadata)?;
+    let mut layout_result = layout_text_inner_authoritative(
+        layout_request,
+        font_ctx,
+        should_include_unit_metadata,
+        session.as_deref_mut(),
+    )?;
     let has_positioned_glyphs = layout_result.lines.iter().any(|line| {
         line.positioned_glyphs
             .as_ref()
@@ -178,7 +183,7 @@ fn layout_text_with_options(
         super::super::decoration::resolve_text_decorations(req, font_ctx, &mut layout_result);
     } else if coalesced_spans.is_some() && !layout_result.lines.is_empty() {
         let mut decoration_layout =
-            layout_text_inner_authoritative(layout_request, font_ctx, true)?;
+            layout_text_inner_authoritative(layout_request, font_ctx, true, session)?;
         super::super::decoration::resolve_text_decorations(req, font_ctx, &mut decoration_layout);
         layout_result.text_decorations = decoration_layout.text_decorations;
     }
@@ -445,6 +450,7 @@ fn layout_text_inner_authoritative(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
     should_include_unit_metadata: bool,
+    session: Option<&mut super::session::TextLayoutSession<'_>>,
 ) -> Result<TextLayoutResult, crate::TextLayoutError> {
     ensure_text_fit_budget(req)?;
     // Measure and fit the complete authored document first. Only when that
@@ -487,7 +493,13 @@ fn layout_text_inner_authoritative(
         );
     }
 
-    layout_text_inner(req, font_ctx, should_include_unit_metadata)
+    layout_text_inner_with_span_promotion(
+        req,
+        font_ctx,
+        should_include_unit_metadata,
+        true,
+        session,
+    )
 }
 
 fn ensure_text_fit_budget(req: &TextLayoutRequest<'_>) -> Result<(), crate::TextLayoutError> {
@@ -535,7 +547,7 @@ pub(crate) fn layout_text_inner(
     font_ctx: &FontContext<'_>,
     should_include_unit_metadata: bool,
 ) -> Result<TextLayoutResult, crate::TextLayoutError> {
-    layout_text_inner_with_span_promotion(req, font_ctx, should_include_unit_metadata, true)
+    layout_text_inner_with_span_promotion(req, font_ctx, should_include_unit_metadata, true, None)
 }
 
 /// Text-on-path has already canonicalized shaping runs and paint ranges. It
@@ -546,7 +558,7 @@ pub(crate) fn layout_text_inner_with_prepared_spans(
     font_ctx: &FontContext<'_>,
     should_include_unit_metadata: bool,
 ) -> Result<TextLayoutResult, crate::TextLayoutError> {
-    layout_text_inner_with_span_promotion(req, font_ctx, should_include_unit_metadata, false)
+    layout_text_inner_with_span_promotion(req, font_ctx, should_include_unit_metadata, false, None)
 }
 
 fn layout_text_inner_with_span_promotion(
@@ -554,6 +566,7 @@ fn layout_text_inner_with_span_promotion(
     font_ctx: &FontContext<'_>,
     should_include_unit_metadata: bool,
     should_promote_spans: bool,
+    session: Option<&mut super::session::TextLayoutSession<'_>>,
 ) -> Result<TextLayoutResult, crate::TextLayoutError> {
     if should_promote_spans
         && !req.has_rich_text()
@@ -581,6 +594,14 @@ fn layout_text_inner_with_span_promotion(
     // text. Rich and vertical dispatches above handle their own
     // preprocessing. For spans, collapse carries across run boundaries and
     // the result is distributed back onto the runs.
+    let prepared_plain = if req.spans.is_none_or(<[TextSpanInput]>::is_empty) && !req.ellipsis {
+        Some(match session {
+            Some(owner_session) => owner_session.prepare(req, font_ctx),
+            None => std::sync::Arc::new(super::session::prepare_plain_text(req, font_ctx)),
+        })
+    } else {
+        None
+    };
     let preprocessed_request_text;
     let normalized_request;
     let normalized_spans: Vec<super::super::types::TextSpanInput>;
@@ -611,6 +632,12 @@ fn layout_text_inner_with_span_promotion(
                 &normalized_request
             }
         }
+    } else if let Some(prepared) = &prepared_plain {
+        normalized_request = TextLayoutRequest {
+            text: &prepared.text,
+            ..req.clone()
+        };
+        &normalized_request
     } else {
         preprocessed_request_text = super::super::types::preprocess_text_for_white_space(
             req.text,
@@ -662,43 +689,19 @@ fn layout_text_inner_with_span_promotion(
     let spans_with_runs = req.spans.filter(|spans| !spans.is_empty());
     let has_runs = spans_with_runs.is_some();
 
-    // Plain text honors white-space preprocessing before shaping.
-    let preprocessed_text = super::super::types::preprocess_text_for_white_space(
-        req.text,
-        req.white_space,
-        req.tab_size,
-    );
-    let text = preprocessed_text.as_str();
+    let text = req.text;
 
-    // --- Shaped path: separate shaping from relayout ---
     if !has_runs && req.fit == FitMode::None && !req.ellipsis {
-        let prep_shape_options = ShapeOptions {
-            writing_mode: None,
-            language: language_to_option_string(req.language),
-            vertical_feature_priority: None,
-            text_orientation: None,
-            font_variation_settings: req.font_variation_settings.clone(),
-            font_feature_settings: req.font_feature_settings.clone(),
-        };
         let effective_wrap = req.effective_wrap();
-        // PreWrap text may contain \n which produces .notdef glyphs;
-        // allow_notdef lets them through for forced newline break handling.
-        if let Some(shaped) = super::super::paragraph::shape_paragraph_with_options(
-            text,
-            font_ctx,
-            req.language,
-            effective_wrap,
-            req.hanging_punctuation,
-            &prep_shape_options,
-            req.uax14_breaks,
-            req.letter_spacing_px,
-            req.has_forced_newline_breaks(),
-        ) {
+        if let Some(shaped) = prepared_plain
+            .as_ref()
+            .and_then(|prepared| prepared.shaped.as_ref())
+        {
             let notdef_warnings = super::super::types::build_notdef_warnings(
-                &super::super::paragraph::collect_notdef_chars(&shaped),
+                &super::super::paragraph::collect_notdef_chars(shaped),
             );
             let break_result = super::super::paragraph::layout_paragraph(
-                &shaped,
+                shaped,
                 req.font_size_px,
                 line_height_px,
                 baseline_offset_px,

@@ -522,6 +522,14 @@ custom producer or WASM is invoked. See
 [Debugging & Diagnostics](/guides/debugging-diagnostics#text-layout-fatal-contract)
 for the complete catalog and migration table.
 
+For plain text, `measureTextBlock` and `shrinkwrapText` can still succeed
+when a resolved font lacks an emoji or CJK glyph; missing characters use the
+text engine's fallback handling. Rendering reports `MISSING_GLYPH` with
+Unicode notation such as `U+1F389 (🎉)`. Explicit `language: "ja"` or `"en"`
+also reaches font shaping, so language-sensitive fonts can produce different
+advances, line counts, and shrinkwrap sizes. `"auto"` supplies no explicit
+shaping language tag.
+
 #### Low-level shape operations
 
 The `@boundsvg/core/wasm` entry exposes the complete low-level shape operation

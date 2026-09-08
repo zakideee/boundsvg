@@ -1121,6 +1121,28 @@ fn vertical_text_aligns_from_the_right_edge() {
 }
 
 #[test]
+fn does_not_infer_missing_glyph_warnings_from_legacy_projection() {
+    let mut text_output = output("txt", 5.0, 5.0, 100.0, 20.0);
+    let mut layout = simple_text_layout("☃", 10.0, 18.0);
+    layout.glyphs = vec![
+        serde_json::from_value(json!({
+            "glyphId": 0, "cluster": 0, "xAdvance": 10, "yAdvance": 0,
+            "xOffset": 0, "yOffset": 0, "fontAlias": "Main"
+        }))
+        .expect("legacy missing glyph"),
+    ];
+    text_output.text_layout = Some(layout);
+    let ir = build_json(
+        json!({
+            "nodeId": "root", "nodeType": "canvas",
+            "children": [text_node_input(&json!({}))]
+        }),
+        vec![output("root", 0.0, 0.0, 200.0, 100.0), text_output],
+    );
+    assert_eq!(ir["warnings"], json!([]));
+}
+
+#[test]
 fn propagates_bridged_text_warnings_and_kinsoku_overflow() {
     let mut text_output = output("txt", 5.0, 5.0, 100.0, 20.0);
     let mut layout = simple_text_layout("hello", 60.0, 18.0);

@@ -142,6 +142,11 @@ primary or unused missing fallback does not fail when another requested alias
 resolves. If no requested alias resolves, `TEXT_FONT_UNAVAILABLE` identifies
 the first failing effective run with a bounded alias list in `context`.
 
+A resolved font lacking a character is different from an unresolved font
+family. Plain-text measurement and shrinkwrap use fallback-capable layout;
+rendering reports the text engine's `MISSING_GLYPH` warning, including Unicode
+notation such as `U+1F389 (🎉)`, with `stage: "text"` and `fallback: "blank"`.
+
 Recursive rich text accepts a container depth of 48 and rejects depth 49 before
 calling a custom producer or WASM. Measurement errors have no node ID; render
 errors include an authored node ID when one exists. Both use

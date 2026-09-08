@@ -9,8 +9,10 @@
 mod api;
 mod break_detection;
 mod char_mapping;
+mod legacy;
 mod line_breaking;
 mod result_building;
+mod session;
 #[cfg(test)]
 mod tests;
 
@@ -19,6 +21,7 @@ pub use api::{
     MeasuredTextBlock, MeasuredTextLine, layout_text, layout_text_with_unit_metadata,
     measure_text_lines,
 };
+pub use legacy::{LegacyUnwrappedGlyphProjection, project_legacy_unwrapped_glyphs};
 pub use line_breaking::{BreakMeasure, BreakResult};
 pub use result_building::{
     apply_feature_settings_to_lines, apply_variation_settings_to_lines, build_horizontal_result,
@@ -32,3 +35,6 @@ pub(crate) use char_mapping::{build_byte_to_char_map, build_char_byte_offsets};
 pub(crate) use line_breaking::{break_lines_internal, measure_break_fit};
 pub(crate) use result_building::build_positioned_glyphs_for_text;
 pub(crate) use result_building::detect_constraint_overflow;
+
+#[doc(hidden)]
+pub use session::TextLayoutSession;

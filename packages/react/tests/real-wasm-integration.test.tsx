@@ -191,7 +191,16 @@ describe("React hooks against a real WASM engine", () => {
       );
     });
 
-    expect(warnings.map((warning) => warning.code)).toContain("MISSING_GLYPH");
+    expect(warnings.map((warning) => warning.toJSON())).toEqual([
+      {
+        severity: "recoverable",
+        code: "MISSING_GLYPH",
+        message: 'Font "NotoSansJP" is missing glyphs for: U+1F389 (🎉)',
+        stage: "text",
+        nodeId: "warn",
+        fallback: "blank",
+      },
+    ]);
     act(() => root.unmount());
     container.remove();
   });

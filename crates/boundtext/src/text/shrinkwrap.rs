@@ -934,3 +934,9 @@ mod tests {
         assert!(result.chosen_width_px < wide_width);
     }
 }
+
+mod request;
+pub use request::{
+    FlowShrinkwrapRequest, FlowShrinkwrapResult, ShrinkwrapRegionProvider, TextShrinkwrapRequest,
+    TextShrinkwrapResult, shrinkwrap_flow, shrinkwrap_text,
+};
