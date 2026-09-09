@@ -98,6 +98,21 @@ no symlinks and are unaffected.
 - Do not update CHANGELOG or version numbers — releases are handled by the
   maintainer via changesets.
 
+### Automated validation
+
+Pull requests run the full CI suite, including TypeScript and Rust coverage,
+package checks, browser E2E, and render regression checks. Only additions or
+content edits confined to the root `README.md` and `CONTRIBUTING.md` use the
+lighter documentation lane: docs build, formatting, and repository-local link
+checks. Other documentation, unknown paths, deletions, renames, and file-mode
+changes run the full suite.
+
+`CI acceptance` and `Baseline Checks` verify the expected job results before
+merge. A failed, cancelled, or unexpectedly skipped required job cannot pass
+these checks. A successful full PR run does not need a second manual full run;
+manual dispatch remains available for investigation. Pushes to `main` and
+`release/**` continue to run full CI.
+
 ### AI-generated contributions
 
 AI-assisted PRs are welcome under the same rules as any PR, plus:

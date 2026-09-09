@@ -6,27 +6,6 @@ name: Render Regression
 
 on:
   pull_request:
-    # Everything that can move rendered output: the engine crates, the core
-    # bridge, the vendored parser sources, the pinned toolchain, the fonts and
-    # fixtures the baselines resolve against, and the check scripts themselves.
-    paths:
-      - "crates/**"
-      - "vendor/**"
-      - "packages/core/**"
-      - "packages/shape/**"
-      - "packages/boundtext-visual-validator/**"
-      - "fixtures/fonts/**"
-      - "fixtures/conformance/**"
-      - "scripts/check-jlreq-*.sh"
-      - "scripts/check-conformance-visual.sh"
-      - "scripts/render-conformance-visual.mts"
-      - "scripts/conformance-visual-compare.mjs"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - ".github/workflows/render-regression.yml"
   push:
     branches: ["main"]
   workflow_dispatch:
@@ -39,8 +18,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Render change classification
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.detect.outputs.mode }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_FULL: "true"
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CI_CLASSIFICATION_REPORT: target/render-classification.json
+        run: node scripts/ci-policy.mjs classify
+
+      - name: Upload render classification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: render-classification
+          path: target/render-classification.json
+          if-no-files-found: error
+
   render-regression:
-    name: Baseline Checks
+    name: Render regression
+    needs: changes
+    if: needs.changes.outputs.mode == 'full'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -107,3 +121,32 @@ jobs:
               "/tmp/boundtext-${name}.json" "$spec" || exit_code=1
           done
           exit $exit_code
+
+  baseline-checks:
+    name: Baseline Checks
+    if: ${{ always() }}
+    needs: [changes, render-regression]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Require expected render results
+        env:
+          CI_MODE: ${{ needs.changes.outputs.mode }}
+          CI_NEEDS: |
+            {
+              "changes": {
+                "result": "${{ needs.changes.result }}",
+                "outputs": {
+                  "mode": "${{ needs.changes.outputs.mode }}"
+                }
+              },
+              "render-regression": {
+                "result": "${{ needs.render-regression.result }}"
+              }
+            }
+        run: node scripts/ci-policy.mjs accept render

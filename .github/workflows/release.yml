@@ -28,9 +28,7 @@ concurrency:
 
 env:
   REQUIRED_CHECKS: |-
-    lint-and-typecheck
-    test-ts
-    test-rust
+    CI acceptance
     Baseline Checks
 
 jobs:

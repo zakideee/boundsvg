@@ -27,7 +27,7 @@ test("the release workflow exposes only explicit native publication routes", () 
   ]) {
     assert.match(releaseWorkflow, new RegExp(`^\\s+- ${target}$`, "m"));
   }
-  for (const requiredCheck of ["lint-and-typecheck", "test-ts", "test-rust", "Baseline Checks"]) {
+  for (const requiredCheck of ["CI acceptance", "Baseline Checks"]) {
     assert.match(releaseWorkflow, new RegExp(`^\\s+${requiredCheck}$`, "m"));
   }
 
