@@ -1,4 +1,10 @@
-import { FatalError, type OutputGenerator } from "@boundsvg/core";
+import type { OutputGenerator } from "@boundsvg/core";
+import {
+  cleanupAfterFailure,
+  createVideoError,
+  decodeMp4Failure,
+  type VideoOperation,
+} from "./diagnostics.js";
 import type { EncodedSample } from "./encode-pipeline.js";
 import type { VideoFrameRate } from "./frame-rate.js";
 import { type InitInput, initMuxerWasm, Mp4VideoMuxer } from "./generated-wasm.js";
@@ -51,84 +57,99 @@ export type Mp4Writer = {
  * container.
  */
 export async function createMp4Writer(options: Mp4WriterOptions): Promise<Mp4Writer> {
-  await initVideoWasm().catch((error: unknown) => {
-    throw new FatalError(
-      "VIDEO_ENCODER_UNSUPPORTED",
-      `the MP4 muxer wasm could not be loaded: ${describeError(error)}`,
-    );
-  });
+  await initVideoWasm();
 
   const muxer = createMuxer(options);
   let hasCodecDescription = false;
   let isDisposed = false;
   let sampleCount = 0;
-  let lastTimestampMicros = Number.NEGATIVE_INFINITY;
+  let lastTimestampMicros: number | undefined;
 
   const dispose = (): void => {
     if (isDisposed) {
       return;
     }
     isDisposed = true;
-    muxer.free();
+    try {
+      muxer.free();
+    } catch {
+      throw createVideoError("VIDEO_MUXER_PROTOCOL_ERROR", "disposeMuxer");
+    }
   };
 
-  const failWriter = (message: string): FatalError => {
-    dispose();
-    return new FatalError("VIDEO_ENCODER_UNSUPPORTED", message);
+  const failWriter = (failure: unknown): never => {
+    cleanupAfterFailure(dispose);
+    throw failure;
   };
-
-  /** Run a container call, turning its wasm-side failure into a FatalError. */
-  const runOnMuxer = <T>(action: () => T, what: string): T => {
+  const assertActive = (operation: "writeSample" | "finishMuxer"): void => {
+    if (isDisposed) {
+      throw createVideoError("VIDEO_MUXER_INVALID_STATE", operation);
+    }
+  };
+  const runOnMuxer = <T>(action: () => T, operation: VideoOperation): T => {
     try {
       return action();
     } catch (error) {
-      throw failWriter(`MP4 container ${what} failed: ${describeError(error)}`);
+      return failWriter(decodeMp4Failure(error, operation));
     }
   };
 
   return {
     write(sample) {
+      assertActive("writeSample");
       if (sample.codecDescription && !hasCodecDescription) {
         runOnMuxer(
           () => muxer.set_codec_description(sample.codecDescription as Uint8Array),
-          "setup",
+          "setDescription",
         );
         hasCodecDescription = true;
       }
       if (!hasCodecDescription) {
-        throw failWriter(
-          "the encoder produced a sample before reporting an avcC codec description, so the MP4 track cannot be described",
+        failWriter(
+          createVideoError("VIDEO_MUXER_MISSING_INPUT", "writeSample", {
+            field: "codecDescription",
+          }),
         );
       }
       // The container gives every sample the same duration in frame order, so
       // reordered output (B-frames) would play out of order rather than fail.
-      if (sample.timestampMicros <= lastTimestampMicros) {
-        throw failWriter(
-          `the encoder emitted samples out of presentation order (${sample.timestampMicros}us after ${lastTimestampMicros}us); MP4 export needs one in-order frame per sample`,
+      if (
+        lastTimestampMicros === undefined
+          ? sample.timestampMicros === Number.NEGATIVE_INFINITY
+          : sample.timestampMicros <= lastTimestampMicros
+      ) {
+        failWriter(
+          createVideoError("VIDEO_SAMPLE_ORDER_INVALID", "writeSample", {
+            ...(lastTimestampMicros !== undefined && {
+              previousTimestampMicros: lastTimestampMicros,
+            }),
+            timestampMicros: sample.timestampMicros,
+          }),
         );
       }
       lastTimestampMicros = sample.timestampMicros;
-      runOnMuxer(() => muxer.append_sample(sample.bytes, sample.keyFrame), "write");
+      runOnMuxer(() => muxer.append_sample(sample.bytes, sample.keyFrame), "appendSample");
       sampleCount += 1;
     },
     sampleCount() {
       return sampleCount;
     },
     finish() {
+      assertActive("finishMuxer");
       if (sampleCount === 0) {
-        throw failWriter("the encoder produced no samples");
+        failWriter(
+          createVideoError("VIDEO_MUXER_MISSING_INPUT", "finishMuxer", { sampleCount: 0 }),
+        );
       }
-      try {
-        return runOnMuxer(() => muxer.finish(), "finalize");
-      } finally {
-        dispose();
-      }
+      const bytes = runOnMuxer(() => muxer.finish(), "finishMuxer");
+      dispose();
+      return bytes;
     },
     dispose,
   };
 }
 
-function createMuxer(options: Mp4WriterOptions): Mp4VideoMuxer {
+function createMuxer(options: Mp4WriterOptions): InstanceType<typeof Mp4VideoMuxer> {
   try {
     return new Mp4VideoMuxer(
       options.width,
@@ -140,22 +161,6 @@ function createMuxer(options: Mp4WriterOptions): Mp4VideoMuxer {
       options.generator?.version,
     );
   } catch (error) {
-    // The frame rate is validated before it gets here and frames are padded to
-    // even sizes, so a rejection means this size cannot be carried at all.
-    throw new FatalError(
-      "VIDEO_ENCODER_UNSUPPORTED",
-      `MP4 container setup failed: ${describeError(error)}`,
-      {
-        context: {
-          width: options.width,
-          height: options.height,
-          frameRate: options.frameRate,
-        },
-      },
-    );
+    throw decodeMp4Failure(error, "createMuxer");
   }
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

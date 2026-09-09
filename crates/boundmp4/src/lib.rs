@@ -7,10 +7,14 @@
 //!
 //! No codec lives here: sample payloads arrive already encoded.
 
+mod error;
+mod failure;
 mod generator;
 mod muxer;
 
-use wasm_bindgen::JsError;
+use crate::error::{GeneratorPart, MuxerError};
+use crate::failure::{Mp4FailureOutput, Operation};
+use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::generator::GeneratorIdentity;
@@ -48,15 +52,25 @@ impl Mp4VideoMuxer {
         frame_count_hint: u32,
         generator_name: Option<String>,
         generator_version: Option<String>,
-    ) -> Result<Mp4VideoMuxer, JsError> {
+    ) -> Result<Mp4VideoMuxer, JsValue> {
         let generator = match (generator_name, generator_version) {
             (None, None) => None,
-            (Some(name), Some(version)) => {
-                Some(GeneratorIdentity::new(name, version).map_err(to_js)?)
-            }
-            _ => {
+            (Some(name), Some(version)) => Some(
+                GeneratorIdentity::new(name, version)
+                    .map_err(|error| to_js(error, Operation::CreateMuxer, None))?,
+            ),
+            (None, Some(_)) => {
                 return Err(to_js(
-                    "generator name and version must be provided together",
+                    MuxerError::IncompleteGenerator(GeneratorPart::Name),
+                    Operation::CreateMuxer,
+                    None,
+                ));
+            }
+            (Some(_), None) => {
+                return Err(to_js(
+                    MuxerError::IncompleteGenerator(GeneratorPart::Version),
+                    Operation::CreateMuxer,
+                    None,
                 ));
             }
         };
@@ -66,7 +80,7 @@ impl Mp4VideoMuxer {
             frame_count_hint,
             generator.as_ref(),
         )
-        .map_err(to_js)?;
+        .map_err(|error| to_js(error, Operation::CreateMuxer, None))?;
         Ok(Self { inner })
     }
 
@@ -76,8 +90,14 @@ impl Mp4VideoMuxer {
     ///
     /// Fails when the record does not parse, when a sample was already
     /// appended, or once [`Mp4VideoMuxer::finish`] has run.
-    pub fn set_codec_description(&mut self, avcc: &[u8]) -> Result<(), JsError> {
-        self.inner.set_codec_description(avcc).map_err(to_js)
+    pub fn set_codec_description(&mut self, avcc: &[u8]) -> Result<(), JsValue> {
+        self.inner.set_codec_description(avcc).map_err(|error| {
+            to_js(
+                error,
+                Operation::SetDescription,
+                Some(self.inner.sample_count()),
+            )
+        })
     }
 
     /// Append one encoded frame in decode order.
@@ -86,8 +106,14 @@ impl Mp4VideoMuxer {
     ///
     /// Fails when no codec description was set, once [`Mp4VideoMuxer::finish`]
     /// has run, or when the container writer rejects the sample.
-    pub fn append_sample(&mut self, bytes: &[u8], is_key: bool) -> Result<(), JsError> {
-        self.inner.append_sample(bytes, is_key).map_err(to_js)
+    pub fn append_sample(&mut self, bytes: &[u8], is_key: bool) -> Result<(), JsValue> {
+        self.inner.append_sample(bytes, is_key).map_err(|error| {
+            to_js(
+                error,
+                Operation::AppendSample,
+                Some(self.inner.sample_count()),
+            )
+        })
     }
 
     /// Write the index and return the complete MP4 file.
@@ -96,12 +122,27 @@ impl Mp4VideoMuxer {
     ///
     /// Fails when no sample was supplied, when called twice, or when the
     /// container writer rejects the accumulated samples.
-    pub fn finish(&mut self) -> Result<Vec<u8>, JsError> {
-        self.inner.finish().map_err(to_js)
+    pub fn finish(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.inner.finish().map_err(|error| {
+            to_js(
+                error,
+                Operation::FinishMuxer,
+                Some(self.inner.sample_count()),
+            )
+        })
     }
 }
 
-/// Convert to a real JS `Error`, so callers can read `.message`.
-fn to_js(error: impl std::fmt::Display) -> JsError {
-    JsError::new(&error.to_string())
+/// Independent revision of the MP4 exports and failure wire.
+const MP4_WASM_SCHEMA_VERSION: u32 = 1;
+
+/// Return the MP4 boundary revision expected by the matching Video package.
+#[wasm_bindgen]
+#[must_use]
+pub fn mp4_wasm_schema_version() -> u32 {
+    MP4_WASM_SCHEMA_VERSION
+}
+
+fn to_js(error: MuxerError, operation: Operation, sample_count: Option<usize>) -> JsValue {
+    Mp4FailureOutput::new(error, operation, sample_count).into_js()
 }

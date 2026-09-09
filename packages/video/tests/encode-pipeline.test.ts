@@ -182,7 +182,7 @@ describe("createEncodePipeline", () => {
     const { pipeline } = await createPipeline(encoder);
 
     await expect(pipeline.finish()).rejects.toMatchObject({
-      code: "VIDEO_ENCODER_UNSUPPORTED",
+      code: "VIDEO_ENCODER_FAILED",
     });
     expect(encoder.state.closeCount).toBe(1);
   });
@@ -271,7 +271,7 @@ describe("createEncodePipeline", () => {
     const { frame, closeSpy } = createFakeFrame();
 
     await expect(pipeline.submit(frame, 0)).rejects.toMatchObject({
-      code: "VIDEO_ENCODER_UNSUPPORTED",
+      code: "VIDEO_ENCODER_FAILED",
     });
     expect(closeSpy).toHaveBeenCalledTimes(1);
     expect(encoder.state.closeCount).toBe(1);
@@ -280,20 +280,19 @@ describe("createEncodePipeline", () => {
   it("surfaces a sample handler that throws synchronously", async () => {
     // A throw inside the encoder's own output task is invisible to the caller
     // unless it is captured here, which would truncate the file silently.
+    const failure = new Error("muxer refused the sample");
     const encoder = createFakeEncoder();
     const pipeline = await createEncodePipeline({
       config: CONFIG,
       keyFrameInterval: 2,
       onSample: () => {
-        throw new Error("muxer refused the sample");
+        throw failure;
       },
       encoderConstructor: encoder.constructor,
     });
 
     encoder.state.emit({ chunk: createFakeChunk([1]) });
-    await expect(pipeline.finish()).rejects.toMatchObject({
-      code: "VIDEO_ENCODER_UNSUPPORTED",
-    });
+    await expect(pipeline.finish()).rejects.toBe(failure);
   });
 
   it("aborts through the supplied signal", async () => {
@@ -319,4 +318,130 @@ describe("createEncodePipeline", () => {
     pipeline.close();
     expect(encoder.state.closeCount).toBe(1);
   });
+});
+
+it("preserves the first sample failure over a later flush rejection and close failure", async () => {
+  const failure = new FatalError("VIDEO_MUXER_WRITE_FAILED", "MP4 container assembly failed", {
+    stage: "emit",
+    context: {
+      domain: "video",
+      category: "container",
+      operation: "appendSample",
+      reason: "writerRejected",
+      sampleCount: 0,
+    },
+  });
+  const encoder = createFakeEncoder();
+  const pipeline = await createEncodePipeline({
+    config: CONFIG,
+    keyFrameInterval: 2,
+    onSample: () => {
+      throw failure;
+    },
+    encoderConstructor: encoder.constructor,
+  });
+  const prototype = encoder.constructor.prototype as VideoEncoderLike;
+  vi.spyOn(prototype, "flush").mockImplementation(async () => {
+    encoder.state.emit({ chunk: createFakeChunk([1]) });
+    encoder.state.fail(new Error("later callback"));
+    throw new Error("later flush");
+  });
+  const close = vi.spyOn(prototype, "close").mockImplementation(() => {
+    throw new Error("cleanup");
+  });
+  await expect(pipeline.finish()).rejects.toBe(failure);
+  pipeline.close();
+  expect(close).toHaveBeenCalledTimes(1);
+});
+
+it("classifies chunk copy failure without retaining its cause", async () => {
+  const encoder = createFakeEncoder();
+  const { pipeline } = await createPipeline(encoder);
+  const chunk = createFakeChunk([1]);
+  vi.spyOn(chunk, "copyTo").mockImplementation(() => {
+    throw new Error("private bytes");
+  });
+  encoder.state.emit({ chunk });
+  await expect(pipeline.finish()).rejects.toMatchObject({
+    code: "VIDEO_ENCODER_FAILED",
+    message: "Video encoding failed",
+    context: { domain: "video", category: "encoderFailure", operation: "receiveSample" },
+  });
+  expect(encoder.state.closeCount).toBe(1);
+});
+
+it("closes a submitted frame once without replacing an encode failure", async () => {
+  const encoder = createFakeEncoder();
+  const { pipeline } = await createPipeline(encoder);
+  vi.spyOn(encoder.constructor.prototype as VideoEncoderLike, "encode").mockImplementation(() => {
+    throw new Error("encode");
+  });
+  const { frame, closeSpy } = createFakeFrame();
+  closeSpy.mockImplementation(() => {
+    throw new Error("frame close");
+  });
+  await expect(pipeline.submit(frame, 0)).rejects.toMatchObject({
+    code: "VIDEO_ENCODER_FAILED",
+    context: expect.objectContaining({ operation: "encodeFrame" }),
+  });
+  expect(closeSpy).toHaveBeenCalledTimes(1);
+  expect(encoder.state.closeCount).toBe(1);
+});
+
+it("reports standalone frame close failure and preserves opaque undefined sample failure", async () => {
+  const encoder = createFakeEncoder();
+  const { pipeline } = await createPipeline(encoder, {
+    onSample: () => {
+      throw undefined;
+    },
+  });
+  encoder.state.emit({ chunk: createFakeChunk([1]) });
+  await expect(pipeline.finish()).rejects.toBeUndefined();
+  const next = createFakeEncoder();
+  const { pipeline: nextPipeline } = await createPipeline(next);
+  const { frame, closeSpy } = createFakeFrame();
+  closeSpy.mockImplementation(() => {
+    throw new Error("close");
+  });
+  await expect(nextPipeline.submit(frame, 0)).rejects.toMatchObject({
+    code: "VIDEO_ENCODER_FAILED",
+    context: expect.objectContaining({ operation: "closeFrame" }),
+  });
+  expect(closeSpy).toHaveBeenCalledTimes(1);
+  expect(next.state.closeCount).toBe(1);
+});
+
+it("classifies constructor failure and closes once after standalone encoder cleanup failure", async () => {
+  class FailingEncoder {
+    constructor() {
+      throw new Error("private constructor failure");
+    }
+    static async isConfigSupported(config: VideoEncoderConfig) {
+      return { supported: true, config };
+    }
+  }
+  await expect(
+    createEncodePipeline({
+      config: CONFIG,
+      keyFrameInterval: 2,
+      onSample: () => {},
+      encoderConstructor: FailingEncoder as unknown as VideoEncoderConstructorLike,
+    }),
+  ).rejects.toMatchObject({
+    code: "VIDEO_ENCODER_FAILED",
+    context: { operation: "createEncoder" },
+  });
+  const encoder = createFakeEncoder();
+  const { pipeline } = await createPipeline(encoder);
+  const close = vi
+    .spyOn(encoder.constructor.prototype as VideoEncoderLike, "close")
+    .mockImplementation(() => {
+      throw new Error("private cleanup failure");
+    });
+  await expect(pipeline.finish()).rejects.toMatchObject({
+    code: "VIDEO_ENCODER_FAILED",
+    context: { operation: "closeEncoder" },
+  });
+  pipeline.close();
+  expect(close).toHaveBeenCalledTimes(1);
 });

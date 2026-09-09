@@ -1,6 +1,6 @@
 //! Constrained public generator identity for MP4 exports.
 
-use crate::muxer::MuxerError;
+use crate::error::MuxerError;
 
 const GENERATOR_NAME_MAX_LEN: usize = 64;
 const GENERATOR_VERSION_MAX_LEN: usize = 64;
@@ -16,9 +16,7 @@ impl GeneratorIdentity {
     /// Validate and construct the deliberately narrow representation.
     pub fn new(name: String, version: String) -> Result<Self, MuxerError> {
         if !is_valid_package_name(&name) {
-            return Err(MuxerError::InvalidArgument(format!(
-                "generator name must be a lowercase package identifier of at most {GENERATOR_NAME_MAX_LEN} ASCII characters"
-            )));
+            return Err(MuxerError::InvalidGeneratorName);
         }
         if version.is_empty()
             || version.len() > GENERATOR_VERSION_MAX_LEN
@@ -30,9 +28,7 @@ impl GeneratorIdentity {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-' | b'_')
             })
         {
-            return Err(MuxerError::InvalidArgument(format!(
-                "generator version must start with an ASCII letter or digit, contain only ASCII letters, digits, '.', '+', '-' or '_', and be at most {GENERATOR_VERSION_MAX_LEN} characters"
-            )));
+            return Err(MuxerError::InvalidGeneratorVersion);
         }
         Ok(Self { name, version })
     }

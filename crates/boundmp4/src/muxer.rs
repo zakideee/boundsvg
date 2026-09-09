@@ -5,7 +5,6 @@
 //! This module only frames those payloads into an MP4 container — it never
 //! encodes or transcodes video.
 
-use std::fmt;
 use std::num::{NonZeroU16, NonZeroU32};
 
 use shiguredo_mp4::boxes::{Avc1Box, AvccBox, SampleEntry, UnknownBox, VisualSampleEntryFields};
@@ -14,6 +13,7 @@ use shiguredo_mp4::mux::{
 };
 use shiguredo_mp4::{BoxSize, BoxType, Decode, Encode, TrackKind, Uint};
 
+use crate::error::{Dimension, FrameRateTerm, MuxerError};
 use crate::generator::GeneratorIdentity;
 
 /// Largest frame count the reserved index may be sized for.
@@ -30,35 +30,6 @@ const FRAME_COUNT_HINT_MAX: u32 = 1_000_000;
 /// 1080p at the export bitrate ceiling — leaves room for that growth. Past it
 /// the allocator aborts the whole module instead of returning an error.
 const FILE_BYTES_MAX: usize = 256 << 20;
-
-/// Failure while assembling the MP4 container.
-#[derive(Debug)]
-pub enum MuxerError {
-    /// A constructor argument was outside the range MP4 can represent.
-    InvalidArgument(String),
-    /// A required input was missing or arrived in the wrong order.
-    MissingInput(String),
-    /// `finish` was already called on this muxer.
-    AlreadyFinished,
-    /// The underlying container writer rejected the input.
-    ContainerWrite(String),
-}
-
-impl fmt::Display for MuxerError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidArgument(detail) | Self::MissingInput(detail) => {
-                formatter.write_str(detail)
-            }
-            Self::AlreadyFinished => formatter.write_str("muxer has already been finished"),
-            Self::ContainerWrite(detail) => {
-                write!(formatter, "mp4 container write failed: {detail}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for MuxerError {}
 
 /// Streams encoded H.264 samples into a faststart MP4 file.
 ///
@@ -79,6 +50,11 @@ pub struct VideoMuxer {
 }
 
 impl VideoMuxer {
+    /// Return the number of successfully appended samples for failure context.
+    pub fn sample_count(&self) -> usize {
+        self.sample_count
+    }
+
     /// Create a muxer for a single H.264 track.
     ///
     /// The container time axis is `timescale = frame_rate_numerator` with every
@@ -91,7 +67,7 @@ impl VideoMuxer {
     ///
     /// # Errors
     ///
-    /// Returns [`MuxerError::InvalidArgument`] when the dimensions are zero,
+    /// Returns [`MuxerError`] when the dimensions are zero,
     /// odd (H.264 yuv420 requires even dimensions), or larger than the MP4
     /// visual sample entry can hold, or when either frame rate term or the
     /// frame count hint is zero.
@@ -101,41 +77,28 @@ impl VideoMuxer {
         frame_count_hint: u32,
         generator: Option<&GeneratorIdentity>,
     ) -> Result<Self, MuxerError> {
-        let width = check_dimension(dimensions.0, "width")?;
-        let height = check_dimension(dimensions.1, "height")?;
-        let frame_rate_numerator = NonZeroU32::new(frame_rate.0).ok_or_else(|| {
-            MuxerError::InvalidArgument("frame rate numerator must be positive".to_string())
-        })?;
+        let width = check_dimension(dimensions.0, Dimension::Width)?;
+        let height = check_dimension(dimensions.1, Dimension::Height)?;
+        let frame_rate_numerator = NonZeroU32::new(frame_rate.0)
+            .ok_or(MuxerError::InvalidFrameRate(FrameRateTerm::Numerator))?;
         if frame_rate.1 == 0 {
-            return Err(MuxerError::InvalidArgument(
-                "frame rate denominator must be positive".to_string(),
-            ));
+            return Err(MuxerError::InvalidFrameRate(FrameRateTerm::Denominator));
         }
         if frame_count_hint == 0 || frame_count_hint > FRAME_COUNT_HINT_MAX {
-            return Err(MuxerError::InvalidArgument(format!(
-                "frame count hint must be between 1 and {FRAME_COUNT_HINT_MAX} (got {frame_count_hint})"
-            )));
+            return Err(MuxerError::InvalidFrameCountHint);
         }
 
         let generator_udta_box = generator.map(build_generator_udta_box).transpose()?;
         // Keep enough room for the metadata plus a valid trailing `free` box.
         // The no-generator branch preserves the previous reservation exactly.
         let generator_reservation = match &generator_udta_box {
-            Some(metadata_box) => usize::try_from(metadata_box.box_size.get())
-                .ok()
-                .and_then(|metadata_size| metadata_size.checked_add(8))
-                .ok_or_else(|| {
-                    MuxerError::InvalidArgument(
-                        "generator metadata reservation overflow".to_string(),
-                    )
-                })?,
+            Some(metadata_box) => generator_reservation(metadata_box.box_size.get())?,
             None => 0,
         };
-        let reserved_moov_box_size = estimate_maximum_moov_box_size(&[frame_count_hint as usize])
-            .checked_add(generator_reservation)
-            .ok_or_else(|| {
-                MuxerError::InvalidArgument("generator metadata reservation overflow".to_string())
-            })?;
+        let reserved_moov_box_size = combined_reservation(
+            estimate_maximum_moov_box_size(&[frame_count_hint as usize]),
+            generator_reservation,
+        )?;
         let options = Mp4FileMuxerOptions {
             reserved_moov_box_size,
             ..Mp4FileMuxerOptions::default()
@@ -165,7 +128,7 @@ impl VideoMuxer {
     ///
     /// # Errors
     ///
-    /// Returns [`MuxerError::InvalidArgument`] when the record does not parse or
+    /// Returns [`MuxerError`] when the record does not parse or
     /// a sample was already appended, and [`MuxerError::AlreadyFinished`] once
     /// `finish` has run.
     pub fn set_codec_description(&mut self, avcc: &[u8]) -> Result<(), MuxerError> {
@@ -173,9 +136,7 @@ impl VideoMuxer {
             return Err(MuxerError::AlreadyFinished);
         }
         if self.sample_count > 0 {
-            return Err(MuxerError::InvalidArgument(
-                "codec description must be set before the first sample".to_string(),
-            ));
+            return Err(MuxerError::DescriptionAfterSamples);
         }
         self.sample_entry = Some(self.build_sample_entry(avcc)?);
         Ok(())
@@ -185,9 +146,9 @@ impl VideoMuxer {
     ///
     /// # Errors
     ///
-    /// Returns [`MuxerError::MissingInput`] when no codec description was set,
+    /// Returns [`MuxerError::MissingCodecDescription`] when no codec description was set,
     /// [`MuxerError::AlreadyFinished`] once `finish` has run, and
-    /// [`MuxerError::ContainerWrite`] when the container writer rejects the
+    /// [`MuxerError::WriterRejected`] when the container writer rejects the
     /// sample.
     pub fn append_sample(&mut self, bytes: &[u8], is_key: bool) -> Result<(), MuxerError> {
         if self.is_finished {
@@ -196,22 +157,23 @@ impl VideoMuxer {
         let is_first_sample = self.sample_count == 0;
         // The writer reuses the previous entry when this is None.
         let sample_entry = if is_first_sample {
-            Some(self.sample_entry.clone().ok_or_else(|| {
-                MuxerError::MissingInput("codec description was never set".to_string())
-            })?)
+            Some(
+                self.sample_entry
+                    .clone()
+                    .ok_or(MuxerError::MissingCodecDescription)?,
+            )
         } else {
             None
         };
 
         let data_offset = self.file_bytes.len() as u64;
         if self.file_bytes.len().saturating_add(bytes.len()) > FILE_BYTES_MAX {
-            return Err(MuxerError::ContainerWrite(format!(
-                "output would exceed the {FILE_BYTES_MAX} byte limit"
-            )));
+            return Err(MuxerError::OutputByteLimit {
+                limit_bytes: FILE_BYTES_MAX,
+                requested_bytes: self.file_bytes.len().saturating_add(bytes.len()),
+            });
         }
-        self.file_bytes.try_reserve(bytes.len()).map_err(|_| {
-            MuxerError::ContainerWrite("out of memory for the next sample".to_string())
-        })?;
+        reserve_sample_bytes(&mut self.file_bytes, bytes.len())?;
 
         // Told to the writer before the payload lands, so a rejected sample
         // leaves the buffer and the writer's position in step.
@@ -236,18 +198,16 @@ impl VideoMuxer {
     ///
     /// # Errors
     ///
-    /// Returns [`MuxerError::MissingInput`] when no sample was appended,
+    /// Returns [`MuxerError::MissingCodecDescription`] when no sample was appended,
     /// [`MuxerError::AlreadyFinished`] on a second call, and
-    /// [`MuxerError::ContainerWrite`] when the writer rejects the accumulated
+    /// [`MuxerError::WriterRejected`] when the writer rejects the accumulated
     /// samples or the reserved index space turned out too small.
     pub fn finish(&mut self) -> Result<Vec<u8>, MuxerError> {
         if self.is_finished {
             return Err(MuxerError::AlreadyFinished);
         }
         if self.sample_count == 0 {
-            return Err(MuxerError::MissingInput(
-                "no samples were appended".to_string(),
-            ));
+            return Err(MuxerError::EmptySamples);
         }
 
         // finalize is not idempotent, so this muxer is spent from here on
@@ -255,10 +215,7 @@ impl VideoMuxer {
         self.is_finished = true;
         let finalized = self.muxer.finalize().map_err(container_write_error)?;
         if !finalized.is_faststart_enabled() {
-            return Err(MuxerError::ContainerWrite(format!(
-                "reserved index space was too small for {} samples",
-                self.sample_count
-            )));
+            return Err(MuxerError::InsufficientIndexSpace);
         }
 
         let custom_moov_bytes = if let Some(generator_udta_box) = &self.generator_udta_box {
@@ -270,9 +227,8 @@ impl VideoMuxer {
         };
         let mut patches = Vec::new();
         for (offset, bytes) in finalized.offset_and_bytes_pairs() {
-            let start = usize::try_from(offset).map_err(|_| {
-                MuxerError::ContainerWrite("container offset exceeds address space".to_string())
-            })?;
+            let start =
+                usize::try_from(offset).map_err(|_| MuxerError::InvalidContainerStructure)?;
             patches.push((start, bytes));
         }
         let file_bytes = &mut self.file_bytes;
@@ -339,10 +295,34 @@ fn build_generator_udta_box(generator: &GeneratorIdentity) -> Result<UnknownBox,
     })
 }
 
+fn generator_reservation(box_size: u64) -> Result<usize, MuxerError> {
+    usize::try_from(box_size)
+        .ok()
+        .and_then(|metadata_size| metadata_size.checked_add(8))
+        .ok_or(MuxerError::MetadataReservationLimit)
+}
+
+fn combined_reservation(index_size: usize, generator_size: usize) -> Result<usize, MuxerError> {
+    index_size
+        .checked_add(generator_size)
+        .ok_or(MuxerError::MetadataReservationLimit)
+}
+
+fn small_box_size(payload_size: usize) -> Result<u32, MuxerError> {
+    u32::try_from(8usize.saturating_add(payload_size))
+        .map_err(|_| MuxerError::MetadataReservationLimit)
+}
+
+fn reserve_sample_bytes(output: &mut Vec<u8>, additional: usize) -> Result<(), MuxerError> {
+    output
+        .try_reserve(additional)
+        .map_err(|_| MuxerError::OutputAllocation {
+            requested_bytes: additional,
+        })
+}
+
 fn encode_small_box(box_type: [u8; 4], payload: &[u8]) -> Result<Vec<u8>, MuxerError> {
-    let size = u32::try_from(8usize.saturating_add(payload.len())).map_err(|_| {
-        MuxerError::InvalidArgument("generator metadata box is too large".to_string())
-    })?;
+    let size = small_box_size(payload.len())?;
     let mut box_bytes = Vec::with_capacity(size as usize);
     box_bytes.extend_from_slice(&size.to_be_bytes());
     box_bytes.extend_from_slice(&box_type);
@@ -361,37 +341,28 @@ fn replace_faststart_moov(
     let moov_index = boxes
         .iter()
         .position(|(_, _, box_type)| box_type == b"moov")
-        .ok_or_else(|| MuxerError::ContainerWrite("finalized MP4 has no moov box".to_string()))?;
+        .ok_or(MuxerError::InvalidContainerStructure)?;
     let (moov_offset, moov_size, _) = boxes[moov_index];
     let Some(&(free_offset, free_size, ref free_type)) = boxes.get(moov_index + 1) else {
-        return Err(MuxerError::ContainerWrite(
-            "generator metadata has no reserved free box".to_string(),
-        ));
+        return Err(MuxerError::InvalidContainerStructure);
     };
     if free_type != b"free" || free_offset != moov_offset + moov_size {
-        return Err(MuxerError::ContainerWrite(
-            "generator metadata reservation is not adjacent to moov".to_string(),
-        ));
+        return Err(MuxerError::InvalidContainerStructure);
     }
     let available_size = moov_size.saturating_add(free_size);
     if custom_moov_bytes.len() > available_size {
-        return Err(MuxerError::ContainerWrite(
-            "reserved index space was too small for generator metadata".to_string(),
-        ));
+        return Err(MuxerError::InvalidContainerStructure);
     }
     let trailing_size = available_size - custom_moov_bytes.len();
     if trailing_size != 0 && trailing_size < 8 {
-        return Err(MuxerError::ContainerWrite(
-            "generator metadata left an invalid MP4 free-box gap".to_string(),
-        ));
+        return Err(MuxerError::InvalidContainerStructure);
     }
 
     let custom_moov_end = moov_offset + custom_moov_bytes.len();
     file_bytes[moov_offset..custom_moov_end].copy_from_slice(custom_moov_bytes);
     if trailing_size > 0 {
-        let trailing_size_u32 = u32::try_from(trailing_size).map_err(|_| {
-            MuxerError::ContainerWrite("generator free box exceeds 32-bit size".to_string())
-        })?;
+        let trailing_size_u32 =
+            u32::try_from(trailing_size).map_err(|_| MuxerError::InvalidContainerStructure)?;
         file_bytes[custom_moov_end..custom_moov_end + 4]
             .copy_from_slice(&trailing_size_u32.to_be_bytes());
         file_bytes[custom_moov_end + 4..custom_moov_end + 8].copy_from_slice(b"free");
@@ -420,9 +391,7 @@ fn top_level_boxes(file_bytes: &[u8]) -> Result<Vec<(usize, usize, [u8; 4])>, Mu
             0 => file_bytes.len() - offset,
             1 => {
                 if offset.saturating_add(16) > file_bytes.len() {
-                    return Err(MuxerError::ContainerWrite(
-                        "truncated large MP4 box header".to_string(),
-                    ));
+                    return Err(MuxerError::InvalidContainerStructure);
                 }
                 let large_size = u64::from_be_bytes([
                     file_bytes[offset + 8],
@@ -434,47 +403,31 @@ fn top_level_boxes(file_bytes: &[u8]) -> Result<Vec<(usize, usize, [u8; 4])>, Mu
                     file_bytes[offset + 14],
                     file_bytes[offset + 15],
                 ]);
-                usize::try_from(large_size).map_err(|_| {
-                    MuxerError::ContainerWrite("MP4 box exceeds address space".to_string())
-                })?
+                usize::try_from(large_size).map_err(|_| MuxerError::InvalidContainerStructure)?
             }
             size => size as usize,
         };
         if box_size < 8 || offset.saturating_add(box_size) > file_bytes.len() {
-            return Err(MuxerError::ContainerWrite(
-                "invalid finalized MP4 box size".to_string(),
-            ));
+            return Err(MuxerError::InvalidContainerStructure);
         }
         boxes.push((offset, box_size, box_type));
         offset += box_size;
     }
     if offset != file_bytes.len() {
-        return Err(MuxerError::ContainerWrite(
-            "trailing bytes after finalized MP4 boxes".to_string(),
-        ));
+        return Err(MuxerError::InvalidContainerStructure);
     }
     Ok(boxes)
 }
 
-fn check_dimension(value: u32, label: &str) -> Result<NonZeroU16, MuxerError> {
-    if value == 0 {
-        return Err(MuxerError::InvalidArgument(format!(
-            "{label} must be positive"
-        )));
+fn check_dimension(pixels: u32, dimension: Dimension) -> Result<NonZeroU16, MuxerError> {
+    let failure = MuxerError::InvalidDimension { dimension, pixels };
+    if pixels == 0 || !pixels.is_multiple_of(2) {
+        return Err(failure);
     }
-    if !value.is_multiple_of(2) {
-        return Err(MuxerError::InvalidArgument(format!(
-            "{label} must be even for H.264 yuv420 (got {value})"
-        )));
-    }
-    u16::try_from(value)
+    u16::try_from(pixels)
         .ok()
         .and_then(NonZeroU16::new)
-        .ok_or_else(|| {
-            MuxerError::InvalidArgument(format!(
-                "{label} exceeds the mp4 limit of 65534 (got {value})"
-            ))
-        })
+        .ok_or(failure)
 }
 
 /// Parse an `avcC` decoder configuration record into its box representation.
@@ -486,17 +439,14 @@ fn decode_avcc_box(codec_description: &[u8]) -> Result<AvccBox, MuxerError> {
     const AVCC_BOX_HEADER_SIZE: usize = 8;
 
     let box_size = u32::try_from(AVCC_BOX_HEADER_SIZE.saturating_add(codec_description.len()))
-        .map_err(|_| MuxerError::InvalidArgument("codec description is too large".to_string()))?;
+        .map_err(|_| MuxerError::InvalidCodecDescription)?;
     let mut box_bytes = Vec::with_capacity(box_size as usize);
     box_bytes.extend_from_slice(&box_size.to_be_bytes());
     box_bytes.extend_from_slice(b"avcC");
     box_bytes.extend_from_slice(codec_description);
 
-    let (mut avcc_box, _) = AvccBox::decode(&box_bytes).map_err(|error| {
-        MuxerError::InvalidArgument(format!(
-            "codec description is not a valid avcC record: {error}"
-        ))
-    })?;
+    let (mut avcc_box, _) =
+        AvccBox::decode(&box_bytes).map_err(|_| MuxerError::InvalidCodecDescription)?;
     fill_chroma_defaults(&mut avcc_box);
     Ok(avcc_box)
 }
@@ -525,8 +475,8 @@ fn fill_chroma_defaults(avcc_box: &mut AvccBox) {
         .get_or_insert(Uint::new(BIT_DEPTH_8));
 }
 
-fn container_write_error(error: impl fmt::Display) -> MuxerError {
-    MuxerError::ContainerWrite(error.to_string())
+fn container_write_error(_: impl std::fmt::Display) -> MuxerError {
+    MuxerError::WriterRejected
 }
 
 #[cfg(test)]
@@ -672,6 +622,40 @@ mod tests {
     }
 
     #[test]
+    fn maps_derived_reservation_overflows_without_allocating() {
+        assert_eq!(
+            super::generator_reservation(u64::MAX),
+            Err(MuxerError::MetadataReservationLimit)
+        );
+        assert_eq!(
+            super::combined_reservation(usize::MAX, 1),
+            Err(MuxerError::MetadataReservationLimit)
+        );
+        assert_eq!(
+            super::small_box_size(usize::MAX),
+            Err(MuxerError::MetadataReservationLimit)
+        );
+        assert_eq!(
+            super::reserve_sample_bytes(&mut Vec::new(), usize::MAX),
+            Err(MuxerError::OutputAllocation {
+                requested_bytes: usize::MAX
+            })
+        );
+    }
+
+    #[test]
+    fn maps_container_structure_failures_without_retaining_text() {
+        assert_eq!(
+            super::top_level_boxes(&[0, 0, 0, 7, b'm', b'o', b'o', b'v']),
+            Err(MuxerError::InvalidContainerStructure)
+        );
+        assert_eq!(
+            super::container_write_error("external secret"),
+            MuxerError::WriterRejected
+        );
+    }
+
+    #[test]
     fn muxes_a_two_sample_track_that_reads_back() {
         let file_bytes = mux_frames(2, (30, 1));
         let (timescale, samples, resolution) = demux(&file_bytes);
@@ -721,8 +705,7 @@ mod tests {
                 .unwrap();
         }
         let error = muxer.finish().unwrap_err();
-        assert!(matches!(error, MuxerError::ContainerWrite(_)));
-        assert!(error.to_string().contains("reserved index space"));
+        assert_eq!(error, MuxerError::InsufficientIndexSpace);
     }
 
     #[test]
@@ -858,19 +841,18 @@ mod tests {
     #[test]
     fn rejects_odd_dimensions() {
         let error = VideoMuxer::new((65, 32), (30, 1), 1, None).unwrap_err();
-        assert!(matches!(error, MuxerError::InvalidArgument(_)));
-        assert!(error.to_string().contains("even"));
+        assert!(matches!(error, MuxerError::InvalidDimension { .. }));
     }
 
     #[test]
     fn rejects_a_zero_frame_rate() {
         assert!(matches!(
             VideoMuxer::new(FRAME_SIZE, (0, 1), 1, None).unwrap_err(),
-            MuxerError::InvalidArgument(_)
+            MuxerError::InvalidFrameRate(_)
         ));
         assert!(matches!(
             VideoMuxer::new(FRAME_SIZE, (30, 0), 1, None).unwrap_err(),
-            MuxerError::InvalidArgument(_)
+            MuxerError::InvalidFrameRate(_)
         ));
     }
 
@@ -878,11 +860,11 @@ mod tests {
     fn rejects_an_out_of_range_frame_count_hint() {
         assert!(matches!(
             VideoMuxer::new(FRAME_SIZE, (30, 1), 0, None).unwrap_err(),
-            MuxerError::InvalidArgument(_)
+            MuxerError::InvalidFrameCountHint
         ));
         assert!(matches!(
             VideoMuxer::new(FRAME_SIZE, (30, 1), u32::MAX, None).unwrap_err(),
-            MuxerError::InvalidArgument(_)
+            MuxerError::InvalidFrameCountHint
         ));
     }
 
@@ -891,7 +873,7 @@ mod tests {
         let mut muxer = new_muxer((30, 1), 1);
         assert!(matches!(
             muxer.append_sample(&sample_bytes(0, 8), true).unwrap_err(),
-            MuxerError::MissingInput(_)
+            MuxerError::MissingCodecDescription
         ));
     }
 
@@ -904,7 +886,7 @@ mod tests {
             muxer
                 .set_codec_description(&codec_description())
                 .unwrap_err(),
-            MuxerError::InvalidArgument(_)
+            MuxerError::DescriptionAfterSamples
         ));
     }
 
@@ -914,7 +896,7 @@ mod tests {
         muxer.set_codec_description(&codec_description()).unwrap();
         assert!(matches!(
             muxer.finish().unwrap_err(),
-            MuxerError::MissingInput(_)
+            MuxerError::EmptySamples
         ));
     }
 
@@ -943,8 +925,7 @@ mod tests {
         // Stand in for a stream far past the limit without allocating one.
         muxer.file_bytes.resize(super::FILE_BYTES_MAX, 0);
         let error = muxer.append_sample(&oversized, true).unwrap_err();
-        assert!(matches!(error, MuxerError::ContainerWrite(_)));
-        assert!(error.to_string().contains("byte limit"));
+        assert!(matches!(error, MuxerError::OutputByteLimit { .. }));
     }
 
     #[test]
@@ -952,7 +933,7 @@ mod tests {
         let mut muxer = new_muxer((30, 1), 1);
         assert!(matches!(
             muxer.set_codec_description(&[0x09, 0x00]).unwrap_err(),
-            MuxerError::InvalidArgument(_)
+            MuxerError::InvalidCodecDescription
         ));
     }
 }

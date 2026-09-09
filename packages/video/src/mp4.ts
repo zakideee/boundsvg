@@ -103,7 +103,7 @@ const PACKAGE_NAME_PATTERN =
  * @throws FatalError with `VIDEO_INVALID_SCHEDULE` (the sample schedule),
  * `VIDEO_INVALID_OPTION` (any other option value), `VIDEO_INVALID_FRAMES` (the
  * sampled frames), `VIDEO_INVALID_FRAME_RATE`, `VIDEO_TOO_MANY_FRAMES`,
- * `VIDEO_ENCODER_UNSUPPORTED`, or `VIDEO_EXPORT_ABORTED`.
+ * `VIDEO_EXPORT_ABORTED`, or a Video encoder, frame preparation or muxer diagnostic.
  */
 export async function renderToMp4(
   engine: Engine,

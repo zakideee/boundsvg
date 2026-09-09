@@ -136,14 +136,14 @@ describe("createMp4Writer", () => {
   it("refuses a sample the encoder never described", async () => {
     const writer = await createMp4Writer(writerOptions());
     expect(() => writer.write(sample([1, 2, 3]))).toThrowError(
-      expect.objectContaining({ code: "VIDEO_ENCODER_UNSUPPORTED" }),
+      expect.objectContaining({ code: "VIDEO_MUXER_MISSING_INPUT" }),
     );
   });
 
   it("refuses to finish without samples", async () => {
     const writer = await createMp4Writer(writerOptions());
     expect(() => writer.finish()).toThrowError(
-      expect.objectContaining({ code: "VIDEO_ENCODER_UNSUPPORTED" }),
+      expect.objectContaining({ code: "VIDEO_MUXER_MISSING_INPUT" }),
     );
   });
 
@@ -151,13 +151,13 @@ describe("createMp4Writer", () => {
     const writer = await createMp4Writer(writerOptions());
     writer.write(sample([1, 2, 3], { codecDescription: CODEC_DESCRIPTION, timestampMicros: 100 }));
     expect(() => writer.write(sample([4, 5, 6], { timestampMicros: 50 }))).toThrowError(
-      expect.objectContaining({ code: "VIDEO_ENCODER_UNSUPPORTED" }),
+      expect.objectContaining({ code: "VIDEO_SAMPLE_ORDER_INVALID" }),
     );
   });
 
   it("rejects odd frame dimensions", async () => {
     await expect(createMp4Writer({ ...writerOptions(), width: 65 })).rejects.toMatchObject({
-      code: "VIDEO_ENCODER_UNSUPPORTED",
+      code: "VIDEO_MUXER_INVALID_INPUT",
     });
   });
 
