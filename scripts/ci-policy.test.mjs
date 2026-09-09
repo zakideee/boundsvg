@@ -364,11 +364,14 @@ test("actual workflow wiring keeps required jobs, coverage, and unique acceptanc
   ]) {
     const block = jobBlock(yaml, name);
     assert.match(block, /if: \$\{\{ always\(\) \}\}/);
-    const actualNeeds = /needs:\s*\[([\s\S]*?)\]/
-      .exec(block)?.[1]
-      .split(",")
-      .map((name) => name.trim())
-      .filter(Boolean);
+    const flowNeeds = /needs:\s*\[([\s\S]*?)\]/.exec(block)?.[1];
+    const actualNeeds =
+      flowNeeds === undefined
+        ? [...block.matchAll(/^ {6}- ([\w-]+)$/gm)].map((match) => match[1])
+        : flowNeeds
+            .split(",")
+            .map((name) => name.trim())
+            .filter(Boolean);
     assert.deepEqual(actualNeeds, expected.slice(1, -1).split(", "));
     for (const dependency of actualNeeds) {
       assert.ok(block.includes(`"result": "\${{ needs.${dependency}.result }}"`));

@@ -430,15 +430,13 @@ jobs:
     name: CI acceptance
     if: ${{ always() }}
     needs:
-      [
-        changes,
-        docs-build,
-        docs-check,
-        lint-and-typecheck,
-        test-ts,
-        test-rust,
-        test-e2e,
-      ]
+      - changes
+      - docs-build
+      - docs-check
+      - lint-and-typecheck
+      - test-ts
+      - test-rust
+      - test-e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
