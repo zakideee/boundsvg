@@ -215,7 +215,7 @@ function main() {
     if (process.env.GITHUB_STEP_SUMMARY) {
       appendFileSync(
         process.env.GITHUB_STEP_SUMMARY,
-        `CI mode: ${classification.mode}\n\nCheckout: ${classification.checkout}\n\nTree: ${classification.tree}\n\nChanged paths: ${classification.changes.length}\n\nDiff SHA-256: ${classification.changesSha256}\n`,
+        `CI mode: ${classification.mode}\n\nEvent: ${classification.event}\n\nBase: ${classification.base}\n\nHead: ${classification.head}\n\nMerge base: ${classification.mergeBase}\n\nCheckout: ${classification.checkout}\n\nTree: ${classification.tree}\n\nChanged paths: ${classification.changes.length}\n\nDiff SHA-256: ${classification.changesSha256}\n`,
       );
     }
     process.stdout.write(report);

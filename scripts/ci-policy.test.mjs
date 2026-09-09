@@ -265,6 +265,16 @@ test("CLI emits exact identities and all docs flags; invalid inputs fail without
     assert.equal(fields[flag], "false");
   }
   assert.equal(JSON.parse(readFileSync(report, "utf8")).head, head);
+  const summary = readFileSync(env.GITHUB_STEP_SUMMARY, "utf8");
+  for (const [label, value] of [
+    ["Event", "pull_request"],
+    ["Base", base],
+    ["Head", head],
+    ["Merge base", base],
+  ]) {
+    assert.ok(summary.includes(`${label}: ${value}\n`), label);
+  }
+
   const originalOutput = readFileSync(output, "utf8");
   env.PR_BASE_SHA = "missing";
   assert.equal(spawnSync(process.execPath, [script, "classify"], { cwd: root, env }).status, 1);
@@ -336,6 +346,12 @@ test("actual workflow wiring keeps required jobs, coverage, and unique acceptanc
   );
   assert.doesNotMatch(ci + render, /^\s+paths(?:-ignore)?:/m);
   assert.doesNotMatch(ci + render, /continue-on-error/);
+  assert.ok(ci.includes('git cat-file -e "${PREFLIGHT_BASE}^{commit}"'));
+  for (const yaml of [ci, render]) {
+    assert.doesNotMatch(yaml, /runner.temp/);
+    assert.match(yaml, /CI_CLASSIFICATION_REPORT: target\/\S+-classification.json/);
+    assert.match(yaml, /path: target\/\S+-classification.json/);
+  }
   assert.equal((ci.match(/^ {4}name: CI acceptance$/gm) ?? []).length, 1);
   assert.equal((render.match(/^ {4}name: Baseline Checks$/gm) ?? []).length, 1);
   for (const [yaml, name, expected] of [

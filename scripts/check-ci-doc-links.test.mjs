@@ -39,6 +39,21 @@ test("heading fragments include duplicates, inline formatting, and explicit anch
   );
 });
 
+test("syntax diagnostics preserve source lines across multiline literals", () => {
+  const prefix = "# Guide\n`code\nexample`\n<!-- comment\ncontinued -->\n";
+  for (const [source, error] of [
+    ["[label](unterminated", /line 6: Unterminated/],
+    ["[missing][id]", /line 6: Undefined/],
+    ["[label](two words)", /line 6: Unrecognized/],
+    ["[id]: two words", /line 6: Unrecognized/],
+  ]) {
+    assert.throws(() => extractLinks(prefix + source), error);
+  }
+  assert.deepEqual(extractLinks(`${prefix}[link](guide.md)`), [
+    { destination: "guide.md", line: 6 },
+  ]);
+});
+
 function fixture(context, readme) {
   const root = mkdtempSync(join(tmpdir(), "doc-links-"));
   context.after(() => rmSync(root, { recursive: true, force: true }));
@@ -77,4 +92,11 @@ test("missing, untracked, outside, invalid and unsupported destinations fail", (
   assert.equal(spawnSync("git", ["add", "outside"], { cwd: root }).status, 0);
   writeFileSync(join(root, "README.md"), "[outside](outside)\n");
   assert.match(checkDocumentLinks(root).errors[0], /symlink outside/);
+});
+
+test("malformed links report both the document and source line", (context) => {
+  const root = fixture(context, "# Guide\n\n[missing][id]\n");
+  assert.deepEqual(checkDocumentLinks(root).errors, [
+    "README.md: line 3: Undefined Markdown reference: id",
+  ]);
 });

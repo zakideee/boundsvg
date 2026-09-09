@@ -54,14 +54,14 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
-          CI_CLASSIFICATION_REPORT: ${{ runner.temp }}/ci-classification.json
+          CI_CLASSIFICATION_REPORT: target/ci-classification.json
         run: node scripts/ci-policy.mjs classify
 
       - name: Upload CI classification
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ci-classification
-          path: ${{ runner.temp }}/ci-classification.json
+          path: target/ci-classification.json
           if-no-files-found: error
 
       # The exact base also binds the declaration check to this candidate.
@@ -154,11 +154,11 @@ jobs:
       - name: Build MP4 muxer WASM
         run: pnpm build:wasm:mp4
 
-      - name: Fetch preflight base
+      - name: Verify preflight base object
         env:
           PREFLIGHT_BASE: ${{ needs.changes.outputs.base_ref }}
         run: |
-          git fetch --no-tags --prune --depth=1 origin "${PREFLIGHT_BASE#origin/}"
+          git cat-file -e "${PREFLIGHT_BASE}^{commit}"
 
       - name: Changed-area preflight
         env:

@@ -48,6 +48,10 @@ function normalizeReference(label) {
   return label.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function lineAt(prose, offset) {
+  return prose.slice(0, offset).split("\n").length;
+}
+
 function parseDestination(text) {
   const trimmed = text.trim();
   const destination = /^(?:<([^<>\n]*)>|(\S+?))(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?$/.exec(
@@ -97,16 +101,21 @@ function parseMarkdownLink(prose, start, definitions) {
 /** Extract supported Markdown and HTML links, excluding literal code examples. */
 export function extractLinks(markdown) {
   let prose = removeFences(markdown)
-    .replace(/(`+)([\s\S]*?)\1/g, "")
-    .replace(/<!--([\s\S]*?)-->/g, "");
+    // Preserve newlines so diagnostics still identify the source location.
+    .replace(/(`+)([\s\S]*?)\1/g, (literal) => literal.replace(/[^\n]/g, ""))
+    .replace(/<!--([\s\S]*?)-->/g, (comment) => comment.replace(/[^\n]/g, ""));
   const definitions = new Map();
-  prose = prose.replace(/^ {0,3}\[([^\]\n]+)\]:\s*(.+)$/gm, (_line, label, destination) => {
-    definitions.set(normalizeReference(label), parseDestination(destination));
+  prose = prose.replace(/^ {0,3}\[([^\]\n]+)\]:[ \t]*(.+)$/gm, (...definitionMatch) => {
+    const [, label, destination, offset] = definitionMatch;
+    try {
+      definitions.set(normalizeReference(label), parseDestination(destination));
+    } catch (error) {
+      throw new Error(`line ${lineAt(prose, offset)}: ${error.message}`);
+    }
     return "";
   });
   const links = [];
-  const addLink = (destination, offset) =>
-    links.push({ destination, line: prose.slice(0, offset).split("\n").length });
+  const addLink = (destination, offset) => links.push({ destination, line: lineAt(prose, offset) });
   for (const match of prose.matchAll(/\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
     addLink(decodeEntities(match[1] ?? match[2] ?? match[3]), match.index);
   }
@@ -114,7 +123,12 @@ export function extractLinks(markdown) {
     if (prose[index] !== "[" || prose[index - 1] === "\\") {
       continue;
     }
-    const parsed = parseMarkdownLink(prose, index, definitions);
+    let parsed;
+    try {
+      parsed = parseMarkdownLink(prose, index, definitions);
+    } catch (error) {
+      throw new Error(`line ${lineAt(prose, index)}: ${error.message}`);
+    }
     if (parsed.destination !== undefined) {
       addLink(parsed.destination, index);
     }

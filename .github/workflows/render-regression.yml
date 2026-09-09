@@ -41,14 +41,14 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
-          CI_CLASSIFICATION_REPORT: ${{ runner.temp }}/render-classification.json
+          CI_CLASSIFICATION_REPORT: target/render-classification.json
         run: node scripts/ci-policy.mjs classify
 
       - name: Upload render classification
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: render-classification
-          path: ${{ runner.temp }}/render-classification.json
+          path: target/render-classification.json
           if-no-files-found: error
 
   render-regression:
