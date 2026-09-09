@@ -185,3 +185,6 @@ Two properties of this route matter when sizing work:
   scenes the recompile dominates: adding workers raises total CPU and memory
   and can make the wall time worse, not better. Measure before assuming a
   larger pool helps.
+
+MP4 failures preserve structured `FatalError` codes and Video category/operation
+context. See the [Video diagnostics guide](./video-export#structured-video-diagnostics) for load/ABI retry and encoder/container failure handling.

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { type Engine, FatalError, type Frame, type RenderFramesOptions } from "@boundsvg/core";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { encodeFrames } from "../src/encode-frames.js";
 import { videoFrameDurationMicros, videoTimestampMicros } from "../src/frame-rate.js";
 import { Mp4VideoMuxer } from "../src/generated-wasm.js";
 import { encodePngFramesToMp4, renderToMp4 } from "../src/mp4.js";
@@ -460,7 +461,7 @@ describe("encodePngFramesToMp4 end to end", () => {
 
     await expect(
       encodePngFramesToMp4(pngFrames(4), { frameRate: 30, frameCount: 4 }),
-    ).rejects.toMatchObject({ code: "VIDEO_ENCODER_UNSUPPORTED" });
+    ).rejects.toMatchObject({ code: "VIDEO_SAMPLE_COUNT_MISMATCH" });
   });
 });
 
@@ -607,4 +608,172 @@ describe("renderToMp4 end to end", () => {
     ).rejects.toMatchObject({ code: "VIDEO_EXPORT_ABORTED" });
     expect(() => stub.lastOptions()).toThrowError("renderFrames was never called");
   });
+});
+
+it.each([
+  ["createImageBitmap", "decodeFrame"],
+  ["VideoFrame", "createFrame"],
+  ["VideoEncoder", "probeEncoder"],
+] as const)("reports absent %s at its use position", async (capability, operation) => {
+  const original = globalThis[capability];
+  Object.assign(globalThis, { [capability]: undefined });
+  try {
+    await expect(encodePngFramesToMp4(pngFrames(2), { frameRate: 30 })).rejects.toMatchObject({
+      code: "VIDEO_ENCODER_UNSUPPORTED",
+      context: { domain: "video", category: "encoderUnsupported", operation },
+    });
+    if (capability === "createImageBitmap") {
+      expect(state.canvasSizes).toHaveLength(0);
+    } else {
+      expect(state.bitmapCloseCount).toBe(1);
+      expect(state.canvasSizes).toHaveLength(1);
+    }
+  } finally {
+    Object.assign(globalThis, { [capability]: original });
+  }
+});
+
+it("preserves a caller progress failure and frees the writer", async () => {
+  const failure = new Error("caller progress");
+  const free = vi.spyOn(Mp4VideoMuxer.prototype, "free");
+  try {
+    await expect(
+      encodePngFramesToMp4(pngFrames(2), {
+        frameRate: 30,
+        onProgress: () => {
+          throw failure;
+        },
+      }),
+    ).rejects.toBe(failure);
+    expect(free).toHaveBeenCalledTimes(1);
+    expect(state.bitmapCloseCount).toBe(1);
+    expect(state.videoFrameCloseCount).toBe(1);
+  } finally {
+    free.mockRestore();
+  }
+});
+
+it.each([
+  ["createImageBitmap", "decodeFrame"],
+  ["OffscreenCanvas", "createCanvas"],
+  ["VideoFrame", "createFrame"],
+] as const)("classifies an existing %s that throws without exposing its cause", async (capability, operation) => {
+  const original = globalThis[capability];
+  const close = vi.spyOn(VideoEncoder.prototype, "close");
+  Object.assign(globalThis, {
+    [capability]: function failedCapability() {
+      throw new Error("private cause");
+    },
+  });
+  try {
+    await expect(encodePngFramesToMp4(pngFrames(2), { frameRate: 30 })).rejects.toMatchObject({
+      code: "VIDEO_FRAME_PREPARATION_FAILED",
+      message: "Video frame could not be prepared",
+      context: { domain: "video", category: "framePreparation", operation },
+    });
+    expect(state.bitmapCloseCount).toBe(capability === "createImageBitmap" ? 0 : 1);
+    expect(close).toHaveBeenCalledTimes(capability === "VideoFrame" ? 1 : 0);
+  } finally {
+    Object.assign(globalThis, { [capability]: original });
+    close.mockRestore();
+  }
+});
+
+it("distinguishes an absent 2d context from a throwing context API", async () => {
+  const context = vi.spyOn(OffscreenCanvas.prototype, "getContext");
+  try {
+    context.mockReturnValue(null);
+    await expect(encodePngFramesToMp4(pngFrames(2), { frameRate: 30 })).rejects.toMatchObject({
+      code: "VIDEO_ENCODER_UNSUPPORTED",
+      context: { operation: "createCanvas" },
+    });
+    context.mockImplementation(() => {
+      throw new Error("context failure");
+    });
+    await expect(encodePngFramesToMp4(pngFrames(2), { frameRate: 30 })).rejects.toMatchObject({
+      code: "VIDEO_FRAME_PREPARATION_FAILED",
+      context: { operation: "createCanvas" },
+    });
+    expect(state.bitmapCloseCount).toBe(2);
+    expect(state.videoFrames).toHaveLength(0);
+  } finally {
+    context.mockRestore();
+  }
+});
+
+it("preserves a caller iterator failure over both cleanup failures", async () => {
+  const failure = new Error("caller iterator");
+  function* frames() {
+    yield* pngFrames(1);
+    throw failure;
+  }
+  const close = vi.spyOn(VideoEncoder.prototype, "close").mockImplementation(() => {
+    throw new Error("encoder cleanup");
+  });
+  const freeOriginal = Mp4VideoMuxer.prototype.free;
+  const free = vi.spyOn(Mp4VideoMuxer.prototype, "free").mockImplementation(function (
+    this: InstanceType<typeof Mp4VideoMuxer>,
+  ) {
+    freeOriginal.call(this);
+    throw new Error("muxer cleanup");
+  });
+  try {
+    await expect(encodePngFramesToMp4(frames(), { frameRate: 30 })).rejects.toBe(failure);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(free).toHaveBeenCalledTimes(1);
+    expect(state.bitmapCloseCount).toBe(1);
+    expect(state.videoFrameCloseCount).toBe(1);
+  } finally {
+    close.mockRestore();
+    free.mockRestore();
+  }
+});
+
+it("closes the encoder and bitmap when writer setup fails before run assignment", async () => {
+  const close = vi.spyOn(VideoEncoder.prototype, "close");
+  try {
+    await expect(
+      encodeFrames(pngFrames(2), {
+        frameRate: { numerator: 30, denominator: 1 },
+        frameCountHint: 0,
+        codec: "avc1.640028",
+        background: "#ffffff",
+      }),
+    ).rejects.toMatchObject({
+      code: "VIDEO_MUXER_INVALID_INPUT",
+      context: {
+        operation: "createMuxer",
+        reason: "invalidFrameCountHint",
+      },
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(state.bitmapCloseCount).toBe(1);
+    expect(state.videoFrameCloseCount).toBe(0);
+  } finally {
+    close.mockRestore();
+  }
+});
+
+it("closes the bitmap after a draw failure without starting an encoded frame", async () => {
+  const getContext = vi.spyOn(OffscreenCanvas.prototype, "getContext");
+  getContext.mockReturnValue({
+    fillStyle: "#000000",
+    fillRect: () => {},
+    drawImage: () => {
+      throw new Error("private draw failure");
+    },
+  } as unknown as OffscreenCanvasRenderingContext2D);
+  const close = vi.spyOn(VideoEncoder.prototype, "close");
+  try {
+    await expect(encodePngFramesToMp4(pngFrames(2), { frameRate: 30 })).rejects.toMatchObject({
+      code: "VIDEO_FRAME_PREPARATION_FAILED",
+      context: { operation: "drawFrame" },
+    });
+    expect(state.bitmapCloseCount).toBe(1);
+    expect(state.videoFrameCloseCount).toBe(0);
+    expect(close).toHaveBeenCalledTimes(1);
+  } finally {
+    getContext.mockRestore();
+    close.mockRestore();
+  }
 });

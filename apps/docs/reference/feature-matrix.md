@@ -90,3 +90,6 @@ release), **Not supported** (documented gap).
 | Interactive events / hit-testing                  | Experimental |                                                                                                                       |
 | CLI (`convert` / `export` / `inspect` / `doctor`) | Experimental | SVG import analyzer has documented limits                                                                             |
 | Node.js / browser / worker runtimes               | Supported    | Same covered artifacts for accepted inputs on declared surfaces (see contract)                                        |
+
+MP4 failures preserve structured `FatalError` codes and Video category/operation
+context. See the [Video diagnostics guide](/guides/video-export#structured-video-diagnostics) for load/ABI retry and encoder/container failure handling.

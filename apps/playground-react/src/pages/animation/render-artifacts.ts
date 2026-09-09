@@ -7,6 +7,7 @@ import type {
   RenderSvgOptions,
 } from "@boundsvg/core";
 
+// Preserve diagnostic instances so callers retain their code, stage and context.
 function toRenderError(renderError: unknown): Error {
   return renderError instanceof Error ? renderError : new Error(String(renderError));
 }

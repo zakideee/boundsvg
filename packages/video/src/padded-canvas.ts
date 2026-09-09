@@ -1,4 +1,5 @@
 import { FatalError } from "@boundsvg/core";
+import { createVideoError } from "./diagnostics.js";
 
 /** Canvas sized to even dimensions, reused for every frame of an export. */
 export type PaddedFrameCanvas = {
@@ -25,16 +26,27 @@ export function createPaddedFrameCanvas(
   const width = toEven(frameWidth);
   const height = toEven(frameHeight);
   const { canvas, context } = createCanvasContext(width, height);
-  assertOpaqueColor(context, background);
+  try {
+    assertOpaqueColor(context, background);
+  } catch (failure) {
+    if (failure instanceof FatalError) {
+      throw failure;
+    }
+    throw createVideoError("VIDEO_FRAME_PREPARATION_FAILED", "createCanvas");
+  }
 
   return {
     width,
     height,
     source: canvas,
     draw(bitmap) {
-      context.fillStyle = background;
-      context.fillRect(0, 0, width, height);
-      context.drawImage(bitmap, 0, 0);
+      try {
+        context.fillStyle = background;
+        context.fillRect(0, 0, width, height);
+        context.drawImage(bitmap, 0, 0);
+      } catch {
+        throw createVideoError("VIDEO_FRAME_PREPARATION_FAILED", "drawFrame");
+      }
     },
   };
 }
@@ -122,31 +134,25 @@ type CanvasContext = {
 };
 
 function createCanvasContext(width: number, height: number): CanvasContext {
-  const canvas = createCanvas(width, height);
-  // Frames are opaque after the background pass, and telling the compositor so
-  // avoids a needless premultiplied-alpha round trip on every frame.
-  const context = canvas.getContext("2d", { alpha: false });
+  let canvas: OffscreenCanvas | HTMLCanvasElement;
+  let context: CanvasContext["context"] | null;
+  if (typeof OffscreenCanvas === "undefined" && typeof document === "undefined") {
+    throw createVideoError("VIDEO_ENCODER_UNSUPPORTED", "createCanvas");
+  }
+  try {
+    if (typeof OffscreenCanvas !== "undefined") {
+      canvas = new OffscreenCanvas(width, height);
+    } else {
+      canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+    }
+    context = canvas.getContext("2d", { alpha: false });
+  } catch {
+    throw createVideoError("VIDEO_FRAME_PREPARATION_FAILED", "createCanvas");
+  }
   if (!context) {
-    throw new FatalError(
-      "VIDEO_ENCODER_UNSUPPORTED",
-      "a 2d canvas context is required to pad frames for MP4 export",
-    );
+    throw createVideoError("VIDEO_ENCODER_UNSUPPORTED", "createCanvas");
   }
   return { canvas, context };
-}
-
-function createCanvas(width: number, height: number): OffscreenCanvas | HTMLCanvasElement {
-  if (typeof OffscreenCanvas !== "undefined") {
-    return new OffscreenCanvas(width, height);
-  }
-  if (typeof document !== "undefined") {
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    return canvas;
-  }
-  throw new FatalError(
-    "VIDEO_ENCODER_UNSUPPORTED",
-    "MP4 export needs a canvas implementation; this runtime has neither OffscreenCanvas nor document",
-  );
 }

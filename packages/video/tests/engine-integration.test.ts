@@ -380,6 +380,19 @@ describe("renderToMp4 against a real engine", () => {
   });
 });
 
+it("preserves a caller warning failure before any frame decoding", async () => {
+  const failure = new Error("caller warning");
+  await expect(
+    renderToMp4(engine, scene("\u{1F600}\u{1F680}"), {
+      durationMs: 100,
+      onWarning: () => {
+        throw failure;
+      },
+    }),
+  ).rejects.toBe(failure);
+  expect(state.frameDigests).toHaveLength(0);
+});
+
 describe("renderCompiledToMp4 against a real engine", () => {
   it("rejects an artifact created by a different Engine before encoding frames", async () => {
     const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput());

@@ -1,5 +1,5 @@
-import { FatalError } from "@boundsvg/core";
 import { throwIfExportAborted } from "./abort.js";
+import { cleanupAfterFailure, createVideoError } from "./diagnostics.js";
 
 /** One encoded frame handed to the container writer. */
 export type EncodedSample = {
@@ -82,58 +82,76 @@ export async function createEncodePipeline(
   // An encoder reports failures through its error callback, where throwing
   // cannot reach the caller; it is rethrown at the next submit or finish.
   let encoderError: unknown;
+  let hasEncoderError = false;
   let isClosed = false;
-
-  const encoder = new encoderConstructor({
-    output: (chunk, metadata) => {
-      // This callback runs on the encoder's own task, so a throw here would be
-      // lost without being captured and rethrown at the next submit or finish.
-      try {
-        options.onSample(toEncodedSample(chunk, metadata));
-      } catch (error: unknown) {
-        encoderError ??= error;
-      }
-    },
-    error: (error) => {
-      encoderError ??= error;
-    },
-  });
+  const captureFailure = (failure: unknown): void => {
+    if (!hasEncoderError) {
+      hasEncoderError = true;
+      encoderError = failure;
+    }
+  };
+  let encoder: VideoEncoderLike;
+  try {
+    encoder = new encoderConstructor({
+      output: (chunk, metadata) => {
+        if (hasEncoderError) {
+          return;
+        }
+        let sample: EncodedSample;
+        try {
+          sample = toEncodedSample(chunk, metadata);
+        } catch {
+          captureFailure(createVideoError("VIDEO_ENCODER_FAILED", "receiveSample"));
+          return;
+        }
+        try {
+          options.onSample(sample);
+        } catch (failure) {
+          captureFailure(failure);
+        }
+      },
+      error: () => {
+        captureFailure(createVideoError("VIDEO_ENCODER_FAILED", "encodeFrame"));
+      },
+    });
+  } catch {
+    throw createVideoError("VIDEO_ENCODER_FAILED", "createEncoder");
+  }
   const close = (): void => {
     if (isClosed) {
       return;
     }
     isClosed = true;
-    encoder.close();
-  };
-
-  try {
-    encoder.configure(config);
-  } catch (error) {
-    close();
-    throw unsupportedConfig(config, error);
-  }
-
-  const throwIfFailed = (): void => {
-    if (encoderError !== undefined) {
-      const failure = encoderError;
-      encoderError = undefined;
-      close();
-      throw asEncoderFailure(failure);
+    try {
+      encoder.close();
+    } catch {
+      throw createVideoError("VIDEO_ENCODER_FAILED", "closeEncoder");
     }
   };
-
+  try {
+    encoder.configure(config);
+  } catch {
+    cleanupAfterFailure(close);
+    throw createVideoError("VIDEO_ENCODER_UNSUPPORTED", "configureEncoder");
+  }
+  const throwIfFailed = (): void => {
+    if (hasEncoderError) {
+      cleanupAfterFailure(close);
+      throw encoderError;
+    }
+  };
   const throwIfAborted = (): void => {
     try {
       throwIfExportAborted(options.signal);
-    } catch (error) {
-      close();
-      throw error;
+    } catch (failure) {
+      cleanupAfterFailure(close);
+      throw failure;
     }
   };
-
   return {
     config,
     async submit(frame, frameIndex) {
+      let hasPrimaryFailure = false;
       try {
         throwIfAborted();
         throwIfFailed();
@@ -142,21 +160,33 @@ export async function createEncodePipeline(
           throwIfAborted();
           throwIfFailed();
         }
-        encoder.encode(frame, { keyFrame: frameIndex % options.keyFrameInterval === 0 });
+        try {
+          encoder.encode(frame, { keyFrame: frameIndex % options.keyFrameInterval === 0 });
+        } catch {
+          throwIfFailed();
+          throw createVideoError("VIDEO_ENCODER_FAILED", "encodeFrame");
+        }
+      } catch (failure) {
+        hasPrimaryFailure = true;
+        cleanupAfterFailure(close);
+        throw failure;
       } finally {
-        // Frames hold decoded pixel buffers that GC reclaims far too late.
-        frame.close();
+        closeSubmittedFrame(frame, hasPrimaryFailure, () => {
+          cleanupAfterFailure(close);
+          throwIfFailed();
+        });
       }
     },
     async finish() {
       throwIfAborted();
       throwIfFailed();
-      await encoder.flush().catch((error: unknown) => {
-        close();
-        throw asEncoderFailure(error);
-      });
-      // flush() resolves only after every output callback has run, so a failure
-      // raised inside one is visible by now.
+      try {
+        await encoder.flush();
+      } catch {
+        cleanupAfterFailure(close);
+        throwIfFailed();
+        throw createVideoError("VIDEO_ENCODER_FAILED", "flushEncoder");
+      }
       throwIfFailed();
       close();
     },
@@ -164,15 +194,27 @@ export async function createEncodePipeline(
   };
 }
 
+function closeSubmittedFrame(
+  frame: VideoFrame,
+  hasPrimaryFailure: boolean,
+  beforeFailure: () => void,
+): void {
+  try {
+    frame.close();
+  } catch {
+    if (!hasPrimaryFailure) {
+      beforeFailure();
+      throw createVideoError("VIDEO_ENCODER_FAILED", "closeFrame");
+    }
+  }
+}
+
 function resolveAmbientEncoder(): VideoEncoderConstructorLike {
   const ambient = (globalThis as Record<string, unknown>).VideoEncoder as
     | VideoEncoderConstructorLike
     | undefined;
   if (!ambient) {
-    throw new FatalError(
-      "VIDEO_ENCODER_UNSUPPORTED",
-      "WebCodecs VideoEncoder is unavailable in this runtime; MP4 export needs a browser that supports it",
-    );
+    throw createVideoError("VIDEO_ENCODER_UNSUPPORTED", "probeEncoder");
   }
   return ambient;
 }
@@ -181,46 +223,25 @@ async function resolveSupportedConfig(
   encoderConstructor: VideoEncoderConstructorLike,
   config: VideoEncoderConfig,
 ): Promise<VideoEncoderConfig> {
-  // A configuration the runtime considers malformed rejects here with a
-  // TypeError, which would otherwise reach the caller untyped.
-  const support = await encoderConstructor.isConfigSupported(config).catch((error: unknown) => {
-    throw unsupportedConfig(config, error);
-  });
-  if (!support.supported) {
-    throw unsupportedConfig(config);
+  let support: VideoEncoderSupport;
+  try {
+    support = await encoderConstructor.isConfigSupported(config);
+  } catch {
+    throw createVideoError("VIDEO_ENCODER_UNSUPPORTED", "probeEncoder");
   }
-  // The runtime may hand back a normalized configuration; it takes precedence,
-  // but only where it still describes the stream the container will declare.
+  if (!support.supported) {
+    throw createVideoError("VIDEO_ENCODER_UNSUPPORTED", "probeEncoder");
+  }
   const resolved = support.config ?? config;
-  // An omitted `avc` means the runtime did not echo the field, not that it
-  // changed the bitstream format; a different value does mean that.
+  // Only accept normalization that still describes the container's requested stream.
   if (
     resolved.width !== config.width ||
     resolved.height !== config.height ||
     (resolved.avc !== undefined && resolved.avc.format !== "avc")
   ) {
-    throw unsupportedConfig(config, "the runtime normalized the request into a different stream");
+    throw createVideoError("VIDEO_ENCODER_UNSUPPORTED", "probeEncoder");
   }
   return resolved;
-}
-
-function unsupportedConfig(config: VideoEncoderConfig, cause?: unknown): FatalError {
-  const detail = cause === undefined ? "" : `: ${describeError(cause)}`;
-  return new FatalError(
-    "VIDEO_ENCODER_UNSUPPORTED",
-    `this runtime cannot encode ${config.codec} at ${config.width}x${config.height}${detail}`,
-    {
-      context: {
-        codec: config.codec,
-        width: config.width,
-        height: config.height,
-      },
-    },
-  );
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function toEncodedSample(
@@ -245,18 +266,6 @@ function toUint8Array(source: AllowSharedBufferSource): Uint8Array {
     );
   }
   return new Uint8Array(source.slice(0));
-}
-
-function asEncoderFailure(error: unknown): FatalError {
-  if (error instanceof FatalError) {
-    return error;
-  }
-  const detail = describeError(error);
-  return new FatalError("VIDEO_ENCODER_UNSUPPORTED", `video encoding failed: ${detail}`, {
-    context: {
-      cause: detail,
-    },
-  });
 }
 
 /** Yield to the event loop so the encoder can drain its queue. */

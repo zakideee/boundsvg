@@ -1,5 +1,6 @@
 import { FatalError, type OutputGenerator } from "@boundsvg/core";
 import { throwIfExportAborted } from "./abort.js";
+import { cleanupAfterFailure, createVideoError } from "./diagnostics.js";
 import {
   createEncodePipeline,
   type EncodedSample,
@@ -66,7 +67,8 @@ type EncodeRun = {
  * pixel buffers. The first frame settles the output size.
  *
  * @throws FatalError with `VIDEO_INVALID_FRAMES`, `VIDEO_INVALID_OPTION`,
- * `VIDEO_TOO_MANY_FRAMES`, `VIDEO_ENCODER_UNSUPPORTED`, or `VIDEO_EXPORT_ABORTED`.
+ * `VIDEO_TOO_MANY_FRAMES`, `VIDEO_EXPORT_ABORTED`, or a Video encoder, frame preparation
+ * or muxer diagnostic.
  */
 export async function encodeFrames(
   frames: AsyncIterable<PngFrameInput> | Iterable<PngFrameInput>,
@@ -95,24 +97,31 @@ export async function encodeFrames(
         );
       }
 
-      const bitmap = await createImageBitmap(
-        new Blob([frame.data as BlobPart], { type: "image/png" }),
-        // Colour management and premultiplication are per-browser transforms;
-        // frames go to the encoder as decoded.
-        { colorSpaceConversion: "none", premultiplyAlpha: "none" },
-      );
+      const bitmap = await decodeBitmap(frame);
+      let hasBitmapFailure = false;
       try {
         run ??= await startRun(bitmap.width, bitmap.height, options);
         assertMatchingFrameSize(run, bitmap, frameCount);
         run.canvas.draw(bitmap);
+      } catch (failure) {
+        hasBitmapFailure = true;
+        throw failure;
       } finally {
-        bitmap.close();
+        closeBitmap(bitmap, hasBitmapFailure);
       }
 
-      const videoFrame = new VideoFrame(run.canvas.source, {
-        timestamp: videoTimestampMicros(options.frameRate, frameCount),
-        duration: videoFrameDurationMicros(options.frameRate, frameCount),
-      });
+      if (typeof VideoFrame === "undefined") {
+        throw createVideoError("VIDEO_ENCODER_UNSUPPORTED", "createFrame");
+      }
+      let videoFrame: VideoFrame;
+      try {
+        videoFrame = new VideoFrame(run.canvas.source, {
+          timestamp: videoTimestampMicros(options.frameRate, frameCount),
+          duration: videoFrameDurationMicros(options.frameRate, frameCount),
+        });
+      } catch {
+        throw createVideoError("VIDEO_FRAME_PREPARATION_FAILED", "createFrame");
+      }
       await run.pipeline.submit(videoFrame, frameCount);
 
       frameCount += 1;
@@ -136,22 +145,26 @@ export async function encodeFrames(
     // duration equal the animation length.
     const sampleCount = run.writer.sampleCount();
     if (sampleCount !== frameCount) {
-      throw new FatalError(
-        "VIDEO_ENCODER_UNSUPPORTED",
-        `the encoder returned ${sampleCount} samples for ${frameCount} frames; MP4 export needs one sample per frame`,
-        {
-          context: {
-            sampleCount,
-            frameCount,
-          },
-        },
-      );
+      throw createVideoError("VIDEO_SAMPLE_COUNT_MISMATCH", "flushEncoder", {
+        sampleCount,
+        frameCount,
+      });
     }
     return run.writer.finish();
   } catch (error) {
-    run?.pipeline.close();
-    run?.writer.dispose();
+    cleanupAfterFailure(() => run?.pipeline.close());
+    cleanupAfterFailure(() => run?.writer.dispose());
     throw error;
+  }
+}
+
+function closeBitmap(bitmap: ImageBitmap, hasPrimaryFailure: boolean): void {
+  try {
+    bitmap.close();
+  } catch {
+    if (!hasPrimaryFailure) {
+      throw createVideoError("VIDEO_FRAME_PREPARATION_FAILED", "decodeFrame");
+    }
   }
 }
 
@@ -186,7 +199,7 @@ async function startRun(
       ...(options.generator !== undefined && { generator: options.generator }),
     });
   } catch (error) {
-    pipeline.close();
+    cleanupAfterFailure(() => pipeline.close());
     throw error;
   }
   writeSample = (sample) => {
@@ -285,4 +298,18 @@ export function tooManyFrames(frameCount: number): FatalError {
       },
     },
   );
+}
+
+async function decodeBitmap(frame: PngFrameInput): Promise<ImageBitmap> {
+  if (typeof createImageBitmap === "undefined") {
+    throw createVideoError("VIDEO_ENCODER_UNSUPPORTED", "decodeFrame");
+  }
+  try {
+    return await createImageBitmap(new Blob([frame.data as BlobPart], { type: "image/png" }), {
+      colorSpaceConversion: "none",
+      premultiplyAlpha: "none",
+    });
+  } catch {
+    throw createVideoError("VIDEO_FRAME_PREPARATION_FAILED", "decodeFrame");
+  }
 }
