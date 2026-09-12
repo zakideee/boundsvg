@@ -15,7 +15,8 @@ export const TEMPLATE_IMAGE_DATA_URL = `data:image/svg+xml;utf8,${encodeURICompo
   </svg>`,
 )}`;
 
-const TERMINAL_CODE_SNIPPET = `import { renderToSvg } from "@boundsvg/core";
+const TERMINAL_CODE_SNIPPET = `import { readFile } from "node:fs/promises";
+import { createEngineAsync } from "@boundsvg/core";
 import { Canvas, Flex, Text, toVNode } from "@boundsvg/react";
 
 const vnode = toVNode(
@@ -28,7 +29,17 @@ const vnode = toVNode(
   </Canvas>,
 );
 
-console.log(renderToSvg(vnode));`;
+const engine = await createEngineAsync({
+  fonts: [{
+    alias: "JetBrainsMono-woff2",
+    data: new Uint8Array(await readFile("JetBrainsMono-Regular.woff2")),
+  }],
+});
+try {
+  console.log(engine.renderToSvg(vnode));
+} finally {
+  engine.dispose();
+}`;
 
 const TERMINAL_TEMPLATE_INPUT: TerminalDesignInput = {
   code: TERMINAL_CODE_SNIPPET,

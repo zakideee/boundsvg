@@ -74,7 +74,7 @@ release), **Not supported** (documented gap).
 | Capability                                        | Status       | Notes                                                                                                                 |
 | ------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------- |
 | Static SVG output (text as glyph paths)           | Supported    | Animated input requires explicit `timeMs`; `nodeIdMetadata` can include preview identity or omit it for final export. |
-| Independent animated SVG output                   | Supported    | Explicit `renderToAnimatedSvg(..., { playback: { mode: "independent" } })` preserves authored clocks.                 |
+| Independent animated SVG output                   | Supported    | Explicit `engine.renderToAnimatedSvg(..., { playback: { mode: "independent" } })` preserves authored clocks.          |
 | Document-timeline animated SVG output             | Supported    | Explicit duration and finite/fractional or infinite document iterations; deterministic base pose and budgeted CSS.    |
 | PNG output (scale, background, caps)              | Supported    | Max 3840×2160                                                                                                         |
 | WebP output (`renderToWebp`)                      | Supported    | Lossless (VP8L) only; byte-deterministic; often smaller than PNG                                                      |

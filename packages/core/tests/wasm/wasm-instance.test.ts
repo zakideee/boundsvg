@@ -1,12 +1,8 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { createEngineAsync } from "../../src/engine.js";
 import { initNodeWasm } from "../../src/node.js";
-import {
-  dispose as disposeDefaultEngine,
-  initAsync as initDefaultEngineAsync,
-  isInitialized as isDefaultEngineInitialized,
-  renderToSvg as renderWithDefaultEngine,
-} from "../../src/render.js";
 import { createElement } from "../../src/vnode/create-element.js";
+import * as wasmEntry from "../../src/wasm/index.js";
 import { createWasmEngineInstance, getWasm, type WasmEngineHandle } from "../../src/wasm/index.js";
 import {
   assertWasmPkgAvailable,
@@ -463,120 +459,74 @@ describe("WASM instance-based engine", () => {
     });
   });
 
-  describe("default engine initialization lifecycle", () => {
-    afterEach(() => {
-      disposeDefaultEngine();
-    });
-
-    function textScene(font: string) {
-      return createElement(
-        "Canvas",
-        { width: 180, height: 80 },
-        createElement("Text", { font, fontSizePx: 20 }, "監査"),
-      );
-    }
-
-    it("coalesces concurrent initAsync calls using the first options", async () => {
-      const fontData = loadSubsetFont();
-      const firstInitialization = initDefaultEngineAsync({
-        fonts: [{ alias: "FirstDefault", weight: 400, style: "normal", data: fontData.slice() }],
+  describe("async Engine factory lifecycle", () => {
+    it("releases a failed instance and allows an independent call and retry", async () => {
+      const createInstance = wasmEntry.createWasmEngineInstance;
+      const createdHandles: WasmEngineHandle[] = [];
+      const disposeSpies: ReturnType<typeof vi.spyOn>[] = [];
+      const createSpy = vi.spyOn(wasmEntry, "createWasmEngineInstance").mockImplementation(() => {
+        const handle = createInstance();
+        createdHandles.push(handle);
+        disposeSpies.push(vi.spyOn(handle, "dispose"));
+        return handle;
       });
-      const secondInitialization = initDefaultEngineAsync({
-        fonts: [{ alias: "SecondDefault", weight: 400, style: "normal", data: fontData.slice() }],
-      });
-
-      await Promise.all([firstInitialization, secondInitialization]);
-
-      expect(renderWithDefaultEngine(textScene("FirstDefault"))).toContain("<svg");
       try {
-        renderWithDefaultEngine(textScene("SecondDefault"));
-        expect.unreachable("second concurrent initAsync options must be ignored");
-      } catch (error) {
-        expect(error).toMatchObject({
-          name: "FatalError",
-          code: "TEXT_FONT_UNAVAILABLE",
-          stage: "text",
+        const settlements = await Promise.allSettled([
+          createEngineAsync({
+            fonts: [
+              { alias: "RegisteredBeforeFailure", data: loadSubsetFont() },
+              { alias: "InvalidFont", data: new Uint8Array([0]) },
+            ],
+          }),
+          createEngineAsync({ fonts: [{ alias: "IndependentFont", data: loadSubsetFont() }] }),
+        ]);
+        expect(settlements.map(({ status }) => status)).toEqual(["rejected", "fulfilled"]);
+        expect(disposeSpies[0]).toHaveBeenCalledTimes(1);
+        expect(disposeSpies[1]).not.toHaveBeenCalled();
+        expect(() => createdHandles[0]?.createComputeLayoutFn()("{}")).toThrow(/disposed/i);
+        const successfulInitialization = settlements[1];
+        if (successfulInitialization?.status !== "fulfilled") {
+          throw new TypeError("Expected the independent factory to succeed");
+        }
+        const engine = successfulInitialization.value;
+        try {
+          expect(
+            engine.renderToSvg(
+              createElement(
+                "Canvas",
+                { width: 180, height: 80 },
+                createElement("Text", { font: "IndependentFont", fontSizePx: 20 }, "監査"),
+              ),
+            ),
+          ).toContain("<svg");
+        } finally {
+          engine.dispose();
+        }
+        const retryEngine = await createEngineAsync({
+          fonts: [{ alias: "RegisteredBeforeFailure", data: loadSubsetFont() }],
         });
+        try {
+          expect(
+            retryEngine.renderToSvg(
+              createElement(
+                "Canvas",
+                { width: 180, height: 80 },
+                createElement("Text", { font: "RegisteredBeforeFailure", fontSizePx: 20 }, "監査"),
+              ),
+            ),
+          ).toContain("<svg");
+        } finally {
+          retryEngine.dispose();
+        }
+      } finally {
+        for (const handle of createdHandles) {
+          handle.dispose();
+        }
+        createSpy.mockRestore();
+        for (const disposeSpy of disposeSpies) {
+          disposeSpy.mockRestore();
+        }
       }
-    });
-
-    it("does not resurrect an initialization disposed while pending", async () => {
-      const initialization = initDefaultEngineAsync({
-        fonts: [
-          {
-            alias: "CanceledDefault",
-            weight: 400,
-            style: "normal",
-            data: loadSubsetFont(),
-          },
-        ],
-      });
-
-      disposeDefaultEngine();
-      await initialization;
-
-      expect(isDefaultEngineInitialized()).toBe(false);
-      try {
-        renderWithDefaultEngine(textScene("CanceledDefault"));
-        expect.unreachable("disposed pending initialization must stay unavailable");
-      } catch (error) {
-        expect(error).toMatchObject({
-          name: "FatalError",
-          code: "ENGINE_NOT_INIT",
-          stage: "engine",
-        });
-      }
-    });
-
-    it("publishes a new initialization after canceling a stale pending one", async () => {
-      const fontData = loadSubsetFont();
-      const staleInitialization = initDefaultEngineAsync({
-        fonts: [{ alias: "StaleDefault", weight: 400, style: "normal", data: fontData.slice() }],
-      });
-
-      disposeDefaultEngine();
-      const replacementInitialization = initDefaultEngineAsync({
-        fonts: [
-          {
-            alias: "ReplacementDefault",
-            weight: 400,
-            style: "normal",
-            data: fontData.slice(),
-          },
-        ],
-      });
-      await Promise.all([staleInitialization, replacementInitialization]);
-
-      expect(renderWithDefaultEngine(textScene("ReplacementDefault"))).toContain("<svg");
-      try {
-        renderWithDefaultEngine(textScene("StaleDefault"));
-        expect.unreachable("stale initialization must not replace the new default engine");
-      } catch (error) {
-        expect(error).toMatchObject({
-          name: "FatalError",
-          code: "TEXT_FONT_UNAVAILABLE",
-          stage: "text",
-        });
-      }
-    });
-
-    it("clears a rejected initialization so a later retry can succeed", async () => {
-      const invalidFont = new Uint8Array([0]);
-      const firstInitialization = initDefaultEngineAsync({
-        fonts: [{ alias: "InvalidDefault", data: invalidFont }],
-      });
-      const coalescedInitialization = initDefaultEngineAsync({
-        fonts: [{ alias: "IgnoredWhilePending", data: loadSubsetFont() }],
-      });
-
-      const settlements = await Promise.allSettled([firstInitialization, coalescedInitialization]);
-      expect(settlements.map(({ status }) => status)).toEqual(["rejected", "rejected"]);
-      expect(isDefaultEngineInitialized()).toBe(false);
-
-      await initDefaultEngineAsync({
-        fonts: [{ alias: "RetryDefault", data: loadSubsetFont() }],
-      });
-      expect(renderWithDefaultEngine(textScene("RetryDefault"))).toContain("<svg");
     });
   });
 });

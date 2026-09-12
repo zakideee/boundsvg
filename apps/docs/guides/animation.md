@@ -479,14 +479,14 @@ carve-out and is the verification path for exact checkpoints.
 
 ### Migrating output-mode calls from 0.3
 
-Audit every no-option `renderToSvg(scene)` call whose scene may contain
+Audit every no-option `engine.renderToSvg(scene)` call whose scene may contain
 `animate` or `animateUnits`; choose either a deterministic static time or the
 animated entry point. Then migrate mechanically:
 
-- `renderToSvg(scene, { animation: "static", timeMs })` becomes
-  `renderToSvg(scene, { timeMs })`.
-- `renderToSvg(scene, { animation: "declarative", ... })` becomes
-  `renderToAnimatedSvg(scene, { playback: { mode: "independent" }, ... })`.
+- `engine.renderToSvg(scene, { animation: "static", timeMs })` becomes
+  `engine.renderToSvg(scene, { timeMs })`.
+- `engine.renderToSvg(scene, { animation: "declarative", ... })` becomes
+  `engine.renderToAnimatedSvg(scene, { playback: { mode: "independent" }, ... })`.
 - Remove `animation` from PNG/WebP calls and keep the explicit `timeMs`.
 - Make the same choice for `renderToSvgAndIR`, compiled methods, Worker calls,
   React components, and hooks. Removed or artifact-incompatible own keys fail;
@@ -574,7 +574,7 @@ version, render options, and `timeMs`, static SVG and PNG bytes are reproducible
 An animated SVG also carries the sampled `timeMs` pose in ordinary SVG
 attributes. A static renderer such as resvg ignores the animation CSS and sees
 that **base pose**. Rasterizing it produces the same PNG bytes as
-`renderToPng(scene, { timeMs })`.
+`engine.renderToPng(scene, { timeMs })`.
 
 ## What is not guaranteed
 
@@ -640,7 +640,7 @@ return prefersReducedMotion ? (
 
 ## Sampling, IR, and compiled scenes
 
-`renderToIR(scene, { timeMs })` always returns the pose sampled at `timeMs` plus
+`engine.renderToIR(scene, { timeMs })` always returns the pose sampled at `timeMs` plus
 the semantic `animation` track. Only `timeMs` changes the sampled pose. Pause an editor at a
 fixed time, request a new IR, and use that IR for hit-testing or selection.
 

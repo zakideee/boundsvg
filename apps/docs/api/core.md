@@ -844,9 +844,9 @@ const snapshot = engine.snapshotCompiledIR(compiled);
 console.log(snapshot.width, snapshot.warnings);
 ```
 
-The same rule applies to the default-engine functions: `compileScene`,
-`snapshotCompiledIR`, and every `renderCompiled*` call must use the same
-configured default Engine instance.
+Every `engine.renderCompiled*` call and `engine.snapshotCompiledIR` must use
+the exact Engine that compiled the scene, even if another Engine has identical
+options.
 
 ```ts
 const outputs: Uint8Array[] = [];
@@ -1301,103 +1301,57 @@ to that original node exactly once. If the browser emits both `pointercancel`
 and `lostpointercapture` for the same pointer, the second event does not
 dispatch another `onPointerCancel` callback.
 
-## Standalone Functions
+## Migrating from standalone rendering functions
 
-Top-level functions that use a shared default Engine instance. The default engine must be initialized before calling render functions.
+Rendering uses an explicit Engine instance. The package root no longer exports
+`init`, `initAsync`, `isInitialized`, `dispose`, or the standalone rendering,
+compiled rendering, frame sampling, and hit-testing functions.
 
-### `initAsync(options?)`
-
-Initialize the default engine with real WASM (async). Loads WASM, registers fonts, and configures the engine.
-
-```ts
-await initAsync({ fonts: [...] });
-```
-
-### `init(options)`
-
-Initialize the default engine synchronously with pre-configured `EngineOptions` (for mock/test usage).
-
-### `renderToSvg(input, options?)`
-
-Render a static SVG using the default engine (sync). Throws if the default
-engine is not initialized, or if animated input omits `timeMs`.
+Create an Engine once for each application, job, or independently configured
+rendering context. Keep it ready before exposing rendering actions, reuse it
+for multiple renders, and dispose it when that context ends:
 
 ```ts
-const svg = renderToSvg(node);
+import { Canvas, createEngineAsync } from "@boundsvg/core";
+
+const engine = await createEngineAsync({});
+try {
+  const node = Canvas({ width: 400, height: 300, background: "#ffffff" });
+  const svg = engine.renderToSvg(node);
+  const png = engine.renderToPng(node, { scale: 2 });
+  const compiled = engine.compile(node);
+  const snapshot = engine.snapshotCompiledIR(compiled);
+  console.log(svg, png.byteLength, snapshot.width);
+} finally {
+  engine.dispose();
+}
 ```
 
-### `renderToAnimatedSvg(input, options)`
+Pass fonts, geometries, and symbols to `createEngineAsync` for the returned
+instance. If initialization rejects, no Engine is returned and its acquired
+WASM instance is released; a later factory call can retry. Two calls create
+two separate instances with separate asset registrations and disposal.
+Applications that need both configurations retain both Engines and pay for
+both instances' resources.
 
-Render an animated SVG using the default engine. The playback contract is the
-same as `engine.renderToAnimatedSvg`: choose independent authored clocks or an
-explicit document timeline.
+| Removed root API                                                            | Migration                                                                                                    |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `init(options)`                                                             | `const engine = createEngine(options)` with the existing synchronous `EngineOptions` and injected transports |
+| `initAsync(options)`                                                        | `const engine = await createEngineAsync(options)`                                                            |
+| `initAsync()`                                                               | `const engine = await createEngineAsync({})`                                                                 |
+| `isInitialized()`                                                           | Keep readiness in the caller; expose the Engine only after the factory succeeds                              |
+| `compileScene(input, options)`                                              | `engine.compile(input, options)`                                                                             |
+| `hitTestOnIR(ir, x, y)`                                                     | `engine.hitTest(ir, x, y)`                                                                                   |
+| Rendering, frame sampling, transition compilation, snapshots, and `dispose` | Call the existing method of the same name on the retained Engine                                             |
 
-```ts
-const svg = renderToAnimatedSvg(node, {
-  playback: { mode: "timeline", durationMs: 2400, iterations: 2.5 },
-  timeMs: 600,
-});
-```
+The synchronous factory still accepts full `EngineOptions`; it does not load
+WASM or register the asynchronous factory's font input for you. The former
+asynchronous initializer accepted fonts only, while `createEngineAsync` also
+accepts geometry and symbol registrations. Do not create an Engine per render
+or substitute a shared global default. Compiled scenes remain bound to the
+exact Engine that created them.
 
-`renderToSvgAndIR` and `renderToAnimatedSvgAndIR` expose the corresponding
-SVG-plus-IR pairs.
-
-### `renderToPng(input, options?)`
-
-Render to PNG using the default engine (sync).
-
-```ts
-const png = renderToPng(node, { scale: 2 });
-```
-
-### `renderToWebp(input, options?)`
-
-Render to a lossless WebP using the default engine (sync).
-
-```ts
-const webp = renderToWebp(node, { scale: 2 });
-```
-
-### `renderToAnimatedWebp(input, options)`
-
-Render a declarative animation to an animated WebP using the default engine.
-
-```ts
-const webp = renderToAnimatedWebp(node, {
-  durationMs: 2000,
-  fps: 20,
-  iterations: "infinite",
-});
-```
-
-### `renderToAnimatedGif(input, options)`
-
-Render a declarative animation to an animated GIF using the default engine.
-
-```ts
-const gif = renderToAnimatedGif(node, {
-  durationMs: 2000,
-  fps: 20,
-  iterations: 1,
-});
-```
-
-### `renderToIR(input, options?)`
-
-Render to intermediate representation for inspection or hit-testing.
-
-### `renderToLayoutTree(input, options?)`
-
-Render to the pre-animation layout tree. Its options do not include `timeMs`.
-
-### `renderToTextOutlines(input, options?)`
-
-Render text elements as outlined SVG paths using the default engine.
-
-### `renderFrames(input, options)`
-
-Use the default engine's prepared batch sampler. It returns the same
-single-use `Iterable<Frame>` as `engine.renderFrames`.
+## Standalone utilities
 
 ### `createImageLoader(fetchImage)`
 
