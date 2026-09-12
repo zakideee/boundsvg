@@ -4,9 +4,10 @@ import { initNodeWasm } from "../../src/node.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import { createWasmEngineInstance } from "../../src/wasm/index.js";
 import { engineOptionsFromHandle } from "../helpers/wasm-render-engine.js";
-import { loadSubsetFont } from "../wasm/test-prerequisites.js";
+import { assertWasmPkgAvailable, loadSubsetFont } from "../wasm/test-prerequisites.js";
 
 beforeAll(async () => {
+  assertWasmPkgAvailable();
   await initNodeWasm();
 });
 
