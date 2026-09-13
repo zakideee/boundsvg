@@ -1,111 +1,124 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {
-  compileScene,
-  dispose,
-  init,
-  isInitialized,
-  renderCompiledToPng,
-  renderCompiledToSvg,
-  renderToSvg,
-  renderToSvgAndIR,
-  snapshotCompiledIR,
-} from "../../src/render.js";
+import { beforeAll, describe, expect, it } from "vitest";
+import { createEngine, createEngineAsync } from "../../src/engine.js";
+import { initNodeWasm } from "../../src/node.js";
 import { createElement } from "../../src/vnode/create-element.js";
-import type { WasmEngineHandle } from "../../src/wasm/index.js";
-import { createFontedWasmHandle, engineOptionsFromHandle } from "../helpers/wasm-render-engine.js";
-
-let handle: WasmEngineHandle;
+import { createWasmEngineInstance } from "../../src/wasm/index.js";
+import { engineOptionsFromHandle } from "../helpers/wasm-render-engine.js";
+import { assertWasmPkgAvailable, loadSubsetFont } from "../wasm/test-prerequisites.js";
 
 beforeAll(async () => {
-  handle = await createFontedWasmHandle();
+  assertWasmPkgAvailable();
+  await initNodeWasm();
 });
 
-afterAll(() => {
-  handle.dispose();
-});
+function registrationOptions(path: string, font: string) {
+  const geometry = {
+    viewBox: { width: 20, height: 20 },
+    root: { kind: "path" as const, d: path },
+  };
+  return {
+    fonts: [{ alias: font, data: loadSubsetFont() }],
+    geometries: [{ id: "shape", doc: geometry }],
+    symbols: [{ id: "symbol", def: { geometry, elasticSegments: [] } }],
+  };
+}
 
-describe("lazy init", () => {
-  beforeEach(() => {
-    dispose();
-  });
+function textScene(font: string) {
+  return createElement(
+    "Canvas",
+    { width: 180, height: 80 },
+    createElement("Text", { font, fontSizePx: 20 }, "監査"),
+  );
+}
 
-  it("isInitialized returns false before init", () => {
-    expect(isInitialized()).toBe(false);
-  });
+function assetScene(type: "Shape" | "Symbol") {
+  return createElement(
+    "Canvas",
+    { width: 80, height: 80 },
+    type === "Shape"
+      ? createElement("Shape", { geometryId: "shape", width: 40, height: 40, fill: "#2563eb" })
+      : createElement("Symbol", { symbolId: "symbol", width: 40, height: 40, fill: "#2563eb" }),
+  );
+}
 
-  it("renderToSvg throws if not initialized", () => {
-    const vnode = createElement("Canvas", { width: 400, height: 300 });
-    expect(() => renderToSvg(vnode)).toThrow("Engine not initialized");
-  });
-
-  it("init() makes isInitialized return true", () => {
-    init(engineOptionsFromHandle(handle));
-    expect(isInitialized()).toBe(true);
-  });
-
-  it("renderToSvg works after init", () => {
-    init(engineOptionsFromHandle(handle));
-    const vnode = createElement("Canvas", { width: 400, height: 300 });
-    const svg = renderToSvg(vnode);
-    expect(svg).toContain("<svg");
-    expect(svg).toContain("viewBox");
-  });
-
-  it("exposes default-engine compile and compiled render helpers", () => {
-    init(engineOptionsFromHandle(handle, { svgToPngFn: () => new Uint8Array([0x89, 0x50]) }));
-    const vnode = createElement("Canvas", { width: 400, height: 300 });
-
-    const { svg, ir } = renderToSvgAndIR(vnode);
-    const compiled = compileScene(vnode);
-
-    expect(svg).toContain("<svg");
-    expect(ir.width).toBe(400);
-    expect(compiled.width).toBe(400);
-    const firstSnapshot = snapshotCompiledIR(compiled);
-    firstSnapshot.width = 1;
-    expect(snapshotCompiledIR(compiled).width).toBe(400);
-    expect(renderCompiledToSvg(compiled)).toContain("<svg");
-    expect(renderCompiledToPng(compiled)).toEqual(new Uint8Array([0x89, 0x50]));
-  });
-
-  it("keeps default wrappers bound to one exact default Engine", () => {
-    init(engineOptionsFromHandle(handle));
-    const compiled = compileScene(createElement("Canvas", { width: 400, height: 300 }));
-    dispose();
-    init(engineOptionsFromHandle(handle));
-
+describe.each(["sync", "async"] as const)("%s Engine ownership", (mode) => {
+  it("keeps two font, geometry and symbol configurations independent", async () => {
+    const firstOptions = registrationOptions("M0 0H20V20H0Z", "FirstFont");
+    const secondOptions = registrationOptions("M0 0L20 20H0Z", "SecondFont");
+    const createConfiguredEngine = async (options: ReturnType<typeof registrationOptions>) => {
+      if (mode === "async") {
+        return createEngineAsync(options);
+      }
+      const handle = createWasmEngineInstance();
+      const engine = createEngine(
+        engineOptionsFromHandle(handle, {
+          geometries: options.geometries,
+          symbols: options.symbols,
+          wasmHandle: handle,
+          registerFontFn: (font) => handle.registerFont(font.data, font),
+        }),
+      );
+      engine.registerFonts(options.fonts);
+      return engine;
+    };
+    const [firstEngine, secondEngine] = await Promise.all([
+      createConfiguredEngine(firstOptions),
+      createConfiguredEngine(secondOptions),
+    ]);
     try {
-      snapshotCompiledIR(compiled);
-    } catch (error) {
-      expect(error).toMatchObject({
-        code: "COMPILED_SCENE_WRONG_ENGINE",
-        message: "Compiled scene belongs to a different Engine",
-        stage: "engine",
-      });
-      return;
+      expect(firstEngine).not.toBe(secondEngine);
+      expect(firstEngine.renderToSvg(textScene("FirstFont"))).toContain("<svg");
+      expect(secondEngine.renderToSvg(textScene("SecondFont"))).toContain("<svg");
+      expect(() => firstEngine.renderToSvg(textScene("SecondFont"))).toThrowError(
+        expect.objectContaining({ code: "TEXT_FONT_UNAVAILABLE", stage: "text" }),
+      );
+      expect(() => secondEngine.renderToSvg(textScene("FirstFont"))).toThrowError(
+        expect.objectContaining({ code: "TEXT_FONT_UNAVAILABLE", stage: "text" }),
+      );
+      for (const type of ["Shape", "Symbol"] as const) {
+        const scene = assetScene(type);
+        const secondSvg = secondEngine.renderToSvg(scene);
+        expect(firstEngine.renderToSvg(scene)).not.toBe(secondSvg);
+        expect(secondEngine.renderToSvg(scene)).toBe(secondSvg);
+      }
+      const secondSvg = secondEngine.renderToSvg(textScene("SecondFont"));
+      firstEngine.dispose();
+      expect(secondEngine.renderToSvg(textScene("SecondFont"))).toBe(secondSvg);
+      expect(() => firstEngine.renderToSvg(textScene("FirstFont"))).toThrow(/disposed/i);
+      expect(secondEngine.renderToSvg(assetScene("Shape"))).toContain("<svg");
+      expect(secondEngine.renderToSvg(assetScene("Symbol"))).toContain("<svg");
+    } finally {
+      firstEngine.dispose();
+      secondEngine.dispose();
     }
-    throw new TypeError("Expected default-engine ownership rejection");
   });
+});
 
-  it("double init is a no-op (no error)", () => {
-    init(engineOptionsFromHandle(handle));
-    init(engineOptionsFromHandle(handle)); // Should not throw
-    expect(isInitialized()).toBe(true);
-  });
-
-  it("dispose resets initialization state", () => {
-    init(engineOptionsFromHandle(handle));
-    expect(isInitialized()).toBe(true);
-    dispose();
-    expect(isInitialized()).toBe(false);
-  });
-
-  it("can re-init after dispose", () => {
-    init(engineOptionsFromHandle(handle));
-    dispose();
-    init(engineOptionsFromHandle(handle));
-    expect(isInitialized()).toBe(true);
-    const vnode = createElement("Canvas", { width: 400, height: 300 });
-    expect(() => renderToSvg(vnode)).not.toThrow();
+describe("compiled Engine ownership", () => {
+  it("detaches snapshots and rejects a different Engine even with identical options", async () => {
+    const [firstEngine, secondEngine] = await Promise.all([
+      createEngineAsync({}),
+      createEngineAsync({}),
+    ]);
+    try {
+      const scene = createElement("Canvas", { width: 400, height: 300 });
+      const { svg, ir } = firstEngine.renderToSvgAndIR(scene);
+      const compiled = firstEngine.compile(scene);
+      const snapshot = firstEngine.snapshotCompiledIR(compiled);
+      snapshot.width = 1;
+      expect(ir.width).toBe(400);
+      expect(firstEngine.snapshotCompiledIR(compiled).width).toBe(400);
+      expect(firstEngine.renderCompiledToSvg(compiled)).toBe(svg);
+      expect(firstEngine.renderCompiledToPng(compiled)).toEqual(firstEngine.renderToPng(scene));
+      expect(() => secondEngine.snapshotCompiledIR(compiled)).toThrowError(
+        expect.objectContaining({ code: "COMPILED_SCENE_WRONG_ENGINE", stage: "engine" }),
+      );
+      expect(() => secondEngine.renderCompiledToSvg(compiled)).toThrowError(
+        expect.objectContaining({ code: "COMPILED_SCENE_WRONG_ENGINE", stage: "engine" }),
+      );
+    } finally {
+      firstEngine.dispose();
+      secondEngine.dispose();
+    }
   });
 });

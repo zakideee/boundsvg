@@ -1,10 +1,4 @@
-import {
-  type CompiledScene,
-  compileLayoutTransition,
-  type Engine,
-  type LayoutTransitionInput,
-  type VNode,
-} from "../../dist/index.js";
+import type { CompiledScene, Engine, LayoutTransitionInput, VNode } from "../../dist/index.js";
 
 declare const engine: Engine;
 declare const stateA: VNode;
@@ -25,9 +19,7 @@ const engineCompiled: CompiledScene = engine.compileLayoutTransition(transition,
   skipValidation: true,
   textPathMode: "glyphs",
 });
-const defaultCompiled: CompiledScene = compileLayoutTransition(transition);
 void engineCompiled;
-void defaultCompiled;
 
 engine.compileLayoutTransition(transition, {
   // @ts-expect-error animation sampling is fixed by the transition operation

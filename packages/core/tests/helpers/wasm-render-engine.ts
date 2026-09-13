@@ -59,8 +59,8 @@ export async function createFontedWasmHandle(): Promise<WasmEngineHandle> {
 /**
  * Builds the EngineOptions wired to `handle`'s render transports. `overrides`
  * are spread last, so tests can replace any transport (or add mocks) while the
- * rest stays real. Exposed for the default-engine lifecycle tests that feed
- * these options straight into `render.init`.
+ * rest stays real. Factory tests pass these options to `createEngine` to keep
+ * each Engine bound to its own handle.
  */
 export function engineOptionsFromHandle(
   handle: WasmEngineHandle,

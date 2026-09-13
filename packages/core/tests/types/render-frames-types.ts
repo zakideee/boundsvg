@@ -1,12 +1,10 @@
-import {
-  type CompiledScene,
-  type Engine,
-  type Frame,
-  type RenderCompiledFramesOptions,
-  type RenderFramesOptions,
-  renderCompiledFrames,
-  renderFrames,
-  type VNode,
+import type {
+  CompiledScene,
+  Engine,
+  Frame,
+  RenderCompiledFramesOptions,
+  RenderFramesOptions,
+  VNode,
 } from "../../dist/index.js";
 
 declare const engine: Engine;
@@ -19,13 +17,9 @@ const options: RenderFramesOptions = {
   scale: 2,
 };
 const engineFrames: Iterable<Frame> = engine.renderFrames(scene, options);
-const defaultFrames: Iterable<Frame> = renderFrames(scene, options);
 const engineCompiledFrames: Iterable<Frame> = engine.renderCompiledFrames(compiled, options);
-const defaultCompiledFrames: Iterable<Frame> = renderCompiledFrames(compiled, options);
 void engineFrames;
-void defaultFrames;
 void engineCompiledFrames;
-void defaultCompiledFrames;
 
 const compiledOptions: RenderCompiledFramesOptions = {
   timesMs: [0, 600],

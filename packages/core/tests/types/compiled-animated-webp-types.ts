@@ -1,9 +1,4 @@
-import {
-  type CompiledScene,
-  type Engine,
-  type RenderCompiledAnimatedWebpOptions,
-  renderCompiledToAnimatedWebp,
-} from "../../dist/index.js";
+import type { CompiledScene, Engine, RenderCompiledAnimatedWebpOptions } from "../../dist/index.js";
 
 declare const engine: Engine;
 declare const compiled: CompiledScene;
@@ -15,9 +10,7 @@ const options: RenderCompiledAnimatedWebpOptions = {
   scale: 2,
 };
 const engineBytes: Uint8Array = engine.renderCompiledToAnimatedWebp(compiled, options);
-const defaultBytes: Uint8Array = renderCompiledToAnimatedWebp(compiled, options);
 void engineBytes;
-void defaultBytes;
 
 const invalidCompiledValidation: RenderCompiledAnimatedWebpOptions = {
   durationMs: 1_000,

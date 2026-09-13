@@ -15,20 +15,21 @@ export const TEMPLATE_IMAGE_DATA_URL = `data:image/svg+xml;utf8,${encodeURICompo
   </svg>`,
 )}`;
 
-const TERMINAL_CODE_SNIPPET = `import { renderToSvg } from "@boundsvg/core";
-import { Canvas, Flex, Text, toVNode } from "@boundsvg/react";
-
-const vnode = toVNode(
-  <Canvas width={960} height={420} background="#1e1e1e">
-    <Flex direction="column" gap={12} padding={24}>
-      <Text font="JetBrainsMono-woff2" fontSizePx={22} color="#e2e8f0" wrap="none">
-        pnpm --filter @boundsvg/docs generate
-      </Text>
-    </Flex>
-  </Canvas>,
-);
-
-console.log(renderToSvg(vnode));`;
+const TERMINAL_CODE_SNIPPET = `import { readFile } from "node:fs/promises";
+import { createEngineAsync } from "@boundsvg/core";
+import { Canvas, Text, toVNode } from "@boundsvg/react";
+const fontBytes = new Uint8Array(await readFile("mono.woff2"));
+const engine = await createEngineAsync({
+  fonts: [{ alias: "Mono", data: fontBytes }],
+});
+try {
+  const node = toVNode(<Canvas width={400} height={300}>
+    <Text font="Mono">Hello, boundsvg!</Text>
+  </Canvas>);
+  console.log(engine.renderToSvg(node));
+} finally {
+  engine.dispose();
+}`;
 
 const TERMINAL_TEMPLATE_INPUT: TerminalDesignInput = {
   code: TERMINAL_CODE_SNIPPET,

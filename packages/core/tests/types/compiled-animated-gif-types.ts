@@ -1,9 +1,4 @@
-import {
-  type CompiledScene,
-  type Engine,
-  type RenderCompiledAnimatedGifOptions,
-  renderCompiledToAnimatedGif,
-} from "../../dist/index.js";
+import type { CompiledScene, Engine, RenderCompiledAnimatedGifOptions } from "../../dist/index.js";
 
 declare const engine: Engine;
 declare const compiled: CompiledScene;
@@ -15,9 +10,7 @@ const options: RenderCompiledAnimatedGifOptions = {
   scale: 2,
 };
 const engineBytes: Uint8Array = engine.renderCompiledToAnimatedGif(compiled, options);
-const defaultBytes: Uint8Array = renderCompiledToAnimatedGif(compiled, options);
 void engineBytes;
-void defaultBytes;
 
 const invalidCompiledValidation: RenderCompiledAnimatedGifOptions = {
   durationMs: 1_000,

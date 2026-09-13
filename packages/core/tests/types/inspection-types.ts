@@ -6,7 +6,6 @@ import {
   inspectScene,
   type LayoutRenderOptions,
   type SceneInspection,
-  snapshotCompiledIR,
   type VNode,
 } from "../../dist/index.js";
 import { collectInspectionBBoxes } from "../../dist/inspect.js";
@@ -24,9 +23,7 @@ void bbox;
 void collected;
 
 const engineSnapshot: IR = engine.snapshotCompiledIR(compiled);
-const defaultSnapshot: IR = snapshotCompiledIR(compiled);
 void engineSnapshot;
-void defaultSnapshot;
 
 // @ts-expect-error CompiledScene is nominal and cannot be constructed structurally
 const structuralCompiled: CompiledScene = {
@@ -44,3 +41,41 @@ compiled.width = 10;
 
 // @ts-expect-error animation is sampled after layout and is not a layout-tree option
 engine.renderToLayoutTree(scene, { timeMs: 120 });
+
+import type * as CoreExports from "../../dist/index.js";
+
+type RemovedRootExport =
+  | "compileLayoutTransition"
+  | "compileScene"
+  | "dispose"
+  | "hitTestOnIR"
+  | "init"
+  | "initAsync"
+  | "isInitialized"
+  | "renderCompiledFrames"
+  | "renderCompiledToAnimatedGif"
+  | "renderCompiledToAnimatedSvg"
+  | "renderCompiledToAnimatedWebp"
+  | "renderCompiledToPng"
+  | "renderCompiledToSvg"
+  | "renderFrames"
+  | "renderToAnimatedGif"
+  | "renderToAnimatedSvg"
+  | "renderToAnimatedSvgAndIR"
+  | "renderToAnimatedWebp"
+  | "renderToIR"
+  | "renderToLayeredPng"
+  | "renderToLayeredSvg"
+  | "renderToLayoutTree"
+  | "renderToPng"
+  | "renderToSvg"
+  | "renderToSvgAndIR"
+  | "renderToTextOutlines"
+  | "renderToWebp"
+  | "snapshotCompiledIR";
+
+// Restoring any removed function makes the declaration contract fail.
+const hasNoRemovedRootExports: Extract<RemovedRootExport, keyof typeof CoreExports> extends never
+  ? true
+  : false = true;
+void hasNoRemovedRootExports;

@@ -120,37 +120,6 @@ export type {
   NodeIdValidationResult,
 } from "./node-ids.js";
 export { assertUniqueNodeIds, collectNodeIds, validateNodeIds } from "./node-ids.js";
-// Top-level render functions (default engine)
-export {
-  compileLayoutTransition,
-  compileScene,
-  dispose,
-  hitTestOnIR,
-  init,
-  initAsync,
-  isInitialized,
-  renderCompiledFrames,
-  renderCompiledToAnimatedGif,
-  renderCompiledToAnimatedSvg,
-  renderCompiledToAnimatedWebp,
-  renderCompiledToPng,
-  renderCompiledToSvg,
-  renderFrames,
-  renderToAnimatedGif,
-  renderToAnimatedSvg,
-  renderToAnimatedSvgAndIR,
-  renderToAnimatedWebp,
-  renderToIR,
-  renderToLayeredPng,
-  renderToLayeredSvg,
-  renderToLayoutTree,
-  renderToPng,
-  renderToSvg,
-  renderToSvgAndIR,
-  renderToTextOutlines,
-  renderToWebp,
-  snapshotCompiledIR,
-} from "./render.js";
 // Render capability contract
 export type { RasterScaleOptions, ResolvedRasterScale } from "./render-capabilities.js";
 export {

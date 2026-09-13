@@ -74,12 +74,12 @@ release), **Not supported** (documented gap).
 | Capability                                        | Status       | Notes                                                                                                                 |
 | ------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------- |
 | Static SVG output (text as glyph paths)           | Supported    | Animated input requires explicit `timeMs`; `nodeIdMetadata` can include preview identity or omit it for final export. |
-| Independent animated SVG output                   | Supported    | Explicit `renderToAnimatedSvg(..., { playback: { mode: "independent" } })` preserves authored clocks.                 |
+| Independent animated SVG output                   | Supported    | Explicit `engine.renderToAnimatedSvg(..., { playback: { mode: "independent" } })` preserves authored clocks.          |
 | Document-timeline animated SVG output             | Supported    | Explicit duration and finite/fractional or infinite document iterations; deterministic base pose and budgeted CSS.    |
 | PNG output (scale, background, caps)              | Supported    | Max 3840×2160                                                                                                         |
-| WebP output (`renderToWebp`)                      | Supported    | Lossless (VP8L) only; byte-deterministic; often smaller than PNG                                                      |
-| Animated WebP (`renderToAnimatedWebp`)            | Experimental | Sampled from declarative animations; full-frame lossless; max 300 frames                                              |
-| Animated GIF (`renderToAnimatedGif`)              | Experimental | 256-color quantized; 10 ms timing quantum; byte-deterministic                                                         |
+| WebP output (`engine.renderToWebp`)               | Supported    | Lossless (VP8L) only; byte-deterministic; often smaller than PNG                                                      |
+| Animated WebP (`engine.renderToAnimatedWebp`)     | Experimental | Sampled from declarative animations; full-frame lossless; max 300 frames                                              |
+| Animated GIF (`engine.renderToAnimatedGif`)       | Experimental | 256-color quantized; 10 ms timing quantum; byte-deterministic                                                         |
 | MP4 export, browser (`@boundsvg/video`)           | Experimental | H.264 via the browser's WebCodecs encoder; outside the determinism contract; no Cloudflare Workers                    |
 | MP4 export, CLI (`--format mp4`)                  | Experimental | H.264 via an external ffmpeg you install; outside the determinism contract                                            |
 | Layered SVG/PNG export                            | Experimental | For motion-tool handoff                                                                                               |
