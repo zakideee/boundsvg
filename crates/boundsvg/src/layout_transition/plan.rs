@@ -11,7 +11,10 @@ use super::{CompatibilityCategory, CompatibilityMismatch};
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LayoutTransitionPlanInput {
     checkpoints: Vec<LayoutTransitionCheckpointInput>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::ir::wire_input::deserialize_optional_easing"
+    )]
     easing: Option<AnimationEasing>,
 }
 
@@ -148,5 +151,34 @@ fn schedule_mismatch(
         node_id: node_id.to_string(),
         expected: expected.into(),
         observed: observed.into(),
+    }
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::LayoutTransitionPlanInput;
+    use crate::wire::test_support::assert_optional_field;
+    use serde_json::json;
+
+    #[test]
+    fn easing_presence_preserves_the_valid_checkpoint_schedule() {
+        let fixture = json!({
+            "checkpoints": [
+                {"timeMs": 0, "stateIndex": 0},
+                {"timeMs": 100, "stateIndex": 1},
+                {"timeMs": 200, "stateIndex": 1},
+                {"timeMs": 300, "stateIndex": 0}
+            ],
+            "easing": "linear"
+        });
+        assert_optional_field::<LayoutTransitionPlanInput>(&fixture, "easing", |input| {
+            input.easing.is_none()
+        });
+        let input: LayoutTransitionPlanInput =
+            serde_json::from_value(fixture.clone()).expect("valid schedule");
+        assert!(input.validate("node").is_ok());
+        let mut unknown = fixture;
+        unknown["unknownOption"] = json!(true);
+        assert!(serde_json::from_value::<LayoutTransitionPlanInput>(unknown).is_err());
     }
 }

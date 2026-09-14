@@ -264,7 +264,7 @@ describe("generated directional IR schemas", () => {
     expect(definition(inputSchema, "TextRunStyle")).toBeDefined();
   });
 
-  it("models omit-none output separately from defaulted nullable input", () => {
+  it("models migrated optional fields separately from unchanged nullable input", () => {
     const outputProperties = properties(outputSchema, "output IR");
     const inputProperties = properties(inputSchema, "emit input");
     expect(outputProperties.warnings).toBeUndefined();
@@ -272,7 +272,7 @@ describe("generated directional IR schemas", () => {
     expect(requiredFields(outputSchema)).not.toContain("debug");
     expect(schemaAllowsNull(outputProperties.debug)).toBe(false);
     expect(requiredFields(inputSchema)).not.toContain("debug");
-    expect(schemaAllowsNull(inputProperties.debug)).toBe(true);
+    expect(schemaAllowsNull(inputProperties.debug)).toBe(false);
 
     const outputText = asObject(
       asArray(definition(outputSchema, "IrNode").oneOf, "output variants")[2],
@@ -529,7 +529,7 @@ describe("generated IR validator against real WASM output", () => {
     expect(validateStructuralIr(nestedEffectNull)).toBe(false);
   });
 
-  it("accepts optional omission and only the deserialize contract's permitted null", () => {
+  it("accepts optional omission and rejects migrated input null", () => {
     const optionalOutput = structuredClone(actualCorpus[0]);
     Reflect.set(optionalOutput, "debug", true);
     expect(
@@ -548,6 +548,8 @@ describe("generated IR validator against real WASM output", () => {
       height: actualCorpus[0]?.height,
       debug: null,
     };
+    expect(inputValidator(emitInput)).toBe(false);
+    Reflect.deleteProperty(emitInput, "debug");
     expect(inputValidator(emitInput), validatorMessage(inputValidator.errors)).toBe(true);
   });
 });

@@ -100,7 +100,7 @@ function architectureIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
   ].sort();
   return new Map([
     ["contracts/root-runtime-exports.json", jsonBytes(currentRootExports)],
-    ["contracts/wasm-schema-version.txt", utf8("31")],
+    ["contracts/wasm-schema-version.txt", utf8("32")],
     [
       "fallback/missing-glyph.warnings.json",
       jsonBytes([

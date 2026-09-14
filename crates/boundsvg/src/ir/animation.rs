@@ -1137,6 +1137,8 @@ pub fn sample_animation_state(
     let sampled = sample_animation(ir, time_ms)?;
     let mut samples = Vec::new();
     collect_animation_state(&sampled.root, &mut samples);
+    crate::wire::finite::FiniteOutput::try_new(&samples)
+        .map_err(|error| error.into_engine_error("sample_animation_state"))?;
     Ok(samples)
 }
 
@@ -1260,70 +1262,72 @@ mod tests {
     }
 
     fn text_unit_ir(order: &str) -> Ir {
-        let root = serde_json::from_value(serde_json::json!({
-            "nodeId": "text",
-                "bbox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
-                "type": "text",
-                "lines": [],
-                "font": "Test",
-                "fontSizePx": 10.0,
-                "color": "#000000",
-            "textAlign": "start",
-                "layoutBox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
-                "lineHeightPx": 10.0,
-                "unitMap": {
-                    "kind": "cluster",
-                    "ruby": "with-base",
-                    "units": [
+        let root =
+            serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(serde_json::json!({
+                "nodeId": "text",
+                    "bbox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
+                    "type": "text",
+                    "lines": [],
+                    "font": "Test",
+                    "fontSizePx": 10.0,
+                    "color": "#000000",
+                "textAlign": "start",
+                    "layoutBox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
+                    "lineHeightPx": 10.0,
+                    "unitMap": {
+                        "kind": "cluster",
+                        "ruby": "with-base",
+                        "units": [
+                            {
+                                "unitId": "first",
+                                "kind": "cluster",
+                                "sourceStart": 0,
+                                "sourceEnd": 1,
+                                "lineId": "line",
+                                "logicalOrder": 0,
+                                "visualOrder": 1,
+                                "members": []
+                            },
+                            {
+                                "unitId": "second",
+                                "kind": "cluster",
+                                "sourceStart": 1,
+                                "sourceEnd": 2,
+                                "lineId": "line",
+                                "logicalOrder": 1,
+                                "visualOrder": 0,
+                                "members": []
+                            }
+                        ]
+                    },
+                    "unitAnimation": {
+                        "by": "cluster",
+                        "animation": {
+                            "keyframes": [
+                                { "at": 0.0, "opacity": 0.0 },
+                                { "at": 1.0, "opacity": 1.0 }
+                            ],
+                            "durationMs": 100.0,
+                            "easing": "linear",
+                            "fill": "both"
+                        },
+                        "delayStepMs": 50.0,
+                        "order": order,
+                        "ruby": "with-base"
+                    },
+                    "unitAnimationSamples": [
                         {
                             "unitId": "first",
-                            "kind": "cluster",
-                            "sourceStart": 0,
-                            "sourceEnd": 1,
-                            "lineId": "line",
-                            "logicalOrder": 0,
-                            "visualOrder": 1,
-                            "members": []
+                            "bbox": { "x": 0.0, "y": 0.0, "w": 10.0, "h": 10.0 }
                         },
                         {
                             "unitId": "second",
-                            "kind": "cluster",
-                            "sourceStart": 1,
-                            "sourceEnd": 2,
-                            "lineId": "line",
-                            "logicalOrder": 1,
-                            "visualOrder": 0,
-                            "members": []
+                            "bbox": { "x": 10.0, "y": 0.0, "w": 10.0, "h": 10.0 }
                         }
                     ]
-                },
-                "unitAnimation": {
-                    "by": "cluster",
-                    "animation": {
-                        "keyframes": [
-                            { "at": 0.0, "opacity": 0.0 },
-                            { "at": 1.0, "opacity": 1.0 }
-                        ],
-                        "durationMs": 100.0,
-                        "easing": "linear",
-                        "fill": "both"
-                    },
-                    "delayStepMs": 50.0,
-                    "order": order,
-                    "ruby": "with-base"
-                },
-                "unitAnimationSamples": [
-                    {
-                        "unitId": "first",
-                        "bbox": { "x": 0.0, "y": 0.0, "w": 10.0, "h": 10.0 }
-                    },
-                    {
-                        "unitId": "second",
-                        "bbox": { "x": 10.0, "y": 0.0, "w": 10.0, "h": 10.0 }
-                    }
-                ]
-        }))
-        .expect("text unit node fixture deserializes");
+            }))
+            .map(IrNode::from)
+            .expect("text unit node fixture deserializes");
         Ir {
             root,
             draw_order: vec!["text".to_string()],
@@ -1646,7 +1650,8 @@ mod tests {
             serde_json::json!({ "type": "steps", "count": 2, "extra": true }),
         ] {
             assert!(
-                serde_json::from_value::<AnimationEasing>(easing_json).is_err(),
+                serde_json::from_value::<crate::ir::wire_input::AnimationEasingInput>(easing_json)
+                    .is_err(),
                 "invalid steps JSON must fail before sampling"
             );
         }
@@ -1758,26 +1763,35 @@ mod tests {
 
     #[test]
     fn spring_easing_type_must_be_spring() {
-        let easing: AnimationEasing = serde_json::from_value(serde_json::json!({
+        let easing: AnimationEasing = serde_json::from_value::<
+            crate::ir::wire_input::AnimationEasingInput,
+        >(serde_json::json!({
             "type": "bounce",
             "stiffness": 100.0
         }))
+        .map(AnimationEasing::from)
         .expect("object shape parses as a spring");
         assert_eq!(spring_error_code(easing), "ANIMATION_INVALID_SPEC");
     }
 
     #[test]
     fn spring_json_round_trips_without_shadowing_steps() {
-        let steps: AnimationEasing = serde_json::from_value(serde_json::json!({
+        let steps: AnimationEasing = serde_json::from_value::<
+            crate::ir::wire_input::AnimationEasingInput,
+        >(serde_json::json!({
             "type": "steps",
             "count": 3,
             "position": "jump-start"
         }))
+        .map(AnimationEasing::from)
         .expect("steps easing still parses");
         assert!(matches!(steps, AnimationEasing::Steps(_)));
 
-        let bare: AnimationEasing =
-            serde_json::from_value(serde_json::json!({ "type": "spring" })).expect("bare spring");
+        let bare: AnimationEasing = serde_json::from_value::<
+            crate::ir::wire_input::AnimationEasingInput,
+        >(serde_json::json!({ "type": "spring" }))
+        .map(AnimationEasing::from)
+        .expect("bare spring");
         assert_eq!(
             serde_json::to_value(&bare).expect("spring serializes"),
             serde_json::json!({ "type": "spring" }),

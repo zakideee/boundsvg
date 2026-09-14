@@ -1,3 +1,5 @@
+//! Raster requests, resolution limits, and SVG-to-pixel conversion.
+
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -15,10 +17,30 @@ const PNG_MAX_PIXELS_U64: u64 = 3840 * 2160;
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FontFamilyConfig {
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub serif: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub sans_serif: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub cursive: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fantasy: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub monospace: Option<String>,
 }
 
@@ -34,14 +56,34 @@ pub enum OversizeBehavior {
 #[serde(rename_all = "camelCase")]
 pub struct RasterizeOptions {
     /// CSS3 color string for PNG background (e.g. "#ffffff", "rgb(255,255,255)")
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub background: Option<String>,
     /// Output scale factor (e.g. 2.0 for Retina). Default: 1.0
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub scale: Option<f64>,
     /// Resolution overflow behavior when PNG exceeds 4K-equivalent cap
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub oversize_behavior: Option<OversizeBehavior>,
     /// Per-family font mapping for generic CSS families
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_families: Option<FontFamilyConfig>,
     /// Public generator identity embedded in the completed file.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub generator: Option<crate::output_generator::OutputGenerator>,
 }
 
@@ -234,24 +276,44 @@ pub fn validate_layered_svg_composition(
     })
 }
 
+/// Borrowed raster settings after resolving transport defaults.
+struct RasterizeRequest<'a> {
+    background: Option<&'a str>,
+    scale: f64,
+    oversize_behavior: OversizeBehavior,
+    font_families: Option<&'a FontFamilyConfig>,
+}
+
+impl<'a> From<&'a RasterizeOptions> for RasterizeRequest<'a> {
+    fn from(options: &'a RasterizeOptions) -> Self {
+        Self {
+            background: options.background.as_deref(),
+            scale: options.scale.unwrap_or(1.0),
+            oversize_behavior: options
+                .oversize_behavior
+                .unwrap_or(OversizeBehavior::AutoAdjust),
+            font_families: options.font_families.as_ref(),
+        }
+    }
+}
+
 pub(crate) fn rasterize_svg_to_pixmap(
     svg_string: &str,
     alias_map: &[(String, String)],
     font_data: &[Arc<Vec<u8>>],
     options: &RasterizeOptions,
 ) -> Result<resvg::tiny_skia::Pixmap, EngineError> {
-    let requested_scale = options.scale.unwrap_or(1.0);
+    let request = RasterizeRequest::from(options);
+    let requested_scale = request.scale;
     assert_valid_raster_scale(requested_scale)?;
 
     let mut usvg_options = usvg::Options::default();
-    register_fonts_into_fontdb(&mut usvg_options, font_data, options);
+    register_fonts_into_fontdb(&mut usvg_options, font_data, request.font_families);
     let resolved_svg = substitute_font_aliases(svg_string, alias_map);
     let tree = usvg::Tree::from_str(&resolved_svg, &usvg_options)?;
 
     let size = tree.size();
-    let behavior = options
-        .oversize_behavior
-        .unwrap_or(OversizeBehavior::AutoAdjust);
+    let behavior = request.oversize_behavior;
     let resolution = resolve_png_scale(
         f64::from(size.width()),
         f64::from(size.height()),
@@ -275,8 +337,8 @@ pub(crate) fn rasterize_svg_to_pixmap(
             .ok_or_else(|| EngineError::Rasterize("Failed to create pixmap".into()))?;
 
     // Fill background if specified
-    if let Some(ref bg) = options.background {
-        let color = parse_color(bg)?;
+    if let Some(background) = request.background {
+        let color = parse_color(background)?;
         pixmap.fill(color);
     }
 
@@ -825,7 +887,7 @@ fn is_ascii_space(byte: u8) -> bool {
 fn register_fonts_into_fontdb(
     options: &mut usvg::Options,
     font_data: &[Arc<Vec<u8>>],
-    rasterize_opts: &RasterizeOptions,
+    font_families: Option<&FontFamilyConfig>,
 ) {
     if font_data.is_empty() {
         return;
@@ -840,7 +902,7 @@ fn register_fonts_into_fontdb(
     }
 
     // Apply user-specified font family mappings if provided
-    if let Some(ref families) = rasterize_opts.font_families {
+    if let Some(families) = font_families {
         if let Some(ref name) = families.serif {
             fontdb.set_serif_family(name.clone());
         }

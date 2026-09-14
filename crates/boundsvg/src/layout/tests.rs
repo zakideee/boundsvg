@@ -269,7 +269,7 @@ fn rich_base_decoration_wire_input(range_count: usize, animate_units: bool) -> L
             }
         })
     });
-    serde_json::from_value(serde_json::json!({
+    let mut fixture = serde_json::json!({
         "root": {
             "nodeId": "canvas",
             "nodeType": "canvas",
@@ -284,8 +284,7 @@ fn rich_base_decoration_wire_input(range_count: usize, animate_units: bool) -> L
                     "fontSizePx": 16.0,
                     "fontFamily": ["NotoSansJP"],
                     "richText": rich_text
-                },
-                "visual": visual
+                }
             }]
         },
         "fonts": [{
@@ -294,8 +293,11 @@ fn rich_base_decoration_wire_input(range_count: usize, animate_units: bool) -> L
             "style": "normal",
             "data": test_font_data()
         }]
-    }))
-    .expect("rich decoration wire input")
+    });
+    if let Some(visual_properties) = visual {
+        fixture["root"]["children"][0]["visual"] = visual_properties;
+    }
+    serde_json::from_value(fixture).expect("rich decoration wire input")
 }
 
 fn inline_rect_wire_input(rich_text: &serde_json::Value) -> LayoutInput {

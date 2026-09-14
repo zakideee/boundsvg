@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { Engine, type EngineOptions, type LayeredPngOptions } from "../../src/engine.js";
+import {
+  Engine,
+  type EngineOptions,
+  type LayeredPngOptions,
+  type LayeredSvgOptions,
+} from "../../src/engine.js";
+import { snapshotLayerSourceMetadata } from "../../src/layer-source-metadata.js";
 import { formatLayerFileName, sortLayersByPaintOrder } from "../../src/layered-svg.js";
+import type { LayoutNode } from "../../src/layout/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import {
@@ -1174,4 +1181,141 @@ describe("formatLayerFileName()", () => {
     expect(formatLayerFileName(3, "", "svg")).toBe("003-layer.svg");
     expect(formatLayerFileName(3, "   ", "png")).toBe("003-layer.png");
   });
+});
+
+describe("layered source metadata boundary", () => {
+  it.each([
+    "svg",
+    "png",
+  ] as const)("compiles %s once without an additional layout transport", (format) => {
+    const computeLayoutFn = vi.fn(handle.createComputeLayoutFn());
+    const renderToIrFn = vi.fn((inputJson: string, optionsJson: string) =>
+      handle.renderToIr(inputJson, optionsJson),
+    );
+    const engine = createPngTestEngine({ computeLayoutFn, renderToIrFn });
+    const scene = createTestScene();
+    const result =
+      format === "svg" ? engine.renderToLayeredSvg(scene) : engine.renderToLayeredPng(scene);
+    expect(result.layers.map((layer) => layer.id)).toEqual(["background", "text"]);
+    expect(renderToIrFn).toHaveBeenCalledOnce();
+    expect(computeLayoutFn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "svg",
+    "png",
+  ] as const)("does not observe partial backend layout failures for %s", (format) => {
+    const computeLayoutFn = vi.fn(() => {
+      throw new TypeError("layout transport unavailable");
+    });
+    const engine = createPngTestEngine({ computeLayoutFn });
+    const scene = createTestScene();
+    expect(() => engine.renderToLayoutTree(scene)).toThrow("layout transport unavailable");
+    computeLayoutFn.mockClear();
+    const result =
+      format === "svg" ? engine.renderToLayeredSvg(scene) : engine.renderToLayeredPng(scene);
+    expect(result.layers).toHaveLength(2);
+    expect(computeLayoutFn).not.toHaveBeenCalled();
+  });
+
+  it("snapshots SVG options and backends before a warning callback mutates caller state", () => {
+    const emitSvgFromIrFn = vi.fn((irJson: string, optionsJson: string) =>
+      handle.emitSvgFromIr(irJson, optionsJson),
+    );
+    const replacementEmitter = vi.fn(() => "<svg/>");
+    const validateLayeredSvgCompositionFn = vi.fn(() => ({
+      differentPixels: 0,
+      differenceRatio: 0,
+      width: 320,
+      height: 200,
+    }));
+    const engineOptions = engineOptionsFromHandle(handle, {
+      emitSvgFromIrFn,
+      validateLayeredSvgCompositionFn,
+    });
+    const engine = new Engine(engineOptions);
+    const textNode = createElement(
+      "Text",
+      { id: "subject", layer: "before", font: "JetBrainsMono", fontSizePx: 16 },
+      "A日本語",
+    );
+    const scene = createElement("Canvas", { width: 320, height: 200 }, textNode);
+    const mutateCallerState = vi.fn(() => {
+      textNode.props.layer = "after";
+      renderOptions.scale = Number.MAX_VALUE;
+      renderOptions.resourceIdPrefix = "after";
+      if (renderOptions.generator) {
+        renderOptions.generator.name = "after";
+      }
+      if (typeof renderOptions.validateComposition === "object") {
+        renderOptions.validateComposition.enabled = false;
+      }
+      engineOptions.emitSvgFromIrFn = replacementEmitter;
+      engineOptions.validateLayeredSvgCompositionFn = undefined;
+      engineOptions.resolveIrFn = undefined;
+    });
+    const renderOptions: LayeredSvgOptions = {
+      scale: 1,
+      resourceIdPrefix: "before",
+      generator: { name: "before", version: "1" },
+      validateComposition: { enabled: true },
+      onWarning: mutateCallerState,
+    };
+    const result = engine.renderToLayeredSvg(scene, renderOptions);
+    expect(mutateCallerState).toHaveBeenCalled();
+    expect(result.layers.map((layer) => layer.id)).toEqual(["before"]);
+    expect(result.compositionValidation?.status).toBe("passed");
+    expect(validateLayeredSvgCompositionFn).toHaveBeenCalledOnce();
+    expect(replacementEmitter).not.toHaveBeenCalled();
+    expect(emitSvgFromIrFn).toHaveBeenCalled();
+    expect(
+      emitSvgFromIrFn.mock.calls.map(([, encodedOptions]) => JSON.parse(encodedOptions)),
+    ).toEqual([
+      expect.objectContaining({
+        scale: 1,
+        resourceIdPrefix: "beforelayer-0-",
+        generator: { name: "before", version: "1" },
+      }),
+      expect.objectContaining({ scale: 1, resourceIdPrefix: "before" }),
+    ]);
+  });
+});
+
+it("matches layout-tree metadata across inline children and inherited layers", () => {
+  const inlineNode = createElement("Inline", { key: "accent" }, "inside");
+  const textNode = createElement(
+    "Text",
+    { id: "", layer: "  letters  ", font: "NotoSansJP", fontSizePx: 16 },
+    "before",
+    inlineNode,
+    "after",
+  );
+  const scene = createElement(
+    "Canvas",
+    { width: 320, height: 200 },
+    createElement("Box", { layer: "parent", width: 300, height: 100 }, textNode),
+  );
+  const root = createTestEngine().renderToLayoutTree(scene).root;
+  const expected = new Map<
+    string,
+    { nodeId: string; nodeType: string; requestedLayerId: string }
+  >();
+  const visit = (node: LayoutNode, inheritedLayerId: string): void => {
+    const layer = "layer" in node.vnode.props ? node.vnode.props.layer?.trim() : undefined;
+    const requestedLayerId = layer || inheritedLayerId;
+    expected.set(node.nodeId, { nodeId: node.nodeId, nodeType: node.vnode.type, requestedLayerId });
+    for (const child of node.children) {
+      visit(child, requestedLayerId);
+    }
+  };
+  visit(root, "default");
+  const metadata = snapshotLayerSourceMetadata(scene);
+  expect(metadata).toEqual(expected);
+  expect(metadata.get(".0:accent")).toEqual({
+    nodeId: ".0:accent",
+    nodeType: "Inline",
+    requestedLayerId: "letters",
+  });
+  textNode.props.layer = "changed";
+  expect(metadata.get("")?.requestedLayerId).toBe("letters");
 });

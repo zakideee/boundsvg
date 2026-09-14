@@ -94,6 +94,26 @@ fn omitted_option_fields() -> Result<Vec<OmittedOptionField>, IrSchemaGeneration
         .collect()
 }
 
+fn output_schema_owner(owner: &str) -> &str {
+    match owner {
+        "HandlersRefOutput" => "HandlersRef",
+        "TextOutlinePathOutput" => "TextOutlinePath",
+        "ShapePartPaintOutput" => "ShapePartPaint",
+        "ShapePathPartOutput" => "ShapePathPart",
+        "AnimationTransform2DOutput" => "AnimationTransform2D",
+        "AnimationKeyframeOutput" => "AnimationKeyframe",
+        "AnimationSpringOutput" => "AnimationSpring",
+        "AnimationStepsOutput" => "AnimationSteps",
+        "AnimationSpecOutput" => "AnimationSpec",
+        "TextUnitAnimationOutput" => "TextUnitAnimation",
+        "TextUnitAnimationSampleOutput" => "TextUnitAnimationSample",
+        "IrNodeOutput" => "IrNode",
+        "AnimationEasingOutput" => "AnimationEasing",
+        "IrNodeKindOutput" => "IrNodeKind",
+        _ => owner,
+    }
+}
+
 fn normalize_output_schema(schema: &mut serde_json::Value) -> Result<(), IrSchemaGenerationError> {
     let omitted_fields = omitted_option_fields()?;
     let mut owners: BTreeMap<&str, Vec<&OmittedOptionField>> = BTreeMap::new();
@@ -119,16 +139,17 @@ fn normalize_output_schema(schema: &mut serde_json::Value) -> Result<(), IrSchem
             if *owner == "StructuralIr" {
                 continue;
             }
-            if let Some(definition) = definitions.get_mut(*owner) {
+            if let Some(definition) = definitions.get_mut(output_schema_owner(owner)) {
                 normalize_struct_fields(definition, owner, fields.iter().copied())?;
             }
             continue;
         };
 
-        let definition_name = if base_owner == "IrNodeKind" {
+        let base_schema_owner = output_schema_owner(base_owner);
+        let definition_name = if base_schema_owner == "IrNodeKind" {
             "IrNode"
         } else {
-            base_owner
+            base_schema_owner
         };
         let Some(definition) = definitions.get_mut(definition_name) else {
             continue;

@@ -37,21 +37,17 @@ import { hitTest } from "./ir/hit-test.js";
 import type { NodePosition } from "./ir/internal.js";
 import { generateNodeId } from "./ir/node-id.js";
 import type { IR, IRNode } from "./ir/types.js";
+import { snapshotLayerSourceMetadata } from "./layer-source-metadata.js";
 import type {
   LayeredCompositionValidationOptions,
   LayeredCompositionValidationResult,
   LayeredPngResult,
   LayeredSvgResult,
 } from "./layered-svg.js";
-import {
-  hasAnimatedNode,
-  type LayerEmitOptions,
-  renderLayeredSvg,
-  snapshotLayerSourceMetadata,
-} from "./layered-svg.js";
+import { hasAnimatedNode, type LayerEmitOptions, renderLayeredSvg } from "./layered-svg.js";
 import type { ComputeLayoutTransportFn } from "./layout/backend.js";
 import { buildLayoutTransportJson, computeLayout } from "./layout/taffy-layout-adapter.js";
-import type { LayoutNode, LayoutResult } from "./layout/types.js";
+import type { LayoutResult } from "./layout/types.js";
 import { type LayoutTransitionInput, resolveLayoutTransitionInput } from "./layout-transition.js";
 import { assertLayoutTransitionSemanticIds } from "./layout-transition-semantic-ids.js";
 import {
@@ -1096,13 +1092,14 @@ type LegacyRenderFramesOptions = InternalRenderOptions & {
   format: "svg" | "png";
 };
 
-function snapshotRasterOptions<
+function snapshotRenderOptions<
   Options extends
     | RenderPngOptions
     | RenderWebpOptions
     | EmitPngOptions
     | EmitWebpOptions
     | LayeredPngOptions
+    | LayeredSvgOptions
     | LegacyRenderFramesOptions
     | RenderAnimatedWebpOptions
     | RenderAnimatedGifOptions,
@@ -1377,17 +1374,19 @@ export class Engine {
     assertSvgEmissionOptionValues(renderOpts);
     assertValidAnimationRenderOptions(renderOpts);
     this.ensureNotDisposed();
+    const stableRenderOpts =
+      renderOpts === undefined ? undefined : snapshotRenderOptions(renderOpts);
     const renderSnapshot = this.createLayeredRenderSnapshot();
     const { ir, layeredResult } = this.prepareLayeredSvgRender(
       input,
-      renderOpts,
+      stableRenderOpts,
       renderSnapshot.emitLayerSvg,
     );
 
     const compositionValidation = this.validateLayeredSvgComposition({
       ir,
       layeredResult,
-      renderOpts,
+      renderOpts: stableRenderOpts,
       renderSnapshot,
     });
     if (compositionValidation) {
@@ -1407,7 +1406,7 @@ export class Engine {
     );
     this.ensureNotDisposed();
     const stableRenderOpts =
-      renderOpts === undefined ? undefined : snapshotRasterOptions(renderOpts);
+      renderOpts === undefined ? undefined : snapshotRenderOptions(renderOpts);
     assertValidAnimationRenderOptions(stableRenderOpts);
     this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
     const rasterize = this.requireRasterEncoder(this.options.svgToPngFn, {
@@ -1436,12 +1435,7 @@ export class Engine {
       warnings: [...compiledSource.ir.warnings],
     };
     assertRenderableCanvas(irMetadataSnapshot);
-    const layoutRoot = computeLayout(vnode, {
-      computeLayoutFn: this.options.computeLayoutFn,
-      fonts: this.options.fonts,
-      shapeRegistry: this.shapeRegistry(),
-    });
-    const sourceNodeMap = snapshotLayerSourceMetadata(layoutRoot.root);
+    const sourceNodeMap = snapshotLayerSourceMetadata(vnode);
     const behavior = stableRenderOpts?.rasterOversizeBehavior ?? "auto-adjust";
     let scaleResolution: ResolvedRasterScale | undefined;
     let scaleError: FatalError | undefined;
@@ -1617,7 +1611,7 @@ export class Engine {
     frameProducer: AnimationFrameProducer,
   ): Uint8Array {
     this.ensureNotDisposed();
-    const stableRenderOpts = snapshotRasterOptions(renderOpts);
+    const stableRenderOpts = snapshotRenderOptions(renderOpts);
     // Reported ahead of WEBP_NO_ENCODER, matching renderToWebp's ordering.
     this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
     const encodeAnimatedWebp = this.options.svgsToAnimatedWebpFn;
@@ -1707,7 +1701,7 @@ export class Engine {
     frameProducer: AnimationFrameProducer,
   ): Uint8Array {
     this.ensureNotDisposed();
-    const stableRenderOpts = snapshotRasterOptions(renderOpts);
+    const stableRenderOpts = snapshotRenderOptions(renderOpts);
     // Reported ahead of GIF_NO_ENCODER, matching the other raster entry points.
     this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
     const encodeAnimatedGif = this.options.svgsToAnimatedGifFn;
@@ -2163,7 +2157,7 @@ export class Engine {
     options: LegacyRenderFramesOptions,
     animationRasterPlan?: AnimationRasterPlan,
   ): FrameRenderPlan {
-    const stableOptions = snapshotRasterOptions(options);
+    const stableOptions = snapshotRenderOptions(options);
     const timesMs = validateFrameSchedule(stableOptions);
     const format = stableOptions.format;
     const frameEncoder = this.createFrameEncoder(format);
@@ -2773,7 +2767,7 @@ export class Engine {
   ): Uint8Array {
     this.ensureNotDisposed();
     const stableRenderOpts =
-      renderOpts === undefined ? undefined : snapshotRasterOptions(renderOpts);
+      renderOpts === undefined ? undefined : snapshotRenderOptions(renderOpts);
     assertValidAnimationRenderOptions(stableRenderOpts);
     const renderToIrFn = this.requireWasmBackendFn(this.options.renderToIrFn, "renderToIrFn");
     this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
@@ -2965,7 +2959,7 @@ export class Engine {
     this.ensureNotDisposed();
     const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
     assertOwnOptionKeys(emitOpts, EMIT_RASTER_OPTION_KEYS, "renderCompiledToPng");
-    const stableEmitOpts = emitOpts === undefined ? undefined : snapshotRasterOptions(emitOpts);
+    const stableEmitOpts = emitOpts === undefined ? undefined : snapshotRenderOptions(emitOpts);
     assertValidAnimationRenderOptions(stableEmitOpts);
     const requestedScale = stableEmitOpts?.scale ?? 1;
     assertPngScale(requestedScale);
@@ -3056,21 +3050,12 @@ export class Engine {
     }
   }
 
-  /**
-   * Compile and split a scene for the layered render entry points.
-   *
-   * The IR comes from the WASM compile (layout + text + IR build in one
-   * call); the layer split additionally needs the VNode-annotated layout
-   * tree, which only `computeLayout` produces, so the layered path runs a
-   * second layout pass. Both passes are deterministic over the same
-   * transport payload, so the trees always agree — the extra pass is an
-   * accepted cost of the layered path.
-   */
+  /** Compile once and split using metadata captured from the authoring tree. */
   private prepareLayeredSvgRender(
     input: EngineInput,
     renderOpts: LayeredSvgOptions | undefined,
     emitLayerSvg: (layerIr: IR, emitOptions: LayerEmitOptions) => string,
-  ): { ir: IR; layoutRoot: LayoutNode; layeredResult: LayeredSvgResult } {
+  ): { ir: IR; layeredResult: LayeredSvgResult } {
     const vnode = this.resolveInput(input);
     assertValidAnimationRenderOptions(renderOpts);
 
@@ -3091,12 +3076,7 @@ export class Engine {
       );
     }
     const irSnapshotJson = serializeIrForWasm(compiledSource.ir);
-    const layoutRoot = computeLayout(vnode, {
-      computeLayoutFn: this.options.computeLayoutFn,
-      fonts: this.options.fonts,
-      shapeRegistry: this.shapeRegistry(),
-    }).root;
-    const sourceNodeMap = snapshotLayerSourceMetadata(layoutRoot);
+    const sourceNodeMap = snapshotLayerSourceMetadata(vnode);
     const ir = this.resolveIrViaWasm(compiledSource.ir, compiledSource.textPathMode, {
       showMissingGlyphs: renderOpts?.showMissingGlyphs,
       preserveResolvedUnitOutlines: true,
@@ -3119,7 +3099,7 @@ export class Engine {
       // WASM emitter.
       emitLayerSvg,
     });
-    return { ir, layoutRoot, layeredResult };
+    return { ir, layeredResult };
   }
 
   private handleResolvedPngScale(args: {

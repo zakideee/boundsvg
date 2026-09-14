@@ -1,6 +1,11 @@
 import { cloneAnimationSpecForIR, cloneIRForLayeredTransform } from "./ir/clone.js";
 import type { IR, IRGroupNode, IRNode } from "./ir/types.js";
-import type { BBox, LayoutNode } from "./layout/types.js";
+import {
+  DEFAULT_LAYER_ID,
+  type LayerSourceMetadata,
+  type SourceNodeInfo,
+} from "./layer-source-metadata.js";
+import type { BBox } from "./layout/types.js";
 import { LAYOUT_TRANSITION_WRAPPER_META } from "./layout-transition.js";
 import { toCssSafeResourceId } from "./svg/resource-id.js";
 import type { DebugOverlayConfig } from "./svg/types.js";
@@ -12,7 +17,6 @@ import {
   hasTransform,
   multiplyAffineMatrices,
 } from "./transform.js";
-import type { VNode } from "./vnode/types.js";
 
 export type LayerMode = "independent" | "atomic";
 
@@ -119,14 +123,6 @@ type RenderLayeredSvgOptions = {
   };
 };
 
-type SourceNodeInfo = {
-  nodeId: string;
-  nodeType: VNode["type"];
-  requestedLayerId: string;
-};
-
-type LayerSourceMetadata = ReadonlyMap<string, SourceNodeInfo>;
-
 type LayerFragment = {
   id: string;
   mode: LayerMode;
@@ -182,7 +178,6 @@ type TransformAncestor = {
   animation?: NonNullable<IRGroupNode["animation"]>;
 };
 
-const DEFAULT_LAYER_ID = "default";
 const BG_NODE_SUFFIX = ":bg";
 const BORDER_NODE_SUFFIX = ":border";
 const INLINE_DECORATION_PATTERN = /^(.*):ibox\d+$/u;
@@ -301,57 +296,6 @@ export function renderLayeredSvg(input: RenderLayeredSvgInput): LayeredSvgResult
       layers: layers.map(({ svg: _svg, ...entry }) => entry),
     },
   };
-}
-
-/**
- * Copy the VNode-backed fields needed for layer assignment into value metadata.
- * Callers retain this snapshot across warning callbacks instead of retaining a
- * live VNode reference through the layer split.
- */
-export function snapshotLayerSourceMetadata(root: LayoutNode): LayerSourceMetadata {
-  const sourceNodeMap = new Map<string, SourceNodeInfo>();
-
-  const visit = (node: LayoutNode, inheritedLayerId: string): void => {
-    const requestedLayerId = normalizeLayerId(readLayerProp(node.vnode)) ?? inheritedLayerId;
-    sourceNodeMap.set(node.nodeId, {
-      nodeId: node.nodeId,
-      nodeType: node.vnode.type,
-      requestedLayerId,
-    });
-
-    for (const child of node.children) {
-      visit(child, requestedLayerId);
-    }
-  };
-
-  visit(root, DEFAULT_LAYER_ID);
-  return sourceNodeMap;
-}
-
-function readLayerProp(vnode: VNode): string | undefined {
-  switch (vnode.type) {
-    case "Flex":
-    case "Grid":
-    case "Box":
-    case "Text":
-    case "TextOnPath":
-    case "Image":
-    case "Path":
-    case "Svg":
-    case "Shape":
-    case "Symbol":
-      return vnode.props.layer;
-    default:
-      return undefined;
-  }
-}
-
-function normalizeLayerId(layerId: string | undefined): string | undefined {
-  const trimmed = layerId?.trim();
-  if (!trimmed || trimmed === DEFAULT_LAYER_ID) {
-    return trimmed ? DEFAULT_LAYER_ID : undefined;
-  }
-  return trimmed;
 }
 
 function buildDrawIndexMap(drawOrder: readonly string[]): ReadonlyMap<string, number> {

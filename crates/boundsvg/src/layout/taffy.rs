@@ -1441,6 +1441,10 @@ fn collect_layout_results(
         None
     };
 
+    if let Some(text_result) = &text_layout {
+        text_result.try_output()?;
+    }
+
     results.push(LayoutNodeOutput {
         node_id: string_id,
         x,

@@ -25,6 +25,8 @@ fn build_font_families(primary: &str, fallback: Option<&[String]>) -> Vec<String
 }
 
 #[cfg(test)]
+mod presence_tests;
+#[cfg(test)]
 mod tests;
 
 // Re-export everything that lib.rs and other modules need
@@ -38,3 +40,6 @@ pub(crate) use types::{
     IntrinsicInlineSizeInput, MeasureTextBlockInput, ShrinkwrapFlowInput, ShrinkwrapTextInput,
     TextFlowInput, TextFlowWithExclusionsInput,
 };
+
+#[cfg(test)]
+mod output_tests;

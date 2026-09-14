@@ -6,16 +6,16 @@
 //! camelCase keys, and unset fields omitted. Field additions must keep the
 //! serialized JSON shape-identical to what the TS IR builder produces.
 //!
-//! Node types also derive `Deserialize` so `emit_svg_from_ir` can consume a
-//! TS-produced IR JSON. The serialize shape stays authoritative; deserialize
-//! only has to accept what the TS builder emits (`#[serde(default)]` covers
-//! fields the TS side omits).
+//! Input DTOs in `wire_input` convert into these domain values. Native
+//! serialization delegates to the borrowed `wire_output` projections, which
+//! retain the public field names and omission rules.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
+#[cfg(test)]
+use super::wire_output::serialize_lines_ts_projection;
 use crate::diagnostics::SerializedRecoverableError;
-use crate::font::shaping::GlyphInfo;
-use crate::text::types::{Line, PositionedGlyph, TextRunStyle};
+use crate::text::types::Line;
 pub use crate::text::types::{TextShadowLayer, TextStrokeLayer};
 
 pub const MAX_TEXT_ANIMATION_UNITS: usize = 4_096;
@@ -168,51 +168,28 @@ pub enum IrFillRule {
 // ---------------------------------------------------------------------------
 
 /// Event handler references (string identifiers for hit testing).
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default)]
 pub struct HandlersRef {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_click: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_double_click: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_context_menu: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_pointer_down: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_pointer_up: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_pointer_cancel: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_pointer_move: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_pointer_enter: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_pointer_leave: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_pointer_over: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_pointer_out: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_mouse_down: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_mouse_up: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_mouse_move: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_mouse_enter: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_mouse_leave: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_mouse_over: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_mouse_out: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_touch_start: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_touch_end: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_touch_move: Option<String>,
 }
 
@@ -249,9 +226,7 @@ impl HandlersRef {
 
 /// A text run resolved to glyph outline paths.
 /// Mirrors TS `TextOutlinePath` (`packages/core/src/text/types.ts`).
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct TextOutlinePath {
     pub node_id: String,
     pub d: String,
@@ -259,27 +234,13 @@ pub struct TextOutlinePath {
     pub glyph_ids: Vec<u32>,
     pub text: String,
     pub bbox: BBox,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub unit_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_start: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_end: Option<usize>,
-    #[cfg_attr(
-        feature = "ir-schema",
-        schemars(
-            with = "Option<boundtext::schema::DirectionalSchema<crate::text::unit_map::TextUnitSourceRole, String>>"
-        )
-    )]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source_role: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub paint_range_index: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub strokes: Option<Vec<TextStrokeLayer>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub shadows: Option<Vec<TextShadowLayer>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub missing_glyph: Option<bool>,
 }
 
@@ -313,39 +274,24 @@ pub struct ShapePartBounds {
 
 /// Per-part paint override; unset fields inherit the node paint.
 /// Mirrors the `paint` member of TS `ShapePathPart`.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ShapePartPaint {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stroke: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stroke_width: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stroke_linecap: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stroke_linejoin: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stroke_dasharray: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stroke_miterlimit: Option<f64>,
 }
 
 /// One baked part of a shape IR node. Mirrors TS `ShapePathPart`.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ShapePathPart {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub part_id: Option<String>,
     pub d: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stroke_d: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub bounds: Option<ShapePartBounds>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub paint: Option<ShapePartPaint>,
 }
 
@@ -355,24 +301,17 @@ pub struct ShapePathPart {
 
 /// Transform channels allowed in animation keyframes. Animation origins are
 /// fixed to the logical node center and are therefore intentionally absent.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct AnimationTransform2D {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub translate_x: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub translate_y: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub scale_x: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub scale_y: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub rotate_deg: Option<f64>,
 }
 
 #[cfg(feature = "ir-schema")]
-struct NamedAnimationEasingSchema;
+pub(super) struct NamedAnimationEasingSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for NamedAnimationEasingSchema {
@@ -389,7 +328,7 @@ impl boundtext::schema::StringEnumSchemaDomain for NamedAnimationEasingSchema {
 }
 
 #[cfg(feature = "ir-schema")]
-struct AnimationSpringKindSchema;
+pub(super) struct AnimationSpringKindSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationSpringKindSchema {
@@ -398,7 +337,7 @@ impl boundtext::schema::StringEnumSchemaDomain for AnimationSpringKindSchema {
 }
 
 #[cfg(feature = "ir-schema")]
-struct AnimationStepsKindSchema;
+pub(super) struct AnimationStepsKindSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationStepsKindSchema {
@@ -407,7 +346,7 @@ impl boundtext::schema::StringEnumSchemaDomain for AnimationStepsKindSchema {
 }
 
 #[cfg(feature = "ir-schema")]
-struct AnimationStepPositionSchema;
+pub(super) struct AnimationStepPositionSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationStepPositionSchema {
@@ -425,7 +364,7 @@ impl boundtext::schema::StringEnumSchemaDomain for AnimationInfiniteSchema {
 }
 
 #[cfg(feature = "ir-schema")]
-struct AnimationFillSchema;
+pub(super) struct AnimationFillSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationFillSchema {
@@ -434,7 +373,7 @@ impl boundtext::schema::StringEnumSchemaDomain for AnimationFillSchema {
 }
 
 #[cfg(feature = "ir-schema")]
-struct TextLayoutKindSchema;
+pub(super) struct TextLayoutKindSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for TextLayoutKindSchema {
@@ -442,30 +381,16 @@ impl boundtext::schema::StringEnumSchemaDomain for TextLayoutKindSchema {
     const VALUES: &'static [&'static str] = &["path"];
 }
 
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnimationKeyframe {
     pub at: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub transform: Option<AnimationTransform2D>,
 }
 
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AnimationEasing {
-    Named(
-        #[cfg_attr(
-            feature = "ir-schema",
-            schemars(
-                with = "boundtext::schema::DirectionalSchema<boundtext::schema::StringEnumSchema<NamedAnimationEasingSchema>, String>"
-            )
-        )]
-        String,
-    ),
+    Named(String),
     CubicBezier([f64; 4]),
     // Untagged variants are tried in declaration order and `AnimationSteps` also
     // carries a `type` field, so `Spring` must precede it. Both structs deny
@@ -475,58 +400,19 @@ pub enum AnimationEasing {
     Steps(AnimationSteps),
 }
 
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnimationSpring {
-    #[cfg_attr(
-        feature = "ir-schema",
-        schemars(
-            with = "boundtext::schema::DirectionalSchema<boundtext::schema::StringEnumSchema<AnimationSpringKindSchema>, String>"
-        )
-    )]
-    #[serde(rename = "type")]
     pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stiffness: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub damping: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mass: Option<f64>,
 }
 
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnimationSteps {
-    #[cfg_attr(
-        feature = "ir-schema",
-        schemars(
-            with = "boundtext::schema::DirectionalSchema<boundtext::schema::StringEnumSchema<AnimationStepsKindSchema>, String>"
-        )
-    )]
-    #[serde(rename = "type")]
     pub kind: String,
     pub count: f64,
-    #[cfg_attr(
-        feature = "ir-schema",
-        schemars(
-            with = "boundtext::schema::DirectionalSchema<boundtext::schema::StringEnumSchema<AnimationStepPositionSchema>, String>"
-        )
-    )]
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_animation_step_position"
-    )]
     pub position: Option<String>,
-}
-
-fn deserialize_animation_step_position<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<String>, D::Error> {
-    // Missing fields use serde(default); requiring a string here rejects an explicit null.
-    String::deserialize(deserializer).map(Some)
 }
 
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
@@ -545,25 +431,13 @@ pub enum AnimationIterations {
     ),
 }
 
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnimationSpec {
     pub keyframes: Vec<AnimationKeyframe>,
     pub duration_ms: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub delay_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub easing: Option<AnimationEasing>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub iterations: Option<AnimationIterations>,
-    #[cfg_attr(
-        feature = "ir-schema",
-        schemars(
-            with = "Option<boundtext::schema::DirectionalSchema<boundtext::schema::StringEnumSchema<AnimationFillSchema>, String>>"
-        )
-    )]
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<String>,
 }
 
@@ -576,31 +450,21 @@ pub enum TextUnitAnimationOrder {
 }
 
 /// Raw text paint-unit animation semantic retained after sampling.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextUnitAnimation {
     pub by: crate::text::unit_map::TextUnitKind,
     pub animation: AnimationSpec,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub delay_step_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<TextUnitAnimationOrder>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub ruby: Option<crate::text::unit_map::TextUnitRubyMode>,
 }
 
 /// Actual outline bounds and sampled pose for one text paint unit.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextUnitAnimationSample {
     pub unit_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub bbox: Option<BBox>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub transform: Option<boundshape::Transform2D>,
 }
 
@@ -648,124 +512,8 @@ pub struct TextPathMetadata {
     pub path_overflow: String,
 }
 
-/// Exact serialized form of a color-bearing inline style.
-///
-/// The layout type keeps `color` optional, but the IR serializer emits a
-/// fragment style only when that color is present. Keeping this as a real Rust
-/// projection makes the serializer and the serialize-direction schema share
-/// one structural source.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TextRunStyleProjection<'a> {
-    font: &'a str,
-    #[serde(skip_serializing_if = "<[String]>::is_empty")]
-    fallback: &'a [String],
-    font_weight: u16,
-    font_style: &'a crate::font::FontStyle,
-    font_size_px: f64,
-    letter_spacing_px: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    text_orientation: Option<&'a crate::text::types::TextOrientation>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    font_variation_settings: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    font_feature_settings: Option<&'a str>,
-    color: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    text_strokes: Option<&'a Vec<TextStrokeLayer>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    text_shadows: Option<&'a Vec<TextShadowLayer>>,
-    #[cfg_attr(
-        feature = "ir-schema",
-        schemars(
-            with = "Option<boundtext::schema::DirectionalSchema<crate::text::types::Language, String>>"
-        )
-    )]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    language: Option<&'a str>,
-}
-
-impl<'a> TextRunStyleProjection<'a> {
-    fn from_color_bearing(style: &'a TextRunStyle) -> Option<Self> {
-        Some(Self {
-            font: &style.font,
-            fallback: &style.fallback,
-            font_weight: style.font_weight,
-            font_style: &style.font_style,
-            font_size_px: style.font_size_px,
-            letter_spacing_px: style.letter_spacing_px,
-            text_orientation: style.text_orientation.as_ref(),
-            font_variation_settings: style.font_variation_settings.as_deref(),
-            font_feature_settings: style.font_feature_settings.as_deref(),
-            color: style.color.as_deref()?,
-            text_strokes: style.text_strokes.as_ref(),
-            text_shadows: style.text_shadows.as_ref(),
-            language: style.language.as_deref(),
-        })
-    }
-}
-
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FragmentProjection<'a> {
-    text: &'a str,
-    glyphs: &'a [GlyphInfo],
-    width: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    style: Option<TextRunStyleProjection<'a>>,
-}
-
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LineProjection<'a> {
-    text: &'a str,
-    glyphs: &'a [GlyphInfo],
-    width: f64,
-    baseline_y: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fragments: Option<Vec<FragmentProjection<'a>>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    positioned_glyphs: Option<&'a Vec<PositionedGlyph>>,
-}
-
-/// Exact deserialize view accepted by `emit_svg_from_ir` for one fragment.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LineFragmentWire {
-    text: String,
-    glyphs: Vec<GlyphInfo>,
-    width: f64,
-    #[serde(default)]
-    style: Option<TextRunStyle>,
-}
-
-/// Exact deserialize view accepted by `emit_svg_from_ir` for one line.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LineWire {
-    text: String,
-    glyphs: Vec<GlyphInfo>,
-    width: f64,
-    baseline_y: f64,
-    #[serde(default)]
-    fragments: Option<Vec<LineFragmentWire>>,
-    #[serde(default)]
-    positioned_glyphs: Option<Vec<PositionedGlyph>>,
-}
-
-#[cfg(feature = "ir-schema")]
-fn lines_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    if generator.contract().is_serialize() {
-        generator.subschema_for::<Vec<LineProjection<'static>>>()
-    } else {
-        generator.subschema_for::<Vec<LineWire>>()
-    }
-}
+#[cfg(test)]
+use super::wire_input::LineWire;
 
 // IR node
 // ---------------------------------------------------------------------------
@@ -773,13 +521,10 @@ fn lines_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
 /// An IR node in the rendering tree.
 /// Serializes flat (kind fields inline next to `nodeId`/`bbox`, plus a
 /// `type` discriminant) to match the TS `IRNode` shape.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct IrNode {
     pub node_id: String,
     pub bbox: BBox,
-    #[serde(flatten)]
     pub kind: IrNodeKind,
 }
 
@@ -787,307 +532,116 @@ pub struct IrNode {
 ///
 /// Large event-handler tables on container and text nodes are boxed so the
 /// common enum value stays compact without adding indirection to paint data.
-#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    rename_all = "lowercase",
-    rename_all_fields = "camelCase"
-)]
+#[derive(Debug, Clone)]
 pub enum IrNodeKind {
     /// Container group (may clip children).
     Group {
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         children: Vec<IrNode>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         clip_path: Option<BBox>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         clip_border_radius: Option<BorderRadius>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         opacity: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         box_shadow: Option<BoxShadow>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         meta: Option<std::collections::BTreeMap<String, String>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         transform: Option<boundshape::Transform2D>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         animation: Option<AnimationSpec>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         on: Option<Box<HandlersRef>>,
     },
-
     /// Filled/stroked rectangle.
     Rect {
-        #[serde(skip_serializing_if = "Option::is_none")]
         fill: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         gradient: Option<Gradient>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_width: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_scaling: Option<StrokeScaling>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         border_radius: Option<BorderRadius>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_linecap: Option<StrokeLinecap>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_linejoin: Option<StrokeLinejoin>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_dasharray: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_miterlimit: Option<f64>,
     },
-
     /// Text node with line-broken content.
     Text {
-        #[cfg_attr(feature = "ir-schema", schemars(schema_with = "lines_schema"))]
-        #[serde(
-            serialize_with = "serialize_lines_ts_projection",
-            deserialize_with = "deserialize_lines_ts_projection"
-        )]
         lines: Vec<Line>,
         font: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         font_fallback: Option<Vec<String>>,
         font_size_px: f64,
-        #[serde(skip_serializing_if = "Option::is_none")]
         font_weight: Option<u16>,
-        #[cfg_attr(
-            feature = "ir-schema",
-            schemars(
-                with = "Option<boundtext::schema::DirectionalSchema<crate::font::FontStyle, String>>"
-            )
-        )]
-        #[serde(skip_serializing_if = "Option::is_none")]
         font_style: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         letter_spacing_px: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         font_variation_settings: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         font_feature_settings: Option<String>,
         color: String,
         text_align: IrTextAlign,
         /// Allotted text layout box; `bbox` is the aligned measured block.
         layout_box: BBox,
-        #[cfg_attr(
-            feature = "ir-schema",
-            schemars(
-                with = "Option<boundtext::schema::DirectionalSchema<crate::text::types::WritingMode, String>>"
-            )
-        )]
-        #[serde(skip_serializing_if = "Option::is_none")]
         writing_mode: Option<String>,
-        #[cfg_attr(
-            feature = "ir-schema",
-            schemars(
-                with = "Option<boundtext::schema::DirectionalSchema<crate::text::types::Language, String>>"
-            )
-        )]
-        #[serde(skip_serializing_if = "Option::is_none")]
         language: Option<String>,
         line_height_px: f64,
-        #[cfg_attr(
-            feature = "ir-schema",
-            schemars(
-                with = "Option<boundtext::schema::DirectionalSchema<boundtext::schema::StringEnumSchema<TextLayoutKindSchema>, String>>"
-            )
-        )]
-        #[serde(skip_serializing_if = "Option::is_none")]
         text_layout_kind: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         source_text: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         display_text: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         text_path: Option<Box<TextPathMetadata>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         glyph_paths: Option<Vec<TextOutlinePath>>,
         /// Stable paint-unit metadata generated by boundtext for opt-in text.
-        #[serde(skip_serializing_if = "Option::is_none")]
         unit_map: Option<crate::text::unit_map::TextUnitMap>,
         /// Raw unit animation semantic retained across frame sampling.
-        #[serde(skip_serializing_if = "Option::is_none")]
         unit_animation: Option<TextUnitAnimation>,
         /// Per-unit actual outline bounds and sampled pose.
-        #[serde(skip_serializing_if = "Option::is_none")]
         unit_animation_samples: Option<Vec<TextUnitAnimationSample>>,
         // Stroke
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_width: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_linecap: Option<StrokeLinecap>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_linejoin: Option<StrokeLinejoin>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_dasharray: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_miterlimit: Option<f64>,
         // Multi-layer text effects (take precedence over scalar stroke fields)
-        #[serde(skip_serializing_if = "Option::is_none")]
         strokes: Option<Vec<TextStrokeLayer>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         shadows: Option<Vec<TextShadowLayer>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         text_decorations: Option<Vec<crate::text::types::TextDecorationFragment>>,
         // Event handlers
-        #[serde(skip_serializing_if = "Option::is_none")]
         on: Option<Box<HandlersRef>>,
     },
-
     /// Raster image (base64 data URI).
     Image {
         src: String,
         preserve_aspect_ratio: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         on: Option<HandlersRef>,
     },
-
     /// SVG path element.
     Path {
         path_data: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         fill: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_width: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_scaling: Option<StrokeScaling>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         fill_rule: Option<IrFillRule>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_linecap: Option<StrokeLinecap>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_linejoin: Option<StrokeLinejoin>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_dasharray: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_miterlimit: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         on: Option<HandlersRef>,
     },
-
     /// Nested SVG content.
     Svg {
-        #[serde(rename = "svgContent")]
         content: String,
-        #[serde(rename = "svgViewBox", skip_serializing_if = "Option::is_none")]
         view_box: Option<String>,
         preserve_aspect_ratio: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         on: Option<HandlersRef>,
     },
-
     /// Structural shape with viewport-baked part paths.
     Shape {
         shape_parts: Vec<ShapePathPart>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         fill: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_width: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         fill_rule: Option<IrFillRule>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_linecap: Option<StrokeLinecap>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_linejoin: Option<StrokeLinejoin>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_dasharray: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         stroke_miterlimit: Option<f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         on: Option<HandlersRef>,
     },
-}
-
-/// Serialize IR text lines the way the TS layout parser projects them:
-/// fragment `style` is omitted when it has no explicit color (the TS side
-/// drops color-less styles when parsing the layout transport).
-fn serialize_lines_ts_projection<S: Serializer>(
-    lines: &[Line],
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    let projected: Vec<LineProjection> = lines
-        .iter()
-        .map(|line| LineProjection {
-            text: &line.text,
-            glyphs: &line.glyphs,
-            width: line.width,
-            baseline_y: line.baseline_y,
-            fragments: line.fragments.as_ref().map(|fragments| {
-                fragments
-                    .iter()
-                    .map(|fragment| FragmentProjection {
-                        text: &fragment.text,
-                        glyphs: &fragment.glyphs,
-                        width: fragment.width,
-                        style: TextRunStyleProjection::from_color_bearing(&fragment.style),
-                    })
-                    .collect()
-            }),
-            positioned_glyphs: line.positioned_glyphs.as_ref(),
-        })
-        .collect();
-
-    projected.serialize(serializer)
-}
-
-/// Deserialize IR text lines from the TS projection produced by
-/// [`serialize_lines_ts_projection`]. A fragment whose `style` was dropped
-/// (color-less in the projection) gets an inert placeholder style — the SVG
-/// emitter never reads fragment styles, and a deserialized IR is only
-/// emitted, never re-serialized.
-fn deserialize_lines_ts_projection<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<Line>, D::Error> {
-    fn placeholder_style() -> TextRunStyle {
-        TextRunStyle {
-            font: String::new(),
-            fallback: Vec::new(),
-            font_weight: 400,
-            font_style: crate::font::FontStyle::Normal,
-            font_size_px: 0.0,
-            letter_spacing_px: 0.0,
-            text_orientation: None,
-            font_variation_settings: None,
-            font_feature_settings: None,
-            color: None,
-            text_strokes: None,
-            text_shadows: None,
-            language: None,
-        }
-    }
-
-    let wires = Vec::<LineWire>::deserialize(deserializer)?;
-    Ok(wires
-        .into_iter()
-        .map(|wire| Line {
-            text: wire.text,
-            glyphs: wire.glyphs,
-            width: wire.width,
-            baseline_y: wire.baseline_y,
-            fragments: wire.fragments.map(|fragments| {
-                fragments
-                    .into_iter()
-                    .map(|fragment| crate::text::types::LineFragment {
-                        text: fragment.text,
-                        glyphs: fragment.glyphs,
-                        width: fragment.width,
-                        style: fragment.style.unwrap_or_else(placeholder_style),
-                    })
-                    .collect()
-            }),
-            positioned_glyphs: wire.positioned_glyphs,
-        })
-        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -1128,6 +682,10 @@ pub struct Ir {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StructuralIr<'a> {
+    #[cfg_attr(
+        feature = "ir-schema",
+        schemars(with = "super::wire_output::IrNodeOutput<'static>")
+    )]
     pub root: &'a IrNode,
     pub draw_order: &'a [String],
     pub width: f64,
@@ -1360,6 +918,90 @@ fn count_ascii_digits(bytes: &[u8]) -> usize {
         .iter()
         .take_while(|byte| byte.is_ascii_digit())
         .count()
+}
+
+impl Serialize for HandlersRef {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::HandlersRefOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for TextOutlinePath {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::TextOutlinePathOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for ShapePartPaint {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::ShapePartPaintOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for ShapePathPart {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::ShapePathPartOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for AnimationTransform2D {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::AnimationTransform2DOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for AnimationKeyframe {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::AnimationKeyframeOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for AnimationSpring {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::AnimationSpringOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for AnimationSteps {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::AnimationStepsOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for AnimationSpec {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::AnimationSpecOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for TextUnitAnimation {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::TextUnitAnimationOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for TextUnitAnimationSample {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::TextUnitAnimationSampleOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for IrNode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::IrNodeOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for AnimationEasing {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::AnimationEasingOutput::from(self).serialize(serializer)
+    }
+}
+
+impl Serialize for IrNodeKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        super::wire_output::IrNodeKindOutput::from(self).serialize(serializer)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1677,7 +1319,10 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&root).expect("serializes");
-        let deserialized: IrNode = serde_json::from_str(&serialized).expect("deserializes");
+        let deserialized: IrNode =
+            serde_json::from_str::<crate::ir::wire_input::IrNodeInput>(&serialized)
+                .map(IrNode::from)
+                .expect("deserializes");
         let reserialized = serde_json::to_string(&deserialized).expect("re-serializes");
         assert_eq!(serialized, reserialized);
     }
@@ -1697,8 +1342,11 @@ mod tests {
 
         // Non-integral numbers so the f64 formatting round-trips textually.
         let wire = r#"[{"text":"ab","glyphs":[],"width":8.5,"baselineY":6.5,"fragments":[{"text":"ab","glyphs":[],"width":8.5}]}]"#;
-        let mut wire_deserializer = serde_json::Deserializer::from_str(wire);
-        let lines = deserialize_lines_ts_projection(&mut wire_deserializer).expect("deserializes");
+        let lines: Vec<Line> = serde_json::from_str::<Vec<LineWire>>(wire)
+            .expect("deserializes")
+            .into_iter()
+            .map(Line::from)
+            .collect();
         let reserialized = serde_json::to_string(&LinesProjection(&lines)).expect("re-serializes");
         assert_eq!(reserialized, wire);
     }

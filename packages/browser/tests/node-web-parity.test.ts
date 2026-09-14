@@ -14,7 +14,7 @@ import {
   WasmEngineHandle,
   type WasmEngineInstance,
 } from "@boundsvg/core/wasm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import webWasmInit, {
   BoundSvgEngine as WebBoundSvgEngine,
   compile_shape_svg as webCompileShapeSvg,
@@ -706,6 +706,35 @@ describe("nodejs/web WASM public parity", () => {
   let scalarWebEngine: Engine;
   let timelineEngines: Engine[];
   let textLayoutWasmInstances: WasmEngineInstance[];
+
+  it("uses one compile and no extra layout call for layered SVG and PNG on every target", () => {
+    const results = timelineEngines.map((engine, index) => {
+      const instance = textLayoutWasmInstances[index];
+      if (instance === undefined) {
+        throw new Error("Missing matching WASM instance");
+      }
+      const layoutSpy = vi.spyOn(instance, "compute_layout");
+      const compileSpy = vi.spyOn(instance, "render_to_ir");
+      try {
+        const scene = buildScene();
+        const svg = engine.renderToLayeredSvg(scene);
+        expect(compileSpy).toHaveBeenCalledOnce();
+        expect(layoutSpy).not.toHaveBeenCalled();
+        compileSpy.mockClear();
+        const png = engine.renderToLayeredPng(scene);
+        expect(compileSpy).toHaveBeenCalledOnce();
+        expect(layoutSpy).not.toHaveBeenCalled();
+        return { svg, png };
+      } finally {
+        layoutSpy.mockRestore();
+        compileSpy.mockRestore();
+      }
+    });
+    expect(results).toHaveLength(4);
+    for (const result of results.slice(1)) {
+      expect(result).toEqual(results[0]);
+    }
+  });
 
   beforeAll(async () => {
     const webWasmBytes = readFileSync(

@@ -253,6 +253,32 @@ const typeTargets: Record<string, TypeTarget[]> = {
   ],
 };
 
+const directionalStructNames = [
+  "HandlersRef",
+  "TextOutlinePath",
+  "ShapePartPaint",
+  "ShapePathPart",
+  "AnimationTransform2D",
+  "AnimationKeyframe",
+  "AnimationSpring",
+  "AnimationSteps",
+  "AnimationSpec",
+  "TextUnitAnimation",
+  "TextUnitAnimationSample",
+] as const;
+
+for (const name of directionalStructNames) {
+  const targets = typeTargets[name];
+  if (!targets) {
+    throw new Error(`Missing directional field mapping for ${name}`);
+  }
+  typeTargets[`${name}Input`] = targets.map(
+    ({ intentionallyOptionalRustFields: _optionalFields, ...target }) => target,
+  );
+  typeTargets[`${name}Output`] = targets;
+  delete typeTargets[name];
+}
+
 const payloadTargets: Record<string, PayloadTarget> = {
   CompileShapeSvgInput: {
     file: wasmIndexFile,
@@ -792,7 +818,8 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       ...Object.keys(unitEnumTargets),
       "BorderRadius",
       "BorderRadiusInputValue",
-      "AnimationEasing",
+      "AnimationEasingInput",
+      "AnimationEasingOutput",
       "AnimationIterations",
       "AnimatedSvgPlaybackInput",
       "AnimatedSvgTimelineIterationsInput",
@@ -803,22 +830,24 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       "FlowExclusionMargin",
       "FlowExclusionShape",
       "Gradient",
-      "IrNode",
-      "IrNodeKind",
+      "IrNodeInput",
+      "IrNodeOutput",
+      "IrNodeKindInput",
+      "IrNodeKindOutput",
     ].sort();
     expect(rustInventory.deriveCount, "every boundsvg serde derive must be parsed").toBe(
       rustDtos.size,
     );
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(132);
+    expect(rustDtos.size).toBe(146);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(864);
-    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(81);
+    ).toBe(1023);
+    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(92);
   });
 
   it("keeps struct wire fields and requiredness directionally compatible", () => {
@@ -894,11 +923,14 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
     }
   });
 
-  it("keeps each flattened IR node kind aligned with its TS discriminated variant", () => {
-    const irNode = rustDtos.get("IrNode");
+  it.each([
+    "Input",
+    "Output",
+  ] as const)("keeps each %s IR node kind aligned with its TS variant", (direction) => {
+    const irNode = rustDtos.get(`IrNode${direction}`);
     expect(irNode?.fields.map((field) => field.name).sort()).toEqual(["bbox", "kind", "nodeId"]);
 
-    const kind = rustDtos.get("IrNodeKind");
+    const kind = rustDtos.get(`IrNodeKind${direction}`);
     expect(kind?.serdeAttributes.some((attribute) => /\btag = "type"/.test(attribute))).toBe(true);
     if (!kind) {
       return;
@@ -929,9 +961,13 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       expect(variantShape.get("bbox"), `${variant.name}.bbox is required`).toBe(true);
       compareFields(
         {
-          name: `IrNodeKind.${variant.name}`,
-          direction: "serialize",
-          fields: variant.fields,
+          name: `IrNodeKind${direction}.${variant.name}`,
+          direction: direction === "Input" ? "deserialize" : "serialize",
+          fields: [
+            ...(irNode?.fields.filter((field) => field.name !== "kind") ?? []),
+            { name: "type", required: true },
+            ...variant.fields,
+          ],
           variants: [],
           serdeAttributes: [],
         },
@@ -1033,17 +1069,17 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
     expect(types.some((type) => (type.flags & ts.TypeFlags.Object) !== 0)).toBe(true);
   });
 
-  it("keeps animation easing and iteration unions untagged", () => {
-    expect(rustDtos.get("AnimationEasing")?.serdeAttributes).toContain("untagged");
-    expect(rustDtos.get("AnimationEasing")?.variants).toHaveLength(4);
+  it.each([
+    "Input",
+    "Output",
+  ] as const)("keeps %s animation easing and iteration unions untagged", (direction) => {
+    expect(rustDtos.get(`AnimationEasing${direction}`)?.serdeAttributes).toContain("untagged");
+    expect(rustDtos.get(`AnimationEasing${direction}`)?.variants).toHaveLength(4);
     // Untagged arms are tried in order and AnimationSteps also carries `type`,
     // so Spring must stay ahead of Steps for both object shapes to parse.
-    expect(rustDtos.get("AnimationEasing")?.variants.map((variant) => variant.name)).toEqual([
-      "Named",
-      "CubicBezier",
-      "Spring",
-      "Steps",
-    ]);
+    expect(
+      rustDtos.get(`AnimationEasing${direction}`)?.variants.map((variant) => variant.name),
+    ).toEqual(["Named", "CubicBezier", "Spring", "Steps"]);
     expect(rustDtos.get("AnimationIterations")?.serdeAttributes).toContain("untagged");
     expect(rustDtos.get("AnimationIterations")?.variants).toHaveLength(2);
 
