@@ -70,6 +70,7 @@ export type {
   WorkerRenderPngResult,
   WorkerRenderSvgAndIrResult,
   WorkerRenderSvgResult,
+  WorkerRequestOptions,
 } from "./worker-engine.js";
 // WorkerEngine proxy
 export { WorkerEngine } from "./worker-engine.js";

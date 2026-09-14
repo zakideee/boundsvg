@@ -1,8 +1,8 @@
-import type { Engine, VNode } from "@boundsvg/core";
+import { Engine, type VNode } from "@boundsvg/core";
 import type { WorkerEngine } from "@boundsvg/worker";
 
 export function makeEngineMock(value: Partial<Engine>): Engine {
-  return value as Engine;
+  return Object.assign(new Engine({ computeLayoutFn: () => "" }), value);
 }
 
 export function makeWorkerEngineMock(value: Partial<WorkerEngine>): WorkerEngine {

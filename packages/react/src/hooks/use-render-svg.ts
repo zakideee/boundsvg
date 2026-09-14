@@ -1,5 +1,6 @@
 import type { RenderSvgOptions, VNode } from "@boundsvg/core";
 import { useMemo } from "react";
+import type { RenderInputOptions } from "../types.js";
 import { resolveMainThreadEngineError } from "../utils/main-thread-only.js";
 import { useBoundSvg } from "./use-boundsvg.js";
 import {
@@ -8,10 +9,8 @@ import {
   type RenderNotificationDelivery,
   useCommitPhaseRenderNotifications,
 } from "./use-commit-phase-render-notifications.js";
-import {
-  useStructurallyStableRenderOptions,
-  useStructurallyStableValue,
-} from "./use-structurally-stable-value.js";
+import { useRenderInput } from "./use-render-input.js";
+import { useStructurallyStableRenderOptions } from "./use-structurally-stable-value.js";
 
 export type UseRenderToSvgResult = {
   /** Rendered SVG string (null while engine is not ready or on error) */
@@ -34,14 +33,15 @@ type SvgRenderComputation = {
 export function useRenderToSvg(
   vnode: VNode | null,
   options?: RenderSvgOptions,
+  inputOptions?: RenderInputOptions,
 ): UseRenderToSvgResult {
   const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
-  const stableVNode = useStructurallyStableValue(vnode);
+  const renderInput = useRenderInput(vnode, engine, inputOptions);
   const stableOptions = useStructurallyStableRenderOptions(options);
   const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   const computation = useMemo<SvgRenderComputation>(() => {
-    if (status !== "ready" || !engine || !stableVNode) {
+    if (status !== "ready" || !engine || !renderInput.vnode) {
       const error = resolveMainThreadEngineError("useRenderToSvg", {
         status,
         engine,
@@ -56,7 +56,7 @@ export function useRenderToSvg(
     const mergedOptions = { ...stableDefaultCommonOptions, ...stableOptions };
     const captured = captureRenderNotifications(mergedOptions);
     try {
-      const svg = engine.renderToSvg(stableVNode, captured.options);
+      const svg = engine.renderToSvg(renderInput.vnode, captured.options);
       return {
         result: { svg, error: null, isReady: true },
         deliveries: [captured.delivery],
@@ -68,7 +68,7 @@ export function useRenderToSvg(
         deliveries: [captured.delivery],
       };
     }
-  }, [engine, workerEngine, status, stableVNode, stableOptions, stableDefaultCommonOptions]);
+  }, [engine, workerEngine, status, renderInput, stableOptions, stableDefaultCommonOptions]);
   useCommitPhaseRenderNotifications(computation.deliveries);
   return computation.result;
 }

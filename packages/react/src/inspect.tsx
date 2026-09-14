@@ -8,10 +8,9 @@ import {
   type RenderNotificationDelivery,
   useCommitPhaseRenderNotifications,
 } from "./hooks/use-commit-phase-render-notifications.js";
-import {
-  useStructurallyStableRenderOptions,
-  useStructurallyStableValue,
-} from "./hooks/use-structurally-stable-value.js";
+import { useRenderInput } from "./hooks/use-render-input.js";
+import { useStructurallyStableRenderOptions } from "./hooks/use-structurally-stable-value.js";
+import type { RenderInputOptions } from "./types.js";
 import { pickRenderIrOptions } from "./utils/render-options.js";
 
 export type {
@@ -40,14 +39,15 @@ type InspectionComputation = {
 export function useBoundSvgInspection(
   vnode: VNode | null,
   options?: RenderIrOptions,
+  inputOptions?: RenderInputOptions,
 ): UseBoundSvgInspectionResult {
   const { engine, status, defaultCommonOptions } = useBoundSvg();
-  const stableVNode = useStructurallyStableValue(vnode);
+  const renderInput = useRenderInput(vnode, engine, inputOptions);
   const stableOptions = useStructurallyStableRenderOptions(options);
   const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   const computation = useMemo<InspectionComputation>(() => {
-    if (status !== "ready" || !engine || !stableVNode) {
+    if (status !== "ready" || !engine || !renderInput.vnode) {
       return {
         result: { inspection: null, error: null, isReady: false },
         deliveries: NO_RENDER_NOTIFICATION_DELIVERIES,
@@ -57,7 +57,7 @@ export function useBoundSvgInspection(
     const mergedOptions = { ...pickRenderIrOptions(stableDefaultCommonOptions), ...stableOptions };
     const captured = captureRenderNotifications(mergedOptions);
     try {
-      const inspection = inspectScene(engine, stableVNode, captured.options);
+      const inspection = inspectScene(engine, renderInput.vnode, captured.options);
       return {
         result: { inspection, error: null, isReady: true },
         deliveries: [captured.delivery],
@@ -69,7 +69,7 @@ export function useBoundSvgInspection(
         deliveries: [captured.delivery],
       };
     }
-  }, [engine, status, stableVNode, stableOptions, stableDefaultCommonOptions]);
+  }, [engine, status, renderInput, stableOptions, stableDefaultCommonOptions]);
   useCommitPhaseRenderNotifications(computation.deliveries);
   return computation.result;
 }

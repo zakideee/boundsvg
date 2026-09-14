@@ -88,6 +88,12 @@ export type WorkerConfig = {
 /** Defaults shared by every direct render family. Artifact-specific options stay per call. */
 export type BoundSvgDefaultCommonOptions = CompileOptions & OutputCommonOptions;
 
+/** Explicit invalidation for inputs changed in place. */
+export type RenderInputOptions = {
+  /** Non-negative safe integer. Change this value after mutating an input in place. */
+  revision?: number;
+};
+
 /** Configuration for BoundSvgProvider */
 export type BoundSvgConfig = {
   /**
@@ -113,6 +119,9 @@ export type BoundSvgConfig = {
   /** Pre-registered symbol definitions for Symbol components using symbolId */
   symbols?: Array<{ id: string; def: SymbolDefinition }>;
 
+  /** Change after mutating font, geometry, or symbol values in place. Non-negative safe integer. */
+  resourcesRevision?: number;
+
   /**
    * Enable Worker-based off-main-thread rendering.
    *
@@ -122,7 +131,7 @@ export type BoundSvgConfig = {
    * - `undefined`: uses main-thread Engine (default)
    *
    * Once the Worker initializes, `engine` in the context is `null` and the async Worker
-   * hooks in `@boundsvg/react/worker` (e.g. `useRenderToSvgAsync`) must be used.
+   * hooks in `@boundsvg/react/async` (e.g. `useRenderToSvgAsync`) support both execution modes.
    */
   worker?: WorkerConfig;
 };

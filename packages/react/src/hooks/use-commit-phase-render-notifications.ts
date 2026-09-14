@@ -27,7 +27,7 @@ type CapturedRenderOptions<O> = {
 
 export const NO_RENDER_NOTIFICATION_DELIVERIES: readonly RenderNotificationDelivery[] = [];
 
-export function createRenderNotificationDelivery(
+function createRenderNotificationDelivery(
   options: RenderCallbackOptions,
   notifications: CapturedRenderNotifications,
 ): RenderNotificationDelivery {

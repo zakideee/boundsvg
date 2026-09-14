@@ -32,6 +32,7 @@ import {
   type WorkerLike,
   type WorkerPoolEndpoint,
 } from "./worker-engine.js";
+import { resolveWorkerTimeout } from "./worker-timeout.js";
 
 /**
  * Measured conservative default: every Worker duplicates WASM, registered
@@ -167,6 +168,7 @@ type MaterializedCompletion =
 
 type ActivePoolOperation = {
   fail(error: unknown): void;
+  close(): Promise<void>;
 };
 
 const workerPoolDisposeSymbol = Symbol.dispose;
@@ -178,6 +180,7 @@ export class WorkerPool {
   private readonly factoryWorkers: WorkerLike[];
   private readonly activeOperations = new Set<ActivePoolOperation>();
   private disposed = false;
+  private cleanupFailure: unknown;
 
   private constructor(engines: WorkerEngine[], factoryWorkers: WorkerLike[], concurrency: number) {
     this.engines = engines;
@@ -188,6 +191,7 @@ export class WorkerPool {
   /** Create a pool with isolated Worker/WASM instances and copied asset snapshots. */
   static async create(options: WorkerPoolOptions): Promise<WorkerPool> {
     const concurrency = validateConcurrency(options.concurrency);
+    const timeout = resolveWorkerTimeout(options.timeout);
     const snapshot = createAssetSnapshot(options);
     const factoryWorkers: WorkerLike[] = [];
     const factoryWorkerSet = new Set<WorkerLike>();
@@ -206,7 +210,7 @@ export class WorkerPool {
         ...(snapshot.symbols !== undefined && {
           symbols: cloneStructuredAsset(snapshot.symbols, "symbols"),
         }),
-        ...(options.timeout !== undefined && { timeout: options.timeout }),
+        timeout,
       });
     });
 
@@ -317,10 +321,11 @@ export class WorkerPool {
   }
 
   private async *runFrames(input: RunFramesInput): AsyncGenerator<Frame, void, undefined> {
-    this.assertNotDisposed();
+    this.assertCanStartOperation();
     const assignedWorkers = assignSchedule(this.engines, input.timesMs);
     const controller = new PooledFrameController(input.signal);
     this.activeOperations.add(controller);
+    let hasOperationFailed = false;
     try {
       const streams = await controller.open(assignedWorkers, input.source, input.workerOptions);
       assertMatchingWarnings(streams);
@@ -338,21 +343,22 @@ export class WorkerPool {
         });
       }
     } catch (error) {
+      hasOperationFailed = true;
       controller.fail(error);
       await controller.close();
       throw error;
     } finally {
-      await controller.close();
-      this.activeOperations.delete(controller);
+      await this.finishOperation(controller, hasOperationFailed);
     }
   }
 
   private async *runMaterializedFrames(
     input: RunMaterializedFramesInput,
   ): AsyncGenerator<Frame, void, undefined> {
-    this.assertNotDisposed();
+    this.assertCanStartOperation();
     const controller = new MaterializedFrameController(input.source, input.signal);
     this.activeOperations.add(controller);
+    let hasOperationFailed = false;
     try {
       yield* yieldMaterializedFrames({
         controller,
@@ -362,17 +368,47 @@ export class WorkerPool {
         callbacks: input.callbacks,
       });
     } catch (error) {
+      hasOperationFailed = true;
       controller.fail(error);
       throw error;
     } finally {
+      await this.finishOperation(controller, hasOperationFailed);
+    }
+  }
+
+  private async finishOperation(
+    controller: ActivePoolOperation,
+    hasOperationFailed: boolean,
+  ): Promise<void> {
+    try {
       await controller.close();
+      await Promise.all(this.engines.map((engine) => getWorkerPoolEndpoint(engine).finish()));
+    } catch (error: unknown) {
+      this.cleanupFailure = error;
+      if (!hasOperationFailed) {
+        throw error;
+      }
+    } finally {
       this.activeOperations.delete(controller);
+    }
+  }
+
+  private assertCanStartOperation(): void {
+    this.assertNotDisposed();
+    if (this.activeOperations.size > 0) {
+      throw new FatalError("WORKER_POOL_BUSY", "WorkerPool already has an active operation", {
+        stage: "engine",
+        context: { operationLimit: 1 },
+      });
     }
   }
 
   private assertNotDisposed(): void {
     if (this.disposed) {
       throw workerPoolDisposedError();
+    }
+    if (this.cleanupFailure !== undefined) {
+      throw this.cleanupFailure;
     }
   }
 }

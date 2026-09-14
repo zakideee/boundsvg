@@ -20,7 +20,6 @@
  */
 
 import type {
-  DiagnosticContext,
   Frame,
   GeometryDoc,
   IntrinsicInlineSizeInput,
@@ -74,6 +73,15 @@ import {
   type WorkerRequest,
   type WorkerResponse,
 } from "./protocol.js";
+import {
+  describeWorkerFailure,
+  invalidWorkerResponseError,
+  unexpectedWorkerResponseError,
+  workerEngineDisposedError,
+  workerLifecycleError,
+} from "./worker-errors.js";
+import { WorkerRequestScheduler } from "./worker-request-scheduler.js";
+import { resolveWorkerTimeout } from "./worker-timeout.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -97,8 +105,10 @@ export type WorkerLike = Pick<
   "postMessage" | "terminate" | "addEventListener" | "removeEventListener"
 >;
 
-/** Default timeout for all Worker calls (30 s). */
-const DEFAULT_TIMEOUT_MS = 30_000;
+/** Optional cancellation owned by the caller, never sent over the wire. */
+export type WorkerRequestOptions = { signal?: AbortSignal };
+
+const attachedWorkers = new WeakSet<WorkerLike>();
 
 // ---------------------------------------------------------------------------
 // Render result
@@ -130,12 +140,6 @@ export type WorkerRenderSvgAndIrResult = {
 // ---------------------------------------------------------------------------
 // Pending request bookkeeping
 // ---------------------------------------------------------------------------
-
-type PendingRequest<T> = {
-  resolve: (value: T) => void;
-  reject: (reason: unknown) => void;
-  timer: ReturnType<typeof setTimeout>;
-};
 
 type WarningCallback = NonNullable<OutputCommonOptions["onWarning"]>;
 type PngResolutionAdjustedCallback = NonNullable<RasterEmissionOptions["onPngResolutionAdjusted"]>;
@@ -188,6 +192,7 @@ export type WorkerPoolEndpoint = {
   ): Promise<{ streamId: number; warnings: SerializedRecoverableError[] }>;
   next(streamId: number): Promise<Frame | undefined>;
   close(streamId: number): Promise<void>;
+  finish(): Promise<void>;
   render(
     scene: PreparedSceneDocument,
     format: "svg" | "png",
@@ -215,10 +220,9 @@ export function getWorkerPoolEndpoint(engine: WorkerEngine): WorkerPoolEndpoint 
 export class WorkerEngine {
   private readonly worker: WorkerLike;
   private readonly ownsWorker: boolean;
-  private readonly timeoutMs: number;
   private nextId = 1;
   private disposed = false;
-  private readonly pending = new Map<number, PendingRequest<WorkerResponse>>();
+  private readonly scheduler: WorkerRequestScheduler;
 
   /** Bound handlers for addEventListener / removeEventListener. */
   private readonly handleMessage: (event: MessageEvent) => void;
@@ -227,18 +231,18 @@ export class WorkerEngine {
   private constructor(worker: WorkerLike, ownsWorker: boolean, timeoutMs: number) {
     this.worker = worker;
     this.ownsWorker = ownsWorker;
-    this.timeoutMs = timeoutMs;
+    this.scheduler = new WorkerRequestScheduler(timeoutMs, {
+      post: (request) => this.worker.postMessage(request, collectRequestTransferables(request)),
+      nextRequestId: () => this.nextRequestId(),
+      handleFailure: () => this.detachAfterFailure(),
+    });
 
     this.handleMessage = (event: MessageEvent) => {
       const data: unknown = event.data;
       const { id: responseId, message: response } = decodeWorkerResponseMessage(data);
       if (response === undefined) {
         if (responseId !== undefined) {
-          const entry = this.pending.get(responseId);
-          if (entry) {
-            clearTimeout(entry.timer);
-            this.pending.delete(responseId);
-            entry.reject(invalidWorkerResponseError(responseId));
+          if (this.scheduler.receive(responseId, undefined)) {
             return;
           }
         }
@@ -246,14 +250,7 @@ export class WorkerEngine {
         return;
       }
 
-      const entry = this.pending.get(response.id);
-      if (!entry) {
-        return;
-      }
-
-      clearTimeout(entry.timer);
-      this.pending.delete(response.id);
-      entry.resolve(response);
+      this.scheduler.receive(response.id, response);
     };
 
     this.handleError = (event: ErrorEvent) => {
@@ -267,11 +264,7 @@ export class WorkerEngine {
       const error = workerLifecycleError("WORKER_CRASHED", `Worker error: ${workerMessage}`, {
         workerMessage,
       });
-      for (const [id, entry] of this.pending) {
-        clearTimeout(entry.timer);
-        this.pending.delete(id);
-        entry.reject(error);
-      }
+      this.scheduler.dispose(error);
 
       this.worker.removeEventListener("message", this.handleMessage);
       this.worker.removeEventListener("error", this.handleError as EventListener);
@@ -354,11 +347,7 @@ export class WorkerEngine {
       },
       close: async (streamId) => {
         this.assertNotDisposed();
-        const response = await this.send({
-          id: this.nextRequestId(),
-          type: "close-frame-stream",
-          streamId,
-        });
+        const response = await this.scheduler.closeStream(streamId);
         if (response.type === "error") {
           throw FatalError.fromSerialized(response.error);
         }
@@ -366,6 +355,7 @@ export class WorkerEngine {
           throw unexpectedWorkerResponseError(response.type, "close-frame-stream-ok");
         }
       },
+      finish: () => this.scheduler.finish(),
       render: async (scene, format, options) => {
         this.assertNotDisposed();
         const response = await this.send(
@@ -407,7 +397,7 @@ export class WorkerEngine {
    * and resolves once the Worker has loaded WASM and registered all fonts.
    */
   static async create(options: WorkerEngineOptions): Promise<WorkerEngine> {
-    const timeoutMs = options.timeout ?? DEFAULT_TIMEOUT_MS;
+    const timeoutMs = resolveWorkerTimeout(options.timeout);
     let worker: WorkerLike;
     let ownsWorker: boolean;
 
@@ -428,6 +418,13 @@ export class WorkerEngine {
       ownsWorker = true;
     }
 
+    if (attachedWorkers.has(worker)) {
+      throw workerLifecycleError(
+        "WORKER_ALREADY_ATTACHED",
+        "Worker instance has already been attached",
+      );
+    }
+    attachedWorkers.add(worker);
     const engine = new WorkerEngine(worker, ownsWorker, timeoutMs);
 
     let response: WorkerResponse;
@@ -462,7 +459,12 @@ export class WorkerEngine {
    * Warnings from the Worker are forwarded to `options.onWarning` if provided,
    * then the SVG string is returned.
    */
-  async renderToSvg(scene: SceneNode, options?: RenderSvgOptions): Promise<string> {
+  async renderToSvg(
+    scene: SceneNode,
+    options?: RenderSvgOptions,
+    requestOptions?: WorkerRequestOptions,
+  ): Promise<string> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -475,7 +477,7 @@ export class WorkerEngine {
       ...(workerOptions && { options: workerOptions }),
     };
 
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
 
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
@@ -489,7 +491,12 @@ export class WorkerEngine {
   }
 
   /** Render authored animation tracks to animated SVG inside the Worker. */
-  async renderToAnimatedSvg(scene: SceneNode, options: RenderAnimatedSvgOptions): Promise<string> {
+  async renderToAnimatedSvg(
+    scene: SceneNode,
+    options: RenderAnimatedSvgOptions,
+    requestOptions?: WorkerRequestOptions,
+  ): Promise<string> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -500,7 +507,7 @@ export class WorkerEngine {
       scene: preparedScene.scene,
       options: workerOptions as WorkerRenderAnimatedSvgOptions,
     };
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -521,7 +528,9 @@ export class WorkerEngine {
   async renderToSvgAndIR(
     scene: SceneNode,
     options?: RenderSvgOptions,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<WorkerRenderSvgAndIrResult> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -534,7 +543,7 @@ export class WorkerEngine {
       ...(workerOptions && { options: workerOptions }),
     };
 
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
 
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
@@ -558,7 +567,9 @@ export class WorkerEngine {
   async renderToAnimatedSvgAndIR(
     scene: SceneNode,
     options: RenderAnimatedSvgOptions,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<{ svg: string; ir: IR }> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -569,7 +580,7 @@ export class WorkerEngine {
       scene: preparedScene.scene,
       options: workerOptions as WorkerRenderAnimatedSvgOptions,
     };
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -593,7 +604,12 @@ export class WorkerEngine {
    * The PNG `Uint8Array` is transferred (zero-copy) from the Worker.
    * Warnings are forwarded to `options.onWarning` if provided.
    */
-  async renderToPng(scene: SceneNode, options?: RenderPngOptions): Promise<Uint8Array> {
+  async renderToPng(
+    scene: SceneNode,
+    options?: RenderPngOptions,
+    requestOptions?: WorkerRequestOptions,
+  ): Promise<Uint8Array> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -606,7 +622,7 @@ export class WorkerEngine {
       ...(workerOptions && { options: workerOptions }),
     };
 
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
 
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
@@ -625,7 +641,12 @@ export class WorkerEngine {
    * The WebP `Uint8Array` is transferred (zero-copy) from the Worker.
    * Warnings are forwarded to `options.onWarning` if provided.
    */
-  async renderToWebp(scene: SceneNode, options?: RenderWebpOptions): Promise<Uint8Array> {
+  async renderToWebp(
+    scene: SceneNode,
+    options?: RenderWebpOptions,
+    requestOptions?: WorkerRequestOptions,
+  ): Promise<Uint8Array> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -638,7 +659,7 @@ export class WorkerEngine {
       ...(workerOptions && { options: workerOptions }),
     };
 
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
 
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
@@ -658,7 +679,9 @@ export class WorkerEngine {
   async renderToAnimatedWebp(
     scene: SceneNode,
     options: RenderAnimatedWebpOptions,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<Uint8Array> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -671,7 +694,7 @@ export class WorkerEngine {
       options: { ...workerOptions, iterations: options.iterations },
     };
 
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
 
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
@@ -691,7 +714,9 @@ export class WorkerEngine {
   async renderLayoutTransitionToAnimatedWebp(
     input: WorkerLayoutTransitionInput,
     options: RenderAnimatedWebpOptions,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<Uint8Array> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedTransition = prepareWorkerLayoutTransitionForTransport(input);
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
@@ -701,7 +726,7 @@ export class WorkerEngine {
       transition: preparedTransition.transition,
       options: { ...workerOptions, iterations: options.iterations },
     };
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -719,7 +744,9 @@ export class WorkerEngine {
   async renderToAnimatedGif(
     scene: SceneNode,
     options: RenderAnimatedGifOptions,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<Uint8Array> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -732,7 +759,7 @@ export class WorkerEngine {
       options: { ...workerOptions, iterations: options.iterations },
     };
 
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
 
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
@@ -752,7 +779,9 @@ export class WorkerEngine {
   async renderLayoutTransitionToAnimatedGif(
     input: WorkerLayoutTransitionInput,
     options: RenderAnimatedGifOptions,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<Uint8Array> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedTransition = prepareWorkerLayoutTransitionForTransport(input);
     const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
@@ -762,7 +791,7 @@ export class WorkerEngine {
       transition: preparedTransition.transition,
       options: { ...workerOptions, iterations: options.iterations },
     };
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -776,7 +805,9 @@ export class WorkerEngine {
   async renderToLayeredSvg(
     scene: SceneNode,
     options?: LayeredSvgOptions,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<LayeredSvgResult> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -789,7 +820,7 @@ export class WorkerEngine {
       ...(workerOptions ? { options: workerOptions } : {}),
     };
 
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
 
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
@@ -805,7 +836,9 @@ export class WorkerEngine {
   async renderToLayeredPng(
     scene: SceneNode,
     options?: LayeredPngOptions,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<LayeredPngResult> {
+    this.scheduler.assertAccepting();
     this.assertNotDisposed();
     const preparedScene = prepareSceneForTransport(scene);
 
@@ -818,7 +851,7 @@ export class WorkerEngine {
       ...(workerOptions ? { options: workerOptions } : {}),
     };
 
-    const response = await this.send(request);
+    const response = await this.send(request, requestOptions);
 
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
@@ -831,8 +864,15 @@ export class WorkerEngine {
     return response.result;
   }
 
-  async layoutTextFlow(input: TextFlowInput): Promise<TextFlowResult> {
-    const response = await this.send({ id: this.nextRequestId(), type: "layout-text-flow", input });
+  async layoutTextFlow(
+    input: TextFlowInput,
+    requestOptions?: WorkerRequestOptions,
+  ): Promise<TextFlowResult> {
+    this.scheduler.assertAccepting();
+    const response = await this.send(
+      { id: this.nextRequestId(), type: "layout-text-flow", input },
+      requestOptions,
+    );
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -844,12 +884,17 @@ export class WorkerEngine {
 
   async layoutTextFlowWithExclusions(
     input: TextFlowWithExclusionsInput,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<TextFlowWithExclusionsResult> {
-    const response = await this.send({
-      id: this.nextRequestId(),
-      type: "layout-text-flow-with-exclusions",
-      input,
-    });
+    this.scheduler.assertAccepting();
+    const response = await this.send(
+      {
+        id: this.nextRequestId(),
+        type: "layout-text-flow-with-exclusions",
+        input,
+      },
+      requestOptions,
+    );
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -859,12 +904,19 @@ export class WorkerEngine {
     return response.result;
   }
 
-  async measureTextBlock(input: MeasureTextBlockInput): Promise<MeasureTextBlockResult> {
-    const response = await this.send({
-      id: this.nextRequestId(),
-      type: "measure-text-block",
-      input,
-    });
+  async measureTextBlock(
+    input: MeasureTextBlockInput,
+    requestOptions?: WorkerRequestOptions,
+  ): Promise<MeasureTextBlockResult> {
+    this.scheduler.assertAccepting();
+    const response = await this.send(
+      {
+        id: this.nextRequestId(),
+        type: "measure-text-block",
+        input,
+      },
+      requestOptions,
+    );
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -874,8 +926,15 @@ export class WorkerEngine {
     return response.result;
   }
 
-  async shrinkwrapText(input: ShrinkwrapTextInput): Promise<ShrinkwrapTextResult> {
-    const response = await this.send({ id: this.nextRequestId(), type: "shrinkwrap-text", input });
+  async shrinkwrapText(
+    input: ShrinkwrapTextInput,
+    requestOptions?: WorkerRequestOptions,
+  ): Promise<ShrinkwrapTextResult> {
+    this.scheduler.assertAccepting();
+    const response = await this.send(
+      { id: this.nextRequestId(), type: "shrinkwrap-text", input },
+      requestOptions,
+    );
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -885,8 +944,15 @@ export class WorkerEngine {
     return response.result;
   }
 
-  async shrinkwrapFlow(input: ShrinkwrapFlowInput): Promise<ShrinkwrapFlowResult> {
-    const response = await this.send({ id: this.nextRequestId(), type: "shrinkwrap-flow", input });
+  async shrinkwrapFlow(
+    input: ShrinkwrapFlowInput,
+    requestOptions?: WorkerRequestOptions,
+  ): Promise<ShrinkwrapFlowResult> {
+    this.scheduler.assertAccepting();
+    const response = await this.send(
+      { id: this.nextRequestId(), type: "shrinkwrap-flow", input },
+      requestOptions,
+    );
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -898,12 +964,17 @@ export class WorkerEngine {
 
   async measureIntrinsicInlineSize(
     input: IntrinsicInlineSizeInput,
+    requestOptions?: WorkerRequestOptions,
   ): Promise<IntrinsicInlineSizeResult> {
-    const response = await this.send({
-      id: this.nextRequestId(),
-      type: "measure-intrinsic-inline-size",
-      input,
-    });
+    this.scheduler.assertAccepting();
+    const response = await this.send(
+      {
+        id: this.nextRequestId(),
+        type: "measure-intrinsic-inline-size",
+        input,
+      },
+      requestOptions,
+    );
     if (response.type === "error") {
       throw FatalError.fromSerialized(response.error);
     }
@@ -911,6 +982,11 @@ export class WorkerEngine {
       throw unexpectedWorkerResponseError(response.type, "measure-intrinsic-inline-size-ok");
     }
     return response.result;
+  }
+
+  /** Permanently close admission and wait for physical requests and stream cleanup. */
+  drain(): Promise<void> {
+    return this.scheduler.drain();
   }
 
   /**
@@ -944,11 +1020,7 @@ export class WorkerEngine {
 
     // Reject all pending
     const error = workerEngineDisposedError();
-    for (const [id, entry] of this.pending) {
-      clearTimeout(entry.timer);
-      this.pending.delete(id);
-      entry.reject(error);
-    }
+    this.scheduler.dispose(error);
 
     // Remove listeners so externally-provided Workers are left clean
     this.worker.removeEventListener("message", this.handleMessage);
@@ -963,24 +1035,20 @@ export class WorkerEngine {
   // Internal
   // -------------------------------------------------------------------------
 
-  private send(request: WorkerRequest): Promise<WorkerResponse> {
-    return new Promise<WorkerResponse>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(request.id);
-        reject(workerTimeoutError(request, this.timeoutMs));
-      }, this.timeoutMs);
+  private send(
+    request: WorkerRequest,
+    requestOptions?: WorkerRequestOptions,
+  ): Promise<WorkerResponse> {
+    return this.scheduler.send(request, requestOptions?.signal);
+  }
 
-      this.pending.set(request.id, { resolve, reject, timer });
-
-      try {
-        const transferables = collectRequestTransferables(request);
-        this.worker.postMessage(request, transferables);
-      } catch (err) {
-        clearTimeout(timer);
-        this.pending.delete(request.id);
-        reject(workerTransportError(request, err));
-      }
-    });
+  private detachAfterFailure(): void {
+    this.disposed = true;
+    this.worker.removeEventListener("message", this.handleMessage);
+    this.worker.removeEventListener("error", this.handleError as EventListener);
+    if (this.ownsWorker) {
+      this.worker.terminate();
+    }
   }
 
   private disposeAfterProtocolCorruption(): void {
@@ -988,11 +1056,7 @@ export class WorkerEngine {
       return;
     }
     this.disposed = true;
-    for (const [id, entry] of this.pending) {
-      clearTimeout(entry.timer);
-      this.pending.delete(id);
-      entry.reject(invalidWorkerResponseError(id));
-    }
+    this.scheduler.dispose(invalidWorkerResponseError);
     this.worker.removeEventListener("message", this.handleMessage);
     this.worker.removeEventListener("error", this.handleError as EventListener);
     if (this.ownsWorker) {
@@ -1022,18 +1086,8 @@ export class WorkerEngine {
     if (this.disposed) {
       return;
     }
-    let requestId: number;
-    try {
-      requestId = this.nextRequestId();
-    } catch {
-      return;
-    }
-    void this.send({
-      id: requestId,
-      type: "close-frame-stream",
-      streamId,
-    }).catch(() => {
-      // Worker failure or disposal also reclaims its prepared scenes.
+    void this.scheduler.closeStream(streamId).catch(() => {
+      // The owning pool observes physical cleanup through its finish barrier.
     });
   }
 
@@ -1047,64 +1101,6 @@ export class WorkerEngine {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function workerLifecycleError(
-  code: string,
-  message: string,
-  context: DiagnosticContext = {},
-): FatalError {
-  return new FatalError(code, message, {
-    stage: "engine",
-    context: {
-      ...context,
-    },
-  });
-}
-
-function workerEngineDisposedError(): FatalError {
-  return workerLifecycleError("WORKER_ENGINE_DISPOSED", "WorkerEngine has been disposed");
-}
-
-function invalidWorkerResponseError(requestId: number): FatalError {
-  return workerLifecycleError(
-    "WORKER_PROTOCOL_INVALID_RESPONSE",
-    `Worker returned an invalid response for request ${requestId}`,
-    { requestId },
-  );
-}
-
-function unexpectedWorkerResponseError(
-  responseType: WorkerResponse["type"],
-  expectedResponseType: WorkerResponse["type"],
-  messageContext = "",
-): FatalError {
-  return workerLifecycleError(
-    "WORKER_PROTOCOL_UNEXPECTED_RESPONSE",
-    `Unexpected response type${messageContext}: ${responseType}`,
-    { responseType, expectedResponseType },
-  );
-}
-
-function workerTimeoutError(request: WorkerRequest, timeoutMs: number): FatalError {
-  return workerLifecycleError(
-    "WORKER_REQUEST_TIMEOUT",
-    `Worker request timed out after ${timeoutMs}ms (id=${request.id})`,
-    { requestId: request.id, requestType: request.type, timeoutMs },
-  );
-}
-
-function workerTransportError(request: WorkerRequest, error: unknown): FatalError {
-  const causeMessage = describeWorkerFailure(error);
-  return workerLifecycleError(
-    "WORKER_TRANSPORT_FAILED",
-    `Worker request could not be posted: ${causeMessage}`,
-    { requestId: request.id, requestType: request.type, causeMessage },
-  );
-}
-
-function describeWorkerFailure(error: unknown): string {
-  return formatUnknownWorkerFailure(error, "Unknown Worker transport failure");
-}
 
 function describeWorkerErrorEvent(event: ErrorEvent): string {
   const fallback = "Unknown Worker error";

@@ -4,11 +4,15 @@ import { initWasm } from "@boundsvg/core/wasm";
 import type { WorkerEngine } from "@boundsvg/worker";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BoundSvgContext } from "./context.js";
+import { MainRenderSchedulerContext } from "./execution/context.js";
+import { MainRenderScheduler } from "./execution/main-render-scheduler.js";
+import { snapshotProviderConfig } from "./execution/snapshot-provider-config.js";
 import {
   useStructurallyStableRenderOptions,
   useStructurallyStableValue,
 } from "./hooks/use-structurally-stable-value.js";
 import type { BoundSvgConfig, BoundSvgContextValue, BoundSvgStatus } from "./types.js";
+import { resolveRenderRevision } from "./utils/render-input-options.js";
 
 export { useBoundSvg } from "./hooks/use-boundsvg.js";
 export type {
@@ -47,6 +51,7 @@ type InitializeResult = {
 type InitializeLifecycle = {
   signal: AbortSignal;
   setRawWorker: (worker: Worker | null) => void;
+  setFallbackError: (error: Error) => void;
 };
 
 type InitializeWorkerOptions = {
@@ -105,17 +110,30 @@ async function initializeWorker({
   // Create the Worker using the `new Worker(new URL(...))` pattern so
   // bundlers (Vite, Webpack 5) can statically detect and bundle the
   // worker script with all its dependencies.
-  const worker = workerConfig.url
-    ? new Worker(workerConfig.url, { type: "module" })
-    : new Worker(new URL("@boundsvg/worker/worker", import.meta.url), {
-        type: "module",
-      });
-  lifecycle.setRawWorker(worker);
+  const timeout = workerConfig.timeoutMs;
+  if (
+    timeout !== undefined &&
+    (!Number.isInteger(timeout) || timeout < 1 || timeout > 2_147_483_647)
+  ) {
+    throw new FatalError(
+      "WORKER_INVALID_TIMEOUT",
+      "Worker timeout must be an integer from 1 to 2147483647 milliseconds",
+      {
+        stage: "validate",
+        context: { field: "timeout" },
+      },
+    );
+  }
+  let worker: Worker | null = null;
   try {
-    const { WorkerEngine: WE } = await import("@boundsvg/worker");
+    const { WorkerEngine } = await import("@boundsvg/worker");
     if (lifecycle.signal.aborted) {
       return emptyInitializeResult();
     }
+    worker = workerConfig.url
+      ? new Worker(workerConfig.url, { type: "module" })
+      : new Worker(new URL("@boundsvg/worker/worker", import.meta.url), { type: "module" });
+    lifecycle.setRawWorker(worker);
     const fontTransfers = resolvedFonts.map((font) => ({
       alias: font.alias,
       weight: font.weight,
@@ -125,7 +143,7 @@ async function initializeWorker({
         font.data.byteOffset + font.data.byteLength,
       ) as ArrayBuffer,
     }));
-    const workerEngine = await WE.create({
+    const workerEngine = await WorkerEngine.create({
       worker,
       fonts: fontTransfers,
       geometries: config.geometries,
@@ -143,20 +161,13 @@ async function initializeWorker({
       return emptyInitializeResult();
     }
     // Terminate the failed Worker before falling back to main thread
-    worker.terminate();
+    worker?.terminate();
     lifecycle.setRawWorker(null);
     const error = workerError instanceof Error ? workerError : new Error(String(workerError));
     if (workerConfig.mode === "required") {
       throw error;
     }
-    workerConfig.onFallback?.(error);
-    if (lifecycle.signal.aborted) {
-      return emptyInitializeResult();
-    }
-    console.warn(
-      "[BoundSvgProvider] Worker initialization failed, falling back to main thread:",
-      error,
-    );
+    lifecycle.setFallbackError(error);
     const engine = await loadWasmAndCreateEngine(config, resolvedFonts, lifecycle);
     return { engine, workerEngine: null, rawWorker: null };
   }
@@ -175,10 +186,11 @@ async function initialize(
   }
 
   // 1. Fetch font data
-  const resolvedFonts = await resolveFonts(config);
+  const loadedFonts = await resolveFonts(config);
   if (lifecycle.signal.aborted) {
     return emptyInitializeResult();
   }
+  const resolvedFonts = loadedFonts.map((font) => ({ ...font, data: font.data.slice() }));
 
   if (config.worker) {
     // 3a. Worker path: create WorkerEngine (WASM is loaded inside the Worker)
@@ -203,10 +215,9 @@ function useStableProviderConfig(config: BoundSvgConfig) {
   const stableWorkerFallbackRef = useRef<WorkerFallbackCallback | null>(null);
   stableWorkerFallbackRef.current ??= (error) => latestWorkerFallbackRef.current?.(error);
 
-  const normalizedWorker =
-    config.worker && Object.hasOwn(config.worker, "onFallback")
-      ? { ...config.worker, onFallback: stableWorkerFallbackRef.current }
-      : config.worker;
+  const normalizedWorker = config.worker
+    ? { ...config.worker, onFallback: stableWorkerFallbackRef.current }
+    : config.worker;
   const initializationConfig = useStructurallyStableValue<BoundSvgConfig>({
     ...config,
     worker: normalizedWorker,
@@ -225,6 +236,7 @@ const PROVIDER_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "geometries",
   "symbols",
   "worker",
+  "resourcesRevision",
 ]);
 
 const DEFAULT_COMMON_OPTION_KEYS: ReadonlySet<string> = new Set([
@@ -302,12 +314,35 @@ function assertOwnProviderKeys(config: BoundSvgConfig): void {
 
 export function BoundSvgProvider({ config, fallback, children }: BoundSvgProviderProps) {
   assertOwnProviderKeys(config);
+  resolveRenderRevision(config.resourcesRevision, "resourcesRevision");
   const { initializationConfig, stableDefaultCommonOptions } = useStableProviderConfig(config);
   const [status, setStatus] = useState<BoundSvgStatus>("idle");
   const [engine, setEngine] = useState<Engine | null>(null);
   const [workerEngine, setWorkerEngine] = useState<WorkerEngine | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [initializedConfig, setInitializedConfig] = useState<BoundSvgConfig | null>(null);
+  const [mainScheduler, setMainScheduler] = useState<MainRenderScheduler | null>(null);
+  const [fallbackNotice, setFallbackNotice] = useState<{
+    config: BoundSvgConfig;
+    error: Error;
+    delivered: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (
+      !fallbackNotice ||
+      fallbackNotice.config !== initializationConfig ||
+      fallbackNotice.delivered
+    ) {
+      return;
+    }
+    fallbackNotice.delivered = true;
+    console.warn(
+      "[BoundSvgProvider] Worker initialization failed, falling back to main thread:",
+      fallbackNotice.error,
+    );
+    initializationConfig.worker?.onFallback?.(fallbackNotice.error);
+  }, [fallbackNotice, initializationConfig]);
 
   useEffect(() => {
     let disposed = false;
@@ -315,19 +350,32 @@ export function BoundSvgProvider({ config, fallback, children }: BoundSvgProvide
     let initializedEngine: Engine | null = null;
     let initializedWorkerEngine: WorkerEngine | null = null;
     let initializedRawWorker: Worker | null = null;
+    let initializedScheduler: MainRenderScheduler | null = null;
 
     setStatus("loading");
     setError(null);
     setEngine(null);
     setWorkerEngine(null);
     setInitializedConfig(null);
+    setMainScheduler(null);
+    setFallbackNotice(null);
 
-    initialize(initializationConfig, {
-      signal: abortController.signal,
-      setRawWorker(worker) {
-        initializedRawWorker = worker;
-      },
-    })
+    (async () =>
+      initialize(snapshotProviderConfig(initializationConfig), {
+        signal: abortController.signal,
+        setRawWorker(worker) {
+          initializedRawWorker = worker;
+        },
+        setFallbackError(fallbackError) {
+          if (!disposed) {
+            setFallbackNotice({
+              config: initializationConfig,
+              error: fallbackError,
+              delivered: false,
+            });
+          }
+        },
+      }))()
       .then(({ engine: eng, workerEngine: wEng, rawWorker: rw }) => {
         if (disposed) {
           eng?.dispose();
@@ -337,6 +385,8 @@ export function BoundSvgProvider({ config, fallback, children }: BoundSvgProvide
         initializedEngine = eng;
         initializedWorkerEngine = wEng;
         initializedRawWorker = rw;
+        initializedScheduler = eng ? new MainRenderScheduler() : null;
+        setMainScheduler(initializedScheduler);
         setEngine(eng);
         setWorkerEngine(wEng);
         setInitializedConfig(initializationConfig);
@@ -356,6 +406,7 @@ export function BoundSvgProvider({ config, fallback, children }: BoundSvgProvide
     return () => {
       disposed = true;
       abortController.abort();
+      initializedScheduler?.dispose();
       if (initializedEngine) {
         initializedEngine.dispose();
       }
@@ -381,7 +432,9 @@ export function BoundSvgProvider({ config, fallback, children }: BoundSvgProvide
 
   return (
     <BoundSvgContext.Provider value={contextValue}>
-      {visibleStatus === "loading" || visibleStatus === "idle" ? (fallback ?? null) : children}
+      <MainRenderSchedulerContext.Provider value={isCurrentConfig ? mainScheduler : null}>
+        {visibleStatus === "loading" || visibleStatus === "idle" ? (fallback ?? null) : children}
+      </MainRenderSchedulerContext.Provider>
     </BoundSvgContext.Provider>
   );
 }

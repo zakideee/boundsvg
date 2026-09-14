@@ -1,38 +1,24 @@
 import type { RenderSvgOptions, VNode } from "@boundsvg/core";
-import { useWorkerRender } from "./use-worker-render.js";
+import {
+  mapRenderExecutionResult,
+  type RenderExecutionOptions,
+  type RenderExecutionResult,
+} from "../execution/types.js";
+import { type RenderAdapter, useRenderExecution } from "./use-render-execution.js";
+export type UseRenderToSvgAsyncResult = RenderExecutionResult<{ svg: string }>;
 
-export type UseRenderToSvgAsyncResult = {
-  /** Rendered SVG string (null while not ready or on error) */
-  svg: string | null;
-  /** Render error (null on success) */
-  error: Error | null;
-  /** Whether a Worker render is in-flight */
-  isRendering: boolean;
-  /** Whether a current result is available */
-  isReady: boolean;
+const adapter: RenderAdapter<string, RenderSvgOptions> = {
+  main: (engine, scene, options) => engine.renderToSvg(scene, options),
+  worker: (engine, scene, { options, signal }) => engine.renderToSvg(scene, options, { signal }),
 };
 
-/**
- * Reactively render a VNode to SVG via the WorkerEngine.
- *
- * Uses `useEffect` + `useState` to handle the async Worker round-trip.
- * Re-renders when the vnode reference or renderOptions change.
- * Must be used within a `<BoundSvgProvider>` with `worker` enabled.
- */
+/** Render committed inputs through the Provider's main or Worker execution owner. */
 export function useRenderToSvgAsync(
   vnode: VNode | null,
   renderOptions?: RenderSvgOptions,
+  executionOptions?: RenderExecutionOptions,
 ): UseRenderToSvgAsyncResult {
-  const {
-    data: svg,
-    error,
-    isRendering,
-    isReady,
-  } = useWorkerRender<string, RenderSvgOptions>({
-    vnode,
-    renderFn: (engine, scene, options) => engine.renderToSvg(scene, options),
-    renderOptions,
-  });
+  const result = useRenderExecution({ vnode, renderOptions, executionOptions, adapter });
 
-  return { svg, error, isRendering, isReady };
+  return mapRenderExecutionResult(result, (svg) => ({ svg }), { svg: null });
 }

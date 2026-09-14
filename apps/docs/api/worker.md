@@ -290,6 +290,63 @@ correlated is treated as Worker corruption: the engine is disposed and all
 pending requests reject. A well-formed late response for an unknown ID is
 ignored.
 
+## Request lifetime and bounded admission
+
+A WorkerEngine owns one physical request slot and a FIFO of at most 32 unsent
+requests. Full admission rejects with `WORKER_QUEUE_FULL`; a new request never
+replaces another consumer’s request. Payloads are detached snapshots. The queue
+limit counts requests and does not cap total heap bytes.
+
+All twelve render methods accept `WorkerRequestOptions = { signal?: AbortSignal }`
+as their third argument. The six text measurement methods accept it as their
+second argument. This transport control is separate from render/measurement data
+and is never sent to Core or WASM.
+
+```ts
+const controller = new AbortController();
+const svg = await workerEngine.renderToSvg(
+  scene,
+  { timeMs: 400 },
+  {
+    signal: controller.signal,
+  },
+);
+const measurement = await workerEngine.measureTextBlock(input, {
+  signal: controller.signal,
+});
+```
+
+`timeout` defaults to 30,000ms and accepts only integers from 1 through
+2,147,483,647. Null, non-finite values, fractions, and out-of-range values reject
+with `WORKER_INVALID_TIMEOUT` before Worker creation. The deadline starts at
+admission and includes queue wait. Abort or timeout rejects a Promise once; an
+already posted request keeps the physical slot until its response, a crash, or
+disposal. A timeout never posts the next job while the old computation is running.
+Abort does not promise to cancel synchronous WASM.
+
+`workerEngine.drain(): Promise<void>` permanently closes new admission and waits
+for existing physical work and stream-close acknowledgements. Repeated calls
+return the same Promise without resetting its deadline. New requests reject with
+`WORKER_ENGINE_DRAINING`; expiry rejects with `WORKER_DRAIN_TIMEOUT`. `dispose()`
+is idempotent and settles all local pending work. Only the Worker’s owner
+terminates it: a Provider or Pool terminates the raw Workers it created, while a
+WorkerEngine attached to a caller-owned instance does not.
+
+A raw Worker instance belongs to one WorkerEngine lifetime. Simultaneous attachment
+and attachment after disposal both reject with `WORKER_ALREADY_ATTACHED`. Create
+a fresh Worker when recreating an engine, preventing old responses from colliding
+with reused request IDs.
+
+A WorkerPool keeps its default concurrency of two and maximum of eight. It admits
+one active frame or materialized-frame operation; another rejects with
+`WORKER_POOL_BUSY` without disturbing the first. Creating an iterator does not
+acquire the operation until iteration starts. Pending plus buffered frames never
+exceed concurrency, each Worker owns one stream, and one reserved close control
+slot permits cleanup at full admission. Iterator return, abort, and disposal close
+streams and release compiled state. The operation remains busy until physical
+cleanup completes; a cleanup failure makes the pool unusable instead of lending
+out an uncertain slot.
+
 ## Worker error codes
 
 Failures specific to `WorkerEngine` and `WorkerPool` are `FatalError`

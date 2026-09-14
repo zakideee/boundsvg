@@ -1,6 +1,6 @@
 import { Canvas, Flex, Text, toVNode, type VNode } from "@boundsvg/react";
+import { useRenderToPngAsync, useRenderToSvgAndIrAsync } from "@boundsvg/react/async";
 import { type BoundSvgConfig, BoundSvgProvider, useBoundSvg } from "@boundsvg/react/provider";
-import { useRenderToPngAsync, useRenderToSvgAndIrAsync } from "@boundsvg/react/worker";
 import Prism from "prismjs";
 import "prismjs/components/prism-markup";
 import "prismjs/components/prism-typescript";

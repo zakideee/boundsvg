@@ -109,5 +109,6 @@ export {
 export { useRenderToAnimatedSvg } from "./hooks/use-render-animated-svg.js";
 export type { UseRenderToSvgResult } from "./hooks/use-render-svg.js";
 export { useRenderToSvg } from "./hooks/use-render-svg.js";
+export type { RenderInputOptions } from "./types.js";
 // VNode conversion utility
 export { toVNode, toVNodeFromChildren } from "./utils/to-vnode.js";

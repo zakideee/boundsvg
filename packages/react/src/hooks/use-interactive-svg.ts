@@ -15,7 +15,7 @@ import {
   type TextMap,
 } from "@boundsvg/core/scene";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { EventCallback, PointerEventInfo } from "../types.js";
+import type { EventCallback, PointerEventInfo, RenderInputOptions } from "../types.js";
 import { resolveMainThreadEngineError } from "../utils/main-thread-only.js";
 import { useBoundSvg } from "./use-boundsvg.js";
 import {
@@ -24,10 +24,8 @@ import {
   type RenderNotificationDelivery,
   useCommitPhaseRenderNotifications,
 } from "./use-commit-phase-render-notifications.js";
-import {
-  useStructurallyStableRenderOptions,
-  useStructurallyStableValue,
-} from "./use-structurally-stable-value.js";
+import { useRenderInput } from "./use-render-input.js";
+import { useStructurallyStableRenderOptions } from "./use-structurally-stable-value.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -52,6 +50,7 @@ type InteractiveBehaviorOptions = {
 };
 
 export type UseInteractiveSvgOptions = InteractiveBehaviorOptions &
+  RenderInputOptions &
   (
     | {
         /** Static sampled SVG is the default interactive document family. */
@@ -123,7 +122,7 @@ export function useInteractiveSvg(
   options?: UseInteractiveSvgOptions,
 ): UseInteractiveSvgResult {
   const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
-  const stableVNode = useStructurallyStableValue(vnode);
+  const renderInput = useRenderInput(vnode, engine, options);
   const stableRenderOptions = useStructurallyStableRenderOptions(options?.renderOptions);
   const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
   const renderMode = options?.renderMode ?? "static";
@@ -131,7 +130,7 @@ export function useInteractiveSvg(
 
   // Memoize render artifacts — uses engine.renderToSvgAndIR() for single layout pass
   const computation = useMemo<InteractiveRenderComputation>(() => {
-    if (status !== "ready" || !engine || !stableVNode) {
+    if (status !== "ready" || !engine || !renderInput.vnode) {
       const error = resolveMainThreadEngineError("useInteractiveSvg", {
         status,
         engine,
@@ -152,10 +151,10 @@ export function useInteractiveSvg(
       const { svg, ir } =
         renderMode === "animated"
           ? engine.renderToAnimatedSvgAndIR(
-              stableVNode,
+              renderInput.vnode,
               captured.options as RenderAnimatedSvgOptions,
             )
-          : engine.renderToSvgAndIR(stableVNode, captured.options as RenderSvgOptions);
+          : engine.renderToSvgAndIR(renderInput.vnode, captured.options as RenderSvgOptions);
       const spatialIndex = buildHitTestIndex(ir);
       const handlerMap = buildHandlerMap(ir);
       const nodeTypeMap = buildNodeTypeMap(ir);
@@ -184,7 +183,7 @@ export function useInteractiveSvg(
     engine,
     workerEngine,
     status,
-    stableVNode,
+    renderInput,
     stableRenderOptions,
     stableDefaultCommonOptions,
     renderMode,

@@ -36,10 +36,10 @@
       "import": "./dist/provider.js",
       "require": "./dist/provider.cjs"
     },
-    "./worker": {
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/worker.js",
-      "require": "./dist/worker.cjs"
+    "./async": {
+      "types": "./dist/async.d.ts",
+      "import": "./dist/async.js",
+      "require": "./dist/async.cjs"
     },
     "./png": {
       "types": "./dist/png.d.ts",

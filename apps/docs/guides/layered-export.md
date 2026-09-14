@@ -230,20 +230,26 @@ without `svgToPngFn` silently skip validation and surface the
 
 ## React hooks
 
-Off-main-thread rendering is available through
+Shared main and Worker rendering is available from `@boundsvg/react/async` through
 [`useRenderToLayeredSvgAsync`](/api/react#userendertolayeredsvgasync) and
-[`useRenderToLayeredPngAsync`](/api/react#userendertolayeredpngasync). Both
-require a `<BoundSvgProvider>` with `worker` enabled in its `config`. The PNG hook also returns a memoized
-`layerDataUrls: string[] | null` for direct `<img src>` use: null whenever no
-current result is available: before the first render, while new input is in
-flight, and on error.
+[`useRenderToLayeredPngAsync`](/api/react#userendertolayeredpngasync). Both use the
+execution owner selected by `<BoundSvgProvider>`. The PNG hook also returns
+`layerDataUrls: string[] | null` for direct `<img src>` use. By default, the entire
+previous success and its URLs remain available during a new render or failure;
+`isStale` marks that state and `isReady` remains false until the latest success.
 
 ```tsx
-const { result, isRendering } = useRenderToLayeredSvgAsync(vnode, {
-  validateComposition: { enabled: true },
-});
+import { useMemo } from "react";
+import { useRenderToLayeredSvgAsync } from "@boundsvg/react/async";
+
+const options = useMemo(() => ({ validateComposition: { enabled: true } }), []);
+const { result, isRendering } = useRenderToLayeredSvgAsync(vnode, options);
 // result?.layers, result?.manifest, result?.compositionValidation
 ```
+
+Pass `{ retainPreviousResult: false }` as the third argument to clear the previous
+result while updating. Keep the VNode and nested option identities stable, or use
+an explicit revision after mutating values in place.
 
 ## CLI
 
@@ -292,7 +298,7 @@ shared export flags.
 - [`@boundsvg/core` Engine](/api/core#engine-methods) — `renderToLayeredSvg`,
   `renderToLayeredPng`, `LayeredSvgOptions`, `LayeredPngOptions`,
   `LayeredCompositionValidationOptions`
-- [`@boundsvg/react/worker`](/api/react#hooks) — `useRenderToLayeredSvgAsync`,
+- [`@boundsvg/react/async`](/api/react#hooks) — `useRenderToLayeredSvgAsync`,
   `useRenderToLayeredPngAsync`
 - [`@boundsvg/browser`](/api/browser) — `layeredPngToDataUrls`,
   `layeredPngToBlobs`, `layeredSvgToDataUrls`, `composeLayeredSvgInline`

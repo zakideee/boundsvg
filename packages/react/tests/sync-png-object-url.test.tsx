@@ -152,7 +152,8 @@ describe("synchronous PNG object URL stability", () => {
       expect(onPngResolutionAdjusted).not.toHaveBeenCalled();
       return new Uint8Array([1]);
     });
-    const engine = { renderToPng } as unknown as Engine;
+    const engine = new Engine({ computeLayoutFn: () => "" });
+    vi.spyOn(engine, "renderToPng").mockImplementation(renderToPng);
 
     function Probe() {
       useRenderToPng(STABLE_VNODE, { onWarning, onPngResolutionAdjusted });
@@ -330,5 +331,97 @@ describe("synchronous PNG object URL stability", () => {
 
     expect(pngMocks.createPngObjectUrl).toHaveBeenCalledTimes(1);
     mounted.unmount();
+  });
+
+  it("invalidates a stable scene after resource registration", () => {
+    const { engine, renderToPng } = makeEngine();
+    function Probe() {
+      const { png } = useRenderToPng(STABLE_VNODE);
+      return <output>{png?.[0]}</output>;
+    }
+    const mounted = mount(<Probe />, engine);
+    const geometry = {
+      viewBox: { width: 10, height: 10 },
+      root: { kind: "path" as const, d: "M0 0H10V10Z" },
+    };
+    act(() => engine.registerGeometry("shape", geometry));
+    expect(renderToPng).toHaveBeenCalledTimes(2);
+    act(() => engine.unregisterGeometry("absent"));
+    expect(renderToPng).toHaveBeenCalledTimes(2);
+    act(() => engine.unregisterGeometry("shape"));
+    expect(renderToPng).toHaveBeenCalledTimes(3);
+    mounted.unmount();
+  });
+
+  it("observes in-place VNode and option changes through revision", () => {
+    const { engine, renderToPng } = makeEngine();
+    const vnode = makeVNode();
+    const options: RenderPngOptions = { scale: 1 };
+    let updateRevision!: (revision: number) => void;
+    function Probe() {
+      const [revision, setRevision] = useState(0);
+      updateRevision = setRevision;
+      const { png } = useRenderToPng(vnode, options, { revision });
+      return <output>{png?.join(",")}</output>;
+    }
+    const mounted = mount(<Probe />, engine);
+    Reflect.set(vnode.props, "width", 12);
+    options.scale = 3;
+    act(() => updateRevision(1));
+    expect(renderToPng).toHaveBeenCalledTimes(2);
+    expect(document.querySelector("output")?.textContent).toBe("12,3");
+    mounted.unmount();
+  });
+
+  it("isolates public PNG bytes across consumers and subsequent projections", () => {
+    const { engine, renderToPng } = makeEngine();
+    let firstPng: Uint8Array | null = null;
+    let secondPng: Uint8Array | null = null;
+    let refresh!: (revision: number) => void;
+    function First() {
+      const [, setRevision] = useState(0);
+      refresh = setRevision;
+      firstPng = useRenderToPng(STABLE_VNODE).png;
+      return null;
+    }
+    function Second() {
+      secondPng = useRenderToPng(STABLE_VNODE).png;
+      return null;
+    }
+    const mounted = mount(
+      <>
+        <First />
+        <Second />
+      </>,
+      engine,
+    );
+    expect(renderToPng).toHaveBeenCalledTimes(2);
+    expect(firstPng).not.toBe(secondPng);
+    const exposed = firstPng as Uint8Array | null;
+    exposed?.fill(99);
+    expect(secondPng).toEqual(new Uint8Array([10, 1]));
+    act(() => refresh(1));
+    expect(firstPng).toEqual(new Uint8Array([10, 1]));
+    expect(renderToPng).toHaveBeenCalledTimes(2);
+    mounted.unmount();
+  });
+
+  it("replaces and revokes an object URL when mutable bytes receive a new revision", () => {
+    const { engine } = makeEngine();
+    const png = new Uint8Array([1]);
+    let updateRevision!: (revision: number) => void;
+    function Probe() {
+      const [revision, setRevision] = useState(0);
+      updateRevision = setRevision;
+      usePngObjectUrl(png, { revision });
+      return null;
+    }
+    const mounted = mount(<Probe />, engine);
+    png[0] = 2;
+    act(() => updateRevision(1));
+    expect(pngMocks.createPngObjectUrl).toHaveBeenCalledTimes(2);
+    expect(pngMocks.revokePngObjectUrl).toHaveBeenCalledTimes(1);
+    mounted.unmount();
+    expect(pngMocks.revokePngObjectUrl).toHaveBeenCalledTimes(2);
   });
 });

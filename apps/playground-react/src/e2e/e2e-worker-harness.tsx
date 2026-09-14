@@ -1,3 +1,4 @@
+import type { RenderAnimatedSvgOptions } from "@boundsvg/core";
 /**
  * E2E Worker Test Harness
  *
@@ -35,8 +36,8 @@ import {
   toVNode,
   type VNode,
 } from "@boundsvg/react";
+import { useRenderToAnimatedSvgAsync, useRenderToPngAsync } from "@boundsvg/react/async";
 import { type BoundSvgConfig, BoundSvgProvider, useBoundSvg } from "@boundsvg/react/provider";
-import { useRenderToAnimatedSvgAsync, useRenderToPngAsync } from "@boundsvg/react/worker";
 import { type MaterializedFrameInput, WorkerPool } from "@boundsvg/worker";
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -1078,9 +1079,11 @@ function WorkerTestContent() {
   const vnode = useMemo(() => buildTestVNode(), []);
   const routeParity = useRouteParity(status, workerEngine, vnode);
 
-  const svgResult = useRenderToAnimatedSvgAsync(vnode, {
-    playback: { mode: "independent" },
-  });
+  const animatedOptions = useMemo<RenderAnimatedSvgOptions>(
+    () => ({ playback: { mode: "independent" } }),
+    [],
+  );
+  const svgResult = useRenderToAnimatedSvgAsync(vnode, animatedOptions);
   const pngResult = useRenderToPngAsync(vnode, { timeMs: 0 });
 
   return (

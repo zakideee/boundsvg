@@ -89,12 +89,13 @@ function areStructurallyEqual(
 
 export function useStructurallyStableValue<T>(value: T): T {
   const stableValueRef = useRef(value);
-  // This render-phase write may conservatively restart after an abandoned render,
-  // but it cannot hide a supported structural value change.
-  if (!areStructurallyEqual(stableValueRef.current, value)) {
-    stableValueRef.current = value;
-  }
-  return stableValueRef.current;
+  const stableValue = areStructurallyEqual(stableValueRef.current, value)
+    ? stableValueRef.current
+    : value;
+  useLayoutEffect(() => {
+    stableValueRef.current = stableValue;
+  });
+  return stableValue;
 }
 
 function replaceOwnRenderCallbacks<O extends object>(

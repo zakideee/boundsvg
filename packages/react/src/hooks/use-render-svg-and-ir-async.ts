@@ -1,45 +1,34 @@
 import type { IR, RenderSvgOptions, VNode } from "@boundsvg/core";
-import { useWorkerRender } from "./use-worker-render.js";
+import { useMemo } from "react";
+import { cloneRenderedIr } from "../execution/clone-rendered-ir.js";
+import {
+  mapRenderExecutionResult,
+  type RenderExecutionOptions,
+  type RenderExecutionResult,
+} from "../execution/types.js";
+import { type RenderAdapter, useRenderExecution } from "./use-render-execution.js";
+export type UseRenderToSvgAndIrAsyncResult = RenderExecutionResult<{ svg: string; ir: IR }>;
 
-export type UseRenderToSvgAndIrAsyncResult = {
-  /** Rendered SVG string (null while not ready or on error) */
-  svg: string | null;
-  /** Intermediate Representation tree (null while not ready or on error) */
-  ir: IR | null;
-  /** Render error (null on success) */
-  error: Error | null;
-  /** Whether a Worker render is in-flight */
-  isRendering: boolean;
-  /** Whether a current result is available */
-  isReady: boolean;
+const adapter: RenderAdapter<{ svg: string; ir: IR }, RenderSvgOptions> = {
+  main: (engine, scene, options) => engine.renderToSvgAndIR(scene, options),
+  worker: (engine, scene, { options, signal }) =>
+    engine.renderToSvgAndIR(scene, options, { signal }),
 };
 
-/**
- * Reactively render a VNode to SVG + IR via the WorkerEngine.
- *
- * Returns both the SVG string and the IR tree, enabling inspect-hover
- * overlays on the main thread without a synchronous Engine instance.
- * Re-renders when the vnode reference or renderOptions change.
- * Must be used within a `<BoundSvgProvider>` with `worker` enabled.
- */
+/** Render committed inputs through the Provider's main or Worker execution owner. */
 export function useRenderToSvgAndIrAsync(
   vnode: VNode | null,
   renderOptions?: RenderSvgOptions,
+  executionOptions?: RenderExecutionOptions,
 ): UseRenderToSvgAndIrAsyncResult {
-  const { data, error, isRendering, isReady } = useWorkerRender<
-    { svg: string; ir: IR },
-    RenderSvgOptions
-  >({
-    vnode,
-    renderFn: (engine, scene, options) => engine.renderToSvgAndIR(scene, options),
-    renderOptions,
-  });
+  const result = useRenderExecution({ vnode, renderOptions, executionOptions, adapter });
 
-  return {
-    svg: data?.svg ?? null,
-    ir: data?.ir ?? null,
-    error,
-    isRendering,
-    isReady,
-  };
+  const ir = useMemo(
+    () => (result.data === null ? null : cloneRenderedIr(result.data.ir)),
+    [result.data],
+  );
+  return mapRenderExecutionResult(result, (result) => ({ svg: result.svg, ir: ir as IR }), {
+    svg: null,
+    ir: null,
+  });
 }

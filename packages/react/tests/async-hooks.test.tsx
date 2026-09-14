@@ -4,12 +4,12 @@
 /**
  * Tests for useRenderToSvgAsync / useRenderToPngAsync.
  *
- * Uses happy-dom env so useEffect fires. Fully mocks @boundsvg/core to avoid
- * loading the WASM module (which causes OOM in forked vitest workers).
+ * Uses happy-dom to exercise commit effects and a scene-conversion spy.
+ * Rendering backends are controlled independently of WASM execution.
  *
  * Most VNodes are shared constants so each test controls only the dependency
  * whose lifecycle it intends to exercise. A focused regression below covers
- * freshly allocated, structurally equal VNodes.
+ * caller-stabilized VNodes and explicit input changes.
  */
 
 import type {
@@ -30,7 +30,7 @@ import { BoundSvgContext } from "../src/context.js";
 import type { BoundSvgContextValue } from "../src/types.js";
 import { makeEngineMock, makeInvalidVNode, makeWorkerEngineMock } from "./test-doubles.js";
 
-// Fully mock @boundsvg/core — no actual module loading (avoids WASM OOM)
+// Keep Core validation and resource ownership while controlling scene conversion.
 const mockToSceneDocument = vi.fn((vnode: VNode) => {
   if ((vnode.type as string) === "UnknownWidget") {
     throw new Error(`Cannot convert VNode of unknown type "UnknownWidget" to SceneNode`);
@@ -38,7 +38,8 @@ const mockToSceneDocument = vi.fn((vnode: VNode) => {
   return { type: "Canvas", width: 100, height: 100, children: [] };
 });
 
-vi.mock("@boundsvg/core", () => ({
+vi.mock("@boundsvg/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@boundsvg/core")>()),
   toSceneDocument: (vnode: VNode) => mockToSceneDocument(vnode),
 }));
 
@@ -239,7 +240,7 @@ describe("useRenderToSvgAsync", () => {
     unmount();
   });
 
-  it("does not restart for equal inline nested options and detects a nested value change", async () => {
+  it("uses caller-stabilized nested options and detects a nested identity change", async () => {
     const pendingSecondRender = new Promise<string>(() => {});
     const renderToSvg = vi
       .fn()
@@ -251,7 +252,11 @@ describe("useRenderToSvgAsync", () => {
     function Probe() {
       const [debugPart, setter] = useState<"layout" | "baseline">("layout");
       setDebugPart = setter;
-      useRenderToSvgAsync(VALID_VNODE, { debug: { parts: [debugPart] } });
+      const options = useMemo<RenderSvgOptions>(
+        () => ({ debug: { parts: [debugPart] } }),
+        [debugPart],
+      );
+      useRenderToSvgAsync(VALID_VNODE, options);
       return null;
     }
 
@@ -270,11 +275,13 @@ describe("useRenderToSvgAsync", () => {
   });
 
   it("does not restart for an inline callback and forwards to its latest closure", async () => {
-    const pendingSecondRender = new Promise<string>(() => {});
-    const renderToSvg = vi
-      .fn()
-      .mockResolvedValueOnce("<svg>first</svg>")
-      .mockReturnValue(pendingSecondRender);
+    let resolveRender!: (value: string) => void;
+    const renderToSvg = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveRender = resolve;
+        }),
+    );
     const wEng = makeWorkerEngineMock({ renderToSvg });
     const observedLabels: string[] = [];
 
@@ -302,6 +309,9 @@ describe("useRenderToSvgAsync", () => {
       NonNullable<RenderSvgOptions["onWarning"]>
     >[0];
     firstCallOptions.onWarning?.(warning);
+    expect(observedLabels).toEqual([]);
+    resolveRender("<svg>first</svg>");
+    await flush();
     expect(observedLabels).toEqual(["latest"]);
     unmount();
   });
@@ -411,11 +421,13 @@ describe("useRenderToSvgAsync", () => {
   });
 
   it("forwards PNG resolution warnings to the latest inline callback", async () => {
-    const pendingSecondRender = new Promise<Uint8Array>(() => {});
-    const renderToPng = vi
-      .fn()
-      .mockResolvedValueOnce(new Uint8Array([137, 80, 78, 71]))
-      .mockReturnValue(pendingSecondRender);
+    let resolveRender!: (value: Uint8Array) => void;
+    const renderToPng = vi.fn(
+      () =>
+        new Promise<Uint8Array>((resolve) => {
+          resolveRender = resolve;
+        }),
+    );
     const wEng = makeWorkerEngineMock({ renderToPng });
     const observedLabels: string[] = [];
 
@@ -440,6 +452,9 @@ describe("useRenderToSvgAsync", () => {
       NonNullable<RenderPngOptions["onPngResolutionAdjusted"]>
     >[0];
     firstCallOptions.onPngResolutionAdjusted?.(warning);
+    expect(observedLabels).toEqual([]);
+    resolveRender(new Uint8Array([137, 80, 78, 71]));
+    await flush();
     expect(observedLabels).toEqual(["latest"]);
     unmount();
   });
@@ -487,11 +502,13 @@ describe("useRenderToSvgAsync", () => {
   });
 
   it("forwards through the latest Provider default callback without restarting", async () => {
-    const pendingSecondRender = new Promise<string>(() => {});
-    const renderToSvg = vi
-      .fn()
-      .mockResolvedValueOnce("<svg>first</svg>")
-      .mockReturnValue(pendingSecondRender);
+    let resolveRender!: (value: string) => void;
+    const renderToSvg = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveRender = resolve;
+        }),
+    );
     const wEng = makeWorkerEngineMock({ renderToSvg });
     const observedLabels: string[] = [];
 
@@ -525,11 +542,14 @@ describe("useRenderToSvgAsync", () => {
       NonNullable<RenderSvgOptions["onWarning"]>
     >[0];
     firstCallOptions.onWarning?.(warning);
+    expect(observedLabels).toEqual([]);
+    resolveRender("<svg>first</svg>");
+    await flush();
     expect(observedLabels).toEqual(["latest"]);
     unmount();
   });
 
-  it("does not restart for an equal fresh VNode and detects a nested text change", async () => {
+  it("uses caller-stabilized VNode identity and detects a text change", async () => {
     const pendingSecondRender = new Promise<string>(() => {});
     const renderToSvg = vi
       .fn()
@@ -541,17 +561,20 @@ describe("useRenderToSvgAsync", () => {
     function Probe() {
       const [text, setter] = useState("first");
       setText = setter;
-      const vnode: VNode = {
-        type: "Canvas",
-        props: { width: 100, height: 100 },
-        children: [
-          {
-            type: "Text",
-            props: { font: "f", fontSizePx: 16, color: "#000" },
-            children: [text],
-          },
-        ],
-      };
+      const vnode = useMemo<VNode>(
+        () => ({
+          type: "Canvas",
+          props: { width: 100, height: 100 },
+          children: [
+            {
+              type: "Text",
+              props: { font: "f", fontSizePx: 16, color: "#000" },
+              children: [text],
+            },
+          ],
+        }),
+        [text],
+      );
       useRenderToSvgAsync(vnode);
       return null;
     }
@@ -570,7 +593,7 @@ describe("useRenderToSvgAsync", () => {
     unmount();
   });
 
-  it("stabilizes a fresh VNode for PNG and detects a scalar prop change", async () => {
+  it("uses caller-stabilized PNG input and detects a scalar prop change", async () => {
     const pendingSecondRender = new Promise<Uint8Array>(() => {});
     const renderToPng = vi
       .fn()
@@ -582,11 +605,14 @@ describe("useRenderToSvgAsync", () => {
     function Probe() {
       const [width, setter] = useState(100);
       setWidth = setter;
-      const vnode: VNode = {
-        type: "Canvas",
-        props: { width, height: 100 },
-        children: [],
-      };
+      const vnode = useMemo<VNode>(
+        () => ({
+          type: "Canvas",
+          props: { width, height: 100 },
+          children: [],
+        }),
+        [width],
+      );
       useRenderToPngAsync(vnode);
       return null;
     }
@@ -710,7 +736,7 @@ describe("useRenderToSvgAsync", () => {
     unmount();
   });
 
-  it("does not expose a settled SVG for a new VNode while its render is pending", async () => {
+  it("clears settled SVG during a pending update when retention is disabled", async () => {
     const secondVNode: VNode = {
       type: "Canvas",
       props: { width: 120, height: 80 },
@@ -736,7 +762,10 @@ describe("useRenderToSvgAsync", () => {
     function Probe() {
       const [vnode, setter] = useState<VNode>(VALID_VNODE);
       setVNode = setter;
-      snapshots.push({ vnode, result: useRenderToSvgAsync(vnode) });
+      snapshots.push({
+        vnode,
+        result: useRenderToSvgAsync(vnode, undefined, { retainPreviousResult: false }),
+      });
       return null;
     }
 
@@ -754,6 +783,7 @@ describe("useRenderToSvgAsync", () => {
     expect(snapshots.at(-1)?.result.isReady).toBe(false);
     expect(snapshots.at(-1)?.result.isRendering).toBe(true);
 
+    await flush();
     resolveSecond!("<svg>second</svg>");
     await flush();
     expect(snapshots.at(-1)?.result.svg).toBe("<svg>second</svg>");
@@ -806,10 +836,8 @@ describe("animated SVG Worker hooks", () => {
     });
     expect(workerRenderToAnimatedSvg).toHaveBeenCalledWith(
       expect.objectContaining({ type: "Canvas" }),
-      {
-        textPathMode: "merged",
-        ...renderOptions,
-      },
+      expect.objectContaining({ textPathMode: "merged", ...renderOptions }),
+      { signal: expect.any(AbortSignal) },
     );
     asyncMount.unmount();
   });
@@ -820,10 +848,14 @@ describe("animated SVG Worker hooks", () => {
     let snapshot: ReturnType<typeof useRenderToAnimatedSvgAsync> | null = null;
 
     function Probe() {
-      snapshot = useRenderToAnimatedSvgAsync(VALID_VNODE, {
-        playback: { mode: "independent" },
-        resourceIdPrefix: "worker-animated-",
-      });
+      const options = useMemo<RenderAnimatedSvgOptions>(
+        () => ({
+          playback: { mode: "independent" },
+          resourceIdPrefix: "worker-animated-",
+        }),
+        [],
+      );
+      snapshot = useRenderToAnimatedSvgAsync(VALID_VNODE, options);
       return null;
     }
 
@@ -831,11 +863,15 @@ describe("animated SVG Worker hooks", () => {
     await flush();
 
     expect(snapshot?.svg).toContain("animated");
-    expect(renderToAnimatedSvg).toHaveBeenCalledWith(expect.objectContaining({ type: "Canvas" }), {
-      textPathMode: "merged",
-      playback: { mode: "independent" },
-      resourceIdPrefix: "worker-animated-",
-    });
+    expect(renderToAnimatedSvg).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "Canvas" }),
+      expect.objectContaining({
+        textPathMode: "merged",
+        playback: { mode: "independent" },
+        resourceIdPrefix: "worker-animated-",
+      }),
+      { signal: expect.any(AbortSignal) },
+    );
     unmount();
   });
 
@@ -857,23 +893,28 @@ describe("animated SVG Worker hooks", () => {
     let snapshot: ReturnType<typeof useRenderToAnimatedSvgAndIrAsync> | null = null;
 
     function Probe() {
-      snapshot = useRenderToAnimatedSvgAndIrAsync(VALID_VNODE, {
-        playback: { mode: "independent" },
-        nodeIdMetadata: "include",
-      });
+      const options = useMemo<RenderAnimatedSvgOptions>(
+        () => ({
+          playback: { mode: "independent" },
+          nodeIdMetadata: "include",
+        }),
+        [],
+      );
+      snapshot = useRenderToAnimatedSvgAndIrAsync(VALID_VNODE, options);
       return null;
     }
 
     const { unmount } = mount(<Probe />, workerCtx(workerEngine));
     await flush();
 
-    expect(snapshot?.ir).toBe(ir);
+    expect(snapshot?.ir).toEqual(ir);
     expect(renderToAnimatedSvgAndIR).toHaveBeenCalledWith(
       expect.objectContaining({ type: "Canvas" }),
       expect.objectContaining({
         playback: { mode: "independent" },
         nodeIdMetadata: "include",
       }),
+      { signal: expect.any(AbortSignal) },
     );
     unmount();
   });
@@ -898,13 +939,14 @@ describe("useRenderToPngAsync", () => {
     await flush();
 
     expect(snap!.isReady).toBe(true);
-    expect(snap!.png).toBe(pngBytes);
+    expect(snap!.png).toEqual(pngBytes);
+    expect(snap!.png).not.toBe(pngBytes);
     expect(snap!.dataUrl).toContain("data:image/png;base64,");
     expect(snap!.error).toBeNull();
     unmount();
   });
 
-  it("does not expose settled PNG data for a new VNode while its render is pending", async () => {
+  it("clears settled PNG during a pending update when retention is disabled", async () => {
     const firstPng = new Uint8Array([137, 80, 78, 71, 1]);
     const secondPng = new Uint8Array([137, 80, 78, 71, 2]);
     const secondVNode: VNode = {
@@ -932,7 +974,10 @@ describe("useRenderToPngAsync", () => {
     function Probe() {
       const [vnode, setter] = useState<VNode>(VALID_VNODE);
       setVNode = setter;
-      snapshots.push({ vnode, result: useRenderToPngAsync(vnode) });
+      snapshots.push({
+        vnode,
+        result: useRenderToPngAsync(vnode, undefined, { retainPreviousResult: false }),
+      });
       return null;
     }
 
@@ -950,9 +995,10 @@ describe("useRenderToPngAsync", () => {
     expect(snapshots.at(-1)?.result.dataUrl).toBeNull();
     expect(snapshots.at(-1)?.result.isReady).toBe(false);
 
+    await flush();
     resolveSecond!(secondPng);
     await flush();
-    expect(snapshots.at(-1)?.result.png).toBe(secondPng);
+    expect(snapshots.at(-1)?.result.png).toEqual(secondPng);
     unmount();
   });
 
@@ -1049,7 +1095,7 @@ describe("useRenderToLayeredSvgAsync", () => {
     await flush();
 
     expect(snap!.isReady).toBe(true);
-    expect(snap!.result).toBe(SAMPLE_LAYERED_SVG_RESULT);
+    expect(snap!.result).toEqual(SAMPLE_LAYERED_SVG_RESULT);
     expect(snap!.error).toBeNull();
     expect(wEng.renderToLayeredSvg).toHaveBeenCalledTimes(1);
     unmount();
@@ -1134,6 +1180,38 @@ const SAMPLE_LAYERED_PNG_RESULT: LayeredPngResult = {
 };
 
 describe("useRenderToLayeredPngAsync", () => {
+  it("isolates layer bytes, manifests, and URLs across consumers and projections", async () => {
+    const render = vi.fn(async () => SAMPLE_LAYERED_PNG_RESULT);
+    const workerEngine = makeWorkerEngineMock({ renderToLayeredPng: render });
+    const snapshots: Array<ReturnType<typeof useRenderToLayeredPngAsync>> = [];
+    let refresh!: () => void;
+    function Probe() {
+      const [label, setLabel] = useState(0);
+      refresh = () => setLabel((previous) => previous + 1);
+      snapshots[0] = useRenderToLayeredPngAsync(VALID_VNODE);
+      snapshots[1] = useRenderToLayeredPngAsync(VALID_VNODE);
+      return (
+        <output>
+          {label}:{snapshots[0].layerDataUrls?.[0]}
+        </output>
+      );
+    }
+    const mounted = mount(<Probe />, workerCtx(workerEngine));
+    await flush();
+    const originalUrl = snapshots[0]!.layerDataUrls![0];
+    snapshots[0]!.result!.layers[0]!.png[0] = 0;
+    snapshots[0]!.result!.manifest.layers[0]!.id = "mutated";
+    snapshots[0]!.layerDataUrls![0] = "mutated";
+    expect(snapshots[1]!.result!.layers[0]!.png[0]).toBe(137);
+    expect(snapshots[1]!.result!.manifest.layers[0]!.id).toBe("background");
+    act(refresh);
+    expect(snapshots[0]!.result!.layers[0]!.png[0]).toBe(137);
+    expect(snapshots[0]!.result!.manifest.layers[0]!.id).toBe("background");
+    expect(snapshots[0]!.layerDataUrls![0]).toBe(originalUrl);
+    expect(render).toHaveBeenCalledTimes(2);
+    mounted.unmount();
+  });
+
   it("renders layered PNG and exposes per-layer data URLs", async () => {
     const wEng = makeWorkerEngineMock({
       renderToLayeredPng: vi.fn(async () => SAMPLE_LAYERED_PNG_RESULT),
@@ -1149,7 +1227,7 @@ describe("useRenderToLayeredPngAsync", () => {
     await flush();
 
     expect(snap!.isReady).toBe(true);
-    expect(snap!.result).toBe(SAMPLE_LAYERED_PNG_RESULT);
+    expect(snap!.result).toEqual(SAMPLE_LAYERED_PNG_RESULT);
     expect(snap!.layerDataUrls).not.toBeNull();
     expect(snap!.layerDataUrls).toHaveLength(2);
     expect(snap!.layerDataUrls![0]).toContain("data:image/png;base64,");
