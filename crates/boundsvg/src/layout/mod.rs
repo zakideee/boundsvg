@@ -1,3 +1,5 @@
+//! Layout request integration and result projection.
+
 mod compute;
 mod measure;
 mod taffy;
@@ -5,6 +7,8 @@ pub mod types;
 
 pub(crate) const MAX_LAYOUT_TREE_DEPTH: usize = 48;
 
+#[cfg(test)]
+mod presence_tests;
 #[cfg(test)]
 mod tests;
 

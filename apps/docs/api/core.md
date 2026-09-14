@@ -549,7 +549,7 @@ import {
 } from "@boundsvg/core/wasm";
 ```
 
-All nine functions require a matching schema-31 WASM module. A custom module
+All nine functions require a matching schema-32 WASM module. A custom module
 must provide the complete capability set; `isShapeWasmAvailable()` is `true`
 only when all nine exports are functions. Each call also checks its own
 capability and throws `SHAPE_WASM_CAPABILITY_MISSING` when it is absent.

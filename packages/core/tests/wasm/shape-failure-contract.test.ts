@@ -93,40 +93,52 @@ describe("standalone shape failure contract", () => {
     }
   });
 
-  it("preserves missing, null, and value input presence on the three optional routes", () => {
+  it("accepts missing and value while rejecting null on the three optional routes", () => {
     const wasm = getWasm();
     const rawCompile = wasm.compile_shape_svg;
     const rawHitTest = wasm.hit_test_shape_parts;
     const rawRegionRender = wasm.render_shape_region_svg;
-    expect(rawCompile).toBeTypeOf("function");
-    expect(rawHitTest).toBeTypeOf("function");
-    expect(rawRegionRender).toBeTypeOf("function");
+    if (!rawCompile || !rawHitTest || !rawRegionRender) {
+      throw new TypeError("Shape WASM methods must be available");
+    }
 
     const geometry = pathGeometry("M0 0H10V10H0Z");
-    const compileMissing = rawCompile?.(JSON.stringify({ geometry }));
-    const compileNull = rawCompile?.(JSON.stringify({ geometry, paint: null, viewport: null }));
-    const compileValue = rawCompile?.(
+    const compileMissing = rawCompile(JSON.stringify({ geometry }));
+    for (const field of ["paint", "viewport"]) {
+      expect(
+        captureRawDiagnostic(() => rawCompile(JSON.stringify({ geometry, [field]: null }))),
+      ).toMatchObject({
+        code: "SHAPE_INPUT_INVALID",
+        context: { operation: "compileShapeSvg", reason: "invalidRequestShape" },
+      });
+    }
+    const compileValue = rawCompile(
       JSON.stringify({
         geometry,
         paint: { fill: "#ff0000" },
         viewport: { width: 20, height: 30 },
       }),
     );
-    expect(compileNull).toBe(compileMissing);
+    expect(compileMissing).toContain("<svg");
     expect(compileValue).toContain('viewBox="0 0 20 30"');
     expect(compileValue).toContain('fill="#ff0000"');
 
     const hitInput = { geometry, point: { x: 5, y: 5 } };
-    const hitMissing = rawHitTest?.(JSON.stringify(hitInput));
-    const hitNull = rawHitTest?.(JSON.stringify({ ...hitInput, options: null }));
-    const hitValue = rawHitTest?.(
+    const hitMissing = rawHitTest(JSON.stringify(hitInput));
+    expect(
+      captureRawDiagnostic(() => rawHitTest(JSON.stringify({ ...hitInput, options: null }))),
+    ).toMatchObject({
+      code: "SHAPE_INPUT_INVALID",
+      context: { operation: "hitTestShapeParts", reason: "invalidRequestShape" },
+    });
+    const hitValue = rawHitTest(
       JSON.stringify({
         ...hitInput,
         options: { strokeWidth: 1, tolerance: 0, fillRule: "nonzero" },
       }),
     );
-    expect(hitNull).toBe(hitMissing);
-    expect(JSON.parse(hitValue ?? "null")).toBeInstanceOf(Array);
+    expect(JSON.parse(hitMissing)).toBeInstanceOf(Array);
+    expect(JSON.parse(hitValue)).toBeInstanceOf(Array);
 
     const region = {
       contours: [
@@ -141,16 +153,23 @@ describe("standalone shape failure contract", () => {
         },
       ],
     };
-    const regionMissing = rawRegionRender?.(JSON.stringify({ region }));
-    const regionNull = rawRegionRender?.(JSON.stringify({ region, paint: null, viewport: null }));
-    const regionValue = rawRegionRender?.(
+    const regionMissing = rawRegionRender(JSON.stringify({ region }));
+    for (const field of ["paint", "viewport"]) {
+      expect(
+        captureRawDiagnostic(() => rawRegionRender(JSON.stringify({ region, [field]: null }))),
+      ).toMatchObject({
+        code: "SHAPE_INPUT_INVALID",
+        context: { operation: "renderShapeRegionSvg", reason: "invalidRequestShape" },
+      });
+    }
+    const regionValue = rawRegionRender(
       JSON.stringify({
         region,
         paint: { fill: "#ff0000" },
         viewport: { width: 20, height: 30 },
       }),
     );
-    expect(regionNull).toBe(regionMissing);
+    expect(regionMissing).toContain("<svg");
     expect(regionValue).toContain('viewBox="0 0 20 30"');
     expect(regionValue).toContain('fill="#ff0000"');
   });

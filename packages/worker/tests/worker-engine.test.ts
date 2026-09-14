@@ -522,6 +522,33 @@ describe("WorkerEngine", () => {
       engine.dispose();
     });
 
+    it("rehydrates finite-output failures without changing their operation or field", async () => {
+      const engine = await createEngine(mockWorker);
+      const failure = new FatalError(
+        "WASM_NON_FINITE_OUTPUT",
+        "WASM output contains a non-finite number.",
+        {
+          stage: "wasm",
+          context: { operation: "render_to_svg", field: "opacity" },
+        },
+      );
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg-and-ir") {
+          mockWorker.respond({ id: request.id, type: "error", error: failure.toJSON() });
+        }
+      });
+      try {
+        await expect(engine.renderToSvgAndIR(SCENE)).rejects.toMatchObject({
+          code: failure.code,
+          message: failure.message,
+          stage: "wasm",
+          context: failure.context,
+        });
+      } finally {
+        engine.dispose();
+      }
+    });
+
     it("rehydrates timeline Fatal context without flattening it", async () => {
       const engine = await createEngine(mockWorker);
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {

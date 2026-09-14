@@ -37,6 +37,7 @@ mod text_diagnostics;
 pub mod webp_anim;
 #[cfg(feature = "resvg-backend")]
 pub mod webp_encode;
+mod wire;
 pub use boundtext::text;
 
 use std::panic::AssertUnwindSafe;
@@ -62,14 +63,24 @@ struct PositionedGlyphPathRequest {
     origin_x: f64,
     origin_y: f64,
     rotation_deg: u16,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     baseline_rotation_deg: Option<f64>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     inline_scale: Option<f64>,
     writing_mode: String,
     font_alias: String,
     font_weight: u16,
     font_style: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     font_variation_settings: Option<String>,
     #[serde(default)]
     show_missing_glyphs: bool,
@@ -79,9 +90,15 @@ struct PositionedGlyphPathRequest {
 #[serde(rename_all = "camelCase")]
 struct CompileShapeSvgInput {
     geometry: ShapeGeometryDoc,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     paint: Option<GeometryPaint>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     viewport: Option<GeometryViewport>,
     #[serde(default)]
     preserve_aspect_ratio: GeometryPreserveAspectRatio,
@@ -119,9 +136,15 @@ struct ShapeBooleanPairInput {
 #[serde(rename_all = "camelCase")]
 struct RenderShapeRegionSvgInput {
     region: ShapeRegion,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     paint: Option<GeometryPaint>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     viewport: Option<GeometryViewport>,
     #[serde(default)]
     preserve_aspect_ratio: GeometryPreserveAspectRatio,
@@ -132,7 +155,10 @@ struct RenderShapeRegionSvgInput {
 struct ValidateLayeredSvgCompositionInput {
     single_svg: String,
     layers: Vec<rasterize::LayeredSvgValidationLayerInput>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     options: Option<rasterize::RasterizeOptions>,
 }
 
@@ -142,61 +168,99 @@ struct ValidateLayeredSvgCompositionInput {
 #[serde(rename_all = "camelCase")]
 struct RenderSvgOptionsInput {
     /// Scale factor — multiplies the root `width`/`height` attributes.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     scale: Option<f64>,
     /// Debug overlay: `boolean | { parts?: string[] }`.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     debug: Option<DebugOverlayInput>,
     /// Accepted for API parity; the current TS emitter threads the flag but
     /// never reads it, so it has no effect on the output.
-    #[expect(
-        dead_code,
-        reason = "mirrors the TS EmitSvgOptions shape; the TS emitter carries the flag without reading it"
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
     )]
-    #[serde(default)]
     rasterizer_compat: Option<bool>,
     /// Prefix applied to boundsvg-generated resource IDs in `<defs>`.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     resource_id_prefix: Option<String>,
     /// Whether generated node identity metadata is serialized.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     node_id_metadata: Option<NodeIdMetadataInput>,
     /// Text outline grouping mode ("merged" | "glyphs"); default "merged".
     /// `render_to_ir` also reads it for Text nodes with unit animation.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     text_path_mode: Option<String>,
     /// Render synthetic tofu rectangles for missing glyphs. Default false.
     /// `render_to_ir` also reads it for Text nodes with unit animation.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     show_missing_glyphs: Option<bool>,
     /// SVG animation emit mode. SVG defaults to declarative; PNG callers
     /// explicitly request static sampling.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     animation: Option<AnimationRenderModeInput>,
     /// Deterministic animation sampling time in milliseconds.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     time_ms: Option<f64>,
     /// Emit a `prefers-reduced-motion` opt-out alongside declarative
     /// animation CSS. Defaults to `keep`, which leaves output unchanged.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     reduced_motion: Option<ReducedMotionInput>,
     /// Internal `render_to_ir` control used by `compileScene` to retain the
     /// unsampled source IR for later compiled-scene emission.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     sample_animation: Option<bool>,
     /// Internal transport control: return the same fully resolved IR used by
     /// one-shot SVG emission. False keeps the selective `render_to_ir` shape.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     return_resolved_ir: Option<bool>,
     /// Internal transport control for compiled unit-animation scenes.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     preserve_resolved_unit_outlines: Option<bool>,
     /// Raster-only safety gate. When true, preflight and outline resolution
     /// consume the same parsed IR inside one native operation.
     #[serde(default)]
     enforce_png_outline_glyph_limit: bool,
     /// Public package/service identity embedded in the exported file.
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     generator: Option<output_generator::OutputGenerator>,
     /// Parsed animated-SVG document playback. This is an internal pipeline
     /// field and is never accepted by the legacy render-options DTO.
@@ -204,34 +268,118 @@ struct RenderSvgOptionsInput {
     timeline_playback: Option<ir::animation_timeline::DocumentPlayback>,
 }
 
+/// Internal render settings after transport decoding.
+#[derive(Debug, Clone, Default)]
+struct RenderSvgOptions {
+    // Presentation
+    scale: Option<f64>,
+    debug: Option<DebugOverlayInput>,
+    #[expect(
+        dead_code,
+        reason = "accepted emitter parity flag has no rendering effect"
+    )]
+    rasterizer_compat: Option<bool>,
+    resource_id_prefix: Option<String>,
+    node_id_metadata: Option<NodeIdMetadataInput>,
+    text_path_mode: Option<String>,
+    show_missing_glyphs: Option<bool>,
+    // Animation
+    animation: Option<AnimationRenderModeInput>,
+    time_ms: Option<f64>,
+    reduced_motion: Option<ReducedMotionInput>,
+    sample_animation: Option<bool>,
+    // Output selection
+    return_resolved_ir: Option<bool>,
+    preserve_resolved_unit_outlines: Option<bool>,
+    enforce_png_outline_glyph_limit: bool,
+    generator: Option<output_generator::OutputGenerator>,
+    timeline_playback: Option<ir::animation_timeline::DocumentPlayback>,
+}
+
+impl From<RenderSvgOptionsInput> for RenderSvgOptions {
+    fn from(options: RenderSvgOptionsInput) -> Self {
+        Self {
+            scale: options.scale,
+            debug: options.debug,
+            rasterizer_compat: options.rasterizer_compat,
+            resource_id_prefix: options.resource_id_prefix,
+            node_id_metadata: options.node_id_metadata,
+            text_path_mode: options.text_path_mode,
+            show_missing_glyphs: options.show_missing_glyphs,
+            animation: options.animation,
+            time_ms: options.time_ms,
+            reduced_motion: options.reduced_motion,
+            sample_animation: options.sample_animation,
+            return_resolved_ir: options.return_resolved_ir,
+            preserve_resolved_unit_outlines: options.preserve_resolved_unit_outlines,
+            enforce_png_outline_glyph_limit: options.enforce_png_outline_glyph_limit,
+            generator: options.generator,
+            timeline_playback: options.timeline_playback,
+        }
+    }
+}
+
 /// Public static-SVG transport options. Declarative playback and reduced
 /// motion fields are intentionally absent from this DTO.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StaticSvgOptionsInput {
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     scale: Option<f64>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     debug: Option<DebugOverlayInput>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     rasterizer_compat: Option<bool>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     resource_id_prefix: Option<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     node_id_metadata: Option<NodeIdMetadataInput>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     text_path_mode: Option<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     show_missing_glyphs: Option<bool>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     time_ms: Option<f64>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     return_resolved_ir: Option<bool>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     preserve_resolved_unit_outlines: Option<bool>,
     #[serde(default)]
     enforce_png_outline_glyph_limit: bool,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     generator: Option<output_generator::OutputGenerator>,
 }
 
@@ -279,35 +427,71 @@ where
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AnimatedSvgOptionsInput {
     playback: AnimatedSvgPlaybackInput,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     scale: Option<f64>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     debug: Option<DebugOverlayInput>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     rasterizer_compat: Option<bool>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     resource_id_prefix: Option<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     node_id_metadata: Option<NodeIdMetadataInput>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     text_path_mode: Option<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     show_missing_glyphs: Option<bool>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     time_ms: Option<f64>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     reduced_motion: Option<ReducedMotionInput>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     return_resolved_ir: Option<bool>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     preserve_resolved_unit_outlines: Option<bool>,
     #[serde(default)]
     enforce_png_outline_glyph_limit: bool,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     generator: Option<output_generator::OutputGenerator>,
 }
 
-impl From<StaticSvgOptionsInput> for RenderSvgOptionsInput {
+impl From<StaticSvgOptionsInput> for RenderSvgOptions {
     fn from(options: StaticSvgOptionsInput) -> Self {
         Self {
             scale: options.scale,
@@ -328,7 +512,7 @@ impl From<StaticSvgOptionsInput> for RenderSvgOptionsInput {
     }
 }
 
-impl From<AnimatedSvgOptionsInput> for RenderSvgOptionsInput {
+impl From<AnimatedSvgOptionsInput> for RenderSvgOptions {
     fn from(options: AnimatedSvgOptionsInput) -> Self {
         let timeline_playback = match options.playback {
             AnimatedSvgPlaybackInput::Independent => None,
@@ -373,7 +557,10 @@ impl From<AnimatedSvgOptionsInput> for RenderSvgOptionsInput {
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LayoutTransitionCompileOptionsInput {
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     text_path_mode: Option<String>,
 }
 
@@ -419,10 +606,14 @@ fn collect_text_node_ids<'a>(node: &'a ir::types::IrNode, target: &mut Vec<&'a s
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EmitIrInput {
-    root: ir::types::IrNode,
+    root: ir::wire_input::IrNodeInput,
     width: f64,
     height: f64,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
+    #[cfg_attr(feature = "ir-schema", schemars(with = "bool"))]
     debug: Option<bool>,
 }
 
@@ -462,17 +653,21 @@ enum DebugOverlayInput {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DebugOverlayConfigInput {
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     parts: Option<Vec<String>>,
 }
 
 /// Parse the options JSON for the SVG render/emit exports.
 /// An empty/whitespace payload means "no options".
-fn parse_render_svg_options(options_json: &str) -> Result<RenderSvgOptionsInput, JsValue> {
+fn parse_render_svg_options(options_json: &str) -> Result<RenderSvgOptions, JsValue> {
     if options_json.trim().is_empty() {
-        return Ok(RenderSvgOptionsInput::default());
+        return Ok(RenderSvgOptions::default());
     }
-    serde_json::from_str(options_json)
+    serde_json::from_str::<RenderSvgOptionsInput>(options_json)
+        .map(RenderSvgOptions::from)
         .map_err(|e| JsValue::from_str(&format!("Invalid SVG emit options JSON: {e}")))
 }
 
@@ -587,7 +782,7 @@ fn parse_animated_svg_options(options_json: &str) -> Result<AnimatedSvgOptionsIn
                 None,
             )
         })?;
-    let render_options = RenderSvgOptionsInput::from(options.clone());
+    let render_options = RenderSvgOptions::from(options.clone());
     if let Some(playback) = render_options.timeline_playback {
         ir::animation_timeline::validate_document_playback(
             playback,
@@ -858,7 +1053,7 @@ fn parse_layout_input_with_raw(
 }
 
 fn to_paint_scene_options(
-    options: &RenderSvgOptionsInput,
+    options: &RenderSvgOptions,
 ) -> Result<scene::PaintSceneOptions, error::EngineError> {
     if let Some(generator) = &options.generator {
         generator.validate()?;
@@ -888,7 +1083,7 @@ fn to_paint_scene_options(
 }
 
 fn to_outline_resolve_options(
-    options: &RenderSvgOptionsInput,
+    options: &RenderSvgOptions,
 ) -> svg_emit::outline_resolver::OutlineResolveOptions {
     svg_emit::outline_resolver::OutlineResolveOptions {
         text_path_mode: svg_emit::outline_resolver::TextPathMode::parse_str(
@@ -899,7 +1094,7 @@ fn to_outline_resolve_options(
     }
 }
 
-fn to_svg_emit_options(options: &RenderSvgOptionsInput) -> svg_emit::emitter::SvgEmitOptions {
+fn to_svg_emit_options(options: &RenderSvgOptions) -> svg_emit::emitter::SvgEmitOptions {
     svg_emit::emitter::SvgEmitOptions {
         node_id_metadata: match options.node_id_metadata.unwrap_or_default() {
             NodeIdMetadataInput::Include => svg_emit::emitter::NodeIdMetadata::Include,
@@ -910,7 +1105,7 @@ fn to_svg_emit_options(options: &RenderSvgOptionsInput) -> svg_emit::emitter::Sv
 
 fn assert_static_animation_time(
     ir: &ir::types::Ir,
-    options: &RenderSvgOptionsInput,
+    options: &RenderSvgOptions,
 ) -> Result<(), JsValue> {
     ir::animation::validate_animations(ir)
         .map_err(|error| engine_error_to_render_envelope(&error))?;
@@ -931,7 +1126,7 @@ fn parse_emit_ir(ir_json: &str) -> Result<ir::types::Ir, JsValue> {
     let input: EmitIrInput = serde_json::from_str(ir_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid IR JSON: {e}")))?;
     let parsed_ir = ir::types::Ir {
-        root: input.root,
+        root: input.root.into(),
         draw_order: Vec::new(),
         width: input.width,
         height: input.height,
@@ -948,7 +1143,7 @@ fn parse_emit_ir(ir_json: &str) -> Result<ir::types::Ir, JsValue> {
 
 fn emit_prepared_ir(
     prepared_ir: &ir::types::Ir,
-    options: &RenderSvgOptionsInput,
+    options: &RenderSvgOptions,
 ) -> Result<String, JsValue> {
     let (sampled_ir, timeline_plan) = sample_svg_animation(prepared_ir, options)?;
     let mut paint_options =
@@ -962,7 +1157,7 @@ fn emit_prepared_ir(
 
 fn sample_svg_animation(
     source_ir: &ir::types::Ir,
-    options: &RenderSvgOptionsInput,
+    options: &RenderSvgOptions,
 ) -> Result<
     (
         ir::types::Ir,
@@ -994,9 +1189,10 @@ fn sample_svg_animation(
 
 fn render_layout_to_svg(
     input_json: &str,
-    options: &RenderSvgOptionsInput,
+    options: &RenderSvgOptions,
     registry: &FontRegistry,
     require_static_time: bool,
+    operation: &'static str,
 ) -> Result<String, JsValue> {
     let input = parse_layout_input(input_json)?;
     let output = layout::compute_full_layout_with_registry(&input, registry)
@@ -1044,7 +1240,11 @@ fn render_layout_to_svg(
 
     let resolved_ir_raw = if options.return_resolved_ir.unwrap_or(false) {
         Some(
-            serde_json::value::to_raw_value(&sampled_ir.structural()).map_err(|error| {
+            serde_json::value::to_raw_value(&construct_wasm_output(
+                sampled_ir.structural(),
+                operation,
+            )?)
+            .map_err(|error| {
                 JsValue::from_str(&format!("Failed to serialize IR output: {error}"))
             })?,
         )
@@ -1235,6 +1435,14 @@ fn text_layout_panic_diagnostic(
     }
 }
 
+fn construct_wasm_output<T: serde::Serialize>(
+    projection: T,
+    operation: &'static str,
+) -> Result<wire::finite::FiniteOutput<T>, JsValue> {
+    wire::finite::FiniteOutput::try_new(projection)
+        .map_err(|error| engine_error_to_render_envelope(&error.into_engine_error(operation)))
+}
+
 fn run_text_layout_operation<WireInput, Request, Output, Run>(
     operation: text_diagnostics::TextLayoutOperation,
     json_input: &str,
@@ -1257,7 +1465,10 @@ where
         let output = run(request).map_err(|error| {
             text_diagnostics::classify_text_layout_error(&error, operation, None)
         })?;
-        serde_json::to_string(&output).map_err(|_| text_layout_output_encode_diagnostic(operation))
+        let wire_output = wire::finite::FiniteOutput::try_new(output)
+            .map_err(|_| text_layout_output_encode_diagnostic(operation))?;
+        serde_json::to_string(&wire_output)
+            .map_err(|_| text_layout_output_encode_diagnostic(operation))
     }));
 
     match result {
@@ -1375,7 +1586,7 @@ fn resolve_emit_ir(
     ir_json: &str,
     options_json: &str,
     registry: &FontRegistry,
-) -> Result<(ir::types::Ir, RenderSvgOptionsInput), JsValue> {
+) -> Result<(ir::types::Ir, RenderSvgOptions), JsValue> {
     let options = parse_render_svg_options(options_json)?;
     let parsed_ir = resolve_emit_ir_with_options(ir_json, &options, registry)?;
     Ok((parsed_ir, options))
@@ -1383,7 +1594,7 @@ fn resolve_emit_ir(
 
 fn resolve_emit_ir_with_options(
     ir_json: &str,
-    options: &RenderSvgOptionsInput,
+    options: &RenderSvgOptions,
     registry: &FontRegistry,
 ) -> Result<ir::types::Ir, JsValue> {
     let mut parsed_ir = parse_emit_ir(ir_json)?;
@@ -1475,7 +1686,7 @@ fn assert_renderable_canvas(ir: &ir::types::Ir) -> Result<(), JsValue> {
 /// the typed layout input for private transition provenance.
 fn compile_layout_input_to_ir(
     input: &layout::LayoutInput,
-    options: &RenderSvgOptionsInput,
+    options: &RenderSvgOptions,
     registry: &FontRegistry,
 ) -> Result<ir::types::Ir, JsValue> {
     let output = layout::compute_full_layout_with_registry(input, registry)
@@ -1593,7 +1804,7 @@ pub struct BoundSvgPreparedScene {
 #[wasm_bindgen]
 pub struct BoundSvgRasterScene {
     ir: ir::types::Ir,
-    options: RenderSvgOptionsInput,
+    options: RenderSvgOptions,
     owner: Arc<()>,
     resolved: bool,
 }
@@ -1643,7 +1854,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 31;
+pub const WASM_SCHEMA_VERSION: u32 = 32;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -1681,7 +1892,10 @@ pub fn compile_shape_svg(json_input: &str) -> Result<String, JsValue> {
 struct HitTestShapePartsInput {
     geometry: ShapeGeometryDoc,
     point: boundshape::Point2D,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     options: Option<boundshape::HitTestOptions>,
 }
 
@@ -1920,7 +2134,8 @@ impl BoundSvgEngine {
             let input = parse_layout_input(input_json)?;
             let output = layout::compute_full_layout_with_registry(&input, &self.registry)
                 .map_err(|error| engine_error_to_render_envelope(&error))?;
-            serde_json::to_string(&output)
+            let wire_output = construct_wasm_output(output, "compute_layout")?;
+            serde_json::to_string(&wire_output)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize output: {e}")))
         }))
     }
@@ -1937,11 +2152,16 @@ impl BoundSvgEngine {
             let input = parse_layout_input(input_json)?;
             let options = parse_render_svg_options(options_json)?;
             let sampled_ir = compile_layout_input_to_ir(&input, &options, &self.registry)?;
-            serde_json::to_string(&RenderToIrOutput {
-                ir: sampled_ir.structural(),
-                warnings: &sampled_ir.warnings,
+            let wire_output = construct_wasm_output(
+                RenderToIrOutput {
+                    ir: sampled_ir.structural(),
+                    warnings: &sampled_ir.warnings,
+                },
+                "render_to_ir",
+            )?;
+            serde_json::to_string(&wire_output).map_err(|error| {
+                JsValue::from_str(&format!("Failed to serialize IR output: {error}"))
             })
-            .map_err(|error| JsValue::from_str(&format!("Failed to serialize IR output: {error}")))
         }))
     }
 
@@ -1974,10 +2194,10 @@ impl BoundSvgEngine {
                 serde_json::from_str(options_json).map_err(|error| {
                     JsValue::from_str(&format!("Invalid layout transition options JSON: {error}"))
                 })?;
-            let options = RenderSvgOptionsInput {
+            let options = RenderSvgOptions {
                 text_path_mode: compile_options.text_path_mode,
                 sample_animation: Some(false),
-                ..RenderSvgOptionsInput::default()
+                ..RenderSvgOptions::default()
             };
 
             let transition_ir = compile_transition_inputs_with(
@@ -1988,11 +2208,16 @@ impl BoundSvgEngine {
                 &transition_plan,
                 |input| compile_layout_input_to_ir(input, &options, &self.registry),
             )?;
-            serde_json::to_string(&RenderToIrOutput {
-                ir: transition_ir.structural(),
-                warnings: &transition_ir.warnings,
+            let wire_output = construct_wasm_output(
+                RenderToIrOutput {
+                    ir: transition_ir.structural(),
+                    warnings: &transition_ir.warnings,
+                },
+                "compile_layout_transition",
+            )?;
+            serde_json::to_string(&wire_output).map_err(|error| {
+                JsValue::from_str(&format!("Failed to serialize IR output: {error}"))
             })
-            .map_err(|error| JsValue::from_str(&format!("Failed to serialize IR output: {error}")))
         }))
     }
 
@@ -2008,8 +2233,8 @@ impl BoundSvgEngine {
     /// missing.
     pub fn render_to_svg(&self, input_json: &str, options_json: &str) -> Result<String, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let options = RenderSvgOptionsInput::from(parse_static_svg_options(options_json)?);
-            render_layout_to_svg(input_json, &options, &self.registry, true)
+            let options = RenderSvgOptions::from(parse_static_svg_options(options_json)?);
+            render_layout_to_svg(input_json, &options, &self.registry, true, "render_to_svg")
         }))
     }
 
@@ -2025,8 +2250,14 @@ impl BoundSvgEngine {
         options_json: &str,
     ) -> Result<String, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let options = RenderSvgOptionsInput::from(parse_animated_svg_options(options_json)?);
-            render_layout_to_svg(input_json, &options, &self.registry, false)
+            let options = RenderSvgOptions::from(parse_animated_svg_options(options_json)?);
+            render_layout_to_svg(
+                input_json,
+                &options,
+                &self.registry,
+                false,
+                "render_to_animated_svg",
+            )
         }))
     }
 
@@ -2051,7 +2282,7 @@ impl BoundSvgEngine {
     pub fn emit_svg_from_ir(&self, ir_json: &str, options_json: &str) -> Result<String, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let parsed_ir = parse_emit_ir(ir_json)?;
-            let options = RenderSvgOptionsInput::from(parse_static_svg_options(options_json)?);
+            let options = RenderSvgOptions::from(parse_static_svg_options(options_json)?);
             assert_static_animation_time(&parsed_ir, &options)?;
             emit_prepared_ir(&parsed_ir, &options)
         }))
@@ -2070,7 +2301,7 @@ impl BoundSvgEngine {
     ) -> Result<String, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let parsed_ir = parse_emit_ir(ir_json)?;
-            let options = RenderSvgOptionsInput::from(parse_animated_svg_options(options_json)?);
+            let options = RenderSvgOptions::from(parse_animated_svg_options(options_json)?);
             emit_prepared_ir(&parsed_ir, &options)
         }))
     }
@@ -2085,11 +2316,14 @@ impl BoundSvgEngine {
     pub fn resolve_ir(&self, ir_json: &str, options_json: &str) -> Result<String, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let (parsed_ir, _) = resolve_emit_ir(ir_json, options_json, &self.registry)?;
-            serde_json::to_string(&RenderToIrOutput {
-                ir: parsed_ir.structural(),
-                warnings: &parsed_ir.warnings,
-            })
-            .map_err(|error| {
+            let wire_output = construct_wasm_output(
+                RenderToIrOutput {
+                    ir: parsed_ir.structural(),
+                    warnings: &parsed_ir.warnings,
+                },
+                "resolve_ir",
+            )?;
+            serde_json::to_string(&wire_output).map_err(|error| {
                 JsValue::from_str(&format!("Failed to serialize resolved IR output: {error}"))
             })
         }))
@@ -2171,11 +2405,14 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             assert_raster_scene_owner(scene, &self.owner)?;
             resolve_raster_scene_outlines(scene, &self.registry)?;
-            serde_json::to_string(&RenderToIrOutput {
-                ir: scene.ir.structural(),
-                warnings: &scene.ir.warnings,
-            })
-            .map_err(|error| {
+            let wire_output = construct_wasm_output(
+                RenderToIrOutput {
+                    ir: scene.ir.structural(),
+                    warnings: &scene.ir.warnings,
+                },
+                "resolve_raster_scene_to_ir",
+            )?;
+            serde_json::to_string(&wire_output).map_err(|error| {
                 JsValue::from_str(&format!("Failed to serialize resolved raster IR: {error}"))
             })
         }))
@@ -2232,7 +2469,7 @@ impl BoundSvgEngine {
         options_json: &str,
     ) -> Result<String, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let options = RenderSvgOptionsInput::from(parse_static_svg_options(options_json)?);
+            let options = RenderSvgOptions::from(parse_static_svg_options(options_json)?);
             let parsed_ir = resolve_emit_ir_with_options(ir_json, &options, &self.registry)?;
             assert_static_animation_time(&parsed_ir, &options)?;
             emit_prepared_ir(&parsed_ir, &options)
@@ -2251,7 +2488,7 @@ impl BoundSvgEngine {
         options_json: &str,
     ) -> Result<String, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let options = RenderSvgOptionsInput::from(parse_animated_svg_options(options_json)?);
+            let options = RenderSvgOptions::from(parse_animated_svg_options(options_json)?);
             let parsed_ir = resolve_emit_ir_with_options(ir_json, &options, &self.registry)?;
             emit_prepared_ir(&parsed_ir, &options)
         }))
@@ -2272,7 +2509,8 @@ impl BoundSvgEngine {
             let parsed_ir = parse_emit_ir(ir_json)?;
             let samples = ir::animation::sample_animation_state(&parsed_ir, time_ms)
                 .map_err(|e| engine_error_to_render_envelope(&e))?;
-            serde_json::to_string(&samples).map_err(|e| {
+            let wire_output = construct_wasm_output(samples, "sample_animation_state")?;
+            serde_json::to_string(&wire_output).map_err(|e| {
                 JsValue::from_str(&format!("Failed to serialize animation state: {e}"))
             })
         }))
@@ -3351,6 +3589,13 @@ pub fn uax14_line_breaks(text: &str) -> Result<String, JsValue> {
 
 // `JsValue` cannot be constructed on native targets, so the guard is tested via
 // `catch_unwind` + the payload formatter instead of `catch_unwind_to_js` itself.
+#[cfg(test)]
+mod input_presence_tests;
+#[cfg(test)]
+mod output_boundary_tests;
+#[cfg(test)]
+mod render_options_tests;
+
 #[cfg(test)]
 mod tests {
     use super::{

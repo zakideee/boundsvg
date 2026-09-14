@@ -169,6 +169,30 @@ describe("worker script measurement dispatch", () => {
     ]);
   });
 
+  it("preserves finite-output failure fields across the worker dispatch boundary", async () => {
+    scope.send({ id: 1, type: "init", fonts: [] });
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(1));
+    const failure = new FatalError(
+      "WASM_NON_FINITE_OUTPUT",
+      "WASM output contains a non-finite number.",
+      {
+        stage: "wasm",
+        context: { operation: "render_to_svg", field: "opacity" },
+      },
+    );
+    workerEngineMethods.renderToSvgAndIR.mockImplementationOnce(() => {
+      throw failure;
+    });
+    scope.send({
+      id: 2,
+      type: "render-svg-and-ir",
+      scene: { type: "Canvas", width: 10, height: 10, children: [] },
+      options: {},
+    });
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(2));
+    expect(scope.responses[1]).toEqual({ id: 2, type: "error", error: failure.toJSON() });
+  });
+
   it("serializes hostile thrown values without replacing the original failure", async () => {
     scope.send({ id: 1, type: "init", fonts: [] });
     await vi.waitFor(() => expect(scope.responses).toHaveLength(1));

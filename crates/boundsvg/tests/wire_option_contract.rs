@@ -69,6 +69,81 @@ struct SourceAllowance {
 // separately tested structural contract that cannot be expressed by deriving.
 const MANUAL_SERIALIZE_ALLOWLIST: &[SourceAllowance] = &[
     SourceAllowance {
+        source: "crates/boundsvg/src/wire/finite.rs",
+        item: "FiniteOutput",
+        reason: "validated transparent output wrapper delegates to its inventoried projection without adding or removing fields",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "HandlersRef",
+        reason: "native domain serialization delegates to the derived HandlersRefOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "TextOutlinePath",
+        reason: "native domain serialization delegates to the derived TextOutlinePathOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "ShapePartPaint",
+        reason: "native domain serialization delegates to the derived ShapePartPaintOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "ShapePathPart",
+        reason: "native domain serialization delegates to the derived ShapePathPartOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "AnimationTransform2D",
+        reason: "native domain serialization delegates to the derived AnimationTransform2DOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "AnimationKeyframe",
+        reason: "native domain serialization delegates to the derived AnimationKeyframeOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "AnimationSpring",
+        reason: "native domain serialization delegates to the derived AnimationSpringOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "AnimationSteps",
+        reason: "native domain serialization delegates to the derived AnimationStepsOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "AnimationSpec",
+        reason: "native domain serialization delegates to the derived AnimationSpecOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "TextUnitAnimation",
+        reason: "native domain serialization delegates to the derived TextUnitAnimationOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "TextUnitAnimationSample",
+        reason: "native domain serialization delegates to the derived TextUnitAnimationSampleOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "IrNode",
+        reason: "native domain serialization delegates to the derived IrNodeOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "AnimationEasing",
+        reason: "native domain serialization delegates to the derived AnimationEasingOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
+        source: "crates/boundsvg/src/ir/types.rs",
+        item: "IrNodeKind",
+        reason: "native domain serialization delegates to the derived IrNodeKindOutput projection; its fields remain in the inventory",
+    },
+    SourceAllowance {
         source: "crates/boundsvg/src/ir/types.rs",
         item: "Ir",
         reason: "canonical structural IR serialization excludes envelope-owned warnings while preserving every schema-generated field",

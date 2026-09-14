@@ -857,9 +857,9 @@ fn real_compile_ir_satisfies_semantic_group_correspondence() {
         serde_json::from_str(&transport).expect("raw transport should deserialize");
     let input: LayoutInput =
         serde_json::from_value(raw_input.clone()).expect("layout transport should deserialize");
-    let options = crate::RenderSvgOptionsInput {
+    let options = crate::RenderSvgOptions {
         sample_animation: Some(false),
-        ..crate::RenderSvgOptionsInput::default()
+        ..crate::RenderSvgOptions::default()
     };
     let registry = real_compile_registry();
     let compiled_ir = crate::compile_layout_input_to_ir(&input, &options, &registry)
@@ -1385,9 +1385,9 @@ fn identical_text_source_with_different_line_flow_is_content_mismatch() {
         .expect("reference transport should deserialize");
     let target_input: LayoutInput =
         serde_json::from_value(target_raw.clone()).expect("target transport should deserialize");
-    let options = crate::RenderSvgOptionsInput {
+    let options = crate::RenderSvgOptions {
         sample_animation: Some(false),
-        ..crate::RenderSvgOptionsInput::default()
+        ..crate::RenderSvgOptions::default()
     };
     let registry = real_compile_registry();
     let reference_ir = crate::compile_layout_input_to_ir(&reference_input, &options, &registry)

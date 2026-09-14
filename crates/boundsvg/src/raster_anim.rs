@@ -54,6 +54,10 @@ pub struct AnimationEncodeInput {
     pub iterations: AnimatedRasterIterations,
     /// Rasterization options applied identically to every frame, which is what
     /// keeps all frames at one size.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub options: Option<RasterizeOptions>,
 }
 

@@ -70,10 +70,35 @@ key. Decode external values with `decodeSceneDocument()` when a detached
 APIs validate the complete recursive structure, and `fromSceneDocument()`
 decodes exactly once.
 
-The current WASM schema remains version 31. That internal bridge number is not
+The current WASM schema is version 32. That internal bridge number is not
 a Scene document field and must not be added to `.scene.json` files. Any future
 incompatible Scene format would require a separately documented migration;
 there is no runtime version-dispatch mode today.
+
+### WASM schema 32 migration
+
+Update Core, Browser, Worker, and their WASM artifacts together. Schema-31
+modules are rejected; there is no compatibility decoder. The independent MP4
+schema remains version 1.
+
+Optional non-null input properties reject explicit `null`. Omit the property
+to retain its existing default or absence behavior. Array elements that use
+`null` for automatic insets or missing decoration owners retain that meaning.
+Numeric output must be finite: invalid derived values cause a failure instead
+of becoming JSON `null`.
+
+### Layered rendering migration
+
+Layered SVG and PNG rendering compile the scene once and collect layer metadata
+from the authoring tree. They no longer invoke a separate `computeLayout` backend
+function. Custom partial backends therefore observe a behavior change: if
+compilation succeeds but `computeLayout` throws, the old layered request fails
+while the new request can succeed. Side effects of that extra call also disappear.
+Compilation and rendering failures still propagate through their existing paths.
+
+Warning callbacks observe the current request after its layer metadata, render
+options, and required backend functions have been captured. Mutating those caller
+objects in a callback affects later requests, not the current layered SVG or PNG.
 
 ## What is never stable
 

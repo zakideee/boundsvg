@@ -2898,7 +2898,7 @@ mod tests {
     }
 
     fn animated_text_unit(node_id: &str, unit_id: &str, spec: &AnimationSpec) -> IrNode {
-        serde_json::from_value(json!({
+        serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(json!({
             "nodeId": node_id,
             "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
             "type": "text",
@@ -2935,6 +2935,7 @@ mod tests {
                 "bbox": { "x": 0.0, "y": 0.0, "w": 10.0, "h": 20.0 }
             }]
         }))
+        .map(IrNode::from)
         .expect("text-unit fixture should deserialize")
     }
 
@@ -4803,7 +4804,7 @@ mod tests {
 
     #[test]
     fn compiles_text_units_in_sample_order_and_validates_every_effective_delay() {
-        let root: IrNode = serde_json::from_value(json!({
+        let root: IrNode = serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(json!({
                 "nodeId": "copy",
                 "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
                 "type": "text",
@@ -4862,6 +4863,7 @@ mod tests {
                     "bbox": { "x": 12.0, "y": 0.0, "w": 10.0, "h": 20.0 }
                 }]
         }))
+        .map(IrNode::from)
         .expect("text-unit fixture should deserialize");
         let source = Ir {
             root,

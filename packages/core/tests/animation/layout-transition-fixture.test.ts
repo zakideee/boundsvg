@@ -7,10 +7,12 @@ import {
   inspectHitTestCandidates,
 } from "../../src/ir/inspect-hit-test.js";
 import type { IR, IRNode } from "../../src/ir/types.js";
-import { renderLayeredSvg, snapshotLayerSourceMetadata } from "../../src/layered-svg.js";
+import { snapshotLayerSourceMetadata } from "../../src/layer-source-metadata.js";
+import { renderLayeredSvg } from "../../src/layered-svg.js";
 import type { LayoutNode } from "../../src/layout/types.js";
 import type { LayoutTransitionInput } from "../../src/layout-transition.js";
 import { LAYOUT_TRANSITION_WRAPPER_META } from "../../src/layout-transition.js";
+import { resolveSceneOrVNodeInput } from "../../src/scene/from-vnode.js";
 import type { SceneNode } from "../../src/scene/types.js";
 import {
   type AffineMatrix,
@@ -594,9 +596,7 @@ describe("portable layout transition fixture", () => {
     }
     const referenceState = transitionInput.states.A;
     const compiled = engine.compileLayoutTransition(transitionInput, { skipValidation: true });
-    const sourceNodeMap = snapshotLayerSourceMetadata(
-      engine.renderToLayoutTree(referenceState, { skipValidation: true }).root,
-    );
+    const sourceNodeMap = snapshotLayerSourceMetadata(resolveSceneOrVNodeInput(referenceState));
     const layered = renderLayeredSvg({
       ir: engine.snapshotCompiledIR(compiled),
       sourceNodeMap,
@@ -642,9 +642,7 @@ describe("portable layout transition fixture", () => {
     }
     const referenceState = transitionInput.states.A;
     const compiled = engine.compileLayoutTransition(transitionInput);
-    const sourceNodeMap = snapshotLayerSourceMetadata(
-      engine.renderToLayoutTree(referenceState).root,
-    );
+    const sourceNodeMap = snapshotLayerSourceMetadata(resolveSceneOrVNodeInput(referenceState));
     const layered = renderLayeredSvg({
       ir: engine.snapshotCompiledIR(compiled),
       sourceNodeMap,

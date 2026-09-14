@@ -1,3 +1,5 @@
+//! Input and output DTOs for the boundtext flow adapters.
+
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::SerializedRecoverableError;
@@ -13,21 +15,77 @@ use crate::text::types::RichTextNodeInput;
 pub(crate) struct TextFlowInput {
     pub text: String,
     pub font_family: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fallback: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_weight: Option<u16>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_style: Option<String>,
     pub font_size_px: f64,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub letter_spacing_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub language: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub wrap: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub white_space: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub tab_size: Option<u32>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub hanging_punctuation: Option<bool>,
     pub line_widths: Vec<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub writing_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub text_orientation: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_variation_settings: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_feature_settings: Option<String>,
 }
 
@@ -59,35 +117,139 @@ pub(crate) struct TextFlowResult {
 pub(crate) struct TextFlowWithExclusionsInput {
     pub text: String,
     pub font_family: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fallback: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_weight: Option<u16>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_style: Option<String>,
     pub font_size_px: f64,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub letter_spacing_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub language: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub wrap: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub hanging_punctuation: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub white_space: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub tab_size: Option<u32>,
     pub flow_box: FlowBox,
     pub exclusions: Vec<FlowExclusionShape>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub min_region_width_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub max_lines: Option<usize>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub ellipsis: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fit: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub min_font_size_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub max_font_size_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fit_epsilon_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fit_max_iterations: Option<usize>,
     /// Work limit for an uncertified exact-grid fit search.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fit_max_probes: Option<usize>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub spans: Option<Vec<FlowTextSpanDto>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub rich_text: Option<Vec<RichTextNodeInput>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub writing_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub text_orientation: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_variation_settings: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_feature_settings: Option<String>,
 }
 
@@ -97,24 +259,80 @@ pub(crate) struct TextFlowWithExclusionsInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FlowTextSpanDto {
     pub text: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_family: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fallback: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_weight: Option<u16>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_style: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_size_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub letter_spacing_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub color: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_variation_settings: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_feature_settings: Option<String>,
     /// Ruby annotation text (e.g. furigana). When present, this span is
     /// treated as a ruby base + annotation pair: the base text is `text`,
     /// the annotation is `ruby_text`, and the pair is indivisible during
     /// line breaking.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub ruby_text: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub ruby_position: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub ruby_align: Option<String>,
     /// Style overrides for the ruby annotation text.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub ruby_font_size_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub ruby_color: Option<String>,
 }
 
@@ -243,24 +461,96 @@ pub(crate) struct TextFlowWithExclusionsResult {
 pub(crate) struct MeasureTextBlockInput {
     pub text: String,
     pub font_family: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fallback: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_weight: Option<u16>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_style: Option<String>,
     pub font_size_px: f64,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub letter_spacing_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub text_indent: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub language: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub wrap: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub hanging_punctuation: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub max_width: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub max_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub writing_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub text_orientation: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub white_space: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub tab_size: Option<u32>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_variation_settings: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_feature_settings: Option<String>,
 }
 
@@ -301,30 +591,122 @@ pub(crate) struct MeasureTextBlockResult {
 pub(crate) struct ShrinkwrapTextInput {
     pub text: String,
     pub font_family: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fallback: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_weight: Option<u16>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_style: Option<String>,
     pub font_size_px: f64,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub letter_spacing_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub language: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub wrap: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub hanging_punctuation: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub writing_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub text_orientation: Option<String>,
     pub max_width: f64,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub max_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub min_width: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub min_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub target_line_count: Option<usize>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub epsilon_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub max_iterations: Option<usize>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub white_space: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub tab_size: Option<u32>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub spans: Option<Vec<FlowTextSpanDto>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub rich_text: Option<Vec<RichTextNodeInput>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_variation_settings: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_feature_settings: Option<String>,
 }
 
@@ -362,35 +744,123 @@ pub(crate) struct ShrinkwrapFlowInput {
     // --- text ---
     pub text: String,
     pub font_family: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fallback: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_weight: Option<u16>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_style: Option<String>,
     pub font_size_px: f64,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub letter_spacing_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub language: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub wrap: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub hanging_punctuation: Option<bool>,
     // --- layout geometry ---
     pub flow_box: FlowBox,
     pub exclusions: Vec<FlowExclusionShape>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub min_region_width_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub max_lines: Option<usize>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub writing_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub text_orientation: Option<String>,
     // --- shrinkwrap ---
     /// Minimum search width for horizontal shrinkwrap.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub min_width: Option<f64>,
     /// Minimum search height for vertical-rl shrinkwrap.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub min_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub target_line_count: Option<usize>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub shrinkwrap_epsilon_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub shrinkwrap_max_iterations: Option<usize>,
     // --- inline spans (optional) ---
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub spans: Option<Vec<FlowTextSpanDto>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub rich_text: Option<Vec<RichTextNodeInput>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_variation_settings: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_feature_settings: Option<String>,
 }
 
@@ -419,22 +889,82 @@ pub(crate) struct ShrinkwrapFlowResultDto {
 pub(crate) struct IntrinsicInlineSizeInput {
     pub text: String,
     pub font_family: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub fallback: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_weight: Option<u16>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_style: Option<String>,
     pub font_size_px: f64,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub line_height_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub letter_spacing_px: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub text_indent: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub language: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub rich_text: Option<Vec<RichTextNodeInput>>,
     #[serde(rename = "writingMode")]
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub writing_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub text_orientation: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub white_space: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub tab_size: Option<u32>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_variation_settings: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
     pub font_feature_settings: Option<String>,
 }
 
