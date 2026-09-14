@@ -262,10 +262,6 @@ struct RenderSvgOptionsInput {
         deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
     )]
     generator: Option<output_generator::OutputGenerator>,
-    /// Parsed animated-SVG document playback. This is an internal pipeline
-    /// field and is never accepted by the legacy render-options DTO.
-    #[serde(skip)]
-    timeline_playback: Option<ir::animation_timeline::DocumentPlayback>,
 }
 
 /// Internal render settings after transport decoding.
@@ -314,7 +310,7 @@ impl From<RenderSvgOptionsInput> for RenderSvgOptions {
             preserve_resolved_unit_outlines: options.preserve_resolved_unit_outlines,
             enforce_png_outline_glyph_limit: options.enforce_png_outline_glyph_limit,
             generator: options.generator,
-            timeline_playback: options.timeline_playback,
+            timeline_playback: None,
         }
     }
 }

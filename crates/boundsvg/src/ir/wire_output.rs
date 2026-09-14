@@ -18,11 +18,11 @@ use super::types::{
 use crate::font::shaping::GlyphInfo;
 use crate::text::types::{Line, PositionedGlyph, TextRunStyle};
 
+/// Event handler references (string identifiers for hit testing).
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "HandlersRef"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow handlers ref for the serialized output projection.
 #[expect(
     clippy::struct_field_names,
     reason = "Field names match the event-handler wire contract."
@@ -76,11 +76,12 @@ pub(crate) struct HandlersRefOutput<'a> {
     pub on_touch_move: Option<&'a str>,
 }
 
+/// A text run resolved to glyph outline paths.
+/// Mirrors TS `TextOutlinePath` (`packages/core/src/text/types.ts`).
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "TextOutlinePath"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow text outline path for the serialized output projection.
 pub(crate) struct TextOutlinePathOutput<'a> {
     // Identity and geometry
     pub node_id: &'a str,
@@ -115,11 +116,12 @@ pub(crate) struct TextOutlinePathOutput<'a> {
     pub missing_glyph: Option<&'a bool>,
 }
 
+/// Per-part paint override; unset fields inherit the node paint.
+/// Mirrors the `paint` member of TS `ShapePathPart`.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "ShapePartPaint"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow shape part paint for the serialized output projection.
 pub(crate) struct ShapePartPaintOutput<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<&'a str>,
@@ -137,11 +139,11 @@ pub(crate) struct ShapePartPaintOutput<'a> {
     pub stroke_miterlimit: Option<&'a f64>,
 }
 
+/// One baked part of a shape IR node. Mirrors TS `ShapePathPart`.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "ShapePathPart"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow shape path part for the serialized output projection.
 pub(crate) struct ShapePathPartOutput<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub part_id: Option<&'a str>,
@@ -154,11 +156,12 @@ pub(crate) struct ShapePathPartOutput<'a> {
     pub paint: Option<ShapePartPaintOutput<'a>>,
 }
 
+/// Transform channels allowed in animation keyframes. Animation origins are
+/// fixed to the logical node center and are therefore intentionally absent.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationTransform2D"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow animation transform2d for the serialized output projection.
 pub(crate) struct AnimationTransform2DOutput<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translate_x: Option<&'a f64>,
@@ -176,7 +179,6 @@ pub(crate) struct AnimationTransform2DOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationKeyframe"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow animation keyframe for the serialized output projection.
 pub(crate) struct AnimationKeyframeOutput<'a> {
     pub at: &'a f64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,7 +191,6 @@ pub(crate) struct AnimationKeyframeOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpring"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Borrow animation spring for the serialized output projection.
 pub(crate) struct AnimationSpringOutput<'a> {
     #[cfg_attr(
         feature = "ir-schema",
@@ -211,7 +212,6 @@ pub(crate) struct AnimationSpringOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSteps"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Borrow animation steps for the serialized output projection.
 pub(crate) struct AnimationStepsOutput<'a> {
     #[cfg_attr(
         feature = "ir-schema",
@@ -236,7 +236,6 @@ pub(crate) struct AnimationStepsOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpec"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow animation spec for the serialized output projection.
 pub(crate) struct AnimationSpecOutput<'a> {
     pub keyframes: Vec<AnimationKeyframeOutput<'a>>,
     pub duration_ms: &'a f64,
@@ -256,11 +255,11 @@ pub(crate) struct AnimationSpecOutput<'a> {
     pub fill: Option<&'a str>,
 }
 
+/// Raw text paint-unit animation semantic retained after sampling.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "TextUnitAnimation"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow text unit animation for the serialized output projection.
 pub(crate) struct TextUnitAnimationOutput<'a> {
     pub by: &'a crate::text::unit_map::TextUnitKind,
     pub animation: AnimationSpecOutput<'a>,
@@ -272,11 +271,11 @@ pub(crate) struct TextUnitAnimationOutput<'a> {
     pub ruby: Option<&'a crate::text::unit_map::TextUnitRubyMode>,
 }
 
+/// Actual outline bounds and sampled pose for one text paint unit.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "TextUnitAnimationSample"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow text unit animation sample for the serialized output projection.
 pub(crate) struct TextUnitAnimationSampleOutput<'a> {
     pub unit_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -287,11 +286,13 @@ pub(crate) struct TextUnitAnimationSampleOutput<'a> {
     pub transform: Option<&'a boundshape::Transform2D>,
 }
 
+/// An IR node in the rendering tree.
+/// Serializes flat (kind fields inline next to `nodeId`/`bbox`, plus a
+/// `type` discriminant) to match the TS `IRNode` shape.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "IrNode"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-/// Borrow ir node for the serialized output projection.
 pub(crate) struct IrNodeOutput<'a> {
     pub node_id: &'a str,
     pub bbox: &'a BBox,
@@ -303,7 +304,6 @@ pub(crate) struct IrNodeOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationEasing"))]
 #[derive(Serialize)]
 #[serde(untagged)]
-/// Borrow animation easing for the serialized output projection.
 pub(crate) enum AnimationEasingOutput<'a> {
     Named(
         #[cfg_attr(
@@ -319,6 +319,10 @@ pub(crate) enum AnimationEasingOutput<'a> {
     Steps(AnimationStepsOutput<'a>),
 }
 
+/// The type-specific payload of an IR node.
+///
+/// Large event-handler tables on container and text nodes are boxed so the
+/// common enum value stays compact without adding indirection to paint data.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "IrNodeKind"))]
 #[derive(Serialize)]
@@ -327,12 +331,12 @@ pub(crate) enum AnimationEasingOutput<'a> {
     rename_all = "lowercase",
     rename_all_fields = "camelCase"
 )]
-/// Borrow ir node kind for the serialized output projection.
 #[expect(
     clippy::large_enum_variant,
     reason = "Borrowed output projections avoid a separate allocation for every node variant."
 )]
 pub(crate) enum IrNodeKindOutput<'a> {
+    /// Container group (may clip children).
     Group {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         children: Vec<IrNodeOutput<'a>>,
@@ -354,6 +358,7 @@ pub(crate) enum IrNodeKindOutput<'a> {
         on: Option<HandlersRefOutput<'a>>,
     },
 
+    /// Filled/stroked rectangle.
     Rect {
         #[serde(skip_serializing_if = "Option::is_none")]
         fill: Option<&'a str>,
@@ -377,6 +382,7 @@ pub(crate) enum IrNodeKindOutput<'a> {
         stroke_miterlimit: Option<&'a f64>,
     },
 
+    /// Text node with line-broken content.
     Text {
         #[cfg_attr(feature = "ir-schema", schemars(schema_with = "lines_schema"))]
         #[serde(
@@ -406,6 +412,7 @@ pub(crate) enum IrNodeKindOutput<'a> {
         font_feature_settings: Option<&'a str>,
         color: &'a str,
         text_align: &'a IrTextAlign,
+        /// Allotted text layout box; `bbox` is the aligned measured block.
         layout_box: &'a BBox,
         #[cfg_attr(
             feature = "ir-schema",
@@ -441,10 +448,13 @@ pub(crate) enum IrNodeKindOutput<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         glyph_paths: Option<Vec<TextOutlinePathOutput<'a>>>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        /// Stable paint-unit metadata generated by boundtext for opt-in text.
         unit_map: Option<&'a crate::text::unit_map::TextUnitMap>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        /// Raw unit animation semantic retained across frame sampling.
         unit_animation: Option<TextUnitAnimationOutput<'a>>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        /// Per-unit actual outline bounds and sampled pose.
         unit_animation_samples: Option<Vec<TextUnitAnimationSampleOutput<'a>>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         stroke: Option<&'a str>,
@@ -468,6 +478,7 @@ pub(crate) enum IrNodeKindOutput<'a> {
         on: Option<HandlersRefOutput<'a>>,
     },
 
+    /// Raster image (base64 data URI).
     Image {
         src: &'a str,
         preserve_aspect_ratio: &'a str,
@@ -475,6 +486,7 @@ pub(crate) enum IrNodeKindOutput<'a> {
         on: Option<HandlersRefOutput<'a>>,
     },
 
+    /// SVG path element.
     Path {
         path_data: &'a str,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -499,6 +511,7 @@ pub(crate) enum IrNodeKindOutput<'a> {
         on: Option<HandlersRefOutput<'a>>,
     },
 
+    /// Nested SVG content.
     Svg {
         #[serde(rename = "svgContent")]
         content: &'a str,
@@ -509,6 +522,7 @@ pub(crate) enum IrNodeKindOutput<'a> {
         on: Option<HandlersRefOutput<'a>>,
     },
 
+    /// Structural shape with viewport-baked part paths.
     Shape {
         shape_parts: Vec<ShapePathPartOutput<'a>>,
         #[serde(skip_serializing_if = "Option::is_none")]

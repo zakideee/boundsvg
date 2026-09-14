@@ -846,7 +846,7 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(1024);
+    ).toBe(1023);
     expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(92);
   });
 

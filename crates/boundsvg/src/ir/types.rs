@@ -168,50 +168,28 @@ pub enum IrFillRule {
 // ---------------------------------------------------------------------------
 
 /// Event handler references (string identifiers for hit testing).
-
 #[derive(Debug, Clone, Default)]
-
 pub struct HandlersRef {
     pub on_click: Option<String>,
-
     pub on_double_click: Option<String>,
-
     pub on_context_menu: Option<String>,
-
     pub on_pointer_down: Option<String>,
-
     pub on_pointer_up: Option<String>,
-
     pub on_pointer_cancel: Option<String>,
-
     pub on_pointer_move: Option<String>,
-
     pub on_pointer_enter: Option<String>,
-
     pub on_pointer_leave: Option<String>,
-
     pub on_pointer_over: Option<String>,
-
     pub on_pointer_out: Option<String>,
-
     pub on_mouse_down: Option<String>,
-
     pub on_mouse_up: Option<String>,
-
     pub on_mouse_move: Option<String>,
-
     pub on_mouse_enter: Option<String>,
-
     pub on_mouse_leave: Option<String>,
-
     pub on_mouse_over: Option<String>,
-
     pub on_mouse_out: Option<String>,
-
     pub on_touch_start: Option<String>,
-
     pub on_touch_end: Option<String>,
-
     pub on_touch_move: Option<String>,
 }
 
@@ -248,9 +226,7 @@ impl HandlersRef {
 
 /// A text run resolved to glyph outline paths.
 /// Mirrors TS `TextOutlinePath` (`packages/core/src/text/types.ts`).
-
 #[derive(Debug, Clone)]
-
 pub struct TextOutlinePath {
     pub node_id: String,
     pub d: String,
@@ -258,21 +234,13 @@ pub struct TextOutlinePath {
     pub glyph_ids: Vec<u32>,
     pub text: String,
     pub bbox: BBox,
-
     pub unit_id: Option<String>,
-
     pub source_start: Option<usize>,
-
     pub source_end: Option<usize>,
-
     pub source_role: Option<String>,
-
     pub paint_range_index: Option<u32>,
-
     pub strokes: Option<Vec<TextStrokeLayer>>,
-
     pub shadows: Option<Vec<TextShadowLayer>>,
-
     pub missing_glyph: Option<bool>,
 }
 
@@ -306,37 +274,24 @@ pub struct ShapePartBounds {
 
 /// Per-part paint override; unset fields inherit the node paint.
 /// Mirrors the `paint` member of TS `ShapePathPart`.
-
 #[derive(Debug, Clone)]
-
 pub struct ShapePartPaint {
     pub fill: Option<String>,
-
     pub stroke: Option<String>,
-
     pub stroke_width: Option<f64>,
-
     pub stroke_linecap: Option<String>,
-
     pub stroke_linejoin: Option<String>,
-
     pub stroke_dasharray: Option<String>,
-
     pub stroke_miterlimit: Option<f64>,
 }
 
 /// One baked part of a shape IR node. Mirrors TS `ShapePathPart`.
-
 #[derive(Debug, Clone)]
-
 pub struct ShapePathPart {
     pub part_id: Option<String>,
     pub d: String,
-
     pub stroke_d: Option<String>,
-
     pub bounds: Option<ShapePartBounds>,
-
     pub paint: Option<ShapePartPaint>,
 }
 
@@ -346,18 +301,12 @@ pub struct ShapePathPart {
 
 /// Transform channels allowed in animation keyframes. Animation origins are
 /// fixed to the logical node center and are therefore intentionally absent.
-
 #[derive(Debug, Clone, Default, PartialEq)]
-
 pub struct AnimationTransform2D {
     pub translate_x: Option<f64>,
-
     pub translate_y: Option<f64>,
-
     pub scale_x: Option<f64>,
-
     pub scale_y: Option<f64>,
-
     pub rotate_deg: Option<f64>,
 }
 
@@ -433,17 +382,13 @@ impl boundtext::schema::StringEnumSchemaDomain for TextLayoutKindSchema {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-
 pub struct AnimationKeyframe {
     pub at: f64,
-
     pub opacity: Option<f64>,
-
     pub transform: Option<AnimationTransform2D>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-
 pub enum AnimationEasing {
     Named(String),
     CubicBezier([f64; 4]),
@@ -456,23 +401,17 @@ pub enum AnimationEasing {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-
 pub struct AnimationSpring {
     pub kind: String,
-
     pub stiffness: Option<f64>,
-
     pub damping: Option<f64>,
-
     pub mass: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-
 pub struct AnimationSteps {
     pub kind: String,
     pub count: f64,
-
     pub position: Option<String>,
 }
 
@@ -493,17 +432,12 @@ pub enum AnimationIterations {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-
 pub struct AnimationSpec {
     pub keyframes: Vec<AnimationKeyframe>,
     pub duration_ms: f64,
-
     pub delay_ms: Option<f64>,
-
     pub easing: Option<AnimationEasing>,
-
     pub iterations: Option<AnimationIterations>,
-
     pub fill: Option<String>,
 }
 
@@ -516,31 +450,21 @@ pub enum TextUnitAnimationOrder {
 }
 
 /// Raw text paint-unit animation semantic retained after sampling.
-
 #[derive(Debug, Clone, PartialEq)]
-
 pub struct TextUnitAnimation {
     pub by: crate::text::unit_map::TextUnitKind,
     pub animation: AnimationSpec,
-
     pub delay_step_ms: Option<f64>,
-
     pub order: Option<TextUnitAnimationOrder>,
-
     pub ruby: Option<crate::text::unit_map::TextUnitRubyMode>,
 }
 
 /// Actual outline bounds and sampled pose for one text paint unit.
-
 #[derive(Debug, Clone, PartialEq)]
-
 pub struct TextUnitAnimationSample {
     pub unit_id: String,
-
     pub bbox: Option<BBox>,
-
     pub opacity: Option<f64>,
-
     pub transform: Option<boundshape::Transform2D>,
 }
 
@@ -597,13 +521,10 @@ use super::wire_input::LineWire;
 /// An IR node in the rendering tree.
 /// Serializes flat (kind fields inline next to `nodeId`/`bbox`, plus a
 /// `type` discriminant) to match the TS `IRNode` shape.
-
 #[derive(Debug, Clone)]
-
 pub struct IrNode {
     pub node_id: String,
     pub bbox: BBox,
-
     pub kind: IrNodeKind,
 }
 
@@ -611,89 +532,55 @@ pub struct IrNode {
 ///
 /// Large event-handler tables on container and text nodes are boxed so the
 /// common enum value stays compact without adding indirection to paint data.
-
 #[derive(Debug, Clone)]
-
 pub enum IrNodeKind {
     /// Container group (may clip children).
     Group {
         children: Vec<IrNode>,
-
         clip_path: Option<BBox>,
-
         clip_border_radius: Option<BorderRadius>,
-
         opacity: Option<f64>,
-
         box_shadow: Option<BoxShadow>,
-
         meta: Option<std::collections::BTreeMap<String, String>>,
-
         transform: Option<boundshape::Transform2D>,
-
         animation: Option<AnimationSpec>,
-
         on: Option<Box<HandlersRef>>,
     },
-
     /// Filled/stroked rectangle.
     Rect {
         fill: Option<String>,
-
         gradient: Option<Gradient>,
-
         stroke: Option<String>,
-
         stroke_width: Option<f64>,
-
         stroke_scaling: Option<StrokeScaling>,
-
         border_radius: Option<BorderRadius>,
-
         stroke_linecap: Option<StrokeLinecap>,
-
         stroke_linejoin: Option<StrokeLinejoin>,
-
         stroke_dasharray: Option<String>,
-
         stroke_miterlimit: Option<f64>,
     },
-
     /// Text node with line-broken content.
     Text {
         lines: Vec<Line>,
         font: String,
-
         font_fallback: Option<Vec<String>>,
         font_size_px: f64,
-
         font_weight: Option<u16>,
-
         font_style: Option<String>,
-
         letter_spacing_px: Option<f64>,
-
         font_variation_settings: Option<String>,
-
         font_feature_settings: Option<String>,
         color: String,
         text_align: IrTextAlign,
         /// Allotted text layout box; `bbox` is the aligned measured block.
         layout_box: BBox,
-
         writing_mode: Option<String>,
-
         language: Option<String>,
         line_height_px: f64,
-
         text_layout_kind: Option<String>,
-
         source_text: Option<String>,
-
         display_text: Option<String>,
-
         text_path: Option<Box<TextPathMetadata>>,
-
         glyph_paths: Option<Vec<TextOutlinePath>>,
         /// Stable paint-unit metadata generated by boundtext for opt-in text.
         unit_map: Option<crate::text::unit_map::TextUnitMap>,
@@ -703,89 +590,56 @@ pub enum IrNodeKind {
         unit_animation_samples: Option<Vec<TextUnitAnimationSample>>,
         // Stroke
         stroke: Option<String>,
-
         stroke_width: Option<f64>,
-
         stroke_linecap: Option<StrokeLinecap>,
-
         stroke_linejoin: Option<StrokeLinejoin>,
-
         stroke_dasharray: Option<String>,
-
         stroke_miterlimit: Option<f64>,
         // Multi-layer text effects (take precedence over scalar stroke fields)
         strokes: Option<Vec<TextStrokeLayer>>,
-
         shadows: Option<Vec<TextShadowLayer>>,
-
         text_decorations: Option<Vec<crate::text::types::TextDecorationFragment>>,
         // Event handlers
         on: Option<Box<HandlersRef>>,
     },
-
     /// Raster image (base64 data URI).
     Image {
         src: String,
         preserve_aspect_ratio: String,
-
         on: Option<HandlersRef>,
     },
-
     /// SVG path element.
     Path {
         path_data: String,
-
         fill: Option<String>,
-
         stroke: Option<String>,
-
         stroke_width: Option<f64>,
-
         stroke_scaling: Option<StrokeScaling>,
-
         fill_rule: Option<IrFillRule>,
-
         stroke_linecap: Option<StrokeLinecap>,
-
         stroke_linejoin: Option<StrokeLinejoin>,
-
         stroke_dasharray: Option<String>,
-
         stroke_miterlimit: Option<f64>,
-
         on: Option<HandlersRef>,
     },
-
     /// Nested SVG content.
     Svg {
         content: String,
-
         view_box: Option<String>,
         preserve_aspect_ratio: String,
-
         on: Option<HandlersRef>,
     },
-
     /// Structural shape with viewport-baked part paths.
     Shape {
         shape_parts: Vec<ShapePathPart>,
-
         fill: Option<String>,
-
         stroke: Option<String>,
-
         stroke_width: Option<f64>,
-
         fill_rule: Option<IrFillRule>,
-
         stroke_linecap: Option<StrokeLinecap>,
-
         stroke_linejoin: Option<StrokeLinejoin>,
-
         stroke_dasharray: Option<String>,
-
         stroke_miterlimit: Option<f64>,
-
         on: Option<HandlersRef>,
     },
 }

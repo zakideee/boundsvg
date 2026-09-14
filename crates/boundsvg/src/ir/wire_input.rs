@@ -13,11 +13,11 @@ use super::types::{
 use crate::font::shaping::GlyphInfo;
 use crate::text::types::{Line, PositionedGlyph, TextRunStyle};
 
+/// Event handler references (string identifiers for hit testing).
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "HandlersRef"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode handlers ref before constructing the domain value.
 #[expect(
     clippy::struct_field_names,
     reason = "Field names match the event-handler wire contract."
@@ -155,11 +155,12 @@ pub(crate) struct HandlersRefInput {
     pub on_touch_move: Option<String>,
 }
 
+/// A text run resolved to glyph outline paths.
+/// Mirrors TS `TextOutlinePath` (`packages/core/src/text/types.ts`).
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "TextOutlinePath"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode text outline path before constructing the domain value.
 pub(crate) struct TextOutlinePathInput {
     // Identity and geometry
     pub node_id: String,
@@ -220,11 +221,12 @@ pub(crate) struct TextOutlinePathInput {
     pub missing_glyph: Option<bool>,
 }
 
+/// Per-part paint override; unset fields inherit the node paint.
+/// Mirrors the `paint` member of TS `ShapePathPart`.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "ShapePartPaint"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode shape part paint before constructing the domain value.
 pub(crate) struct ShapePartPaintInput {
     #[serde(
         default,
@@ -270,11 +272,11 @@ pub(crate) struct ShapePartPaintInput {
     pub stroke_miterlimit: Option<f64>,
 }
 
+/// One baked part of a shape IR node. Mirrors TS `ShapePathPart`.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "ShapePathPart"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode shape path part before constructing the domain value.
 pub(crate) struct ShapePathPartInput {
     #[serde(
         default,
@@ -303,11 +305,12 @@ pub(crate) struct ShapePathPartInput {
     pub paint: Option<ShapePartPaintInput>,
 }
 
+/// Transform channels allowed in animation keyframes. Animation origins are
+/// fixed to the logical node center and are therefore intentionally absent.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationTransform2D"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode animation transform2d before constructing the domain value.
 pub(crate) struct AnimationTransform2DInput {
     #[serde(
         default,
@@ -345,7 +348,6 @@ pub(crate) struct AnimationTransform2DInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationKeyframe"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode animation keyframe before constructing the domain value.
 pub(crate) struct AnimationKeyframeInput {
     pub at: f64,
     #[serde(
@@ -366,7 +368,6 @@ pub(crate) struct AnimationKeyframeInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpring"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Decode animation spring before constructing the domain value.
 pub(crate) struct AnimationSpringInput {
     #[serde(rename = "type")]
     pub kind: String,
@@ -394,7 +395,6 @@ pub(crate) struct AnimationSpringInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSteps"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-/// Decode animation steps before constructing the domain value.
 pub(crate) struct AnimationStepsInput {
     #[serde(rename = "type")]
     pub kind: String,
@@ -412,7 +412,6 @@ pub(crate) struct AnimationStepsInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpec"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode animation spec before constructing the domain value.
 pub(crate) struct AnimationSpecInput {
     pub keyframes: Vec<AnimationKeyframeInput>,
     pub duration_ms: f64,
@@ -442,11 +441,11 @@ pub(crate) struct AnimationSpecInput {
     pub fill: Option<String>,
 }
 
+/// Raw text paint-unit animation semantic retained after sampling.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "TextUnitAnimation"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode text unit animation before constructing the domain value.
 pub(crate) struct TextUnitAnimationInput {
     pub by: crate::text::unit_map::TextUnitKind,
     pub animation: AnimationSpecInput,
@@ -473,11 +472,11 @@ pub(crate) struct TextUnitAnimationInput {
     pub ruby: Option<crate::text::unit_map::TextUnitRubyMode>,
 }
 
+/// Actual outline bounds and sampled pose for one text paint unit.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "TextUnitAnimationSample"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode text unit animation sample before constructing the domain value.
 pub(crate) struct TextUnitAnimationSampleInput {
     pub unit_id: String,
     #[serde(
@@ -500,11 +499,13 @@ pub(crate) struct TextUnitAnimationSampleInput {
     pub transform: Option<boundshape::Transform2D>,
 }
 
+/// An IR node in the rendering tree.
+/// Serializes flat (kind fields inline next to `nodeId`/`bbox`, plus a
+/// `type` discriminant) to match the TS `IRNode` shape.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "IrNode"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Decode ir node before constructing the domain value.
 pub(crate) struct IrNodeInput {
     pub node_id: String,
     pub bbox: BBox,
@@ -516,7 +517,6 @@ pub(crate) struct IrNodeInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationEasing"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
-/// Decode animation easing before constructing the domain value.
 pub(crate) enum AnimationEasingInput {
     Named(String),
     CubicBezier([f64; 4]),
@@ -524,6 +524,10 @@ pub(crate) enum AnimationEasingInput {
     Steps(AnimationStepsInput),
 }
 
+/// The type-specific payload of an IR node.
+///
+/// Large event-handler tables on container and text nodes are boxed so the
+/// common enum value stays compact without adding indirection to paint data.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "IrNodeKind"))]
 #[derive(Debug, Clone, Deserialize)]
@@ -532,8 +536,8 @@ pub(crate) enum AnimationEasingInput {
     rename_all = "lowercase",
     rename_all_fields = "camelCase"
 )]
-/// Decode ir node kind before constructing the domain value.
 pub(crate) enum IrNodeKindInput {
+    /// Container group (may clip children).
     Group {
         #[serde(default)]
         children: Vec<IrNodeInput>,
@@ -547,6 +551,7 @@ pub(crate) enum IrNodeKindInput {
         on: Option<Box<HandlersRefInput>>,
     },
 
+    /// Filled/stroked rectangle.
     Rect {
         fill: Option<String>,
         gradient: Option<Gradient>,
@@ -560,6 +565,7 @@ pub(crate) enum IrNodeKindInput {
         stroke_miterlimit: Option<f64>,
     },
 
+    /// Text node with line-broken content.
     Text {
         lines: Vec<LineWire>,
         font: String,
@@ -572,6 +578,7 @@ pub(crate) enum IrNodeKindInput {
         font_feature_settings: Option<String>,
         color: String,
         text_align: IrTextAlign,
+        /// Allotted text layout box; `bbox` is the aligned measured block.
         layout_box: BBox,
         writing_mode: Option<String>,
         language: Option<String>,
@@ -581,8 +588,11 @@ pub(crate) enum IrNodeKindInput {
         display_text: Option<String>,
         text_path: Option<Box<TextPathMetadata>>,
         glyph_paths: Option<Vec<TextOutlinePathInput>>,
+        /// Stable paint-unit metadata generated by boundtext for opt-in text.
         unit_map: Option<crate::text::unit_map::TextUnitMap>,
+        /// Raw unit animation semantic retained across frame sampling.
         unit_animation: Option<TextUnitAnimationInput>,
+        /// Per-unit actual outline bounds and sampled pose.
         unit_animation_samples: Option<Vec<TextUnitAnimationSampleInput>>,
         stroke: Option<String>,
         stroke_width: Option<f64>,
@@ -596,12 +606,14 @@ pub(crate) enum IrNodeKindInput {
         on: Option<Box<HandlersRefInput>>,
     },
 
+    /// Raster image (base64 data URI).
     Image {
         src: String,
         preserve_aspect_ratio: String,
         on: Option<HandlersRefInput>,
     },
 
+    /// SVG path element.
     Path {
         path_data: String,
         fill: Option<String>,
@@ -616,6 +628,7 @@ pub(crate) enum IrNodeKindInput {
         on: Option<HandlersRefInput>,
     },
 
+    /// Nested SVG content.
     Svg {
         #[serde(rename = "svgContent")]
         content: String,
@@ -625,6 +638,7 @@ pub(crate) enum IrNodeKindInput {
         on: Option<HandlersRefInput>,
     },
 
+    /// Structural shape with viewport-baked part paths.
     Shape {
         shape_parts: Vec<ShapePathPartInput>,
         fill: Option<String>,
