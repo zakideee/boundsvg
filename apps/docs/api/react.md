@@ -262,6 +262,10 @@ a heap-byte limit. Main computation starts in a later task but synchronous WASM
 still blocks that thread while running. Sent Worker computation may continue after
 its hook is superseded; its result and notifications are ignored.
 
+IR and layered SVG objects belong to one hook consumer and may keep their identity
+within the same result generation. Treat these objects as immutable; a rerender
+does not undo caller mutations.
+
 PNG buffers returned by each hook projection are copies of retained internal
 buffers. Mutating a returned PNG cannot change another consumer, a later
 projection, or its stored data URL. Each hook retains only its current computation,
@@ -781,6 +785,7 @@ export type {
   RubyProps,
   RubyVNode,
   ShapeProps,
+  RenderInputOptions,
   SvgProps,
   SvgVNode,
   SymbolDefinition,
@@ -830,13 +835,13 @@ export {
   useRenderToSvgAsync,
 };
 export type {
+  RenderExecutionOptions,
+  RenderExecutionState,
   UseRenderToLayeredPngAsyncResult,
   UseRenderToLayeredSvgAsyncResult,
   UseRenderToPngAsyncResult,
   UseRenderToSvgAndIrAsyncResult,
   UseRenderToSvgAsyncResult,
-  RenderExecutionOptions,
-  RenderExecutionState,
 };
 
 // "@boundsvg/react/interactive" — hit-testing, events, text copy

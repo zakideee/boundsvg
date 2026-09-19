@@ -934,6 +934,85 @@ describe("WorkerEngine", () => {
       engine.dispose();
     });
 
+    it("preserves queued consumers and future requests after one post fails", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg" && request.scene.width === 200) {
+          throw new Error("DataCloneError");
+        }
+      });
+      const first = engine.renderToSvg(SCENE);
+      const firstRequest = mockWorker.lastRequest();
+      const failed = engine.renderToSvg({ ...SCENE, width: 200 }).catch((error: unknown) => error);
+      const third = engine.renderToSvg({ ...SCENE, width: 300 });
+      mockWorker.respond({
+        id: firstRequest.id,
+        type: "render-svg-ok",
+        svg: "first",
+        warnings: [],
+      });
+      await expect(first).resolves.toBe("first");
+      expect(await failed).toMatchObject({ code: "WORKER_TRANSPORT_FAILED" });
+      const thirdRequest = mockWorker.lastRequest();
+      expect(thirdRequest).toMatchObject({ scene: { width: 300 } });
+      mockWorker.respond({
+        id: thirdRequest.id,
+        type: "render-svg-ok",
+        svg: "third",
+        warnings: [],
+      });
+      await expect(third).resolves.toBe("third");
+      const future = engine.renderToSvg(SCENE);
+      mockWorker.respond({
+        id: mockWorker.lastRequest().id,
+        type: "render-svg-ok",
+        svg: "future",
+        warnings: [],
+      });
+      await expect(future).resolves.toBe("future");
+      expect(mockWorker.hasListeners("message")).toBe(true);
+      expect(mockWorker.terminate).not.toHaveBeenCalled();
+      await engine.drain();
+      engine.dispose();
+    });
+
+    it.each([
+      "open",
+      "close",
+    ] as const)("preserves physical stream accounting when %s cannot be posted", async (failure) => {
+      const engine = await createEngine(mockWorker);
+      const endpoint = getWorkerPoolEndpoint(engine);
+      const { prepareSceneForTransport } = await import("../src/worker-engine.js");
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === `${failure}-frame-stream`) {
+          throw new Error("DataCloneError");
+        }
+        if (request.type === "open-frame-stream") {
+          mockWorker.respond({
+            id: request.id,
+            type: "open-frame-stream-ok",
+            streamId: request.id,
+            warnings: [],
+          });
+        }
+      });
+      const opened = endpoint.open(prepareSceneForTransport(SCENE), [{ index: 0, timeMs: 0 }], {
+        format: "svg",
+      });
+      if (failure === "open") {
+        await expect(opened).rejects.toMatchObject({ code: "WORKER_TRANSPORT_FAILED" });
+        await expect(engine.drain()).resolves.toBeUndefined();
+      } else {
+        const stream = await opened;
+        await expect(endpoint.close(stream.streamId)).rejects.toMatchObject({
+          code: "WORKER_TRANSPORT_FAILED",
+        });
+        await expect(engine.drain()).rejects.toMatchObject({ code: "WORKER_TRANSPORT_FAILED" });
+      }
+      expect(mockWorker.terminate).not.toHaveBeenCalled();
+      engine.dispose();
+    });
+
     it("keeps a hostile thrown transport value inside the stable Fatal boundary", async () => {
       const engine = await createEngine(mockWorker);
       const hostile = new Proxy(Object.create(null) as object, {

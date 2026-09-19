@@ -234,7 +234,6 @@ export class WorkerEngine {
     this.scheduler = new WorkerRequestScheduler(timeoutMs, {
       post: (request) => this.worker.postMessage(request, collectRequestTransferables(request)),
       nextRequestId: () => this.nextRequestId(),
-      handleFailure: () => this.detachAfterFailure(),
     });
 
     this.handleMessage = (event: MessageEvent) => {
@@ -1040,15 +1039,6 @@ export class WorkerEngine {
     requestOptions?: WorkerRequestOptions,
   ): Promise<WorkerResponse> {
     return this.scheduler.send(request, requestOptions?.signal);
-  }
-
-  private detachAfterFailure(): void {
-    this.disposed = true;
-    this.worker.removeEventListener("message", this.handleMessage);
-    this.worker.removeEventListener("error", this.handleError as EventListener);
-    if (this.ownsWorker) {
-      this.worker.terminate();
-    }
   }
 
   private disposeAfterProtocolCorruption(): void {

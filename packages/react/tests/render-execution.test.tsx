@@ -144,6 +144,7 @@ function SvgProbe({
   return (
     <output
       data-status={result.status}
+      data-execution={result.execution}
       data-ready={String(result.isReady)}
       data-stale={String(result.isStale)}
     >
@@ -173,6 +174,62 @@ afterEach(() => {
 });
 
 describe("committed render execution", () => {
+  it("keeps a runtime Worker failure on Worker execution without a main retry", async () => {
+    const { owner, transport } = await worker();
+    const mainRender = vi.spyOn(Engine.prototype, "renderToSvg");
+    try {
+      const view = mount(owner);
+      view.render(<SvgProbe vnode={scene(1)} />);
+      await flush();
+      const request = transport.posts.at(-1)!;
+      await act(async () =>
+        transport.respond({
+          id: request.id,
+          type: "error",
+          error: {
+            severity: "fatal",
+            code: "WORKER_UNHANDLED_ERROR",
+            message: "runtime failure",
+            stage: "engine",
+          },
+        }),
+      );
+      expect(view.container.querySelector("output")?.dataset).toMatchObject({
+        status: "error",
+        execution: "worker",
+      });
+      expect(view.container.textContent).toBe("runtime failure");
+      expect(mainRender).not.toHaveBeenCalled();
+    } finally {
+      mainRender.mockRestore();
+    }
+  });
+
+  it("drops the previous success when the context changes to a new Worker owner", async () => {
+    const first = await worker();
+    const second = await worker();
+    const view = mount(first.owner);
+    const vnode = scene(1);
+    const render = (owner: WorkerEngine) =>
+      view.render(
+        <BoundSvgContext.Provider
+          value={{ engine: null, workerEngine: owner, status: "ready", error: null }}
+        >
+          <SvgProbe vnode={vnode} />
+        </BoundSvgContext.Provider>,
+      );
+    render(first.owner);
+    await flush();
+    await act(async () => first.transport.svg("first"));
+    expect(view.container.textContent).toBe("first");
+    render(second.owner);
+    expect(view.container.textContent).toBe("empty");
+    expect(view.container.querySelector("output")?.dataset.stale).toBe("false");
+    await flush();
+    await act(async () => second.transport.svg("second"));
+    expect(view.container.textContent).toBe("second");
+  });
+
   it("coalesces 100 committed inputs into one post and snapshots the last input", async () => {
     const { owner, transport } = await worker();
     const view = mount(owner);

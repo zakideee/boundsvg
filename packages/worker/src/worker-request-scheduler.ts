@@ -43,7 +43,6 @@ type IdleWait = {
 type SchedulerTransport = {
   post: (request: WorkerRequest) => void;
   nextRequestId: () => number;
-  handleFailure: () => void;
 };
 
 /** Own one physical RPC slot, bounded admission, and one reserved stream-close request. */
@@ -309,8 +308,17 @@ export class WorkerRequestScheduler {
       try {
         this.transport.post(request);
       } catch (error: unknown) {
-        this.dispose(workerTransportError(request, error));
-        this.transport.handleFailure();
+        const transportError = workerTransportError(request, error);
+        this.settle(entry, { error: transportError });
+        this.inFlight = undefined;
+        if (isStreamOpen(request.type)) {
+          this.streamId = undefined;
+        } else if (request.type === "close-frame-stream") {
+          // A failed close did not release the remote stream; finish must report it.
+          this.streamFailure = transportError;
+          this.control = undefined;
+        }
+        this.pump();
       }
       return;
     }
