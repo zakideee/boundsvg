@@ -355,7 +355,7 @@ describe("BoundSvg Worker/non-Worker branching", () => {
 
     expect(html).toContain("data-mode");
     expect(renderToAnimatedSvg).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "Canvas", width: 100 }),
+      expect.objectContaining({ type: "Canvas", props: { width: 100, height: 100 } }),
       expect.objectContaining({
         textPathMode: "merged",
         ...renderOptions,

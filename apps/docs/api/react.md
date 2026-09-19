@@ -425,7 +425,7 @@ const { svg, ir, error, isReady, hoverNodeId, containerRef } =
 
 ### `<BoundSvg>`
 
-Renders a VNode tree inline through the shared async path, on both main and Worker. It keeps the same owner’s previous SVG during updates by default. Main rendering therefore no longer finishes during React render. Set `executionOptions={{ retainPreviousResult: false }}` to clear previous output; `executionOptions` also accepts `revision` and `onError`.
+Renders a VNode tree inline through the shared async path, on both main and Worker. It keeps the same owner’s previous SVG during updates by default. Main rendering therefore no longer finishes during React render. Set `retainPreviousResult: false` in `executionOptions` to clear previous output; `executionOptions` also accepts `revision` and `onError`.
 
 ```tsx
 <BoundSvg

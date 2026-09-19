@@ -156,9 +156,22 @@ export const setAssetRenderCacheEntryAtom = atom(
       entry: AssetRenderCacheEntry;
     },
   ) => {
-    set(assetRenderCacheAtom, (prev) => ({
-      ...prev,
-      [payload.id]: payload.entry,
-    }));
+    set(assetRenderCacheAtom, (previous) => {
+      const current = previous[payload.id];
+      const next = payload.entry;
+      // The data URL preserves PNG bytes while hook buffers are defensive copies.
+      if (
+        current.svg === next.svg &&
+        current.dataUrl === next.dataUrl &&
+        (current.png === null) === (next.png === null) &&
+        current.isReady === next.isReady &&
+        current.error === next.error &&
+        current.canvasSize.width === next.canvasSize.width &&
+        current.canvasSize.height === next.canvasSize.height
+      ) {
+        return previous;
+      }
+      return { ...previous, [payload.id]: next };
+    });
   },
 );
