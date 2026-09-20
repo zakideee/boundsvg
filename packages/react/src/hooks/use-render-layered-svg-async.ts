@@ -1,38 +1,32 @@
 import type { LayeredSvgOptions, LayeredSvgResult, VNode } from "@boundsvg/core";
-import { useWorkerRender } from "./use-worker-render.js";
+import { useMemo } from "react";
+import {
+  mapRenderExecutionResult,
+  type RenderExecutionOptions,
+  type RenderExecutionResult,
+} from "../execution/types.js";
+import { type RenderAdapter, useRenderExecution } from "./use-render-execution.js";
+export type UseRenderToLayeredSvgAsyncResult = RenderExecutionResult<{ result: LayeredSvgResult }>;
 
-export type UseRenderToLayeredSvgAsyncResult = {
-  /** Rendered layered SVG result (null while not ready or on error) */
-  result: LayeredSvgResult | null;
-  /** Render error (null on success) */
-  error: Error | null;
-  /** Whether a Worker render is in-flight */
-  isRendering: boolean;
-  /** Whether a current result is available */
-  isReady: boolean;
+const adapter: RenderAdapter<LayeredSvgResult, LayeredSvgOptions> = {
+  main: (engine, scene, options) => engine.renderToLayeredSvg(scene, options),
+  worker: (engine, scene, { options, signal }) =>
+    engine.renderToLayeredSvg(scene, options, { signal }),
 };
 
-/**
- * Reactively render a VNode to layered SVG via the WorkerEngine.
- *
- * Uses `useEffect` + `useState` to handle the async Worker round-trip.
- * Re-renders when the vnode reference or renderOptions change.
- * Must be used within a `<BoundSvgProvider>` with `worker` enabled.
- */
+/** Render committed inputs through the Provider's main or Worker execution owner. */
 export function useRenderToLayeredSvgAsync(
   vnode: VNode | null,
   renderOptions?: LayeredSvgOptions,
+  executionOptions?: RenderExecutionOptions,
 ): UseRenderToLayeredSvgAsyncResult {
-  const {
-    data: result,
-    error,
-    isRendering,
-    isReady,
-  } = useWorkerRender<LayeredSvgResult, LayeredSvgOptions>({
-    vnode,
-    renderFn: (engine, scene, options) => engine.renderToLayeredSvg(scene, options),
-    renderOptions,
-  });
+  const result = useRenderExecution({ vnode, renderOptions, executionOptions, adapter });
 
-  return { result, error, isRendering, isReady };
+  const layeredResult = useMemo(
+    () => (result.data === null ? null : structuredClone(result.data)),
+    [result.data],
+  );
+  return mapRenderExecutionResult(result, () => ({ result: layeredResult as LayeredSvgResult }), {
+    result: null,
+  });
 }

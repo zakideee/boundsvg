@@ -43,6 +43,7 @@ import { BoundSvgProvider } from "@boundsvg/react/provider";
 | `fontLoader`           | `FontLoader`                   | No       | Override how font bytes are fetched                                                             |
 | `fontFetchOptions`     | `RequestInit`                  | No       | Passed to the default font fetch                                                                |
 | `geometries`           | `Array<{ id, doc }>`           | No       | Geometry registry entries loaded at engine creation                                             |
+| `resourcesRevision`    | `number`                       | No       | Non-negative safe integer; increment after changing resource values in place                    |
 | `symbols`              | `Array<{ id, def }>`           | No       | Symbol registry entries loaded at engine creation                                               |
 | `defaultCommonOptions` | `BoundSvgDefaultCommonOptions` | No       | Compile/output-common defaults only; artifact-specific options stay on each component or hook   |
 
@@ -93,7 +94,7 @@ before any WASM is loaded.
 ## Hooks
 
 The main-thread static and animated SVG hooks are on the package root. PNG,
-Worker, interactive, asset, and inspection hooks live on the subpath named by
+Async, interactive, asset, and inspection hooks live on the subpath named by
 each heading. The complete inventory is under [Public Exports](#public-exports).
 
 ### `useBoundSvg()`
@@ -187,64 +188,170 @@ This commit-phase rule applies to the synchronous hooks and helpers that render
 during React evaluation, including `useRenderToSvg`, `useRenderToPng`,
 `useRenderAsset`, `useInteractiveSvg`, and `useBoundSvgInspection`.
 
+### Shared async execution
+
+Import all seven async hooks from `@boundsvg/react/async`. The former
+`@boundsvg/react/worker` entry and `UseWorkerRenderResult` type have been removed;
+there is no compatibility alias. Hook names and format-specific result fields
+remain the same. `useRenderToSvgAndIrAsync` returns the matching `svg` and `ir`
+from one generation, and its animated counterpart does the same for animated SVG.
+
+The Provider selects main execution when `worker` is omitted. With
+`worker.mode: "prefer"`, only initialization failure falls back to main and
+notifies the latest committed `onFallback` once. `required` propagates that
+failure to the hooks. A render failure, timeout, or crash after initialization
+never silently retries on main.
+
+Every async result has these shared fields, exported as the discriminated
+`RenderExecutionState` type:
+
+| Field         | Meaning                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------- |
+| `status`      | `idle`, `rendering`, `success`, or `error` for the latest input                                          |
+| `execution`   | `main` or `worker` while rendering or holding a result; `null` while idle or for an initialization error |
+| `isRendering` | True only for `rendering`                                                                                |
+| `isReady`     | True only for the latest `success`                                                                       |
+| `isStale`     | True when a previous successful result is retained during rendering or error                             |
+| `error`       | Non-null only for `error`                                                                                |
+
+The third argument is `RenderExecutionOptions`:
+
+| Option                             | Default | Meaning                                                                                          |
+| ---------------------------------- | ------- | ------------------------------------------------------------------------------------------------ |
+| `revision?: number`                | `0`     | Non-negative safe integer; change after mutating the same VNode or nested option object in place |
+| `retainPreviousResult?: boolean`   | `true`  | Keep the complete previous success from the same execution owner during updates and failures     |
+| `onError?: (error: Error) => void` | —       | Notify once after a failed generation commits, after its captured warnings                       |
+
+A successful result has all format fields populated. Idle has none. Rendering
+and error contain either the complete previous success or no result; SVG/IR and
+layer/result/URL fields never mix generations. Input `null`, Provider loading,
+and an Engine/config exchange discard previous results. To display a retained
+result, check its `svg`, `dataUrl`, or `result` field rather than `isReady`.
+
+VNode changes use immutable identity. Non-callback option values use shallow own-key
+comparison and nested object identity; Provider defaults, revision, and Engine
+resource changes also invalidate the input. Stabilize newly authored VNodes and
+nested options with state or a correctly dependent `useMemo`. In-place changes
+require a revision update. Changing only notification callbacks does not redraw;
+notifications use the latest committed callbacks. Revision controls reject `null`,
+negative, fractional, and unsafe values with `INVALID_RENDER_EXECUTION_OPTION`.
+Invalid boolean or callback controls use the same code.
+
+```tsx
+import { useMemo } from "react";
+import { useRenderToAnimatedSvgAsync } from "@boundsvg/react/async";
+
+const options = useMemo(
+  () => ({ playback: { mode: "independent" as const } }),
+  [],
+);
+const rendered = useRenderToAnimatedSvgAsync(vnode, options, { revision });
+```
+
+Scheduling and snapshots start at commit, so abandoned renders make no requests.
+Each hook coalesces its own unsent updates into one microtask and aborts its own
+superseded queue entry. A replacement joins the FIFO tail behind other consumers.
+Warnings and PNG adjustment notifications retain emission order and are delivered
+once for the adopted generation after commit, including StrictMode replay.
+Callback exceptions surface through React effects and do not become producer errors.
+
+Each Provider main scheduler and each WorkerEngine admits one current job plus 32
+queued jobs. Overflow is an explicit `RENDER_QUEUE_FULL` or `WORKER_QUEUE_FULL`
+error; it never displaces an existing request. This is a request-count limit, not
+a heap-byte limit. Main computation starts in a later task but synchronous WASM
+still blocks that thread while running. Sent Worker computation may continue after
+its hook is superseded; its result and notifications are ignored.
+
+IR and layered SVG objects belong to one hook consumer and may keep their identity
+within the same result generation. Treat these objects as immutable; a rerender
+does not undo caller mutations.
+
+PNG buffers returned by each hook projection are copies of retained internal
+buffers. Mutating a returned PNG cannot change another consumer, a later
+projection, or its stored data URL. Each hook retains only its current computation,
+one previous success, one unsent snapshot, and one pending notification batch.
+
+For SSR or static generation, prefer an initialized Core Engine's synchronous API.
+Async hooks are idle on the server. Provider initialization uses effects and does
+not automatically make the Provider ready during SSR.
+
+### Revision and resource changes for synchronous hooks
+
+`useRenderToSvg`, `useRenderToAnimatedSvg`, `useRenderToPng`, `useCompiledScene`,
+`useRenderAsset`, and `useBoundSvgInspection` accept `RenderInputOptions =
+{ revision?: number }` as a third argument. `useInteractiveSvg` accepts `revision`
+in its existing third options argument. `usePngObjectUrl(png, { revision })` accepts
+it as a second argument and revokes a superseded URL. These APIs retain their
+synchronous or inspection responsibilities and observe the Provider Engine's
+resource version. PNG reuse is local to one hook, with no module-wide result cache.
+
+Provider initialization captures font metadata and byte windows, geometry, and
+symbol values before awaiting initialization. Equal configuration still avoids
+reinitialization; `resourcesRevision` explicitly invalidates values changed in
+place. Render defaults and notification callbacks alone do not recreate an Engine.
+
 ### `useRenderToSvgAsync(vnode, options?)`
 
-<sub>`@boundsvg/react/worker`</sub>
+<sub>`@boundsvg/react/async`</sub>
 
-Render a VNode tree to SVG via the WorkerEngine (off-main-thread). Must be used within `<BoundSvgProvider>` with `worker` enabled.
+Render a VNode tree to SVG through the Provider’s selected main or Worker owner.
 
 ```ts
 const { svg, error, isRendering, isReady } = useRenderToSvgAsync(vnode, options?);
 ```
 
-| Return        | Type             | Description                          |
-| ------------- | ---------------- | ------------------------------------ |
-| `svg`         | `string \| null` | Rendered SVG string                  |
-| `error`       | `Error \| null`  | Rendering error                      |
-| `isRendering` | `boolean`        | Whether a Worker render is in-flight |
-| `isReady`     | `boolean`        | Whether SVG is available             |
+| Return        | Type             | Description                           |
+| ------------- | ---------------- | ------------------------------------- |
+| `svg`         | `string \| null` | Rendered SVG string                   |
+| `error`       | `Error \| null`  | Rendering error                       |
+| `isRendering` | `boolean`        | Whether the latest input is rendering |
+| `isReady`     | `boolean`        | Whether the latest input succeeded    |
 
 ### `useRenderToAnimatedSvgAsync(vnode, options)`
 
-<sub>`@boundsvg/react/worker`</sub>
+<sub>`@boundsvg/react/async`</sub>
 
-The Worker equivalent of `useRenderToAnimatedSvg`. Its required options carry
+The shared async equivalent of `useRenderToAnimatedSvg`. Its required options carry
 the same independent-or-timeline playback, base-pose, namespace, metadata, and
 reduced-motion contract.
 
 ```ts
-const result = useRenderToAnimatedSvgAsync(vnode, {
-  playback: { mode: "timeline", durationMs: 2400, iterations: 2 },
-  nodeIdMetadata: "omit",
-});
+const options = useMemo<RenderAnimatedSvgOptions>(
+  () => ({
+    playback: { mode: "timeline", durationMs: 2400, iterations: 2 },
+    nodeIdMetadata: "omit",
+  }),
+  [],
+);
+const result = useRenderToAnimatedSvgAsync(vnode, options);
 ```
 
 `useRenderToAnimatedSvgAndIrAsync` returns the matching `{ svg, ir }` artifacts
-for Worker-backed inspection flows.
+for inspection flows on either execution owner.
 
 ### `useRenderToPngAsync(vnode, options?)`
 
-<sub>`@boundsvg/react/worker`</sub>
+<sub>`@boundsvg/react/async`</sub>
 
-Render a VNode tree to PNG via the WorkerEngine (off-main-thread). PNG data is transferred (zero-copy) from the Worker. Must be used within `<BoundSvgProvider>` with `worker` enabled.
+Render a VNode tree to PNG through either execution owner. Worker transport transfers the buffer; the hook exposes a separate copy.
 
 ```ts
 const { png, dataUrl, error, isRendering, isReady } = useRenderToPngAsync(vnode, options?);
 ```
 
-| Return        | Type                 | Description                          |
-| ------------- | -------------------- | ------------------------------------ |
-| `png`         | `Uint8Array \| null` | PNG binary                           |
-| `dataUrl`     | `string \| null`     | `data:image/png;base64,...`          |
-| `error`       | `Error \| null`      | Rendering error                      |
-| `isRendering` | `boolean`            | Whether a Worker render is in-flight |
-| `isReady`     | `boolean`            | Whether PNG is available             |
+| Return        | Type                 | Description                           |
+| ------------- | -------------------- | ------------------------------------- |
+| `png`         | `Uint8Array \| null` | PNG binary                            |
+| `dataUrl`     | `string \| null`     | `data:image/png;base64,...`           |
+| `error`       | `Error \| null`      | Rendering error                       |
+| `isRendering` | `boolean`            | Whether the latest input is rendering |
+| `isReady`     | `boolean`            | Whether the latest input succeeded    |
 
 ### `useRenderToLayeredSvgAsync(vnode, options?)` {#userendertolayeredsvgasync}
 
-<sub>`@boundsvg/react/worker`</sub>
+<sub>`@boundsvg/react/async`</sub>
 
-Render a VNode tree to a set of SVG layers via the WorkerEngine. Must be used within `<BoundSvgProvider>` with `worker` enabled. See [Layered Export](/guides/layered-export).
+Render a VNode tree to SVG layers through either execution owner. See [Layered Export](/guides/layered-export).
 
 ```ts
 const { result, error, isRendering, isReady } = useRenderToLayeredSvgAsync(
@@ -256,10 +363,10 @@ const { result, error, isRendering, isReady } = useRenderToLayeredSvgAsync(
 
 | Return        | Type                       | Description                           |
 | ------------- | -------------------------- | ------------------------------------- |
-| `result`      | `LayeredSvgResult \| null` | Whole result; `null` until ready      |
+| `result`      | `LayeredSvgResult \| null` | Latest or retained complete result    |
 | `error`       | `Error \| null`            | Rendering error                       |
-| `isRendering` | `boolean`                  | Whether a Worker render is in-flight  |
-| `isReady`     | `boolean`                  | Whether a current result is available |
+| `isRendering` | `boolean`                  | Whether the latest input is rendering |
+| `isReady`     | `boolean`                  | Whether the latest input succeeded    |
 
 `layers`, `manifest` and `compositionValidation` are fields of `result`, not of
 the hook. Options accept [`LayeredSvgOptions`](/api/core#layeredsvgoptions) in
@@ -269,9 +376,9 @@ layer entry inside `result`.
 
 ### `useRenderToLayeredPngAsync(vnode, options?)` {#userendertolayeredpngasync}
 
-<sub>`@boundsvg/react/worker`</sub>
+<sub>`@boundsvg/react/async`</sub>
 
-Render a VNode tree to a set of PNG layers via the WorkerEngine. PNG bytes are transferred (zero-copy) from the Worker. Must be used within `<BoundSvgProvider>` with `worker` enabled.
+Render a VNode tree to PNG layers through either execution owner. Public layer buffers are separate from retained internal buffers.
 
 ```ts
 const { result, layerDataUrls, error, isRendering, isReady } =
@@ -281,11 +388,11 @@ const { result, layerDataUrls, error, isRendering, isReady } =
 
 | Return          | Type                       | Description                                              |
 | --------------- | -------------------------- | -------------------------------------------------------- |
-| `result`        | `LayeredPngResult \| null` | Whole result; `null` until ready                         |
+| `result`        | `LayeredPngResult \| null` | Latest or retained complete result                       |
 | `layerDataUrls` | `string[] \| null`         | Memoized `data:image/png;base64,...` URLs, one per layer |
 | `error`         | `Error \| null`            | Rendering error                                          |
-| `isRendering`   | `boolean`                  | Whether a Worker render is in-flight                     |
-| `isReady`       | `boolean`                  | Whether a current result is available                    |
+| `isRendering`   | `boolean`                  | Whether the latest input is rendering                    |
+| `isReady`       | `boolean`                  | Whether the latest input succeeded                       |
 
 `layers`, `manifest` and `compositionValidation` are fields of `result`. Options
 accept [`LayeredPngOptions`](/api/core#layeredpngoptions) in full, `onWarning`
@@ -318,7 +425,7 @@ const { svg, ir, error, isReady, hoverNodeId, containerRef } =
 
 ### `<BoundSvg>`
 
-Renders a VNode tree inline using `dangerouslySetInnerHTML`. The SVG generated by the Engine is trusted (no XSS risk).
+Renders a VNode tree inline through the shared async path, on both main and Worker. It keeps the same owner’s previous SVG during updates by default. Main rendering therefore no longer finishes during React render. Set `retainPreviousResult: false` in `executionOptions` to clear previous output; `executionOptions` also accepts `revision` and `onError`.
 
 ```tsx
 <BoundSvg
@@ -329,17 +436,18 @@ Renders a VNode tree inline using `dangerouslySetInnerHTML`. The SVG generated b
 />
 ```
 
-| Prop            | Type                                       | Description                                          |
-| --------------- | ------------------------------------------ | ---------------------------------------------------- |
-| `vnode`         | `VNode \| null`                            | VNode tree to render (legacy mode)                   |
-| `width`         | `number`                                   | Canvas width (declarative mode)                      |
-| `height`        | `number`                                   | Canvas height (declarative mode)                     |
-| `background`    | `string`                                   | Canvas background (declarative mode)                 |
-| `children`      | `ReactNode`                                | Declarative children (boundsvg phantom components)   |
-| `renderOptions` | `RenderSvgOptions`                         | Static SVG options; animated input requires `timeMs` |
-| `className`     | `string`                                   | Wrapper div class                                    |
-| `fallback`      | `ReactNode`                                | Fallback UI while engine is loading                  |
-| `errorFallback` | `ReactNode \| (error: Error) => ReactNode` | Fallback UI when rendering fails                     |
+| Prop               | Type                                       | Description                                          |
+| ------------------ | ------------------------------------------ | ---------------------------------------------------- |
+| `vnode`            | `VNode \| null`                            | VNode tree to render (legacy mode)                   |
+| `width`            | `number`                                   | Canvas width (declarative mode)                      |
+| `height`           | `number`                                   | Canvas height (declarative mode)                     |
+| `background`       | `string`                                   | Canvas background (declarative mode)                 |
+| `children`         | `ReactNode`                                | Declarative children (boundsvg phantom components)   |
+| `executionOptions` | `RenderExecutionOptions`                   | Revision, retention, and committed error callback    |
+| `renderOptions`    | `RenderSvgOptions`                         | Static SVG options; animated input requires `timeMs` |
+| `className`        | `string`                                   | Wrapper div class                                    |
+| `fallback`         | `ReactNode`                                | Fallback UI while engine is loading                  |
+| `errorFallback`    | `ReactNode \| (error: Error) => ReactNode` | Fallback UI when rendering fails                     |
 
 ### `<AnimatedBoundSvg>`
 
@@ -677,6 +785,7 @@ export type {
   RubyProps,
   RubyVNode,
   ShapeProps,
+  RenderInputOptions,
   SvgProps,
   SvgVNode,
   SymbolDefinition,
@@ -715,7 +824,7 @@ export type {
 export { useRenderToPng };
 export type { UseRenderToPngResult };
 
-// "@boundsvg/react/worker" — Worker-based async rendering
+// "@boundsvg/react/async" — shared main and Worker async rendering
 export {
   useRenderToAnimatedSvgAndIrAsync,
   useRenderToAnimatedSvgAsync,
@@ -726,12 +835,13 @@ export {
   useRenderToSvgAsync,
 };
 export type {
+  RenderExecutionOptions,
+  RenderExecutionState,
   UseRenderToLayeredPngAsyncResult,
   UseRenderToLayeredSvgAsyncResult,
   UseRenderToPngAsyncResult,
   UseRenderToSvgAndIrAsyncResult,
   UseRenderToSvgAsyncResult,
-  UseWorkerRenderResult,
 };
 
 // "@boundsvg/react/interactive" — hit-testing, events, text copy

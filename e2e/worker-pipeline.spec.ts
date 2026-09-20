@@ -97,6 +97,11 @@ test.describe("Worker Pipeline E2E", () => {
     // WorkerEngine should be null (fallen back to main-thread Engine)
     await expect(page.getByTestId("has-worker-engine")).toHaveText("false");
 
+    await expect(page.getByTestId("svg-ready")).toHaveText("true");
+    await expect(page.getByTestId("png-ready")).toHaveText("true");
+    await expect(page.getByTestId("svg-error")).toHaveText("");
+    await expect(page.getByTestId("png-error")).toHaveText("");
+
     // Verify the fallback warning was logged
     expect(warnings.some((w) => w.includes("Worker initialization failed"))).toBe(true);
   });

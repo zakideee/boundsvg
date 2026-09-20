@@ -423,9 +423,25 @@ function runtimeSource(specifiers, mode) {
   const testing = await load('@boundsvg/testing');
   const worker = await load('@boundsvg/worker');
   const reactPackage = await load('@boundsvg/react');
+  const reactAsync = await load('@boundsvg/react/async');
   const provider = await load('@boundsvg/react/provider');
   const React = await load('react');
   const ReactDOMServer = await load('react-dom/server');
+  for (const hookName of ['useRenderToSvgAsync', 'useRenderToAnimatedSvgAsync', 'useRenderToSvgAndIrAsync', 'useRenderToAnimatedSvgAndIrAsync', 'useRenderToPngAsync', 'useRenderToLayeredSvgAsync', 'useRenderToLayeredPngAsync']) {
+    if (typeof reactAsync[hookName] !== 'function') {
+      throw new Error('missing packed async hook: ' + hookName);
+    }
+  }
+  let removedWorkerEntryRejected = false;
+  try {
+    await load('@boundsvg/react/worker');
+  } catch (error) {
+    if (error.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw error;
+    removedWorkerEntryRejected = true;
+  }
+  if (!removedWorkerEntryRejected) {
+    throw new Error('removed React Worker entry remains accessible');
+  }
   const shapeOperationExports = Object.keys(coreWasm)
     .filter((name) => name.startsWith('wasm') && (name.includes('Shape') || name.includes('SymbolGeometry')))
     .sort();

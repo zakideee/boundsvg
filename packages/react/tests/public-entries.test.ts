@@ -22,14 +22,15 @@ describe("public React entries", () => {
     expect(Reflect.has(entry, "useRenderToSvgAsync")).toBe(false);
   });
 
-  it("exposes provider, worker, png, interactive, inspect, and debug subpaths", () => {
+  it("exposes provider, async, png, interactive, inspect, and debug subpaths", () => {
     const testDir = fileURLToPath(new URL(".", import.meta.url));
     const packageJson = JSON.parse(
       readFileSync(resolve(testDir, "../package.json"), "utf8"),
     ) as PackageJson;
 
     expect(packageJson.exports["./provider"]).toBeDefined();
-    expect(packageJson.exports["./worker"]).toBeDefined();
+    expect(packageJson.exports["./async"]).toBeDefined();
+    expect(packageJson.exports["./worker"]).toBeUndefined();
     expect(packageJson.exports["./png"]).toBeDefined();
     expect(packageJson.exports["./interactive"]).toBeDefined();
     expect(packageJson.exports["./inspect"]).toBeDefined();
@@ -39,7 +40,7 @@ describe("public React entries", () => {
 
   it("keeps structured inspection separate from visual debugging", async () => {
     const providerEntry = await import("../src/provider.js");
-    const workerEntry = await import("../src/worker.js");
+    const asyncEntry = await import("../src/async.js");
     const pngEntry = await import("../src/png.js");
     const interactiveEntry = await import("../src/interactive.js");
     const inspectEntry = await import("../src/inspect.js");
@@ -48,8 +49,8 @@ describe("public React entries", () => {
 
     expect(providerEntry.BoundSvgProvider).toBeDefined();
     expect(providerEntry.useBoundSvg).toBeDefined();
-    expect(workerEntry.useRenderToSvgAsync).toBeDefined();
-    expect(workerEntry.useRenderToPngAsync).toBeDefined();
+    expect(asyncEntry.useRenderToSvgAsync).toBeDefined();
+    expect(asyncEntry.useRenderToPngAsync).toBeDefined();
     expect(pngEntry.useRenderToPng).toBeDefined();
     expect(interactiveEntry.InteractiveBoundSvg).toBeTypeOf("function");
     expect(interactiveEntry.useTextCopy).toBeTypeOf("function");

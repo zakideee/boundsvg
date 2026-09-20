@@ -1236,6 +1236,8 @@ export class Engine {
   private readonly compiledSceneOwnerToken: CompiledSceneOwnerToken =
     createCompiledSceneOwnerToken();
   private disposed = false;
+  private resourceRevision = 0;
+  private readonly resourceListeners = new Set<() => void>();
   private readonly geometryRegistry = new Map<string, GeometryDoc>();
   private readonly symbolRegistry = new Map<string, SymbolDefinition>();
   private readonly preparedFrameScenes = new Set<WeakRef<PreparedSceneRenderHandle>>();
@@ -1248,6 +1250,24 @@ export class Engine {
     for (const symbol of options.symbols ?? []) {
       this.symbolRegistry.set(symbol.id, symbol.def);
     }
+  }
+
+  /** Current resource invalidation generation; throws after disposal. */
+  get resourceVersion(): number {
+    this.ensureNotDisposed();
+    return this.resourceRevision;
+  }
+
+  /**
+   * Observe resource invalidation and terminal disposal. Listeners must not
+   * synchronously render or mutate resources. Unsubscribe is idempotent.
+   */
+  subscribeResourceChanges(listener: () => void): () => void {
+    this.ensureNotDisposed();
+    this.resourceListeners.add(listener);
+    return () => {
+      this.resourceListeners.delete(listener);
+    };
   }
 
   /**
@@ -1274,34 +1294,59 @@ export class Engine {
         { stage: "engine" },
       );
     }
-    for (const font of fonts) {
-      registerFontFn({
-        alias: font.alias,
-        weight: font.weight ?? DEFAULT_FONT_WEIGHT,
-        style: font.style ?? "normal",
-        data: font.data,
-      });
+    let hasAttemptedRegistration = false;
+    try {
+      for (const font of fonts) {
+        const fontRegistration = {
+          alias: font.alias,
+          weight: font.weight ?? DEFAULT_FONT_WEIGHT,
+          style: font.style ?? "normal",
+          data: font.data,
+        };
+        if (!hasAttemptedRegistration) {
+          this.ensureResourceVersionAvailable();
+        }
+        hasAttemptedRegistration = true;
+        registerFontFn(fontRegistration);
+      }
+    } finally {
+      // A backend can change resources before throwing, including on its first call.
+      if (hasAttemptedRegistration) {
+        this.invalidateResources();
+      }
     }
   }
 
   registerGeometry(id: string, doc: GeometryDoc): void {
     this.ensureNotDisposed();
+    this.ensureResourceVersionAvailable();
     this.geometryRegistry.set(id, doc);
+    this.invalidateResources();
   }
 
   registerSymbol(id: string, def: SymbolDefinition): void {
     this.ensureNotDisposed();
+    this.ensureResourceVersionAvailable();
     this.symbolRegistry.set(id, def);
+    this.invalidateResources();
   }
 
   unregisterGeometry(id: string): void {
     this.ensureNotDisposed();
-    this.geometryRegistry.delete(id);
+    if (this.geometryRegistry.has(id)) {
+      this.ensureResourceVersionAvailable();
+      this.geometryRegistry.delete(id);
+      this.invalidateResources();
+    }
   }
 
   unregisterSymbol(id: string): void {
     this.ensureNotDisposed();
-    this.symbolRegistry.delete(id);
+    if (this.symbolRegistry.has(id)) {
+      this.ensureResourceVersionAvailable();
+      this.symbolRegistry.delete(id);
+      this.invalidateResources();
+    }
   }
 
   /**
@@ -3174,12 +3219,48 @@ export class Engine {
   }
 
   dispose(): void {
-    this.disposed = true;
-    for (const preparedReference of this.preparedFrameScenes) {
-      preparedReference.deref()?.dispose();
+    if (this.disposed) {
+      return;
     }
-    this.preparedFrameScenes.clear();
-    this.options.wasmHandle?.dispose();
+    this.disposed = true;
+    try {
+      for (const preparedReference of this.preparedFrameScenes) {
+        preparedReference.deref()?.dispose();
+      }
+      this.preparedFrameScenes.clear();
+      this.options.wasmHandle?.dispose();
+    } finally {
+      this.notifyResourceChanges();
+      this.resourceListeners.clear();
+    }
+  }
+
+  private ensureResourceVersionAvailable(): void {
+    if (this.resourceRevision === Number.MAX_SAFE_INTEGER) {
+      throw new FatalError(
+        "RESOURCE_VERSION_EXHAUSTED",
+        "Engine resource version space has been exhausted",
+        { stage: "engine", context: {} },
+      );
+    }
+  }
+
+  private invalidateResources(): void {
+    this.resourceRevision += 1;
+    this.notifyResourceChanges();
+  }
+
+  private notifyResourceChanges(): void {
+    for (const listener of [...this.resourceListeners]) {
+      try {
+        listener();
+      } catch (error: unknown) {
+        // Observer failures must not replace the mutation's result or skip other observers.
+        queueMicrotask(() => {
+          throw error;
+        });
+      }
+    }
   }
 
   private prunePreparedFrameScenes(): void {

@@ -139,6 +139,40 @@ afterEach(() => {
 });
 
 describe("compiled-scene and inspection render-input stability", () => {
+  it("invalidates compiled and inspection outputs on resources and an explicit revision", () => {
+    const { engine, compile, renderToLayoutTree, renderToIR } = makeEngine();
+    const vnode = makeVNode();
+    let updateRevision!: (revision: number) => void;
+    let compiled: ReturnType<typeof useCompiledScene>["compiled"] = null;
+    function Probe() {
+      const [revision, setRevision] = useState(0);
+      updateRevision = setRevision;
+      compiled = useCompiledScene(vnode, STABLE_COMPILE_OPTIONS, { revision }).compiled;
+      useBoundSvgInspection(vnode, STABLE_RENDER_OPTIONS, { revision });
+      return null;
+    }
+    const mounted = mount(<Probe />, engine);
+    const originalCompiled = compiled;
+    act(() =>
+      engine.registerGeometry("shape", {
+        viewBox: { width: 10, height: 10 },
+        root: { kind: "path", d: "M0 0H10V10Z" },
+      }),
+    );
+    expect(compile).toHaveBeenCalledTimes(2);
+    expect(renderToLayoutTree).toHaveBeenCalledTimes(2);
+    expect(renderToIR).toHaveBeenCalledTimes(2);
+    expect(compiled).not.toBe(originalCompiled);
+    expect(engine.snapshotCompiledIR(originalCompiled!).width).toBe(100);
+    vnode.props.width = 120;
+    act(() => updateRevision(1));
+    expect(compile).toHaveBeenCalledTimes(3);
+    expect(renderToIR.mock.calls.at(-1)?.[0].props.width).toBe(120);
+    expect(engine.snapshotCompiledIR(compiled!).width).toBe(120);
+    mounted.unmount();
+    engine.dispose();
+  });
+
   it("does not recompile a fresh equal VNode for unrelated parent state", async () => {
     const { engine, compile } = makeEngine();
     let firstCompiled: ReturnType<typeof useCompiledScene>["compiled"] = null;

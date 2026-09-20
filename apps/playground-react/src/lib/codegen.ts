@@ -13,21 +13,22 @@ export function generateJsxSnippet(vnode: VNode): string {
 export function generateFullComponent(vnode: VNode, renderer: RendererMode): string {
   const components = collectUsedTypes(vnode).join(", ");
   const jsxBody = vnodeToJsxString(vnode, 2, COMPACT);
-  const fontsDecl = `const fonts = [
+  const fontsDecl = `const fonts: FontDefinition[] = [
   // Replace source with the font path served by your own app.
   { alias: "NotoSansJP-woff2", weight: 400, style: "normal", source: "/fonts/NotoSansJP-Regular.subset.woff2" },
 ];`;
 
   if (renderer === "boundsvg") {
-    return `import { BoundSvg, toVNode, ${components} } from "@boundsvg/react";
-import { BoundSvgProvider } from "@boundsvg/react/provider";
+    return `import { useMemo } from "react";
+import { BoundSvg, toVNode, ${components} } from "@boundsvg/react";
+import { BoundSvgProvider, type FontDefinition } from "@boundsvg/react/provider";
 
 ${fontsDecl}
 
 function App() {
-  const vnode = toVNode(
+  const vnode = useMemo(() => toVNode(
 ${jsxBody}
-  );
+  ), []);
 
   return (
     <BoundSvgProvider config={{ fonts }}>
@@ -39,7 +40,7 @@ ${jsxBody}
 
   if (renderer === "svg-hook") {
     return `import { useRenderToSvg, toVNode, ${components} } from "@boundsvg/react";
-import { BoundSvgProvider } from "@boundsvg/react/provider";
+import { BoundSvgProvider, type FontDefinition } from "@boundsvg/react/provider";
 
 ${fontsDecl}
 
@@ -48,8 +49,8 @@ function SvgPreview() {
 ${jsxBody}
   );
   const { svg, error, isReady } = useRenderToSvg(vnode);
-  if (!isReady) return <p>Loading...</p>;
   if (error) return <p>Error: {error.message}</p>;
+  if (!isReady) return <p>Loading...</p>;
   return <div dangerouslySetInnerHTML={{ __html: svg! }} />;
 }
 
@@ -64,7 +65,7 @@ function App() {
 
   if (renderer === "png-hook") {
     return `import { toVNode, ${components} } from "@boundsvg/react";
-import { BoundSvgProvider } from "@boundsvg/react/provider";
+import { BoundSvgProvider, type FontDefinition } from "@boundsvg/react/provider";
 import { useRenderToPng } from "@boundsvg/react/png";
 
 ${fontsDecl}
@@ -77,8 +78,8 @@ ${jsxBody}
     scale: 2,
     textPathMode: "merged",
   });
-  if (!isReady) return <p>Loading...</p>;
   if (error) return <p>Error: {error.message}</p>;
+  if (!isReady) return <p>Loading...</p>;
   return <img src={dataUrl!} alt="Rendered" />;
 }
 
@@ -92,25 +93,20 @@ function App() {
   }
 
   if (renderer === "svg-async") {
-    return `import { toVNode, ${components} } from "@boundsvg/react";
-import { BoundSvgProvider, useBoundSvg } from "@boundsvg/react/provider";
-import { useRenderToSvgAsync } from "@boundsvg/react/worker";
+    return `import { useMemo } from "react";
+import { toVNode, ${components} } from "@boundsvg/react";
+import { BoundSvgProvider, type FontDefinition } from "@boundsvg/react/provider";
+import { useRenderToSvgAsync } from "@boundsvg/react/async";
 
 ${fontsDecl}
 
 function SvgAsyncPreview() {
-  const { workerEngine, status, error: providerError } = useBoundSvg();
-  const vnode = toVNode(
+  const vnode = useMemo(() => toVNode(
 ${jsxBody}
-  );
-  const { svg, error, isRendering, isReady } = useRenderToSvgAsync(vnode);
+  ), []);
+  const { svg, error, isRendering } = useRenderToSvgAsync(vnode);
   if (error) return <p>Error: {error.message}</p>;
-  if (status === "error") return <p>Init failed: {providerError?.message}</p>;
-  // Worker init failed — Provider fell back to main-thread engine
-  if (status === "ready" && !workerEngine && !isReady) {
-    return <p>Worker unavailable. Use useRenderToSvg for main-thread rendering.</p>;
-  }
-  if (!isReady) return <p>{isRendering ? "Rendering in Worker..." : "Loading..."}</p>;
+  if (svg === null) return <p>{isRendering ? "Rendering..." : "Loading..."}</p>;
   return <div dangerouslySetInnerHTML={{ __html: svg! }} />;
 }
 
@@ -123,25 +119,20 @@ function App() {
 }`;
   }
 
-  return `import { toVNode, ${components} } from "@boundsvg/react";
-import { BoundSvgProvider, useBoundSvg } from "@boundsvg/react/provider";
-import { useRenderToPngAsync } from "@boundsvg/react/worker";
+  return `import { useMemo } from "react";
+import { toVNode, ${components} } from "@boundsvg/react";
+import { BoundSvgProvider, type FontDefinition } from "@boundsvg/react/provider";
+import { useRenderToPngAsync } from "@boundsvg/react/async";
 
 ${fontsDecl}
 
 function PngAsyncPreview() {
-  const { workerEngine, status, error: providerError } = useBoundSvg();
-  const vnode = toVNode(
+  const vnode = useMemo(() => toVNode(
 ${jsxBody}
-  );
-  const { dataUrl, error, isRendering, isReady } = useRenderToPngAsync(vnode, { scale: 2 });
+  ), []);
+  const { dataUrl, error, isRendering } = useRenderToPngAsync(vnode, { scale: 2 });
   if (error) return <p>Error: {error.message}</p>;
-  if (status === "error") return <p>Init failed: {providerError?.message}</p>;
-  // Worker init failed — Provider fell back to main-thread engine
-  if (status === "ready" && !workerEngine && !isReady) {
-    return <p>Worker unavailable. Use useRenderToPng for main-thread rendering.</p>;
-  }
-  if (!isReady) return <p>{isRendering ? "Rendering in Worker..." : "Loading..."}</p>;
+  if (dataUrl === null) return <p>{isRendering ? "Rendering..." : "Loading..."}</p>;
   return <img src={dataUrl!} alt="Rendered" />;
 }
 

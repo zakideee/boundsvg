@@ -303,6 +303,35 @@ describe("BoundSvgProvider Worker initialization", () => {
     expect(workerRef.terminate).toHaveBeenCalledTimes(1);
   });
 
+  it("notifies fallback once even when main initialization also fails", async () => {
+    const workerError = new Error("worker initialization failed");
+    const mainError = new Error("main initialization failed");
+    mockWorkerEngineCreate.mockRejectedValueOnce(workerError);
+    mockLoadWasmModule.mockRejectedValueOnce(mainError);
+    const onFallback = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const logError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    function Probe() {
+      const state = useBoundSvg();
+      return <output>{state.error?.message ?? state.status}</output>;
+    }
+    const mounted = mount(
+      <BoundSvgProvider config={{ fonts: [], worker: { mode: "prefer", onFallback } }}>
+        <Probe />
+      </BoundSvgProvider>,
+    );
+    expect(onFallback).not.toHaveBeenCalled();
+    await flush();
+    expect(mounted.container.textContent).toBe(mainError.message);
+    expect(onFallback).toHaveBeenCalledExactlyOnceWith(workerError);
+    expect(lastCreatedWorker?.terminate).toHaveBeenCalledTimes(1);
+    await flush();
+    expect(onFallback).toHaveBeenCalledTimes(1);
+    mounted.unmount();
+    warn.mockRestore();
+    logError.mockRestore();
+  });
+
   it("does not expose a main Engine from the previous config during a config transition", async () => {
     const snapshots: BoundSvgContextValue[] = [];
     function Probe() {

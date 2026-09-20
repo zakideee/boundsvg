@@ -1,5 +1,5 @@
 import { FatalError, type SceneNode, type SerializedRecoverableError } from "@boundsvg/core";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkerLayoutTransitionInput } from "../src/layout-transition-transport.js";
 import {
   type DecodedWorkerRequest,
@@ -16,6 +16,10 @@ import {
   type MaterializedFrameSource,
   WorkerPool,
 } from "../src/worker-pool.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 type MockEventListener = (event: MessageEvent | ErrorEvent) => void;
 
@@ -38,6 +42,7 @@ class PoolMockWorker {
   initErrorCode: string | undefined;
   failIndex: number | undefined;
   openResponseDelay = 0;
+  closeResponseDelay = 0;
   warnings: SerializedRecoverableError[] = [];
   delayForIndex: (index: number) => number = () => 0;
   returnedIndex: (index: number) => number = (index) => index;
@@ -156,17 +161,22 @@ class PoolMockWorker {
         }, delay);
         break;
       }
-      case "close-frame-stream":
+      case "close-frame-stream": {
         this.closedStreamIds.push(request.streamId);
         this.streams.delete(request.streamId);
-        queueMicrotask(() =>
+        const respondClose = () =>
           this.respond({
             id: request.id,
             type: "close-frame-stream-ok",
             streamId: request.streamId,
-          }),
-        );
+          });
+        if (this.closeResponseDelay === 0) {
+          queueMicrotask(respondClose);
+        } else {
+          setTimeout(respondClose, this.closeResponseDelay);
+        }
         break;
+      }
       case "render-svg":
       case "render-png": {
         this.renderRequests.push(structuredClone(request));
@@ -619,11 +629,12 @@ describe("WorkerPool", () => {
   });
 
   it("best-effort closes a transition stream whose open response times out", async () => {
+    vi.useFakeTimers();
     const worker = new PoolMockWorker();
-    worker.openResponseDelay = 40;
+    worker.openResponseDelay = 15;
     const pool = await createPool([worker], { timeout: 10 });
 
-    await expect(
+    const failure = expect(
       collectFrames(
         pool.renderLayoutTransitionFrames(transitionInput(), {
           timesMs: [0],
@@ -631,9 +642,11 @@ describe("WorkerPool", () => {
         }),
       ),
     ).rejects.toMatchObject({ code: "WORKER_REQUEST_TIMEOUT" });
-    await vi.waitFor(() => expect(worker.closedStreamIds).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(16);
+    await failure;
+    expect(worker.closedStreamIds).toHaveLength(1);
     worker.openResponseDelay = 0;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    vi.useRealTimers();
     pool.dispose();
   });
 
@@ -746,16 +759,19 @@ describe("WorkerPool", () => {
   });
 
   it("best-effort closes a prepared stream whose open response times out", async () => {
+    vi.useFakeTimers();
     const worker = new PoolMockWorker();
-    worker.openResponseDelay = 40;
+    worker.openResponseDelay = 15;
     const pool = await createPool([worker], { timeout: 10 });
 
-    await expect(
+    const failure = expect(
       collectFrames(pool.renderFrames(SCENE, { timesMs: [0], format: "svg" })),
     ).rejects.toThrow("timed out");
-    await vi.waitFor(() => expect(worker.closedStreamIds).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(16);
+    await failure;
+    expect(worker.closedStreamIds).toHaveLength(1);
     worker.openResponseDelay = 0;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    vi.useRealTimers();
     await expect(
       collectFrames(pool.renderFrames(SCENE, { timesMs: [7], format: "svg" })),
     ).resolves.toMatchObject([{ index: 0, timeMs: 7, format: "svg" }]);
@@ -1415,6 +1431,94 @@ describe("WorkerPool materialized frames", () => {
         code: "WORKER_POOL_DISPOSED",
         stage: "engine",
       }),
+    );
+  });
+});
+
+describe("WorkerPool operation ownership", () => {
+  it("does not lease an unstarted iterator and rejects a second active consumer without disturbing the first", async () => {
+    const workers = [new PoolMockWorker()];
+    const pool = await createPool(workers);
+    const dormant = pool
+      .renderFrames(SCENE, { timesMs: [9], format: "svg" })
+      [Symbol.asyncIterator]();
+    const active = pool
+      .renderFrames(SCENE, { timesMs: [0, 1], format: "svg" })
+      [Symbol.asyncIterator]();
+    await expect(active.next()).resolves.toMatchObject({ value: { index: 0 }, done: false });
+    await expect(dormant.next()).rejects.toMatchObject({
+      code: "WORKER_POOL_BUSY",
+      stage: "engine",
+      context: { operationLimit: 1 },
+    });
+    expect(workers[0]!.openedSchedules).toHaveLength(1);
+    await expect(active.next()).resolves.toMatchObject({ value: { index: 1 }, done: false });
+    await active.return?.();
+    expect(workers[0]!.closedStreamIds).toHaveLength(1);
+    pool.dispose();
+  });
+
+  it("holds the operation lease until the close acknowledgement arrives", async () => {
+    const worker = new PoolMockWorker();
+    worker.closeResponseDelay = 30;
+    const pool = await createPool([worker]);
+    const active = pool
+      .renderFrames(SCENE, { timesMs: [0, 1], format: "svg" })
+      [Symbol.asyncIterator]();
+    await active.next();
+    const closing = active.return?.();
+    await expect(
+      collectFrames(pool.renderFrames(SCENE, { timesMs: [9], format: "svg" })),
+    ).rejects.toMatchObject({ code: "WORKER_POOL_BUSY" });
+    await closing;
+    worker.closeResponseDelay = 0;
+    await expect(
+      collectFrames(pool.renderFrames(SCENE, { timesMs: [9], format: "svg" })),
+    ).resolves.toMatchObject([{ index: 0, timeMs: 9 }]);
+    pool.dispose();
+  });
+
+  it("fails the pool after cleanup times out instead of reusing an uncertain stream slot", async () => {
+    const worker = new PoolMockWorker();
+    const pool = await createPool([worker], { timeout: 10 });
+    const active = pool
+      .renderFrames(SCENE, { timesMs: [0, 1], format: "svg" })
+      [Symbol.asyncIterator]();
+    await active.next();
+    vi.useFakeTimers();
+    worker.closeResponseDelay = 50;
+    const closing = active.return?.().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(await closing).toMatchObject({ code: "WORKER_REQUEST_TIMEOUT" });
+    expect(() => pool.renderFrames(SCENE, { timesMs: [9], format: "svg" })).toThrow();
+    expect(worker.openedSchedules).toHaveLength(1);
+    pool.dispose();
+  });
+
+  it.each([
+    1, 2, 8,
+  ])("bounds pending and buffered frames through 60 frames at concurrency %i and releases all streams", async (concurrency) => {
+    const workers = Array.from({ length: concurrency }, () => new PoolMockWorker());
+    const pool = await createPool(workers);
+    let received = 0;
+    for await (const frame of pool.renderFrames(SCENE, {
+      timesMs: Array.from({ length: 60 }, (_, index) => index),
+      format: "png",
+    })) {
+      expect(frame.index).toBe(received);
+      received += 1;
+      const requests = workers.reduce((total, worker) => total + worker.nextRequestCount, 0);
+      expect(requests - received).toBeLessThanOrEqual(concurrency);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(received).toBe(60);
+    expect(workers.map((worker) => worker.prepareCount)).toEqual(Array(concurrency).fill(1));
+    expect(workers.map((worker) => worker.closedStreamIds.length)).toEqual(
+      Array(concurrency).fill(1),
+    );
+    pool.dispose();
+    expect(workers.map((worker) => worker.terminate.mock.calls.length)).toEqual(
+      Array(concurrency).fill(1),
     );
   });
 });

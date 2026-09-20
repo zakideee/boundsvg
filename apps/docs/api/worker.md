@@ -290,6 +290,63 @@ correlated is treated as Worker corruption: the engine is disposed and all
 pending requests reject. A well-formed late response for an unknown ID is
 ignored.
 
+## Request lifetime and bounded admission
+
+A WorkerEngine owns one physical request slot and a FIFO of at most 32 unsent
+requests. Full admission rejects with `WORKER_QUEUE_FULL`; a new request never
+replaces another consumer’s request. Payloads are detached snapshots. The queue
+limit counts requests and does not cap total heap bytes.
+
+All twelve render methods accept `WorkerRequestOptions = { signal?: AbortSignal }`
+as their third argument. The six text measurement methods accept it as their
+second argument. This transport control is separate from render/measurement data
+and is never sent to Core or WASM.
+
+```ts
+const controller = new AbortController();
+const svg = await workerEngine.renderToSvg(
+  scene,
+  { timeMs: 400 },
+  {
+    signal: controller.signal,
+  },
+);
+const measurement = await workerEngine.measureTextBlock(input, {
+  signal: controller.signal,
+});
+```
+
+`timeout` defaults to 30,000ms and accepts only integers from 1 through
+2,147,483,647. Null, non-finite values, fractions, and out-of-range values reject
+with `WORKER_INVALID_TIMEOUT` before Worker creation. The deadline starts at
+admission and includes queue wait. Abort or timeout rejects a Promise once; an
+already posted request keeps the physical slot until its response, a crash, or
+disposal. A timeout never posts the next job while the old computation is running.
+Abort does not promise to cancel synchronous WASM.
+
+`workerEngine.drain(): Promise<void>` permanently closes new admission and waits
+for existing physical work and stream-close acknowledgements. Repeated calls
+return the same Promise without resetting its deadline. New requests reject with
+`WORKER_ENGINE_DRAINING`; expiry rejects with `WORKER_DRAIN_TIMEOUT`. `dispose()`
+is idempotent and settles all local pending work. Only the Worker’s owner
+terminates it: a Provider or Pool terminates the raw Workers it created, while a
+WorkerEngine attached to a caller-owned instance does not.
+
+A raw Worker instance belongs to one WorkerEngine lifetime. Simultaneous attachment
+and attachment after disposal both reject with `WORKER_ALREADY_ATTACHED`. Create
+a fresh Worker when recreating an engine, preventing old responses from colliding
+with reused request IDs.
+
+A WorkerPool keeps its default concurrency of two and maximum of eight. It admits
+one active frame or materialized-frame operation; another rejects with
+`WORKER_POOL_BUSY` without disturbing the first. Creating an iterator does not
+acquire the operation until iteration starts. Pending plus buffered frames never
+exceed concurrency, each Worker owns one stream, and one reserved close control
+slot permits cleanup at full admission. Iterator return, abort, and disposal close
+streams and release compiled state. The operation remains busy until physical
+cleanup completes; a cleanup failure makes the pool unusable instead of lending
+out an uncertain slot.
+
 ## Worker error codes
 
 Failures specific to `WorkerEngine` and `WorkerPool` are `FatalError`
@@ -300,6 +357,13 @@ disposed or failed instance.
 
 | Code                                        | Meaning                                                                                                                              | Retry                                                                                               |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `WORKER_ALREADY_ATTACHED`                   | A raw Worker was already bound to an Engine lifetime.                                                                                | Create a new Worker instance.                                                                       |
+| `WORKER_DRAIN_TIMEOUT`                      | Drain could not confirm physical completion before its deadline.                                                                     | Dispose when graceful completion is unavailable; repeat drain calls share the original Promise.     |
+| `WORKER_ENGINE_DRAINING`                    | Terminal drain has closed admission.                                                                                                 | Use a new Engine and Worker for new requests.                                                       |
+| `WORKER_INVALID_TIMEOUT`                    | Timeout is outside the integer domain 1 through 2,147,483,647ms.                                                                     | Correct the option before creation.                                                                 |
+| `WORKER_POOL_BUSY`                          | The pool already has an active operation.                                                                                            | Finish or close the current iterator before starting another operation.                             |
+| `WORKER_QUEUE_FULL`                         | The Engine already has 32 unsent requests.                                                                                           | Submit less work or wait for capacity; existing requests remain unchanged.                          |
+| `WORKER_REQUEST_ABORTED`                    | The caller's signal aborted this request. Stage is `engine`; context contains `requestId` and `requestType`.                         | Start a new request with a live signal if still needed. Sent work may continue physically.          |
 | `WORKER_CRASHED`                            | The Worker emitted an error event and its `WorkerEngine` was disposed.                                                               | Create a new engine or pool, then retry. Report repeated crashes.                                   |
 | `WORKER_CREATION_FAILED`                    | The Worker constructor failed, for example because of its URL, CSP, or runtime environment.                                          | Fix the environment or Worker URL, then retry creation.                                             |
 | `WORKER_ENGINE_DISPOSED`                    | A request targeted a disposed `WorkerEngine`.                                                                                        | Not on that instance; create a new engine.                                                          |
@@ -323,5 +387,5 @@ disposed or failed instance.
 | `WORKER_PROTOCOL_UNEXPECTED_RESPONSE`       | A valid response type does not match the request that was sent.                                                                      | Verify package versions and rebuild the Worker bundle; report if it persists.                       |
 | `WORKER_PROTOCOL_WARNING_SEVERITY`          | The Worker returned a non-recoverable entry in a warning list.                                                                       | No automatic retry; report the protocol failure.                                                    |
 | `WORKER_REQUEST_TIMEOUT`                    | Initialization or a request exceeded the configured timeout.                                                                         | Check workload and timeout; retry if the render is safe to repeat, or recreate an unhealthy Worker. |
-| `WORKER_TRANSPORT_FAILED`                   | `postMessage` failed before the request could be transported.                                                                        | Fix invalid or detached transfer data; recreate the Worker if needed, then retry.                   |
+| `WORKER_TRANSPORT_FAILED`                   | `postMessage` failed before the request could be transported.                                                                        | Fix invalid or detached transfer data, then retry. Other queued requests remain active.             |
 | `WORKER_UNHANDLED_ERROR`                    | An exception not represented by a boundsvg `FatalError` escaped inside the Worker.                                                   | No automatic retry; inspect the message and report the underlying error.                            |

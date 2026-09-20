@@ -121,7 +121,7 @@ function PngPreview({ vnode }) {
 
 ## Using the BoundSvg Component
 
-The `<BoundSvg>` component is a convenience wrapper that automatically selects sync (`useRenderToSvg`) or async (`useRenderToSvgAsync`) rendering based on the Provider configuration, and injects the SVG via `dangerouslySetInnerHTML`:
+The `<BoundSvg>` component renders through the shared async path on both main and Worker, then injects the SVG via `dangerouslySetInnerHTML`. Main rendering starts in a later task and still blocks while synchronous WASM runs. The previous same-owner SVG stays visible during updates by default:
 
 ```tsx
 import { BoundSvg } from "@boundsvg/react";
@@ -161,6 +161,49 @@ function AnimatedPreview({ vnode }) {
 Keep `nodeIdMetadata: "include"` for an inspection or hit-testing preview and
 use `"omit"` on a separate final-export call. Interactive React APIs force it
 to `"include"` because their event routing depends on those attributes.
+
+## Async hooks and migration
+
+The seven async render hooks live at `@boundsvg/react/async`; the former
+`@boundsvg/react/worker` entry has been removed. The same hooks run with a main
+Provider or with `worker: { mode: "prefer" }`. Worker preference falls back only
+if initialization fails. Runtime render errors, timeouts, and crashes propagate.
+
+```tsx
+import { useRenderToSvgAsync } from "@boundsvg/react/async";
+
+function AsyncPreview({ vnode, revision = 0 }) {
+  const result = useRenderToSvgAsync(vnode, { scale: 1 }, { revision });
+  if (result.svg !== null) {
+    return (
+      <div
+        aria-busy={result.isRendering}
+        dangerouslySetInnerHTML={{ __html: result.svg }}
+      />
+    );
+  }
+  if (result.error) return <p>{result.error.message}</p>;
+  return <p>Rendering...</p>;
+}
+```
+
+`status` describes the latest input: `idle`, `rendering`, `success`, or `error`.
+`isReady` is true only for the latest success. A retained previous result has
+`isStale: true` while rendering or after failure. To clear output during updates,
+pass `{ retainPreviousResult: false }` as the third hook argument or in a
+component's `executionOptions` prop. The same control object accepts `onError`,
+which runs once after a failed generation commits.
+
+Keep VNodes and nested options stable using state or correctly dependent
+`useMemo` values. Async inputs use immutable identity and shallow option values;
+in-place mutations require a revision change. Callback-only updates do not
+request another render. Core resource registration invalidates dependent React
+hooks, while Provider `resourcesRevision` explicitly replaces resources changed
+in place. See the [complete execution contract](/api/react#shared-async-execution).
+
+For SSR and static output, initialize a Core Engine and call its synchronous
+render methods. Provider initialization is effect-based, and async hooks remain
+idle during SSR; the Provider does not automatically become ready on the server.
 
 ## Using phantom components
 

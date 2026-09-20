@@ -1,12 +1,10 @@
 /** @jsxImportSource react */
+
+import { useRenderToAnimatedSvgAndIrAsync, useRenderToAnimatedSvgAsync } from "../../dist/async.js";
 import type { AnimationIterationCount, AnimationTimeline, VNode } from "../../dist/index.js";
 import { AnimatedBoundSvg, BoundSvg, useRenderToAnimatedSvg } from "../../dist/index.js";
 import { InteractiveBoundSvg } from "../../dist/interactive.js";
 import type { BoundSvgConfig } from "../../dist/provider.js";
-import {
-  useRenderToAnimatedSvgAndIrAsync,
-  useRenderToAnimatedSvgAsync,
-} from "../../dist/worker.js";
 
 declare const vnode: VNode;
 

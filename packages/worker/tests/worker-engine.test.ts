@@ -5,10 +5,10 @@ import {
   RecoverableError,
   type SceneNode,
 } from "@boundsvg/core";
-import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import type { WorkerLayoutTransitionInput } from "../src/layout-transition-transport.js";
 import type { WorkerRequest, WorkerResponse } from "../src/protocol.js";
-import { WorkerEngine } from "../src/worker-engine.js";
+import { getWorkerPoolEndpoint, WorkerEngine } from "../src/worker-engine.js";
 
 // ---------------------------------------------------------------------------
 // Mock Worker
@@ -934,6 +934,85 @@ describe("WorkerEngine", () => {
       engine.dispose();
     });
 
+    it("preserves queued consumers and future requests after one post fails", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "render-svg" && request.scene.width === 200) {
+          throw new Error("DataCloneError");
+        }
+      });
+      const first = engine.renderToSvg(SCENE);
+      const firstRequest = mockWorker.lastRequest();
+      const failed = engine.renderToSvg({ ...SCENE, width: 200 }).catch((error: unknown) => error);
+      const third = engine.renderToSvg({ ...SCENE, width: 300 });
+      mockWorker.respond({
+        id: firstRequest.id,
+        type: "render-svg-ok",
+        svg: "first",
+        warnings: [],
+      });
+      await expect(first).resolves.toBe("first");
+      expect(await failed).toMatchObject({ code: "WORKER_TRANSPORT_FAILED" });
+      const thirdRequest = mockWorker.lastRequest();
+      expect(thirdRequest).toMatchObject({ scene: { width: 300 } });
+      mockWorker.respond({
+        id: thirdRequest.id,
+        type: "render-svg-ok",
+        svg: "third",
+        warnings: [],
+      });
+      await expect(third).resolves.toBe("third");
+      const future = engine.renderToSvg(SCENE);
+      mockWorker.respond({
+        id: mockWorker.lastRequest().id,
+        type: "render-svg-ok",
+        svg: "future",
+        warnings: [],
+      });
+      await expect(future).resolves.toBe("future");
+      expect(mockWorker.hasListeners("message")).toBe(true);
+      expect(mockWorker.terminate).not.toHaveBeenCalled();
+      await engine.drain();
+      engine.dispose();
+    });
+
+    it.each([
+      "open",
+      "close",
+    ] as const)("preserves physical stream accounting when %s cannot be posted", async (failure) => {
+      const engine = await createEngine(mockWorker);
+      const endpoint = getWorkerPoolEndpoint(engine);
+      const { prepareSceneForTransport } = await import("../src/worker-engine.js");
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === `${failure}-frame-stream`) {
+          throw new Error("DataCloneError");
+        }
+        if (request.type === "open-frame-stream") {
+          mockWorker.respond({
+            id: request.id,
+            type: "open-frame-stream-ok",
+            streamId: request.id,
+            warnings: [],
+          });
+        }
+      });
+      const opened = endpoint.open(prepareSceneForTransport(SCENE), [{ index: 0, timeMs: 0 }], {
+        format: "svg",
+      });
+      if (failure === "open") {
+        await expect(opened).rejects.toMatchObject({ code: "WORKER_TRANSPORT_FAILED" });
+        await expect(engine.drain()).resolves.toBeUndefined();
+      } else {
+        const stream = await opened;
+        await expect(endpoint.close(stream.streamId)).rejects.toMatchObject({
+          code: "WORKER_TRANSPORT_FAILED",
+        });
+        await expect(engine.drain()).rejects.toMatchObject({ code: "WORKER_TRANSPORT_FAILED" });
+      }
+      expect(mockWorker.terminate).not.toHaveBeenCalled();
+      engine.dispose();
+    });
+
     it("keeps a hostile thrown transport value inside the stable Fatal boundary", async () => {
       const engine = await createEngine(mockWorker);
       const hostile = new Proxy(Object.create(null) as object, {
@@ -1834,7 +1913,7 @@ describe("WorkerEngine", () => {
 
       const first = engine.renderToSvg(SCENE);
       const second = engine.renderToSvg(SCENE);
-      expect(requestIds).toEqual([2, 3]);
+      expect(requestIds).toEqual([2]);
 
       let idDescriptorCalls = 0;
       const malformedResponse = new Proxy(
@@ -1847,7 +1926,7 @@ describe("WorkerEngine", () => {
                 configurable: true,
                 enumerable: true,
                 writable: true,
-                value: idDescriptorCalls === 1 ? requestIds[0] : requestIds[1],
+                value: idDescriptorCalls === 1 ? requestIds[0] : 3,
               };
             }
             return Reflect.getOwnPropertyDescriptor(target, key);
@@ -1860,6 +1939,7 @@ describe("WorkerEngine", () => {
         code: "WORKER_PROTOCOL_INVALID_RESPONSE",
         context: expect.objectContaining({ requestId: 2 }),
       });
+      expect(requestIds).toEqual([2, 3]);
       mockWorker.respond({
         id: requestIds[1]!,
         type: "render-svg-ok",
@@ -2026,9 +2106,13 @@ describe("WorkerEngine", () => {
       const p1 = engine.renderToSvg(SCENE);
       const p2 = engine.renderToSvg(SCENE);
 
-      // Respond in reverse order
-      mockWorker.respond(responses[1]!);
+      // A response for unsent work must not settle that request or free the current slot.
+      expect(responses).toHaveLength(1);
+      mockWorker.respond({ id: 3, type: "render-svg-ok", svg: "unsent", warnings: [] });
+      expect(responses).toHaveLength(1);
       mockWorker.respond(responses[0]!);
+      expect(responses).toHaveLength(2);
+      mockWorker.respond(responses[1]!);
 
       const [svg1, svg2] = await Promise.all([p1, p2]);
       // Each promise should get its matching ID response
@@ -2036,5 +2120,247 @@ describe("WorkerEngine", () => {
       expect(svg2).toContain(`id="3"`);
       engine.dispose();
     });
+  });
+});
+
+describe("Worker request admission and physical completion", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("admits one running and 32 queued requests in FIFO order and rejects overflow", async () => {
+    const worker = new MockWorker();
+    const engine = await createEngine(worker);
+    const completions = Array.from({ length: 64 }, (_, index) =>
+      engine.renderToSvg({ ...SCENE, width: 100 + index }).then(
+        (svg) => ({ svg }),
+        (error: unknown) => ({ error }),
+      ),
+    );
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    for (let index = 0; index < 33; index += 1) {
+      const request = worker.lastRequest();
+      expect(request).toMatchObject({ type: "render-svg", scene: { width: 100 + index } });
+      worker.respond({
+        id: request.id,
+        type: "render-svg-ok",
+        svg: `<svg>${index}</svg>`,
+        warnings: [],
+      });
+    }
+    const results = await Promise.all(completions);
+    expect(results.slice(0, 33)).toEqual(
+      Array.from({ length: 33 }, (_, index) => ({ svg: `<svg>${index}</svg>` })),
+    );
+    for (const rejected of results.slice(33)) {
+      expect(rejected).toMatchObject({
+        error: { code: "WORKER_QUEUE_FULL", stage: "engine", context: { queueLimit: 32 } },
+      });
+    }
+    expect(worker.postMessage).toHaveBeenCalledTimes(34);
+    engine.dispose();
+  });
+
+  it("removes only a queued caller's aborted request and puts its replacement last", async () => {
+    const worker = new MockWorker();
+    const engine = await createEngine(worker);
+    const first = engine.renderToSvg(SCENE);
+    const firstRequest = worker.lastRequest();
+    const controller = new AbortController();
+    const removed = engine
+      .renderToSvg({ ...SCENE, width: 101 }, undefined, { signal: controller.signal })
+      .catch((error: unknown) => error);
+    const other = engine.renderToSvg({ ...SCENE, width: 102 });
+    controller.abort("caller-specific reason must not cross the boundary");
+    const replacement = engine.renderToSvg({ ...SCENE, width: 103 });
+    expect(await removed).toMatchObject({
+      code: "WORKER_REQUEST_ABORTED",
+      context: { requestType: "render-svg" },
+    });
+    worker.respond({ id: firstRequest.id, type: "render-svg-ok", svg: "first", warnings: [] });
+    expect(worker.lastRequest()).toMatchObject({ scene: { width: 102 } });
+    worker.respond({
+      id: worker.lastRequest().id,
+      type: "render-svg-ok",
+      svg: "other",
+      warnings: [],
+    });
+    expect(worker.lastRequest()).toMatchObject({ scene: { width: 103 } });
+    worker.respond({
+      id: worker.lastRequest().id,
+      type: "render-svg-ok",
+      svg: "replacement",
+      warnings: [],
+    });
+    expect(await Promise.all([first, other, replacement])).toEqual([
+      "first",
+      "other",
+      "replacement",
+    ]);
+    expect(worker.postMessage).toHaveBeenCalledTimes(4);
+    engine.dispose();
+  });
+
+  it("settles a sent abort once while holding the slot until its matching response", async () => {
+    const worker = new MockWorker();
+    const engine = await createEngine(worker);
+    const controller = new AbortController();
+    const settled = vi.fn();
+    const first = engine
+      .renderToSvg(SCENE, undefined, { signal: controller.signal })
+      .catch(settled);
+    const sent = worker.lastRequest();
+    controller.abort();
+    await first;
+    const next = engine.renderToSvg(SCENE);
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    worker.respond({ id: sent.id + 100, type: "render-svg-ok", svg: "unknown", warnings: [] });
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    worker.respond({ id: sent.id, type: "render-svg-ok", svg: "late", warnings: [] });
+    expect(worker.postMessage).toHaveBeenCalledTimes(3);
+    worker.respond({
+      id: worker.lastRequest().id,
+      type: "render-svg-ok",
+      svg: "next",
+      warnings: [],
+    });
+    expect(await next).toBe("next");
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(settled.mock.calls[0]?.[0]).toMatchObject({ code: "WORKER_REQUEST_ABORTED" });
+    engine.dispose();
+  });
+
+  it("counts queue wait in the timeout and does not release a timed-out physical slot", async () => {
+    vi.useFakeTimers();
+    const worker = new MockWorker();
+    const engine = await createEngine(worker);
+    const first = engine.renderToSvg(SCENE).catch((error: unknown) => error);
+    const firstRequest = worker.lastRequest();
+    await vi.advanceTimersByTimeAsync(250);
+    const second = engine.renderToSvg(SCENE).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(await first).toMatchObject({ code: "WORKER_REQUEST_TIMEOUT" });
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(await second).toMatchObject({ code: "WORKER_REQUEST_TIMEOUT" });
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    worker.respond({ id: firstRequest.id, type: "render-svg-ok", svg: "late", warnings: [] });
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    engine.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(worker.hasListeners("message")).toBe(false);
+  });
+
+  it("closes admission during drain and shares the same completion Promise", async () => {
+    const worker = new MockWorker();
+    const engine = await createEngine(worker);
+    const rendering = engine.renderToSvg(SCENE);
+    const request = worker.lastRequest();
+    const drained = vi.fn();
+    const drain = engine.drain();
+    void drain.then(drained);
+    expect(engine.drain()).toBe(drain);
+    await expect(engine.renderToSvg(SCENE)).rejects.toMatchObject({
+      code: "WORKER_ENGINE_DRAINING",
+    });
+    expect(drained).not.toHaveBeenCalled();
+    worker.respond({ id: request.id, type: "render-svg-ok", svg: "done", warnings: [] });
+    await rendering;
+    await drain;
+    expect(drained).toHaveBeenCalledTimes(1);
+    expect(engine.drain()).toBe(drain);
+    await expect(engine.renderToSvg(SCENE)).rejects.toMatchObject({
+      code: "WORKER_ENGINE_DRAINING",
+    });
+    engine.dispose();
+  });
+
+  it("does not reset a failed drain deadline or claim physical cancellation", async () => {
+    vi.useFakeTimers();
+    const worker = new MockWorker();
+    const engine = await createEngine(worker);
+    const rendering = engine.renderToSvg(SCENE).catch((error: unknown) => error);
+    const drain = engine.drain();
+    const failedDrain = drain.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await failedDrain).toMatchObject({
+      code: "WORKER_DRAIN_TIMEOUT",
+      context: { timeoutMs: 1000 },
+    });
+    expect(await rendering).toMatchObject({ code: "WORKER_REQUEST_TIMEOUT" });
+    expect(engine.drain()).toBe(drain);
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    engine.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("waits for a late stream open before sending reserved cleanup and finishing drain", async () => {
+    vi.useFakeTimers();
+    const worker = new MockWorker();
+    const engine = await createEngine(worker);
+    const endpoint = getWorkerPoolEndpoint(engine);
+    const { prepareSceneForTransport } = await import("../src/worker-engine.js");
+    const opened = endpoint
+      .open(prepareSceneForTransport(SCENE), [{ index: 0, timeMs: 0 }], { format: "svg" })
+      .catch((error: unknown) => error);
+    const openRequest = worker.lastRequest();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await opened).toMatchObject({ code: "WORKER_REQUEST_TIMEOUT" });
+    expect(worker.postMessage).toHaveBeenCalledTimes(2);
+    const drain = engine.drain();
+    worker.respond({
+      id: openRequest.id,
+      type: "open-frame-stream-ok",
+      streamId: openRequest.id,
+      warnings: [],
+    });
+    const close = worker.lastRequest();
+    expect(close).toMatchObject({ type: "close-frame-stream", streamId: openRequest.id });
+    worker.respond({ id: close.id, type: "close-frame-stream-ok", streamId: openRequest.id });
+    await drain;
+    engine.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    null,
+    0,
+    -1,
+    0.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    2_147_483_648,
+  ])("rejects timeout %s before creating a Worker", async (timeout) => {
+    const createWorker = vi.fn();
+    vi.stubGlobal("Worker", createWorker);
+    await expect(
+      WorkerEngine.create({
+        worker: new URL("https://example.com/worker.js"),
+        fonts: [],
+        timeout: timeout as number,
+      }),
+    ).rejects.toMatchObject({
+      code: "WORKER_INVALID_TIMEOUT",
+      stage: "validate",
+      context: { field: "timeout" },
+    });
+    expect(createWorker).not.toHaveBeenCalled();
+  });
+
+  it("rejects concurrent attachment and reattachment after disposal", async () => {
+    const worker = new MockWorker();
+    const first = WorkerEngine.create({ worker, fonts: [] });
+    await expect(WorkerEngine.create({ worker, fonts: [] })).rejects.toMatchObject({
+      code: "WORKER_ALREADY_ATTACHED",
+    });
+    const init = worker.lastRequest();
+    worker.respond({ id: init.id, type: "init-ok" });
+    const engine = await first;
+    engine.dispose();
+    await expect(WorkerEngine.create({ worker, fonts: [] })).rejects.toMatchObject({
+      code: "WORKER_ALREADY_ATTACHED",
+    });
+    expect(worker.terminate).not.toHaveBeenCalled();
   });
 });

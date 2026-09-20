@@ -4,7 +4,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     provider: "src/provider.tsx",
-    worker: "src/worker.ts",
+    async: "src/async.ts",
     png: "src/png.ts",
     interactive: "src/interactive.ts",
     debug: "src/debug.tsx",

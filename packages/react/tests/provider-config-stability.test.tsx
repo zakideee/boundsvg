@@ -506,3 +506,87 @@ describe("BoundSvgProvider config stability", () => {
     mounted.unmount();
   });
 });
+
+describe("Provider resource snapshots", () => {
+  it("captures fonts and geometry before awaiting initialization", async () => {
+    const fontGate = deferred<ResolvedBrowserFont[]>();
+    mockPreloadFonts.mockImplementationOnce(() => fontGate.promise);
+    const bytes = new Uint8Array([9, 1, 2, 3, 9]);
+    const geometry = {
+      viewBox: { width: 10, height: 10 },
+      root: { kind: "path" as const, nodeId: "part", d: "M0 0H10V10Z" },
+    };
+    const config: BoundSvgConfig = {
+      fonts: [{ alias: "font", source: bytes.subarray(1, 4) }],
+      geometries: [{ id: "shape", doc: geometry }],
+    };
+    const mounted = mount(
+      <BoundSvgProvider config={config}>
+        <ContextProbe />
+      </BoundSvgProvider>,
+    );
+    bytes[1] = 99;
+    geometry.root.d = "M0 0H99V99Z";
+    const capturedFonts = mockPreloadFonts.mock.calls[0]![0];
+    expect(capturedFonts[0]!.source).toEqual(new Uint8Array([1, 2, 3]));
+    fontGate.resolve([
+      { alias: "font", weight: 400, style: "normal", data: new Uint8Array([1, 2, 3]) },
+    ]);
+    await flush();
+    expect(mockCreateEngineAsync.mock.calls[0]?.[0]).toMatchObject({
+      geometries: [{ id: "shape", doc: { root: { d: "M0 0H10V10Z" } } }],
+    });
+    mounted.unmount();
+  });
+
+  it("reinitializes the same resource references when resourcesRevision changes", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const fonts = [{ alias: "font", source: bytes }];
+    let setRevision!: (revision: number) => void;
+    function Parent() {
+      const [resourcesRevision, updateRevision] = useState(0);
+      setRevision = updateRevision;
+      return (
+        <BoundSvgProvider config={{ fonts, resourcesRevision }}>
+          <ContextProbe />
+        </BoundSvgProvider>
+      );
+    }
+    const mounted = mount(<Parent />);
+    await flush();
+    bytes[0] = 9;
+    act(() => setRevision(1));
+    await flush();
+    expect(mockCreateEngineAsync).toHaveBeenCalledTimes(2);
+    expect(createdEngines[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(mockCreateEngineAsync.mock.calls[1]?.[0]).toMatchObject({
+      fonts: [{ data: new Uint8Array([9, 2, 3]) }],
+    });
+    mounted.unmount();
+  });
+
+  it.each(
+    ["required", "prefer"].flatMap((mode) =>
+      [null, 0, 1.5, Infinity, NaN, 2_147_483_648].map((timeoutMs) => ({ mode, timeoutMs })),
+    ),
+  )("rejects $mode timeout $timeoutMs before creating a Worker", async ({ mode, timeoutMs }) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const config = {
+      fonts: [],
+      worker: { mode, timeoutMs },
+    } as unknown as BoundSvgConfig;
+    const mounted = mount(
+      <BoundSvgProvider config={config}>
+        <ContextProbe />
+      </BoundSvgProvider>,
+    );
+    await flush();
+    expect(createdWorkers).toHaveLength(0);
+    expect(mockCreateEngineAsync).not.toHaveBeenCalled();
+    expect(currentSnapshot?.error).toMatchObject({
+      code: "WORKER_INVALID_TIMEOUT",
+      stage: "validate",
+    });
+    mounted.unmount();
+  });
+});

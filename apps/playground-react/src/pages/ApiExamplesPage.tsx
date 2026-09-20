@@ -9,6 +9,7 @@ import {
   toVNode,
   type VNode,
 } from "@boundsvg/react";
+import { useRenderToPngAsync, useRenderToSvgAsync } from "@boundsvg/react/async";
 import {
   type EventCallback,
   InteractiveBoundSvg,
@@ -17,7 +18,6 @@ import {
   useTextCopy,
 } from "@boundsvg/react/interactive";
 import { type BoundSvgConfig, BoundSvgProvider, useBoundSvg } from "@boundsvg/react/provider";
-import { useRenderToPngAsync, useRenderToSvgAsync } from "@boundsvg/react/worker";
 import Prism from "prismjs";
 import { useCallback, useDeferredValue, useMemo, useState, useTransition } from "react";
 import "prismjs/components/prism-markup";
@@ -65,11 +65,11 @@ const { svg, error, isReady } = useRenderToSvg(vnode, { debug: false });`,
   "png-hook": `import { useRenderToPng } from "@boundsvg/react/png";
 
 const { dataUrl, error, isReady } = useRenderToPng(vnode, { scale: 2, textPathMode: "merged" });`,
-  "svg-async": `import { useRenderToSvgAsync } from "@boundsvg/react/worker";
+  "svg-async": `import { useRenderToSvgAsync } from "@boundsvg/react/async";
 
 // Requires BoundSvgProvider with worker: { mode: "prefer" | "required" }
 const { svg, error, isRendering, isReady } = useRenderToSvgAsync(vnode, { debug: false });`,
-  "png-async": `import { useRenderToPngAsync } from "@boundsvg/react/worker";
+  "png-async": `import { useRenderToPngAsync } from "@boundsvg/react/async";
 
 // Requires BoundSvgProvider with worker: { mode: "prefer" | "required" }
 const { dataUrl, png, error, isRendering, isReady } = useRenderToPngAsync(vnode, { scale: 2 });`,
@@ -248,8 +248,7 @@ function SvgAsyncSurface({
   vnode: VNode | null;
   renderOptions?: SharedRenderOptions;
 }) {
-  const { workerEngine, status, error: providerError } = useBoundSvg();
-  const { svg, error, isRendering, isReady } = useRenderToSvgAsync(vnode, renderOptions);
+  const { svg, error, isRendering } = useRenderToSvgAsync(vnode, renderOptions);
   if (error) {
     return (
       <div className="preview-stage">
@@ -257,31 +256,11 @@ function SvgAsyncSurface({
       </div>
     );
   }
-  if (status === "error") {
-    return (
-      <div className="preview-stage">
-        <p className="error-text">
-          Initialization failed: {providerError?.message ?? "unknown error"}
-        </p>
-      </div>
-    );
-  }
-  if (status === "ready" && !workerEngine && !isReady) {
+  if (svg === null) {
     return (
       <div className="preview-stage">
         <p className="placeholder-text">
-          Worker unavailable — fell back to main-thread engine.
-          <br />
-          Use sync hooks (useRenderToSvg) for main-thread rendering.
-        </p>
-      </div>
-    );
-  }
-  if (!isReady || !svg) {
-    return (
-      <div className="preview-stage">
-        <p className="placeholder-text">
-          {isRendering ? "Rendering in Worker..." : "Waiting for Worker..."}
+          {isRendering ? "Rendering..." : "Waiting for renderer..."}
         </p>
       </div>
     );
@@ -300,8 +279,7 @@ function PngAsyncSurface({
   vnode: VNode | null;
   renderOptions?: SharedRenderOptions;
 }) {
-  const { workerEngine, status, error: providerError } = useBoundSvg();
-  const { dataUrl, error, isRendering, isReady } = useRenderToPngAsync(vnode, renderOptions);
+  const { dataUrl, error, isRendering } = useRenderToPngAsync(vnode, renderOptions);
   if (error) {
     return (
       <div className="preview-stage">
@@ -309,31 +287,11 @@ function PngAsyncSurface({
       </div>
     );
   }
-  if (status === "error") {
-    return (
-      <div className="preview-stage">
-        <p className="error-text">
-          Initialization failed: {providerError?.message ?? "unknown error"}
-        </p>
-      </div>
-    );
-  }
-  if (status === "ready" && !workerEngine && !isReady) {
+  if (dataUrl === null) {
     return (
       <div className="preview-stage">
         <p className="placeholder-text">
-          Worker unavailable — fell back to main-thread engine.
-          <br />
-          Use sync hooks (useRenderToPng) for main-thread rendering.
-        </p>
-      </div>
-    );
-  }
-  if (!isReady || !dataUrl) {
-    return (
-      <div className="preview-stage">
-        <p className="placeholder-text">
-          {isRendering ? "Rendering in Worker..." : "Waiting for Worker..."}
+          {isRendering ? "Rendering..." : "Waiting for renderer..."}
         </p>
       </div>
     );

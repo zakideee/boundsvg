@@ -269,7 +269,7 @@ describe("useInteractiveSvg", () => {
 });
 
 describe("useRenderToPng cache", () => {
-  it("reuses PNG render results for the same vnode and options references", () => {
+  it("isolates PNG results between consumers with the same input references", () => {
     const vnode = sampleVNode();
     const options: RenderSvgOptions = { scale: 2, textPathMode: "merged" };
     const png = new Uint8Array([137, 80, 78, 71]);
@@ -295,11 +295,12 @@ describe("useRenderToPng cache", () => {
       </BoundSvgContext.Provider>,
     );
 
-    expect(renderToPng).toHaveBeenCalledTimes(1);
+    expect(renderToPng).toHaveBeenCalledTimes(2);
     expect(firstResult!.isReady).toBe(true);
     expect(secondResult!.isReady).toBe(true);
-    expect(firstResult!.png).toBe(png);
-    expect(secondResult!.png).toBe(png);
+    expect(firstResult!.png).toEqual(png);
+    expect(secondResult!.png).toEqual(png);
+    expect(firstResult!.png).not.toBe(secondResult!.png);
     expect(firstResult!.dataUrl).toBe(secondResult!.dataUrl);
   });
 

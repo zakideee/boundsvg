@@ -7,13 +7,13 @@ import type {
   LayerWarning,
   VNode,
 } from "@boundsvg/core";
-import { type BoundSvgConfig, BoundSvgProvider, useBoundSvg } from "@boundsvg/react/provider";
 import {
   useRenderToLayeredPngAsync,
   useRenderToLayeredSvgAsync,
   useRenderToPngAsync,
   useRenderToSvgAndIrAsync,
-} from "@boundsvg/react/worker";
+} from "@boundsvg/react/async";
+import { type BoundSvgConfig, BoundSvgProvider, useBoundSvg } from "@boundsvg/react/provider";
 import Prism from "prismjs";
 import { buildNodeBBoxMap } from "../../../../playground-shared/event-effects.js";
 import "prismjs/components/prism-markup";
@@ -21,7 +21,7 @@ import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
 import "prismjs/components/prism-json";
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 import type { EventEffectOverlayDisplayOptions } from "../../../../playground-shared/inspect-hover.js";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
 import { BBoxOverlayField } from "../../components/fields";
@@ -79,37 +79,7 @@ function layerKey(layer: { id: string; paintOrder: number }): string {
 }
 
 /**
- * Gate a hook's data on "it was produced for the currently active vnode".
- *
- * The shared worker hooks keep stale `data` during re-renders (the field is
- * only replaced once the new promise resolves). When users flip between preset
- * + format in rapid succession, a format whose hook hasn't finished rendering
- * the new preset would briefly display the previous preset's result. This
- * helper stores the last *settled* result together with the vnode that
- * produced it, and returns `null` whenever the current vnode doesn't match —
- * so the consumer shows a "Rendering…" placeholder instead of stale data.
- */
-function useStableResult<T>(data: T | null, isRendering: boolean, vnode: VNode | null): T | null {
-  const [entry, setEntry] = useState<{ data: T; vnode: VNode | null } | null>(null);
-
-  useEffect(() => {
-    if (!isRendering && data !== null) {
-      setEntry((prev) =>
-        prev !== null && prev.data === data && prev.vnode === vnode ? prev : { data, vnode },
-      );
-    }
-  }, [isRendering, data, vnode]);
-
-  if (entry === null) {
-    return null;
-  }
-  return entry.vnode === vnode ? entry.data : null;
-}
-
-/**
- * Bundle the four async worker renders plus their "stable-for-current-vnode"
- * gating. Extracted into its own hook to keep `LayeredContent` under biome's
- * cognitive-complexity ceiling.
+ * Bundle four async renders with previous-result retention disabled for comparison.
  */
 function useLayeredRenders(
   vnode: VNode | null,
@@ -125,48 +95,39 @@ function useLayeredRenders(
 
   const pngVNode = includePng ? vnode : null;
   const singleSvgVNode = includeSingleSvg ? vnode : null;
-  const singleSvg = useRenderToSvgAndIrAsync(singleSvgVNode);
-  const singlePng = useRenderToPngAsync(pngVNode);
-  const layeredSvg = useRenderToLayeredSvgAsync(vnode, layeredOptions);
-  const layeredPng = useRenderToLayeredPngAsync(pngVNode, layeredOptions);
-
-  const stableSingleSvg = useStableResult(singleSvg.svg, singleSvg.isRendering, singleSvgVNode);
-  const stableSingleIr = useStableResult(singleSvg.ir, singleSvg.isRendering, singleSvgVNode);
-  const stableSinglePngDataUrl = useStableResult(
-    singlePng.dataUrl,
-    singlePng.isRendering,
-    pngVNode,
-  );
-  const stableLayeredSvg = useStableResult(layeredSvg.result, layeredSvg.isRendering, vnode);
-  const stableLayeredPng = useStableResult(layeredPng.result, layeredPng.isRendering, pngVNode);
-  const stableLayerDataUrls = useStableResult(
-    layeredPng.layerDataUrls,
-    layeredPng.isRendering,
-    pngVNode,
-  );
+  const singleSvg = useRenderToSvgAndIrAsync(singleSvgVNode, undefined, {
+    retainPreviousResult: false,
+  });
+  const singlePng = useRenderToPngAsync(pngVNode, undefined, { retainPreviousResult: false });
+  const layeredSvg = useRenderToLayeredSvgAsync(vnode, layeredOptions, {
+    retainPreviousResult: false,
+  });
+  const layeredPng = useRenderToLayeredPngAsync(pngVNode, layeredOptions, {
+    retainPreviousResult: false,
+  });
 
   return {
     singleSvgStatus: {
       isRendering: singleSvg.isRendering,
       error: singleSvg.error,
-      svg: stableSingleSvg,
-      ir: stableSingleIr,
+      svg: singleSvg.svg,
+      ir: singleSvg.ir,
     },
     singlePngStatus: {
       isRendering: singlePng.isRendering,
       error: singlePng.error,
-      dataUrl: stableSinglePngDataUrl,
+      dataUrl: singlePng.dataUrl,
     },
     layeredSvgStatus: {
       isRendering: layeredSvg.isRendering,
       error: layeredSvg.error,
-      result: stableLayeredSvg,
+      result: layeredSvg.result,
     },
     layeredPngStatus: {
       isRendering: layeredPng.isRendering,
       error: layeredPng.error,
-      result: stableLayeredPng,
-      layerDataUrls: stableLayerDataUrls,
+      result: layeredPng.result,
+      layerDataUrls: layeredPng.layerDataUrls,
     },
   };
 }

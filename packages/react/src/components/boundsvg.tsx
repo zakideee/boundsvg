@@ -1,15 +1,15 @@
 import type { RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/core";
 import { type ReactNode, useMemo } from "react";
-import { useBoundSvg } from "../hooks/use-boundsvg.js";
-import { useRenderToAnimatedSvg } from "../hooks/use-render-animated-svg.js";
+import type { RenderExecutionOptions } from "../execution/types.js";
 import { useRenderToAnimatedSvgAsync } from "../hooks/use-render-animated-svg-async.js";
-import { useRenderToSvg } from "../hooks/use-render-svg.js";
 import { useRenderToSvgAsync } from "../hooks/use-render-svg-async.js";
 import { toVNodeFromChildren } from "../utils/to-vnode.js";
 
 const ERROR_FONT_SIZE_PX = 12;
 
 type BoundSvgBaseProps = {
+  /** Revision, previous-result retention, and committed error notification. */
+  executionOptions?: RenderExecutionOptions;
   /** VNode tree to render (legacy API — takes precedence over children) */
   vnode?: VNode | null;
 
@@ -67,7 +67,7 @@ function useResolvedVNode(props: BoundSvgBaseProps): { vnode: VNode | null; erro
 function renderResult(
   svg: string | null,
   error: Error | null,
-  { isReady, props }: { isReady: boolean; props: BoundSvgBaseProps },
+  props: BoundSvgBaseProps,
 ): React.JSX.Element {
   const { className, fallback, errorFallback } = props;
 
@@ -85,30 +85,12 @@ function renderResult(
     );
   }
 
-  if (!isReady || !svg) {
+  if (svg === null) {
     return <>{fallback ?? null}</>;
   }
 
   // Engine-generated SVG is trusted (no user-controlled HTML injection)
   return <div className={className} dangerouslySetInnerHTML={{ __html: svg }} />;
-}
-
-/** Sync rendering via main-thread Engine */
-function BoundSvgSync(props: BoundSvgProps) {
-  const resolved = useResolvedVNode(props);
-  const { svg, error: renderError, isReady } = useRenderToSvg(resolved.vnode, props.renderOptions);
-  return renderResult(svg, resolved.error ?? renderError, { isReady, props });
-}
-
-/** Async rendering via WorkerEngine */
-function BoundSvgAsync(props: BoundSvgProps) {
-  const resolved = useResolvedVNode(props);
-  const {
-    svg,
-    error: renderError,
-    isReady,
-  } = useRenderToSvgAsync(resolved.vnode, props.renderOptions);
-  return renderResult(svg, resolved.error ?? renderError, { isReady, props });
 }
 
 /**
@@ -119,36 +101,25 @@ function BoundSvgAsync(props: BoundSvgProps) {
  * 1. **Legacy**: `<BoundSvg vnode={vnode} />`
  * 2. **Declarative**: `<BoundSvg width={960} height={320}><Flex>...</Flex></BoundSvg>`
  *
- * Automatically selects sync (main-thread Engine) or async (WorkerEngine)
- * rendering based on the Provider configuration.
+ * Uses the shared async path on both main and Worker execution owners.
  */
 export function BoundSvg(props: BoundSvgProps) {
-  const { workerEngine } = useBoundSvg();
-  return workerEngine ? <BoundSvgAsync {...props} /> : <BoundSvgSync {...props} />;
-}
-
-function AnimatedBoundSvgSync(props: AnimatedBoundSvgProps) {
   const resolved = useResolvedVNode(props);
-  const {
-    svg,
-    error: renderError,
-    isReady,
-  } = useRenderToAnimatedSvg(resolved.vnode, props.renderOptions);
-  return renderResult(svg, resolved.error ?? renderError, { isReady, props });
-}
-
-function AnimatedBoundSvgAsync(props: AnimatedBoundSvgProps) {
-  const resolved = useResolvedVNode(props);
-  const {
-    svg,
-    error: renderError,
-    isReady,
-  } = useRenderToAnimatedSvgAsync(resolved.vnode, props.renderOptions);
-  return renderResult(svg, resolved.error ?? renderError, { isReady, props });
+  const { svg, error } = useRenderToSvgAsync(
+    resolved.vnode,
+    props.renderOptions,
+    props.executionOptions,
+  );
+  return renderResult(svg, resolved.error ?? error, props);
 }
 
 /** Render authored animation tracks as declarative animated SVG. */
 export function AnimatedBoundSvg(props: AnimatedBoundSvgProps) {
-  const { workerEngine } = useBoundSvg();
-  return workerEngine ? <AnimatedBoundSvgAsync {...props} /> : <AnimatedBoundSvgSync {...props} />;
+  const resolved = useResolvedVNode(props);
+  const { svg, error } = useRenderToAnimatedSvgAsync(
+    resolved.vnode,
+    props.renderOptions,
+    props.executionOptions,
+  );
+  return renderResult(svg, resolved.error ?? error, props);
 }

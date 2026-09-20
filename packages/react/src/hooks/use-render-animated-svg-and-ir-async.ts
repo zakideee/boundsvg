@@ -1,26 +1,30 @@
 import type { IR, RenderAnimatedSvgOptions, VNode } from "@boundsvg/core";
+import { useMemo } from "react";
+import { cloneRenderedIr } from "../execution/clone-rendered-ir.js";
+import { mapRenderExecutionResult, type RenderExecutionOptions } from "../execution/types.js";
+import { type RenderAdapter, useRenderExecution } from "./use-render-execution.js";
 import type { UseRenderToSvgAndIrAsyncResult } from "./use-render-svg-and-ir-async.js";
-import { useWorkerRender } from "./use-worker-render.js";
 
-/** Render declarative animated SVG and its IR via the WorkerEngine. */
+const adapter: RenderAdapter<{ svg: string; ir: IR }, RenderAnimatedSvgOptions> = {
+  main: (engine, scene, options) => engine.renderToAnimatedSvgAndIR(scene, options),
+  worker: (engine, scene, { options, signal }) =>
+    engine.renderToAnimatedSvgAndIR(scene, options, { signal }),
+};
+
+/** Render committed inputs through the Provider's main or Worker execution owner. */
 export function useRenderToAnimatedSvgAndIrAsync(
   vnode: VNode | null,
   renderOptions: RenderAnimatedSvgOptions,
+  executionOptions?: RenderExecutionOptions,
 ): UseRenderToSvgAndIrAsyncResult {
-  const { data, error, isRendering, isReady } = useWorkerRender<
-    { svg: string; ir: IR },
-    RenderAnimatedSvgOptions
-  >({
-    vnode,
-    renderFn: (engine, scene, options) => engine.renderToAnimatedSvgAndIR(scene, options),
-    renderOptions,
-  });
+  const result = useRenderExecution({ vnode, renderOptions, executionOptions, adapter });
 
-  return {
-    svg: data?.svg ?? null,
-    ir: data?.ir ?? null,
-    error,
-    isRendering,
-    isReady,
-  };
+  const ir = useMemo(
+    () => (result.data === null ? null : cloneRenderedIr(result.data.ir)),
+    [result.data],
+  );
+  return mapRenderExecutionResult(result, (result) => ({ svg: result.svg, ir: ir as IR }), {
+    svg: null,
+    ir: null,
+  });
 }

@@ -494,6 +494,8 @@ interface Engine {
   ): IntrinsicInlineSizeResult;
   shrinkwrapText(input: ShrinkwrapTextInput): ShrinkwrapTextResult;
   shrinkwrapFlow(input: ShrinkwrapFlowInput): ShrinkwrapFlowResult;
+  readonly resourceVersion: number;
+  subscribeResourceChanges(listener: () => void): () => void;
   registerFonts(fonts: FontFaceInput[]): void;
   registerGeometry(id: string, doc: GeometryDoc): void;
   registerSymbol(id: string, def: SymbolDefinition): void;
@@ -934,6 +936,32 @@ new pass.
 `renderFrames` samples one fixed layout. To distribute frames across
 Workers, or to render independently materialized layout-reactive scenes, use
 [`WorkerPool`](/api/worker#workerpool).
+
+### Resource invalidation
+
+`engine.resourceVersion` is a non-negative safe integer invalidation generation.
+An Engine starts at zero; resource registration advances the generation.
+`engine.subscribeResourceChanges(listener)` returns an idempotent unsubscribe
+function. Listeners are notifications only: do not synchronously re-enter rendering
+or mutate resources from a listener.
+
+A `registerFonts` call invalidates once in `finally` after any backend registration
+attempt, including partial success followed by failure. The original failure is
+preserved and successfully registered faces remain registered. Empty calls and
+failures before a backend attempt do not invalidate. Geometry/symbol registration
+and replacement invalidate once, even with the same object identity; deletion
+invalidates only when an entry existed.
+
+The generation observes explicit registrations, not mutations inside an object
+already in a registry. React callers must register again or update their input
+revision to request a redraw after an in-place edit. Existing compiled scenes keep
+their original owner and snapshot semantics when the version changes.
+
+Before exhaustion, a mutation is rejected with `RESOURCE_VERSION_EXHAUSTED` at
+stage `engine`, without changing resources. Disposal sends one terminal
+notification and releases all listeners without incrementing the version; reading
+`resourceVersion` afterward throws `ENGINE_DISPOSED`. Listener exceptions are
+reported asynchronously after the other listeners have been notified.
 
 ### `engine.dispose()`
 

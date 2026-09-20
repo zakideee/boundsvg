@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /** @jsxImportSource react */
 
 import {
@@ -8,11 +9,15 @@ import {
   type VNode,
 } from "@boundsvg/core";
 import type { WorkerEngine } from "@boundsvg/worker";
+import { act, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { AnimatedBoundSvg, BoundSvg } from "../src/components/boundsvg.js";
 import { Flex, Text } from "../src/components/nodes.js";
 import { BoundSvgContext } from "../src/context.js";
+import { MainRenderSchedulerContext } from "../src/execution/context.js";
+import { MainRenderScheduler } from "../src/execution/main-render-scheduler.js";
 import { useBoundSvg } from "../src/hooks/use-boundsvg.js";
 import type { BoundSvgContextValue } from "../src/types.js";
 import { makeEngineMock, makeWorkerEngineMock } from "./test-doubles.js";
@@ -20,6 +25,32 @@ import { makeEngineMock, makeWorkerEngineMock } from "./test-doubles.js";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+beforeAll(() => {
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+});
+
+async function renderCommitted(ui: ReactNode): Promise<string> {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const scheduler = new MainRenderScheduler();
+  try {
+    act(() =>
+      root.render(
+        <MainRenderSchedulerContext.Provider value={scheduler}>
+          {ui}
+        </MainRenderSchedulerContext.Provider>,
+      ),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    return container.innerHTML;
+  } finally {
+    act(() => root.unmount());
+    scheduler.dispose();
+  }
+}
 
 function sampleVNode(): VNode {
   return {
@@ -112,11 +143,11 @@ describe("BoundSvgContextValue with workerEngine", () => {
 // ---------------------------------------------------------------------------
 
 describe("BoundSvg Worker/non-Worker branching", () => {
-  it("uses sync rendering when engine is available (no workerEngine)", () => {
+  it("uses async scheduling when a main Engine is available", async () => {
     const renderToSvg = vi.fn(() => '<svg viewBox="0 0 100 100"><text>hello</text></svg>');
     const engine = makeEngineMock({ renderToSvg });
 
-    const html = renderToString(
+    const html = await renderCommitted(
       <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
         <BoundSvg vnode={sampleVNode()} className="rendered-boundsvg" />
       </BoundSvgContext.Provider>,
@@ -163,14 +194,14 @@ describe("BoundSvg Worker/non-Worker branching", () => {
     expect(html).toContain("loading");
   });
 
-  it("renders error fallback when sync render throws", () => {
+  it("renders error fallback when main render throws", async () => {
     const engine = makeEngineMock({
       renderToSvg: vi.fn(() => {
         throw new Error("render boom");
       }),
     });
 
-    const html = renderToString(
+    const html = await renderCommitted(
       <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
         <BoundSvg
           vnode={sampleVNode()}
@@ -184,7 +215,7 @@ describe("BoundSvg Worker/non-Worker branching", () => {
     expect(html).not.toContain('role="alert"');
   });
 
-  it("passes a text-layout FatalError to the sync error fallback unchanged", () => {
+  it("passes a text-layout FatalError to the main error fallback unchanged", async () => {
     const fatalError = new FatalError(
       "TEXT_FONT_UNAVAILABLE",
       "No requested font is available for text layout.",
@@ -208,7 +239,7 @@ describe("BoundSvg Worker/non-Worker branching", () => {
     });
     let observedError: Error | undefined;
 
-    renderToString(
+    await renderCommitted(
       <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
         <BoundSvg
           vnode={sampleVNode()}
@@ -229,7 +260,7 @@ describe("BoundSvg Worker/non-Worker branching", () => {
     });
   });
 
-  it("passes a rendered Shape FatalError to the sync error fallback unchanged", () => {
+  it("passes a rendered Shape FatalError to the main error fallback unchanged", async () => {
     const fatalError = new FatalError("SHAPE_PATH_DATA_INVALID", "Shape path data is invalid.", {
       stage: "validate",
       nodeId: "invalid-shape",
@@ -242,7 +273,7 @@ describe("BoundSvg Worker/non-Worker branching", () => {
     });
     let observedError: Error | undefined;
 
-    renderToString(
+    await renderCommitted(
       <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
         <BoundSvg
           vnode={sampleVNode()}
@@ -288,12 +319,12 @@ describe("BoundSvg Worker/non-Worker branching", () => {
     expect(html).toContain("Unsupported React element &lt;div&gt;");
   });
 
-  it("passes renderOptions to sync engine", () => {
+  it("passes renderOptions to the main Engine", async () => {
     const renderToSvg = vi.fn(() => '<svg viewBox="0 0 100 100"></svg>');
     const engine = makeEngineMock({ renderToSvg });
     const options: RenderSvgOptions = { scale: 2 };
 
-    renderToString(
+    await renderCommitted(
       <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
         <BoundSvg vnode={sampleVNode()} renderOptions={options} />
       </BoundSvgContext.Provider>,
@@ -307,7 +338,7 @@ describe("BoundSvg Worker/non-Worker branching", () => {
     expect(calledOptions.textPathMode).toBe("merged");
   });
 
-  it("routes AnimatedBoundSvg through the dedicated animated SVG method", () => {
+  it("routes AnimatedBoundSvg through the dedicated animated SVG method", async () => {
     const renderToAnimatedSvg = vi.fn(() => '<svg data-mode="animated"></svg>');
     const engine = makeEngineMock({ renderToAnimatedSvg });
     const renderOptions: RenderAnimatedSvgOptions = {
@@ -316,16 +347,19 @@ describe("BoundSvg Worker/non-Worker branching", () => {
       nodeIdMetadata: "omit",
     };
 
-    const html = renderToString(
+    const html = await renderCommitted(
       <BoundSvgContext.Provider value={createMainThreadContext(engine)}>
         <AnimatedBoundSvg vnode={sampleVNode()} renderOptions={renderOptions} />
       </BoundSvgContext.Provider>,
     );
 
     expect(html).toContain("data-mode");
-    expect(renderToAnimatedSvg).toHaveBeenCalledWith(sampleVNode(), {
-      textPathMode: "merged",
-      ...renderOptions,
-    });
+    expect(renderToAnimatedSvg).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "Canvas", props: { width: 100, height: 100 } }),
+      expect.objectContaining({
+        textPathMode: "merged",
+        ...renderOptions,
+      }),
+    );
   });
 });

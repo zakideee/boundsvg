@@ -1,13 +1,15 @@
 // @vitest-environment happy-dom
 /** @jsxImportSource react */
 
-import type { Engine, RenderSvgOptions, VNode } from "@boundsvg/core";
-import { act, StrictMode, Suspense, useState } from "react";
+import { Engine, type EngineInput, type RenderSvgOptions, type VNode } from "@boundsvg/core";
+import { act, StrictMode, Suspense, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BoundSvg } from "../src/components/boundsvg.js";
 import { Text } from "../src/components/nodes.js";
 import { BoundSvgContext } from "../src/context.js";
+import { MainRenderSchedulerContext } from "../src/execution/context.js";
+import { MainRenderScheduler } from "../src/execution/main-render-scheduler.js";
 import { useRenderToSvg } from "../src/hooks/use-render-svg.js";
 import type { BoundSvgContextValue } from "../src/types.js";
 
@@ -28,16 +30,15 @@ function makeVNode(width = 100, text = "hello"): VNode {
 const STABLE_VNODE = makeVNode();
 
 function makeEngine() {
-  const renderToSvg = vi.fn((vnode: VNode, options: RenderSvgOptions) => {
+  const renderToSvg = vi.fn((vnode: EngineInput, options: RenderSvgOptions) => {
     options.onWarning?.(
       new Error("test warning") as Parameters<NonNullable<RenderSvgOptions["onWarning"]>>[0],
     );
-    return `<svg data-width="${Reflect.get(vnode.props, "width")}" data-scale="${options.scale ?? 1}"></svg>`;
+    return `<svg data-width="${Reflect.get("props" in vnode ? vnode.props : vnode, "width")}" data-scale="${options.scale ?? 1}"></svg>`;
   });
-  return {
-    engine: { renderToSvg } as unknown as Engine,
-    renderToSvg,
-  };
+  const engine = new Engine({ computeLayoutFn: () => "" });
+  vi.spyOn(engine, "renderToSvg").mockImplementation(renderToSvg);
+  return { engine, renderToSvg };
 }
 
 function context(engine: Engine): BoundSvgContextValue {
@@ -54,12 +55,20 @@ function mount(ui: React.ReactNode, engine: Engine) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  const scheduler = new MainRenderScheduler();
   act(() => {
-    root.render(<BoundSvgContext.Provider value={context(engine)}>{ui}</BoundSvgContext.Provider>);
+    root.render(
+      <BoundSvgContext.Provider value={context(engine)}>
+        <MainRenderSchedulerContext.Provider value={scheduler}>
+          {ui}
+        </MainRenderSchedulerContext.Provider>
+      </BoundSvgContext.Provider>,
+    );
   });
   return {
     unmount() {
       act(() => root.unmount());
+      scheduler.dispose();
       container.remove();
     },
   };
@@ -67,7 +76,7 @@ function mount(ui: React.ReactNode, engine: Engine) {
 
 async function flush(): Promise<void> {
   await act(async () => {
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 10));
   });
 }
 
@@ -90,7 +99,8 @@ describe("synchronous SVG render-input stability", () => {
       expect(onWarning).not.toHaveBeenCalled();
       return "<svg></svg>";
     });
-    const engine = { renderToSvg } as unknown as Engine;
+    const engine = new Engine({ computeLayoutFn: () => "" });
+    vi.spyOn(engine, "renderToSvg").mockImplementation(renderToSvg);
 
     function Probe() {
       useRenderToSvg(STABLE_VNODE, { onWarning });
@@ -119,7 +129,8 @@ describe("synchronous SVG render-input stability", () => {
       );
       return "<svg></svg>";
     });
-    const engine = { renderToSvg } as unknown as Engine;
+    const engine = new Engine({ computeLayoutFn: () => "" });
+    vi.spyOn(engine, "renderToSvg").mockImplementation(renderToSvg);
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -155,7 +166,9 @@ describe("synchronous SVG render-input stability", () => {
     });
 
     expect(
-      renderToSvg.mock.calls.some(([vnode]) => Reflect.get(vnode.props, "width") === 120),
+      renderToSvg.mock.calls.some(
+        ([vnode]) => Reflect.get("props" in vnode ? vnode.props : vnode, "width") === 120,
+      ),
     ).toBe(true);
     expect(document.querySelector('[data-fallback="true"]')).not.toBeNull();
     expect(onWarning).not.toHaveBeenCalled();
@@ -190,12 +203,11 @@ describe("synchronous SVG render-input stability", () => {
     function Probe() {
       const [label, setValue] = useState("first");
       setLabel = setValue;
+      const options = useMemo<RenderSvgOptions>(() => ({ debug: { parts: ["layout"] } }), []);
+      const vnode = useMemo(() => makeVNode(), []);
       return (
         <div data-label={label}>
-          <BoundSvg
-            vnode={makeVNode()}
-            renderOptions={{ debug: { parts: ["layout"] }, onWarning: () => {} }}
-          />
+          <BoundSvg vnode={vnode} renderOptions={options} />
         </div>
       );
     }
@@ -214,16 +226,19 @@ describe("synchronous SVG render-input stability", () => {
     function Probe() {
       const [label, setValue] = useState("first");
       setLabel = setValue;
+      const options = useMemo<RenderSvgOptions>(() => ({ debug: { parts: ["layout"] } }), []);
+      const children = useMemo(
+        () => (
+          <Text font="f" fontSizePx={16}>
+            hello
+          </Text>
+        ),
+        [],
+      );
       return (
         <div data-label={label}>
-          <BoundSvg
-            width={100}
-            height={100}
-            renderOptions={{ debug: { parts: ["layout"] }, onWarning: () => {} }}
-          >
-            <Text font="f" fontSizePx={16}>
-              hello
-            </Text>
+          <BoundSvg width={100} height={100} renderOptions={options}>
+            {children}
           </BoundSvg>
         </div>
       );

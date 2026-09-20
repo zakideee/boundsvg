@@ -1,22 +1,21 @@
 import type { RenderAnimatedSvgOptions, VNode } from "@boundsvg/core";
+import { mapRenderExecutionResult, type RenderExecutionOptions } from "../execution/types.js";
+import { type RenderAdapter, useRenderExecution } from "./use-render-execution.js";
 import type { UseRenderToSvgAsyncResult } from "./use-render-svg-async.js";
-import { useWorkerRender } from "./use-worker-render.js";
 
-/** Reactively render authored animation tracks via the WorkerEngine. */
+const adapter: RenderAdapter<string, RenderAnimatedSvgOptions> = {
+  main: (engine, scene, options) => engine.renderToAnimatedSvg(scene, options),
+  worker: (engine, scene, { options, signal }) =>
+    engine.renderToAnimatedSvg(scene, options, { signal }),
+};
+
+/** Render committed inputs through the Provider's main or Worker execution owner. */
 export function useRenderToAnimatedSvgAsync(
   vnode: VNode | null,
   renderOptions: RenderAnimatedSvgOptions,
+  executionOptions?: RenderExecutionOptions,
 ): UseRenderToSvgAsyncResult {
-  const {
-    data: svg,
-    error,
-    isRendering,
-    isReady,
-  } = useWorkerRender<string, RenderAnimatedSvgOptions>({
-    vnode,
-    renderFn: (engine, scene, options) => engine.renderToAnimatedSvg(scene, options),
-    renderOptions,
-  });
+  const result = useRenderExecution({ vnode, renderOptions, executionOptions, adapter });
 
-  return { svg, error, isRendering, isReady };
+  return mapRenderExecutionResult(result, (svg) => ({ svg }), { svg: null });
 }

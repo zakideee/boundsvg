@@ -6,7 +6,7 @@ import type {
   EmitSvgOptions,
   VNode,
 } from "@boundsvg/core";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useBoundSvg } from "./hooks/use-boundsvg.js";
 import {
   captureRenderNotifications,
@@ -14,11 +14,14 @@ import {
   type RenderNotificationDelivery,
   useCommitPhaseRenderNotifications,
 } from "./hooks/use-commit-phase-render-notifications.js";
+import { useRenderInput } from "./hooks/use-render-input.js";
 import {
   useStructurallyStableRenderOptions,
   useStructurallyStableValue,
 } from "./hooks/use-structurally-stable-value.js";
+import type { RenderInputOptions } from "./types.js";
 import { resolveMainThreadEngineError } from "./utils/main-thread-only.js";
+import { resolveRenderRevision } from "./utils/render-input-options.js";
 import { pickCompileOptions, pickOutputCommonOptions } from "./utils/render-options.js";
 
 export type UseCompiledSceneResult = {
@@ -64,31 +67,37 @@ function arePngBytesEqual(leftPng: Uint8Array | null, rightPng: Uint8Array | nul
 
 function useStablePngBytes(png: Uint8Array | null): Uint8Array | null {
   const stablePngRef = useRef(png);
-  if (!arePngBytesEqual(stablePngRef.current, png)) {
-    stablePngRef.current = png;
-  }
-  return stablePngRef.current;
+  const stablePng = arePngBytesEqual(stablePngRef.current, png) ? stablePngRef.current : png;
+  useLayoutEffect(() => {
+    stablePngRef.current = stablePng;
+  });
+  return stablePng;
 }
 
 /**
  * Create and clean up an object URL for PNG bytes rendered by boundsvg.
  */
-export function usePngObjectUrl(png: Uint8Array | null): string | null {
+export function usePngObjectUrl(
+  png: Uint8Array | null,
+  inputOptions?: RenderInputOptions,
+): string | null {
+  const revision = resolveRenderRevision(inputOptions?.revision);
   const [url, setUrl] = useState<string | null>(null);
   const stablePng = useStablePngBytes(png);
+  const pngInput = useMemo(() => ({ png: stablePng, revision }), [stablePng, revision]);
 
   useEffect(() => {
-    if (!stablePng) {
+    if (!pngInput.png) {
       setUrl(null);
       return;
     }
 
-    const nextUrl = createPngObjectUrl(stablePng);
+    const nextUrl = createPngObjectUrl(pngInput.png);
     setUrl(nextUrl);
     return () => {
       revokePngObjectUrl(nextUrl);
     };
-  }, [stablePng]);
+  }, [pngInput]);
 
   return url;
 }
@@ -100,14 +109,15 @@ export function usePngObjectUrl(png: Uint8Array | null): string | null {
 export function useCompiledScene(
   vnode: VNode | null,
   options?: CompileOptions,
+  inputOptions?: RenderInputOptions,
 ): UseCompiledSceneResult {
   const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
-  const stableVNode = useStructurallyStableValue(vnode);
+  const renderInput = useRenderInput(vnode, engine, inputOptions);
   const stableOptions = useStructurallyStableValue(options);
   const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   return useMemo(() => {
-    if (status !== "ready" || !engine || !stableVNode) {
+    if (status !== "ready" || !engine || !renderInput.vnode) {
       const error = resolveMainThreadEngineError("useCompiledScene", {
         status,
         engine,
@@ -120,13 +130,13 @@ export function useCompiledScene(
         ...pickCompileOptions(stableDefaultCommonOptions),
         ...stableOptions,
       };
-      const compiled = engine.compile(stableVNode, compileOptions);
+      const compiled = engine.compile(renderInput.vnode, compileOptions);
       return { compiled, error: null, isReady: true };
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err));
       return { compiled: null, error, isReady: false };
     }
-  }, [engine, workerEngine, status, stableVNode, stableOptions, stableDefaultCommonOptions]);
+  }, [engine, workerEngine, status, renderInput, stableOptions, stableDefaultCommonOptions]);
 }
 
 /**
@@ -135,16 +145,17 @@ export function useCompiledScene(
 export function useRenderAsset(
   vnode: VNode | null,
   options?: UseRenderAssetOptions,
+  inputOptions?: RenderInputOptions,
 ): UseRenderAssetResult {
   const { engine, workerEngine, status, defaultCommonOptions } = useBoundSvg();
-  const stableVNode = useStructurallyStableValue(vnode);
+  const renderInput = useRenderInput(vnode, engine, inputOptions);
   const stableCompileOptions = useStructurallyStableValue(options?.compileOptions);
   const stableSvgOptions = useStructurallyStableRenderOptions(options?.svgOptions);
   const stablePngOptions = useStructurallyStableRenderOptions(options?.pngOptions);
   const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
 
   const computation = useMemo<AssetRenderComputation>(() => {
-    if (status !== "ready" || !engine || !stableVNode) {
+    if (status !== "ready" || !engine || !renderInput.vnode) {
       const error = resolveMainThreadEngineError("useRenderAsset", {
         status,
         engine,
@@ -173,7 +184,7 @@ export function useRenderAsset(
         ...pickCompileOptions(stableDefaultCommonOptions),
         ...stableCompileOptions,
       };
-      const compiled = engine.compile(stableVNode, compileOptions);
+      const compiled = engine.compile(renderInput.vnode, compileOptions);
       const svg = engine.renderCompiledToSvg(compiled, capturedSvg.options);
       const png = engine.renderCompiledToPng(compiled, capturedPng.options);
       return {
@@ -205,12 +216,12 @@ export function useRenderAsset(
     engine,
     workerEngine,
     status,
-    stableVNode,
+    renderInput,
     stableCompileOptions,
     stableSvgOptions,
     stablePngOptions,
     stableDefaultCommonOptions,
   ]);
   useCommitPhaseRenderNotifications(computation.deliveries);
-  return computation.result;
+  return { ...computation.result, png: computation.result.png?.slice() ?? null };
 }
