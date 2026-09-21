@@ -1,5 +1,128 @@
 # @boundsvg/core
 
+## 0.5.0
+
+### Minor Changes
+
+- [#26](https://github.com/zakideee/boundsvg/pull/26) [`836b0bd`](https://github.com/zakideee/boundsvg/commit/836b0bde282617138c09892c612f80ba7e710ff8) Thanks [@zakideee](https://github.com/zakideee)! - Replace the shared diagnostic shape with strict severity-specific fatal and
+  recoverable contracts. Diagnostic constructors now take explicit options,
+  recoverable warnings require `fallback` and `stage`, and malformed boundary
+  values are rejected instead of being normalized through legacy adapters.
+
+  Make operation envelopes the single warning authority across WASM, Core, and
+  Worker routes. Structural IR no longer carries nested warnings, public IR
+  retains detached `RecoverableError` values, Worker responses use one top-level
+  warning list, and the WASM schema advances to version 29.
+
+- [#28](https://github.com/zakideee/boundsvg/pull/28) [`0e86217`](https://github.com/zakideee/boundsvg/commit/0e86217d6785232554c2d60fe4da45d751ffac4a) Thanks [@zakideee](https://github.com/zakideee)! - Make shape failures stable structured diagnostics across native rendering,
+  standalone WASM operations, Browser, Worker, React, CLI, and Video observers.
+  The low-level `@boundsvg/core/wasm` entry now exports all nine shape operations,
+  and Browser requires the same complete capability set. The bundled WASM schema
+  advances to version 31.
+
+  Change the public Rust `ShapeError` contract to a closed 15-variant enum and
+  make `region_to_path`, `region_to_svg`, and `transform_to_svg` return
+  `Result<String, ShapeError>`. Generated non-finite path, SVG, transform, JSON,
+  or compiled-bound output now fails explicitly instead of emitting invalid
+  numeric text or `null`.
+
+  Validate all shape success payloads at the Core boundary. Malformed JSON,
+  wrong field types, and explicit `null` values in optional compiled-path fields
+  now fail with `SHAPE_OUTPUT_INVALID`; omitted optional fields stay omitted.
+  Evaluated `GeometryPart` values now expose required `strokeRegion` geometry.
+
+- [#29](https://github.com/zakideee/boundsvg/pull/29) [`fee590a`](https://github.com/zakideee/boundsvg/commit/fee590ac43f2233e5732936d72982f21d7a45a81) Thanks [@zakideee](https://github.com/zakideee)! - Add a recursive `decodeSceneDocument` boundary that returns a detached Scene
+  tree, make `fromSceneDocument` validate unknown input through that boundary,
+  and expose the five Scene decode resource limits. Invalid structure now uses
+  stable `SCENE_DECODE_*` fatal diagnostics.
+
+  Worker Scene requests now preserve those diagnostics across main-thread,
+  receive, pool, materialized-frame, and layout-transition paths while detaching
+  queued input and avoiding duplicate decodes within each trust boundary.
+
+  CLI Scene files now distinguish JSON syntax failures from structural Scene
+  failures and reuse the single decoded VNode for conversion and export.
+
+  The former Core root exports `isSceneNode` and
+  `assertSerializableSceneTransport` are removed. Replace them with
+  `decodeSceneDocument`, handle its `SCENE_DECODE_*` `FatalError` on failure, and
+  use the returned detached snapshot after success. Rejecting malformed Scene
+  structure that a shallow check previously admitted is an intentional clean
+  break; valid Scene rendering semantics are unchanged.
+
+- [#35](https://github.com/zakideee/boundsvg/pull/35) [`671b9af`](https://github.com/zakideee/boundsvg/commit/671b9af0e53cdc7d210802b16607487f3334bbcd) Thanks [@zakideee](https://github.com/zakideee)! - Remove the shared default Engine and its 28 standalone initialization, rendering, compilation, inspection, and disposal exports. Retain the result of `createEngine` or `createEngineAsync` and call its methods instead. Replace `compileScene` with `engine.compile`, `hitTestOnIR` with `engine.hitTest`, and `isInitialized` with caller-owned readiness. Replace argument-free `initAsync()` with `createEngineAsync({})`. Reuse each instance and dispose it when its rendering context ends.
+
+  Output-affecting: the React terminal template displays the explicit Engine API, changing its rendered snippet text and tokens. Rendering the same scene with the same fonts and options is unchanged.
+
+- [#36](https://github.com/zakideee/boundsvg/pull/36) [`75001ab`](https://github.com/zakideee/boundsvg/commit/75001ab74f4f0b383df4e2c1d9603636b0f4f297) Thanks [@zakideee](https://github.com/zakideee)! - Optional non-null WASM input fields now reject explicit `null`. Omit an optional
+  property to request its existing default or absence behavior. Nullable array
+  elements used for automatic insets and missing decoration owners remain supported.
+
+  The Core WASM schema is now 32. Update Core, Browser, Worker, and their matching
+  WASM artifacts together; schema-31 modules are rejected. The independent MP4
+  schema remains 1. Numeric output must be finite; invalid derived output fails
+  instead of emitting JSON `null`.
+
+  Layered SVG and PNG rendering obtain source metadata directly from the input and
+  no longer call a custom backend's `computeLayout` after compilation. If compilation
+  succeeds and `computeLayout` would throw, layered rendering can now succeed.
+  That extra call's side effects are also removed. Warning callbacks cannot change
+  the current request's captured options, backend functions, or layer metadata.
+
+- [#25](https://github.com/zakideee/boundsvg/pull/25) [`a7a8815`](https://github.com/zakideee/boundsvg/commit/a7a8815e18484c99d2fa72f93c8f09480dc4a892) Thanks [@zakideee](https://github.com/zakideee)! - Make `CompiledScene` an opaque, immutable runtime artifact that can only be
+  used with the exact `Engine` that created it. Remove the public `.ir` field and
+  structural construction; use `snapshotCompiledIR` for a detached, editable
+  inspection copy that is not renderable.
+
+  Cloned or hand-built values now fail with `COMPILED_SCENE_INVALID`, while an
+  authentic artifact passed to another Engine fails with
+  `COMPILED_SCENE_WRONG_ENGINE`. React asset hooks retain their Provider Engine
+  ownership, and `renderCompiledToMp4` requires the same supplied Engine.
+
+- [#37](https://github.com/zakideee/boundsvg/pull/37) [`c33bc4d`](https://github.com/zakideee/boundsvg/commit/c33bc4dfafee20bc7d56218455f9a413dae13041) Thanks [@zakideee](https://github.com/zakideee)! - Unify React async rendering across main and Worker execution. Import the seven existing async hooks from `@boundsvg/react/async`; the former `/worker` entry and `UseWorkerRenderResult` type are removed. Results expose status, execution, and staleness, retain the same owner's previous success by default, and accept explicit revision, retention, and error-notification controls. `BoundSvg` and `AnimatedBoundSvg` now use this async path on main as well. Synchronous hooks keep their responsibilities and gain revision and Engine resource invalidation. PNG buffers are isolated per consumer.
+
+  Add Core resource version observation and Provider resource revisions. Worker preference falls back only during initialization; runtime failures remain errors. Main and Worker execution admit one job plus 32 queued requests. Worker render and measurement calls accept an AbortSignal, and terminal drain waits for physical completion. Timeout values must be integers from 1 through 2,147,483,647ms, including queue wait. A raw Worker cannot be attached again after its first Engine lifetime. Pools retain default concurrency two and maximum eight, allow only one active operation, and wait for stream cleanup before reuse.
+
+  Async inputs now follow immutable VNode identity, shallow non-callback option values and nested identities. Stabilize VNodes and nested options with state or `useMemo`; creating them inline on every hook render can repeatedly schedule work. Changes in place require a new `revision`. Callback-only changes do not schedule rendering. Synchronous render and derived hooks accept `RenderInputOptions` (`revision`) in their third argument; `usePngObjectUrl` accepts it in the second argument, and `useInteractiveSvg` includes it in its existing third options argument.
+
+- [#27](https://github.com/zakideee/boundsvg/pull/27) [`0571ebb`](https://github.com/zakideee/boundsvg/commit/0571ebb906091bc4e95fde8893368f151e918107) Thanks [@zakideee](https://github.com/zakideee)! - Make text layout failures structured fatal diagnostics across render, Core,
+  Browser, Worker, React, CLI, and Video routes. Font resolution now uses the
+  actual registered fallback chain, so a missing primary or unused missing
+  fallback is accepted when another requested alias resolves, while an entirely
+  unresolved chain reports `TEXT_FONT_UNAVAILABLE`.
+
+  Replace the ambiguous `TEXT_NO_LAYOUT` family and the six measurement
+  `WASM_INVALID_*_OUTPUT` codes with operation-aware text layout diagnostics.
+  Malformed output retains a bounded operation, protocol path, and received-type
+  descriptor; true render intrinsic failures now abort instead of silently using
+  a bounding-box fallback.
+
+  Move the public Rust layout and flow APIs to `Result` and closed error/reason
+  types, including fallible region providers, rich-depth validation, fit and
+  ellipsis budgets, and checked invariants. The bundled WASM schema advances to
+  version 30.
+
+- [#32](https://github.com/zakideee/boundsvg/pull/32) [`ba68136`](https://github.com/zakideee/boundsvg/commit/ba68136d824014abcf316dfedd8c44228a1d47ab) Thanks [@zakideee](https://github.com/zakideee)! - **Output-affecting:** Plain-text measurement and shrinkwrap now succeed for
+  missing emoji and CJK glyphs when the resolved font chain can provide fallback
+  layout. Pre-wrap layout includes missing-glyph warnings, and rendered warnings
+  identify characters with Unicode notation such as `U+1F389 (🎉)`. Explicit
+  Japanese and English language tags reach shaping, which can change advances,
+  line breaks, and shrinkwrap sizes for language-sensitive fonts. Same-content
+  sibling text nodes retain their own layout settings regardless of child order;
+  measurement cache hit counts reflect reuse within each node.
+
+  Add Rust-only raw-flow, shrinkwrap request/provider, and unwrapped glyph
+  projection APIs in boundtext, and route the bundled renderer through its text
+  layout owner. The renderer also uses the additive, documentation-hidden Rust
+  `TextLayoutSession` API to retain width-independent prepared text within one
+  rendering operation. These are additive Rust APIs; existing TypeScript and WASM
+  signatures and schema remain unchanged.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @boundsvg/shape@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
