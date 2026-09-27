@@ -235,6 +235,14 @@ layout along path geometry.
 | `"merged"` | One `<path>` per line/run | Default. Smaller file size, not selectable |
 | `"glyphs"` | One `<path>` per glyph    | Larger file size, useful for hit-testing   |
 
+SVG emission shortens the numeric spelling of text outlines. The same
+shortened paths are used by SVG output and by the intermediate SVG for PNG,
+WebP, GIF, frames, and layered raster output. Segment order and rounded decimal
+coordinates are preserved. The `glyphPaths.d` values returned in the IR and
+the paths returned by text-outline APIs retain their original spelling.
+Rasterized pixels can differ slightly from older output because SVG renderers
+evaluate relative path coordinates with floating-point arithmetic.
+
 ```ts
 // Default: merged paths (one path per line)
 const svg = engine.renderToSvg(vnode);

@@ -37,7 +37,11 @@ function stripTomlComment(line) {
 
 function collectCargoManifests(rootDirectory, currentDirectory = rootDirectory, manifests = []) {
   for (const entry of readdirSync(currentDirectory, { withFileTypes: true })) {
-    if (entry.isDirectory() && SKIPPED_DIRECTORIES.has(entry.name)) {
+    if (
+      entry.isDirectory() &&
+      (SKIPPED_DIRECTORIES.has(entry.name) ||
+        (entry.name === "_build" && currentDirectory === rootDirectory))
+    ) {
       continue;
     }
     const entryPath = resolve(currentDirectory, entry.name);

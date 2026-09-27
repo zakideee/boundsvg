@@ -17,7 +17,7 @@ afterAll(() => {
 function makeGlyphPath(fill = "#000000"): TextOutlinePath {
   return {
     nodeId: "text-1",
-    d: "M10,10L20,10L20,20L10,20Z",
+    d: "M10 10H20V20H10z",
     fill,
     glyphIds: [1],
     text: "あ",
@@ -72,7 +72,7 @@ describe("SVG emitter text outlines", () => {
     expect(svg).toContain('<g data-boundsvg-node-id="text-1"');
     expect(svg).toContain('data-boundsvg-text="あ"');
     expect(svg).toContain('aria-label="あ"');
-    expect(svg).toContain('<path d="M10,10L20,10L20,20L10,20Z" fill="#000000"/>');
+    expect(svg).toContain('<path d="M10 10H20V20H10z" fill="#000000"/>');
   });
 
   it("does not emit <text> or <tspan> for text nodes", () => {

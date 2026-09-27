@@ -18,35 +18,35 @@ type OracleResult = {
 
 const expectedOracle: Record<string, OracleResult> = {
   "vertical-ruby-merged": {
-    svgSha256: "dfc3551088618aeadfbf10cf0fe2d542a9c9a8f29087f98bece9e110fc17482f",
+    svgSha256: "ba7f522c7efef9c14ba9b34eefabd2e2ad371d719133bf08fe289545de0fc53d",
     rootSha256: "c5f023624b4db7f5ed32ed3cc4dfd2d09e45da7a9bd830395494f69fdc6ac24c",
     outlinesSha256: "d66146c49b76b739e82d892ceda7b3ad786a36dcd982b7400bf60a06afcda803",
     glyphPathCount: 2,
     unitSampleCount: 0,
   },
   "vertical-ruby-glyphs": {
-    svgSha256: "be5a71775b4f3add9921fdf16436fbd7c49ff96aa56087d4dee12b5a6fbb7564",
+    svgSha256: "bd2c42fff61a8c6e4cfe474d381d883407f315d8c493568a6c05833101ea3945",
     rootSha256: "e7725040142493b695fd2345acb22417a6e6f2cf480e83a69d8fecb176f5da8d",
     outlinesSha256: "112894497c1337e414a9a75582e05b350c38d5c0079218143b6b6a6b2a6c1246",
     glyphPathCount: 53,
     unitSampleCount: 0,
   },
   "text-on-path-merged": {
-    svgSha256: "5731cc5811b3356336d5f052c79d27e713bce397641a899b1ad117632c7e3c58",
+    svgSha256: "189cf0dfe28ffdbb0c3c25071577b1808fa35fc74baaf740c28893bedda4c034",
     rootSha256: "e0d6e060dab0e47b6ac38c1300703035fedce2a5c3507c3d9161542bf7698561",
     outlinesSha256: "2882bca37a25be5608d8f18e15d2e2220f2297f642530491a4548e4ab1ef12c4",
     glyphPathCount: 28,
     unitSampleCount: 35,
   },
   "unit-animation-glyphs": {
-    svgSha256: "4271633ef521e79b97c211d22f60b8ad87fb9b547b54b83a0e01799197f07b3c",
+    svgSha256: "543b0ac36d732b3604c4e5109e00c59979e4fad226255f110473705f776b3e8c",
     rootSha256: "c7864d6ce4d37e71c4e6ce370d3a20f3d789a14c24253afdf544cd7604c08a60",
     outlinesSha256: "69798a33170cf984b178b9bb1d6b9310e309f78266215789f13230f3edd5d457",
     glyphPathCount: 48,
     unitSampleCount: 12,
   },
   "fallback-missing-transform-glyphs": {
-    svgSha256: "d42f51bbab225c3ccef930a80d19f0bb17878526e302d4235e81a90345195044",
+    svgSha256: "f5703fd3e73e894fbf031ced35696f500fd9ba80e40724e35efcada2e6277244",
     rootSha256: "99c764cdc6c340aa02c9c005ba32e8a71e4abc7c060593e5015215e223af8f49",
     outlinesSha256: "9f8267c9a4104e4933f43c735145b851413fc8117c2b32dce4e2b6973d40f265",
     glyphPathCount: 3,

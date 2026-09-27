@@ -197,6 +197,59 @@ describe("SVG Snapshot Tests", () => {
     expect(normalized).toContain('stroke="#fbbf24"');
   });
 
+  it("preserves malformed hand-built text paths through SVG and PNG entrances", () => {
+    const rasterizePng = handle.createSvgToPngFn();
+    const malformedPaths = [
+      "M0 0L10 0L10 10Z,M20 20L30 20L30 30Z",
+      "M,0 0L10 0L10 10Z",
+      "M0,0L,10 0L10 10Z",
+      "M0,,0L10 0L10 10Z",
+      ",M0 0L1 1Z",
+      "M0 0L1 1Z,",
+    ];
+    for (const path of malformedPaths) {
+      const svg = emitSvgFromIrViaHandle(handle, {
+        root: {
+          type: "group",
+          nodeId: "root",
+          bbox: { x: 0, y: 0, w: 40, h: 40 },
+          children: [
+            {
+              type: "text",
+              nodeId: "txt1",
+              bbox: { x: 0, y: 0, w: 40, h: 40 },
+              layoutBox: { x: 0, y: 0, w: 40, h: 40 },
+              font: "NotoSansJP",
+              fontSizePx: 16,
+              color: "#000000",
+              textAlign: "start",
+              lineHeightPx: 20,
+              lines: [{ text: "A", glyphs: [], width: 20, baselineY: 20 }],
+              glyphPaths: [
+                {
+                  nodeId: "txt1",
+                  d: path,
+                  fill: "#000000",
+                  glyphIds: [1],
+                  text: "A",
+                  bbox: { x: 0, y: 0, w: 40, h: 40 },
+                },
+              ],
+            },
+          ],
+        },
+        drawOrder: ["txt1"],
+        width: 40,
+        height: 40,
+        warnings: [],
+      });
+      expect(svg).toContain(`d="${path}"`);
+      expect(rasterizePng(svg).subarray(0, 8)).toEqual(
+        new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+      );
+    }
+  });
+
   it("scale adds width/height to SVG element", () => {
     let capturedSvg = "";
     const scaleEngine = createEngineFromHandle(handle, {
