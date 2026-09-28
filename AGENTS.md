@@ -72,7 +72,7 @@ core function API, once in `apps/playground-react/src/pages/templates/` as JSX (
 - All units in px. No em / rem / % / vw.
 - Errors split into Fatal (throw) and Recoverable (warn + fallback).
 - padding / margin: `number` or `[top, right, bottom, left]`. No 2/3-element shorthand.
-- Props → LayoutStyle mapping is centralized in `layout/taffy-style-mapper.ts`.
+- Props → LayoutStyle mapping is centralized in `packages/core/src/layout/taffy-style-mapper.ts`.
 
 ## Style Enforcement (automated — reference only)
 
@@ -81,7 +81,7 @@ core function API, once in `apps/playground-react/src/pages/templates/` as JSX (
 - Prefer specific variable names (`fontEntry` not `data`, `layoutBbox` not `box`).
 - Avoid variable shadowing. When an inner scope needs a variable with the same semantic role as an outer scope, use a more specific name (e.g. `renderOptions` instead of re-using `options`). Biome `noShadow` is nursery — enforce by convention until it stabilizes.
 - Error handling: use `FatalError` for unrecoverable states, `RecoverableError` for fallback paths. Never use bare `new Error()` in `packages/core/src/`. See `packages/core/src/errors.ts`.
-- WASM type files (`wasm/types.ts`, `packages/browser/src/index.ts`) use `snake_case` to match Rust. This is intentional — do not rename.
+- WASM type files (`packages/core/src/wasm/types.ts`, `packages/browser/src/index.ts`) use `snake_case` to match Rust. This is intentional — do not rename.
 - Do NOT add `#[allow(clippy::*)]` without justification.
 - `as any` type assertions are banned (GritQL plugin in `biome-plugins/`). Use proper types or `as unknown as T` for test doubles.
 - Package import boundaries are enforced by `noRestrictedImports` overrides in `biome.json`.
