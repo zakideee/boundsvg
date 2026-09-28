@@ -51,7 +51,7 @@ pub(super) fn layout_horizontal_tokens(
     decoration_spans: &[DecorationSpanMeta],
     chosen_font_size_px: f64,
     warnings: Vec<TextWarning>,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     let max_width = req.max_width.max(1.0);
     let indent = req.text_indent.unwrap_or(0.0);
     let profile = get_kinsoku_profile(Some(super::language_to_str(req.language)));
@@ -65,7 +65,8 @@ pub(super) fn layout_horizontal_tokens(
         req.uax14_breaks,
         decoration_spans,
         req.has_forced_newline_breaks(),
-    )?;
+    )
+    .ok_or_else(super::rich_preparation_error)?;
     let kinsoku_unresolved = lines.iter().any(|line| line.kinsoku_unresolved);
     let total_count = lines.len();
     if let Some(max_lines) = req.max_lines
@@ -94,6 +95,11 @@ pub(super) fn layout_horizontal_tokens(
     let mut all_inline_rects = Vec::new();
     let mut span_seen_count = std::collections::HashMap::new();
     for line in lines {
+        let line_index = u32::try_from(result_lines.len()).map_err(|_| {
+            crate::TextLayoutError::InvariantViolation {
+                invariant: crate::TextLayoutInvariant::LineIndexOutOfRange,
+            }
+        })?;
         let mut glyphs = line.glyphs;
         shift_glyphs_x(&mut glyphs, 0.0);
         shift_glyphs_y(&mut glyphs, y);
@@ -109,6 +115,7 @@ pub(super) fn layout_horizontal_tokens(
             };
 
             all_decorations.push(InlineBoxDecoration {
+                line_index,
                 x: decoration.offset,
                 y,
                 width: decoration.advance,
@@ -123,6 +130,7 @@ pub(super) fn layout_horizontal_tokens(
         for inline_rect in &line.inline_rects {
             let block_size = resolve_inline_rect_block_size(&inline_rect.rect, line.cross_size);
             all_inline_rects.push(InlineRectFragment {
+                line_index,
                 fragment_id: inline_rect.rect.fragment_id.clone(),
                 x: inline_rect.offset,
                 y: y + horizontal_inline_rect_block_offset(
@@ -153,7 +161,10 @@ pub(super) fn layout_horizontal_tokens(
         y += line.cross_size;
     }
 
-    Some(TextLayoutResult {
+    Ok(TextLayoutResult {
+        placement_space: crate::text::types::TextPlacementSpace::BlockLocal {
+            writing_mode: crate::text::types::WritingMode::HorizontalTb,
+        },
         lines: result_lines,
         bbox: TextBBox {
             x: 0.0,
@@ -189,7 +200,7 @@ pub(super) fn layout_vertical_tokens(
     decoration_spans: &[DecorationSpanMeta],
     chosen_font_size_px: f64,
     warnings: Vec<TextWarning>,
-) -> Option<TextLayoutResult> {
+) -> Result<TextLayoutResult, crate::TextLayoutError> {
     let max_height = req.max_height.unwrap_or(req.max_width.max(1.0)).max(1.0);
     let indent = req.text_indent.unwrap_or(0.0);
     let profile = get_kinsoku_profile(Some(super::language_to_str(req.language)));
@@ -203,7 +214,8 @@ pub(super) fn layout_vertical_tokens(
         req.uax14_breaks,
         decoration_spans,
         req.has_forced_newline_breaks(),
-    )?;
+    )
+    .ok_or_else(super::rich_preparation_error)?;
     let kinsoku_unresolved = columns.iter().any(|column| column.kinsoku_unresolved);
     let total_count = columns.len();
     if let Some(max_lines) = req.max_lines
@@ -233,6 +245,11 @@ pub(super) fn layout_vertical_tokens(
     let mut all_inline_rects = Vec::new();
     let mut span_seen_count = std::collections::HashMap::new();
     for column in &columns {
+        let line_index = u32::try_from(result_lines.len()).map_err(|_| {
+            crate::TextLayoutError::InvariantViolation {
+                invariant: crate::TextLayoutInvariant::LineIndexOutOfRange,
+            }
+        })?;
         x_cursor -= column.cross_size;
         let mut glyphs = column.glyphs.clone();
         shift_glyphs_x(&mut glyphs, x_cursor);
@@ -254,6 +271,7 @@ pub(super) fn layout_vertical_tokens(
                 decoration.border_radius
             };
             all_decorations.push(InlineBoxDecoration {
+                line_index,
                 x: x_cursor + decoration.cross_offset,
                 y: decoration.offset,
                 width: decoration.cross_size,
@@ -268,6 +286,7 @@ pub(super) fn layout_vertical_tokens(
         for inline_rect in &column.inline_rects {
             let block_size = resolve_inline_rect_block_size(&inline_rect.rect, column.cross_size);
             all_inline_rects.push(InlineRectFragment {
+                line_index,
                 fragment_id: inline_rect.rect.fragment_id.clone(),
                 x: x_cursor
                     + vertical_inline_rect_block_offset(
@@ -298,7 +317,10 @@ pub(super) fn layout_vertical_tokens(
         });
     }
 
-    Some(TextLayoutResult {
+    Ok(TextLayoutResult {
+        placement_space: crate::text::types::TextPlacementSpace::BlockLocal {
+            writing_mode: crate::text::types::WritingMode::VerticalRl,
+        },
         lines: result_lines,
         bbox: TextBBox {
             x: 0.0,

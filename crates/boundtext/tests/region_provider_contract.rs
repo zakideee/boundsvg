@@ -107,6 +107,51 @@ struct RecordingProvider {
     queries: RefCell<Vec<RegionQuery>>,
 }
 
+struct EmptyFirstBandProvider;
+
+impl RegionProvider for EmptyFirstBandProvider {
+    fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, RegionProviderError> {
+        if query.cross_start_px == 0.0 {
+            return Ok(Vec::new());
+        }
+        Ok(vec![FlowRegion {
+            inline_start_px: 10.0,
+            inline_size_px: 100.0,
+        }])
+    }
+}
+
+#[test]
+fn decoration_ownership_uses_result_line_position_after_an_empty_band() {
+    let registry = font_registry();
+    let families = ["Noto".to_string()];
+    let font_context = FontContext {
+        registry: &registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let mut rich_text = nested_decorated_resource_input(1);
+    if let RichTextNodeInput::DecoratedSpan { background, .. } = &mut rich_text[0] {
+        *background = Some("#ff0000".to_string());
+    }
+    let flow_request = FlowLayoutRequest {
+        text: "",
+        rich_text: Some(&rich_text),
+        max_lines: None,
+        ..request(WritingMode::HorizontalTb)
+    };
+    let raw = layout_flow_with_regions(&flow_request, &font_context, &EmptyFirstBandProvider)
+        .expect("flow with an empty first band");
+    assert_eq!(raw.lines[0].line_index, 1);
+    let resolved =
+        layout_resolved_flow_with_regions(&flow_request, &font_context, &EmptyFirstBandProvider)
+            .expect("resolved flow with an empty first band");
+    assert_eq!(resolved.inline_box_decorations[0].line_index, 0);
+    assert_eq!(resolved.lines.len(), 1);
+}
+
 impl RegionProvider for RecordingProvider {
     fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, RegionProviderError> {
         self.queries.borrow_mut().push(query);

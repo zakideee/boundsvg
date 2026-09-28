@@ -340,6 +340,9 @@ pub fn build_horizontal_result_with_constraints(
     };
 
     TextLayoutResult {
+        placement_space: crate::text::types::TextPlacementSpace::LineRelative {
+            writing_mode: crate::text::types::WritingMode::HorizontalTb,
+        },
         lines: truncated_lines,
         bbox: TextBBox {
             x: 0.0,

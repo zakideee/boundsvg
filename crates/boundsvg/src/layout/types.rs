@@ -1049,6 +1049,8 @@ pub struct LayoutNodeOutput {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextLayoutOutput {
+    #[serde(skip)]
+    pub placement_space: Option<crate::text::types::TextPlacementSpace>,
     pub glyphs: Vec<shaping::GlyphInfo>,
     pub measured_width: f64,
     pub measured_height: f64,

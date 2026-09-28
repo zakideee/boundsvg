@@ -441,6 +441,7 @@ export const TEMPLATE_DEFINITIONS: Record<string, TemplateDef> = {
               fontSizePx={26}
               color="#fef3c7"
               writingMode="vertical-rl"
+              textAlign="center"
               lineHeight={1.28}
               wrap="char"
               language="ja"
@@ -475,6 +476,7 @@ export const TEMPLATE_DEFINITIONS: Record<string, TemplateDef> = {
                   font="NotoSansJP-woff2"
                   fontSizePx={18}
                   color="#e2e8f0"
+                  textAlign="center"
                   wrap="char"
                   lineHeight={1.55}
                 >

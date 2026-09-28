@@ -195,27 +195,36 @@ describe("InlineRect real WASM rendering", () => {
     expect(findText(fitted.root, "typing").fontSizePx).toBeLessThan(38);
     expect(findNode(fitted.root, "typing:inline-rect:0").bbox).toMatchObject({ w: 4, h: 10 });
 
-    const flowed = engine.renderToIR(
-      typingScene(
-        [
-          "flow ",
-          createElement("InlineRect", {
-            inlineSizePx: 4,
-            advancePx: 8,
-            color: "#16a34a",
-          }),
-          " text around an exclusion ".repeat(4),
-        ],
-        {
-          width: 250,
-          height: 170,
-          fontSizePx: 20,
-          lineHeightPx: 28,
-          flowExclusions: [{ kind: "rect", x: 80, y: 20, width: 70, height: 60 }],
-        },
-      ),
+    const flowScene = typingScene(
+      [
+        "flow ",
+        createElement("InlineRect", {
+          inlineSizePx: 4,
+          advancePx: 8,
+          color: "#16a34a",
+        }),
+        " text around an exclusion ".repeat(4),
+      ],
+      {
+        width: 250,
+        height: 170,
+        fontSizePx: 20,
+        lineHeightPx: 28,
+        flowExclusions: [{ kind: "rect", x: 80, y: 20, width: 70, height: 60 }],
+      },
     );
-    expect(findNode(flowed.root, "typing:inline-rect:0").bbox).toMatchObject({ w: 4, h: 28 });
+    const flowed = engine.renderToIR(flowScene);
+    const flowText = findText(flowed.root, "typing");
+    const flowRect = findNode(flowed.root, "typing:inline-rect:0");
+    const localRect =
+      engine.renderToLayoutTree(flowScene).root.children[0]?.textLayout?.resolvedTextLayout
+        .inlineRects[0];
+    expect(localRect).toBeDefined();
+    expect(flowRect.bbox).toMatchObject({ w: 4, h: 28 });
+    expect(flowText.bbox.x).toBe(flowText.layoutBox.x);
+    expect(flowText.bbox.y).toBe(flowText.layoutBox.y);
+    expect(flowRect.bbox.x).toBeCloseTo(flowText.layoutBox.x + (localRect?.x ?? 0), 5);
+    expect(flowRect.bbox.y).toBeCloseTo(flowText.layoutBox.y + (localRect?.y ?? 0), 5);
   });
 
   it("excludes InlineRect from text, aria, UnitMap, and unit animation", () => {

@@ -381,6 +381,9 @@ fn build_vertical_fit_result(
     overflow: TextOverflow,
 ) -> TextLayoutResult {
     TextLayoutResult {
+        placement_space: crate::text::types::TextPlacementSpace::LineRelative {
+            writing_mode: crate::text::types::WritingMode::VerticalRl,
+        },
         lines: at_size.columns,
         bbox: TextBBox {
             x: 0.0,

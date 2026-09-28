@@ -265,6 +265,9 @@ pub(super) fn build_vertical_result_with_constraints(
     };
 
     TextLayoutResult {
+        placement_space: crate::text::types::TextPlacementSpace::LineRelative {
+            writing_mode: crate::text::types::WritingMode::VerticalRl,
+        },
         lines: truncated_columns,
         bbox: TextBBox {
             x: 0.0,

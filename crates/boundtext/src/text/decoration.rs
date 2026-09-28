@@ -2123,6 +2123,9 @@ mod tests {
             .collect();
         let glyph_count_px = f64::from(u32::try_from(glyph_count).unwrap_or(u32::MAX));
         let mut result = TextLayoutResult {
+            placement_space: crate::text::types::TextPlacementSpace::LineRelative {
+                writing_mode: crate::text::types::WritingMode::HorizontalTb,
+            },
             lines: vec![Line {
                 text: content.clone(),
                 glyphs: Vec::new(),

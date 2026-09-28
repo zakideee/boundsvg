@@ -58,6 +58,15 @@ impl WritingMode {
     }
 }
 
+/// Coordinate frame chosen by the algorithm that produced a text layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextPlacementSpace {
+    LineRelative { writing_mode: WritingMode },
+    BlockLocal { writing_mode: WritingMode },
+    FlowFrame,
+    PathFrame,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WhiteSpaceMode {
     Normal,
@@ -516,6 +525,8 @@ pub struct Line {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InlineRectFragment {
+    #[serde(skip)]
+    pub line_index: u32,
     pub fragment_id: String,
     pub x: f64,
     pub y: f64,
@@ -530,6 +541,8 @@ pub struct InlineRectFragment {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextLayoutResult {
+    #[serde(skip)]
+    pub placement_space: TextPlacementSpace,
     pub lines: Vec<Line>,
     pub bbox: TextBBox,
     pub chosen_font_size_px: f64,
@@ -584,6 +597,8 @@ impl TextLayoutResult {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InlineBoxDecoration {
+    #[serde(skip)]
+    pub line_index: u32,
     pub x: f64,
     pub y: f64,
     pub width: f64,
@@ -1676,6 +1691,9 @@ mod tests {
     #[test]
     fn convert_spaces_to_nbsp_in_result() {
         let mut result = TextLayoutResult {
+            placement_space: crate::text::types::TextPlacementSpace::LineRelative {
+                writing_mode: WritingMode::HorizontalTb,
+            },
             lines: vec![Line {
                 text: "hello world".to_string(),
                 glyphs: vec![],
