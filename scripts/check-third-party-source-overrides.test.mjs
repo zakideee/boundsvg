@@ -61,3 +61,30 @@ test("rejects Cargo git dependencies and source replacement", () => {
     },
   );
 });
+
+test("ignores generated local build artifacts", () => {
+  withFixture(
+    {
+      "_build/tool-cache/Cargo.toml": `[dependencies]\nresvg = { git = "https://example.invalid/resvg" }\n`,
+      "crates/boundsvg/Cargo.toml": `[package]\nname = "boundsvg"\nversion = "0.5.0"\n`,
+    },
+    (fixtureRoot) => {
+      assert.deepEqual(auditThirdPartySourceOverrides(fixtureRoot), []);
+    },
+  );
+});
+
+test("rejects Cargo overrides in nested _build directories", () => {
+  withFixture(
+    {
+      "crates/example/_build/Cargo.toml": `[dependencies]\nresvg = { git = "https://example.invalid/resvg" }\n`,
+    },
+    (fixtureRoot) => {
+      assert.ok(
+        auditThirdPartySourceOverrides(fixtureRoot).some((violation) =>
+          violation.startsWith("crates/example/_build/Cargo.toml:2:"),
+        ),
+      );
+    },
+  );
+});

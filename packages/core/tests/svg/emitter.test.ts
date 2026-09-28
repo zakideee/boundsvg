@@ -631,7 +631,7 @@ describe("emit_svg_from_ir", () => {
           glyphPaths: [
             {
               nodeId: "txt1",
-              d: "M0 0L10 0",
+              d: "M0 0H10",
               fill: "#333333",
               glyphIds: [1, 2],
               text: "Hello\nWorld",
@@ -647,7 +647,7 @@ describe("emit_svg_from_ir", () => {
     expect(svg).toContain('data-boundsvg-node-id="txt1"');
     expect(svg).toContain('data-boundsvg-text="Hello');
     expect(svg).toContain('aria-label="Hello');
-    expect(svg).toContain('<path d="M0 0L10 0" fill="#333333"/>');
+    expect(svg).toContain('<path d="M0 0H10" fill="#333333"/>');
     expect(svg).not.toContain("<tspan");
     expect(svg).not.toContain("<text");
   });
@@ -704,7 +704,7 @@ describe("emit_svg_from_ir", () => {
           glyphPaths: [
             {
               nodeId: "txt-frag",
-              d: "M0 0L10 0",
+              d: "M0 0H10",
               fill: "#ff0000",
               glyphIds: [1],
               text: "A",
@@ -747,7 +747,7 @@ describe("emit_svg_from_ir", () => {
           glyphPaths: [
             {
               nodeId: "txt-path",
-              d: "M0 0L10 0",
+              d: "M0 0H10",
               fill: "#ff0000",
               glyphIds: [1],
               text: "A",
@@ -755,7 +755,7 @@ describe("emit_svg_from_ir", () => {
             },
             {
               nodeId: "txt-path",
-              d: "M0 1L10 1",
+              d: "M0 1H10",
               fill: "#0000ff",
               glyphIds: [2],
               text: "A",
@@ -767,8 +767,8 @@ describe("emit_svg_from_ir", () => {
       ["txt-path"],
     );
     const svg = emitSvgFromIrViaHandle(handle, ir);
-    expect(svg).toContain('<path d="M0 0L10 0" fill="#ff0000"/>');
-    expect(svg).toContain('<path d="M0 1L10 1" fill="#0000ff"/>');
+    expect(svg).toContain('<path d="M0 0H10" fill="#ff0000"/>');
+    expect(svg).toContain('<path d="M0 1H10" fill="#0000ff"/>');
   });
 
   it("emits image with data URI", () => {
@@ -818,7 +818,7 @@ describe("emit_svg_from_ir", () => {
                 glyphPaths: [
                   {
                     nodeId: "label",
-                    d: "M0 0L10 0",
+                    d: "M0 0H10",
                     fill: "#000000",
                     glyphIds: [1],
                     text: "A",
@@ -1382,7 +1382,7 @@ describe("emit_svg_from_ir", () => {
           glyphPaths: [
             {
               nodeId: "txt1",
-              d: "M0 0L10 0",
+              d: "M0 0H10",
               fill: "#000",
               glyphIds: [1],
               text: "A < B & C > D",

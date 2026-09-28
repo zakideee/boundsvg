@@ -25,7 +25,7 @@ describe("Japanese typesetting integration", () => {
       glyphPaths: [
         {
           nodeId: "t1",
-          d: "M0,0L10,0L10,10L0,10Z",
+          d: "M0 0H10V10H0z",
           fill: "#000",
           glyphIds: [1],
           text: "縦",
@@ -53,7 +53,7 @@ describe("Japanese typesetting integration", () => {
     };
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
-    expect(svg).toContain('<path d="M0,0L10,0L10,10L0,10Z" fill="#000"/>');
+    expect(svg).toContain('<path d="M0 0H10V10H0z" fill="#000"/>');
     expect(svg).not.toContain("font-feature-settings:'vert' 1;");
     expect(svg).not.toContain("<text");
   });

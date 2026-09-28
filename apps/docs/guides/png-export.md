@@ -42,7 +42,9 @@ Text is always converted to `<path>` elements (glyph outlines) in the
 intermediate SVG before rasterization. The `textPathMode` option controls how
 glyph paths from `Text` and `TextOnPath` are grouped in the SVG stage, but it
 does not configure path layout and has no visible effect on PNG output—the
-rasterized result is identical regardless of mode.
+rasterized result uses the same outline geometry in either mode. SVG emission
+shortens text-path coordinates before rasterization; older PNG bytes and edge
+pixels can therefore differ slightly.
 
 See [Text & Fonts — Glyph outline grouping](/guides/text-and-fonts#glyph-outline-grouping-textpathmode)
 for details on `"merged"` vs `"glyphs"`.

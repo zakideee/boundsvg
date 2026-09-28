@@ -34,6 +34,7 @@ use crate::svg_emit::num_format::{format_js_number, format_number};
 use crate::svg_emit::paint::{
     StrokeStyleFields, append_stroke_style_attrs, linecap_str, linejoin_str,
 };
+use crate::svg_emit::text_path_writer::compact_text_path;
 use crate::svg_emit::xml::{escape_css_identifier, escape_xml};
 
 const NODE_ID_ATTR: &str = "data-boundsvg-node-id";
@@ -1056,6 +1057,7 @@ fn text_group_attrs(text: &TextItem, options: SvgEmitOptions) -> Vec<String> {
 
 fn emit_text_fill_glyph(
     glyph: &TextGlyphItem,
+    path_d: &str,
     text: &TextItem,
     indent: &str,
 ) -> Result<String, EngineError> {
@@ -1063,13 +1065,13 @@ fn emit_text_fill_glyph(
         let stroke_width = fmt2(text.font_size_px * MISSING_GLYPH_STROKE_RATIO)?;
         format!(
             "<path d=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{stroke_width}\" opacity=\"{MISSING_GLYPH_OPACITY}\"/>",
-            escape_xml(&glyph.d),
+            escape_xml(path_d),
             escape_xml(&glyph.fill)
         )
     } else {
         format!(
             "<path d=\"{}\" fill=\"{}\"/>",
-            escape_xml(&glyph.d),
+            escape_xml(path_d),
             escape_xml(&glyph.fill)
         )
     };
@@ -1134,7 +1136,8 @@ fn emit_text(
     let glyph_indent = format!("{indent}  ");
     append_text_decorations(&mut lines, text, false, &glyph_indent)?;
     for glyph in &text.glyphs {
-        lines.push(emit_text_fill_glyph(glyph, text, &glyph_indent)?);
+        let path_d = compact_text_path(&glyph.d);
+        lines.push(emit_text_fill_glyph(glyph, &path_d, text, &glyph_indent)?);
     }
     append_text_decorations(&mut lines, text, true, &glyph_indent)?;
     lines.push(format!("{indent}</g>"));
@@ -1148,6 +1151,11 @@ fn emit_text_effect_layers(
     options: SvgEmitOptions,
 ) -> Result<String, EngineError> {
     let mut lines: Vec<String> = Vec::new();
+    let path_data: Vec<String> = text
+        .glyphs
+        .iter()
+        .map(|glyph| compact_text_path(&glyph.d))
+        .collect();
     let inner = format!("{indent}  ");
     let copy_indent = format!("{inner}  ");
     lines.push(format!(
@@ -1174,7 +1182,7 @@ fn emit_text_effect_layers(
                 };
                 lines.push(emit_text_unit_path(
                     glyph,
-                    &format!("<path d=\"{}\"/>", escape_xml(&glyph.d)),
+                    &format!("<path d=\"{}\"/>", escape_xml(&path_data[*glyph_index])),
                     &copy_indent,
                 )?);
             }
@@ -1215,7 +1223,7 @@ fn emit_text_effect_layers(
                 };
                 lines.push(emit_text_unit_path(
                     glyph,
-                    &format!("<path d=\"{}\"/>", escape_xml(&glyph.d)),
+                    &format!("<path d=\"{}\"/>", escape_xml(&path_data[*glyph_index])),
                     &copy_indent,
                 )?);
             }
@@ -1224,8 +1232,8 @@ fn emit_text_effect_layers(
     }
 
     // Fill glyphs on top.
-    for glyph in &text.glyphs {
-        lines.push(emit_text_fill_glyph(glyph, text, &inner)?);
+    for (glyph, path_d) in text.glyphs.iter().zip(&path_data) {
+        lines.push(emit_text_fill_glyph(glyph, path_d, text, &inner)?);
     }
     append_text_decorations(&mut lines, text, true, &inner)?;
     lines.push(format!("{indent}</g>"));

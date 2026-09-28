@@ -12,5 +12,6 @@ pub mod outline_resolver;
 pub mod paint;
 pub mod path_bbox;
 pub mod text_decoration_resolver;
+mod text_path_writer;
 pub mod transform;
 pub mod xml;
