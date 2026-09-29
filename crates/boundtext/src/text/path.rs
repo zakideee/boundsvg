@@ -779,6 +779,7 @@ pub fn layout_text_on_path(
         layout.overflow = super::types::TextOverflow::none();
     }
     layout.unit_map = unit_map;
+    layout.placement_space = super::types::TextPlacementSpace::PathFrame;
     Ok(layout)
 }
 

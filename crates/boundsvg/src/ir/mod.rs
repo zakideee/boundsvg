@@ -4,6 +4,7 @@ pub mod builder;
 pub mod gradient;
 mod svg_id_rewrite;
 pub mod svg_security;
+pub(crate) mod text_placement;
 pub mod types;
 pub(crate) mod wire_input;
 pub(crate) mod wire_output;

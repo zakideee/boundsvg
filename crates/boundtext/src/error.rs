@@ -155,6 +155,8 @@ pub enum TextLayoutInvariant {
     LineRangeNotUtf8Boundary,
     #[error("flow layout made no progress")]
     FlowMadeNoProgress,
+    #[error("line index exceeds u32 range")]
+    LineIndexOutOfRange,
 }
 
 /// Fatal failure of the authoritative text-layout operation.

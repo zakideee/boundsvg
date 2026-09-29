@@ -358,6 +358,7 @@ const fn invariant_name(invariant: TextLayoutInvariant) -> &'static str {
         TextLayoutInvariant::LineRangeOutOfBounds => "lineRangeOutOfBounds",
         TextLayoutInvariant::LineRangeNotUtf8Boundary => "lineRangeNotUtf8Boundary",
         TextLayoutInvariant::FlowMadeNoProgress => "flowMadeNoProgress",
+        TextLayoutInvariant::LineIndexOutOfRange => "lineIndexOutOfRange",
     }
 }
 

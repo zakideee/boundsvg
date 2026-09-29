@@ -1056,12 +1056,7 @@ fn is_outline_request_glyph(glyph: &PositionedGlyph) -> bool {
 }
 
 fn resolve_text_start_x(node: &TextNodeView, line_width: f64) -> f64 {
-    let layout_box = node.layout_box;
-    match node.text_align {
-        IrTextAlign::Center => layout_box.x + (layout_box.w - line_width) / 2.0,
-        IrTextAlign::End => layout_box.x + layout_box.w - line_width,
-        IrTextAlign::Start => layout_box.x,
-    }
+    crate::ir::text_placement::horizontal_start(node.layout_box, line_width, node.text_align)
 }
 
 fn resolve_vertical_column_x(node: &TextNodeView, node_bbox: BBox, line_index: usize) -> f64 {
@@ -1081,11 +1076,7 @@ fn resolve_vertical_align_offset(node: &TextNodeView, line: &Line) -> f64 {
     if available <= 0.0 {
         return 0.0;
     }
-    if node.text_align == IrTextAlign::Center {
-        available / 2.0
-    } else {
-        available
-    }
+    crate::ir::text_placement::vertical_align_offset(available, node.text_align)
 }
 
 /// Return false for control characters and whitespace that should not get a

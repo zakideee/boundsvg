@@ -424,6 +424,9 @@ function parseRustFields(
     /(?:^|\n)\s*((?:#\[[^\]]+\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?([A-Za-z_]\w*)\s*:\s*([^,\n]+)/g;
   for (const match of body.matchAll(fieldPattern)) {
     const attributes = serdeAttributes(match[1] ?? "");
+    if (attributes.some((attribute) => /\bskip\b/.test(attribute))) {
+      continue;
+    }
     const rustType = (match[3] ?? "").trim();
     const optionalInput =
       rustType.includes("Option<") || attributes.some((item) => /\bdefault\b/.test(item));

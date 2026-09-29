@@ -1395,6 +1395,7 @@ fn collect_layout_results(
                 },
             );
             Some(TextLayoutOutput {
+                placement_space: rust_result.map(|result| result.placement_space),
                 glyphs,
                 measured_width,
                 measured_height: line_height_px,
@@ -1590,6 +1591,7 @@ fn build_text_path_layout_output(
     )
     .line_height_px;
     Ok(TextLayoutOutput {
+        placement_space: Some(result.placement_space),
         glyphs,
         measured_width,
         measured_height,

@@ -72,6 +72,9 @@ fn public_ir_json(ir: &crate::ir::types::Ir) -> Value {
 
 fn simple_text_layout(text: &str, w: f64, h: f64) -> TextLayoutOutput {
     TextLayoutOutput {
+        placement_space: Some(crate::text::types::TextPlacementSpace::LineRelative {
+            writing_mode: crate::text::types::WritingMode::HorizontalTb,
+        }),
         glyphs: Vec::new(),
         measured_width: w,
         measured_height: h,
@@ -970,8 +973,13 @@ fn zero_text_stroke_width_is_omitted() {
 fn emits_inline_box_decorations_before_text() {
     let mut text_output = output("txt", 5.0, 5.0, 100.0, 20.0);
     let mut layout = simple_text_layout("hello", 60.0, 18.0);
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::BlockLocal {
+        writing_mode: crate::text::types::WritingMode::HorizontalTb,
+    });
+    layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(Vec::new());
     layout.inline_box_decorations = vec![
         crate::text::types::InlineBoxDecoration {
+            line_index: 0,
             x: 1.0,
             y: 2.0,
             width: 10.0,
@@ -983,6 +991,7 @@ fn emits_inline_box_decorations_before_text() {
             span_key: None,
         },
         crate::text::types::InlineBoxDecoration {
+            line_index: 0,
             x: 0.0,
             y: 0.0,
             width: 1.0,
@@ -1020,11 +1029,289 @@ fn emits_inline_box_decorations_before_text() {
 }
 
 #[test]
+fn aligns_each_rich_line_and_its_decoration_independently() {
+    let mut text_output = output("txt", 5.0, 7.0, 100.0, 40.0);
+    let mut layout = simple_text_layout("first", 60.0, 40.0);
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::BlockLocal {
+        writing_mode: crate::text::types::WritingMode::HorizontalTb,
+    });
+    let mut first_line = layout.lines.as_ref().unwrap()[0].clone();
+    first_line.positioned_glyphs = Some(Vec::new());
+    let mut second_line = first_line.clone();
+    second_line.text = "second".to_string();
+    second_line.width = 40.0;
+    second_line.baseline_y = 32.0;
+    layout.lines = Some(vec![first_line, second_line]);
+    let decoration = crate::text::types::InlineBoxDecoration {
+        line_index: 0,
+        x: 10.0,
+        y: 0.0,
+        width: 5.0,
+        height: 10.0,
+        background: Some("#f00".to_string()),
+        border_color: None,
+        border_width: None,
+        border_radius: None,
+        span_key: None,
+    };
+    layout.inline_box_decorations = vec![
+        decoration.clone(),
+        crate::text::types::InlineBoxDecoration {
+            line_index: 1,
+            ..decoration
+        },
+    ];
+    text_output.text_layout = Some(layout);
+    let ir = build_text_ir(
+        &json!({ "textAlign": "center" }),
+        vec![output("root", 0.0, 0.0, 200.0, 100.0), text_output],
+    );
+    let children = ir["root"]["children"][0]["children"].as_array().unwrap();
+    assert_eq!(children[0]["bbox"]["x"], json!(35.0));
+    assert_eq!(children[1]["bbox"]["x"], json!(45.0));
+}
+
+#[test]
+fn aligns_block_local_result_even_when_flow_was_requested() {
+    let mut text_output = output("txt", 5.0, 7.0, 100.0, 40.0);
+    let mut layout = simple_text_layout("hello", 60.0, 20.0);
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::BlockLocal {
+        writing_mode: crate::text::types::WritingMode::HorizontalTb,
+    });
+    layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(Vec::new());
+    layout.inline_box_decorations = vec![crate::text::types::InlineBoxDecoration {
+        line_index: 0,
+        x: 10.0,
+        y: 0.0,
+        width: 5.0,
+        height: 10.0,
+        background: Some("#f00".to_string()),
+        border_color: None,
+        border_width: None,
+        border_radius: None,
+        span_key: None,
+    }];
+    text_output.text_layout = Some(layout);
+    let mut input = text_node_input(&json!({ "textAlign": "center" }));
+    input["text"]["flow"] = json!({ "exclusions": [] });
+    let ir = build_json(
+        json!({
+            "nodeId": "root",
+            "nodeType": "canvas",
+            "children": [input],
+        }),
+        vec![output("root", 0.0, 0.0, 200.0, 100.0), text_output],
+    );
+    assert_eq!(
+        ir["root"]["children"][0]["children"][0]["bbox"]["x"],
+        json!(35.0)
+    );
+}
+
+#[test]
+fn rejects_invalid_decoration_ownership_and_mode() {
+    let input = parse_node(json!({
+        "nodeId": "root", "nodeType": "canvas",
+        "children": [text_node_input(&json!({}))]
+    }));
+    let mut text_output = output("txt", 5.0, 7.0, 100.0, 40.0);
+    let mut layout = simple_text_layout("first", 60.0, 40.0);
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::BlockLocal {
+        writing_mode: crate::text::types::WritingMode::HorizontalTb,
+    });
+    layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(Vec::new());
+    layout
+        .inline_box_decorations
+        .push(crate::text::types::InlineBoxDecoration {
+            line_index: 1,
+            x: 0.0,
+            y: 0.0,
+            width: 5.0,
+            height: 10.0,
+            background: Some("#f00".to_string()),
+            border_color: None,
+            border_width: None,
+            border_radius: None,
+            span_key: None,
+        });
+    text_output.text_layout = Some(layout);
+    let mut outputs = outputs_map(vec![output("root", 0.0, 0.0, 200.0, 100.0), text_output]);
+    let invalid_index = build_ir(&input, &outputs).expect_err("out of range line index");
+    assert!(
+        matches!(invalid_index, crate::error::EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID")
+    );
+    let layout = outputs
+        .get_mut("txt")
+        .unwrap()
+        .text_layout
+        .as_mut()
+        .unwrap();
+    layout.inline_box_decorations.clear();
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::PathFrame);
+    let invalid_mode = build_ir(&input, &outputs).expect_err("path frame on text node");
+    assert!(
+        matches!(invalid_mode, crate::error::EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID")
+    );
+
+    let layout = outputs
+        .get_mut("txt")
+        .unwrap()
+        .text_layout
+        .as_mut()
+        .unwrap();
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::BlockLocal {
+        writing_mode: crate::text::types::WritingMode::HorizontalTb,
+    });
+    layout.lines.as_mut().unwrap()[0].positioned_glyphs = None;
+    let missing_glyphs =
+        build_ir(&input, &outputs).expect_err("absolute line without positioned glyphs");
+    assert!(
+        matches!(missing_glyphs, crate::error::EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID")
+    );
+
+    let missing_text_input = parse_node(json!({
+        "nodeId": "root", "nodeType": "canvas",
+        "children": [{ "nodeId": "txt", "nodeType": "text", "children": [], "visual": {} }]
+    }));
+    let invalid_input =
+        build_ir(&missing_text_input, &outputs).expect_err("text layout without text input");
+    assert!(
+        matches!(invalid_input, crate::error::EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID")
+    );
+
+    let mut glyph: crate::text::types::PositionedGlyph = serde_json::from_value(json!({
+        "glyphId": 1,
+        "text": "H",
+        "clusterStart": 0,
+        "clusterEnd": 1,
+        "fontAlias": "Main",
+        "fontWeight": 400,
+        "fontStyle": "normal",
+        "originX": 0.0,
+        "originY": 0.0,
+        "xOffset": 0.0,
+        "yOffset": 0.0,
+        "xAdvance": 10.0,
+        "yAdvance": 0.0,
+        "rotationDeg": 0,
+        "absolutePosition": false
+    }))
+    .expect("positioned glyph fixture");
+    let layout = outputs
+        .get_mut("txt")
+        .unwrap()
+        .text_layout
+        .as_mut()
+        .unwrap();
+    layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(vec![glyph.clone()]);
+    let relative_glyph =
+        build_ir(&input, &outputs).expect_err("relative glyph in block-local result");
+    assert!(
+        matches!(relative_glyph, crate::error::EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID")
+    );
+    glyph.absolute_position = Some(true);
+    let layout = outputs
+        .get_mut("txt")
+        .unwrap()
+        .text_layout
+        .as_mut()
+        .unwrap();
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::LineRelative {
+        writing_mode: crate::text::types::WritingMode::HorizontalTb,
+    });
+    layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(vec![glyph]);
+    let absolute_glyph = build_ir(&input, &outputs).expect_err("absolute glyph in relative result");
+    assert!(
+        matches!(absolute_glyph, crate::error::EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID")
+    );
+}
+
+#[test]
+fn rejects_text_node_kind_that_contradicts_placement_input() {
+    let mut text_output = output("txt", 5.0, 7.0, 100.0, 40.0);
+    text_output.text_layout = Some(simple_text_layout("hello", 60.0, 40.0));
+    let mut text_on_path = text_node_input(&json!({}));
+    text_on_path["nodeType"] = json!("textonpath");
+    let text_on_path_root = parse_node(json!({
+        "nodeId": "root", "nodeType": "canvas", "children": [text_on_path]
+    }));
+    let outputs = outputs_map(vec![output("root", 0.0, 0.0, 200.0, 100.0), text_output]);
+    let wrong_text_on_path = build_ir(&text_on_path_root, &outputs)
+        .expect_err("textonpath with text input and line-relative placement");
+    assert!(matches!(
+        wrong_text_on_path,
+        EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID"
+    ));
+
+    let mut path_only = text_node_input(&json!({}));
+    path_only.as_object_mut().unwrap().remove("text");
+    path_only["textPath"] = json!({
+        "spans": [],
+        "decorationOwnerIds": [],
+        "sourceItemCount": 0,
+        "inlineCount": 0,
+        "d": "M0 0 L100 0",
+        "fontSizePx": 16.0,
+    });
+    let path_only_root = parse_node(json!({
+        "nodeId": "root", "nodeType": "canvas", "children": [path_only]
+    }));
+    let mut path_outputs = outputs;
+    let path_layout = path_outputs
+        .get_mut("txt")
+        .unwrap()
+        .text_layout
+        .as_mut()
+        .unwrap();
+    path_layout.placement_space = Some(crate::text::types::TextPlacementSpace::PathFrame);
+    path_layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(Vec::new());
+    let wrong_text =
+        build_ir(&path_only_root, &path_outputs).expect_err("text with path input and path frame");
+    assert!(matches!(
+        wrong_text,
+        EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID"
+    ));
+}
+
+#[test]
+fn rejects_flow_frame_with_path_metadata() {
+    let mut text_input = text_node_input(&json!({}));
+    text_input["text"]["flow"] = json!({ "exclusions": [] });
+    text_input["textPath"] = json!({
+        "spans": [],
+        "decorationOwnerIds": [],
+        "sourceItemCount": 0,
+        "inlineCount": 0,
+        "d": "M0 0 L100 0",
+        "fontSizePx": 16.0,
+    });
+    let input = parse_node(json!({
+        "nodeId": "root", "nodeType": "canvas", "children": [text_input]
+    }));
+    let mut text_output = output("txt", 5.0, 7.0, 100.0, 40.0);
+    let mut layout = simple_text_layout("hello", 60.0, 40.0);
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::FlowFrame);
+    layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(Vec::new());
+    text_output.text_layout = Some(layout);
+    let outputs = outputs_map(vec![output("root", 0.0, 0.0, 200.0, 100.0), text_output]);
+    let error = build_ir(&input, &outputs).expect_err("flow frame with path metadata");
+    assert!(matches!(
+        error,
+        EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID"
+    ));
+}
+
+#[test]
 fn emits_inline_rects_in_fixed_paint_order_with_fragment_animation() {
     let mut text_output = output("txt", 5.0, 7.0, 100.0, 24.0);
     let mut layout = simple_text_layout("hello", 60.0, 20.0);
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::BlockLocal {
+        writing_mode: crate::text::types::WritingMode::HorizontalTb,
+    });
+    layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(Vec::new());
     layout.inline_rects = vec![
         crate::text::types::InlineRectFragment {
+            line_index: 0,
             fragment_id: "txt:inline-rect:0".to_string(),
             x: 10.0,
             y: 2.0,
@@ -1036,6 +1323,7 @@ fn emits_inline_rects_in_fixed_paint_order_with_fragment_animation() {
             paint_order: "behind".to_string(),
         },
         crate::text::types::InlineRectFragment {
+            line_index: 0,
             fragment_id: "txt:inline-rect:1".to_string(),
             x: 20.0,
             y: 3.0,
@@ -1090,6 +1378,11 @@ fn emits_inline_rects_in_fixed_paint_order_with_fragment_animation() {
 
 #[test]
 fn vertical_text_aligns_from_the_right_edge() {
+    let mut outputs = text_outputs(40.0, 100.0, 20.0, 80.0);
+    outputs[1].text_layout.as_mut().unwrap().placement_space =
+        Some(crate::text::types::TextPlacementSpace::LineRelative {
+            writing_mode: crate::text::types::WritingMode::VerticalRl,
+        });
     let ir = build_json(
         json!({
             "nodeId": "root",
@@ -1107,7 +1400,7 @@ fn vertical_text_aligns_from_the_right_edge() {
                 "visual": {},
             }],
         }),
-        text_outputs(40.0, 100.0, 20.0, 80.0),
+        outputs,
     );
     let text = &ir["root"]["children"][0]["children"][0];
     // x = layout.x + layout.w - measured.w = 5 + 40 - 20 = 25

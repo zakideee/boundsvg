@@ -395,9 +395,13 @@ fn materialize_horizontal_flow_decorations(
     lines: &[text_flow::FlowLine],
     tokens: &[super::LayoutToken],
     decoration_spans: &[super::DecorationSpanMeta],
-) -> Vec<InlineBoxDecoration> {
+) -> Result<Vec<InlineBoxDecoration>, TextLayoutError> {
     let mut pending = Vec::new();
-    for line in lines {
+    for (line_position, line) in lines.iter().enumerate() {
+        let line_index =
+            u32::try_from(line_position).map_err(|_| TextLayoutError::InvariantViolation {
+                invariant: crate::TextLayoutInvariant::LineIndexOutOfRange,
+            })?;
         let mut group_start = 0usize;
         while group_start < line.fragments.len() {
             let region_index = line.fragments[group_start].region_index;
@@ -422,6 +426,7 @@ fn materialize_horizontal_flow_decorations(
                     pending.push(PendingFlowDecoration {
                         span_id,
                         decoration: InlineBoxDecoration {
+                            line_index,
                             x: first_fragment.x + decoration.offset,
                             y: first_fragment.y,
                             width: decoration.advance,
@@ -442,16 +447,20 @@ fn materialize_horizontal_flow_decorations(
             group_start = group_end;
         }
     }
-    finish_flow_decorations(pending, false)
+    Ok(finish_flow_decorations(pending, false))
 }
 
 fn materialize_vertical_flow_decorations(
     columns: &[text_flow::FlowLine],
     tokens: &[super::LayoutToken],
     decoration_spans: &[super::DecorationSpanMeta],
-) -> Vec<InlineBoxDecoration> {
+) -> Result<Vec<InlineBoxDecoration>, TextLayoutError> {
     let mut pending = Vec::new();
-    for column in columns {
+    for (line_position, column) in columns.iter().enumerate() {
+        let line_index =
+            u32::try_from(line_position).map_err(|_| TextLayoutError::InvariantViolation {
+                invariant: crate::TextLayoutInvariant::LineIndexOutOfRange,
+            })?;
         let mut group_start = 0usize;
         while group_start < column.fragments.len() {
             let region_index = column.fragments[group_start].region_index;
@@ -479,6 +488,7 @@ fn materialize_vertical_flow_decorations(
                     pending.push(PendingFlowDecoration {
                         span_id,
                         decoration: InlineBoxDecoration {
+                            line_index,
                             x: first_fragment.x + cross_offset,
                             y: first_fragment.y + decoration.offset,
                             width: if span_id.is_some() {
@@ -499,7 +509,7 @@ fn materialize_vertical_flow_decorations(
             group_start = group_end;
         }
     }
-    finish_flow_decorations(pending, true)
+    Ok(finish_flow_decorations(pending, true))
 }
 
 fn layout_rich_flow_horizontal(
@@ -653,7 +663,7 @@ fn layout_rich_flow_horizontal(
 
     let exhausted = cursor >= tokens.len() && !pending_trailing_line;
     let inline_box_decorations =
-        materialize_horizontal_flow_decorations(&lines, tokens, decoration_spans);
+        materialize_horizontal_flow_decorations(&lines, tokens, decoration_spans)?;
     Ok(text_flow::FlowLayoutResult {
         used_line_count: lines.len(),
         exhausted,
@@ -819,7 +829,7 @@ fn layout_rich_flow_vertical(
 
     let exhausted = cursor >= tokens.len() && !pending_trailing_column;
     let inline_box_decorations =
-        materialize_vertical_flow_decorations(&columns, tokens, decoration_spans);
+        materialize_vertical_flow_decorations(&columns, tokens, decoration_spans)?;
     Ok(text_flow::FlowLayoutResult {
         used_line_count: columns.len(),
         exhausted,

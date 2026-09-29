@@ -2433,6 +2433,10 @@ fn layout_resolved_flow_with_regions_budgeted(
     }
 
     for flow_line in flow_result.lines {
+        let line_index =
+            u32::try_from(lines.len()).map_err(|_| crate::TextLayoutError::InvariantViolation {
+                invariant: crate::TextLayoutInvariant::LineIndexOutOfRange,
+            })?;
         let line_cross_size = flow_line.cross_size;
         let baseline_y = flow_line.fragments.first().map_or(0.0, |fragment| {
             if is_vertical {
@@ -2469,6 +2473,7 @@ fn layout_resolved_flow_with_regions_budgeted(
                     _ => (line_cross_size - block_size) * 0.5,
                 };
                 inline_rects.push(InlineRectFragment {
+                    line_index,
                     fragment_id: inline_rect.rect.fragment_id.clone(),
                     x: if is_vertical {
                         fragment.x + block_offset - req.flow_bounds.x
@@ -2517,6 +2522,7 @@ fn layout_resolved_flow_with_regions_budgeted(
     }
 
     let mut layout_result = TextLayoutResult {
+        placement_space: crate::text::types::TextPlacementSpace::FlowFrame,
         lines,
         bbox: TextBBox {
             x: 0.0,

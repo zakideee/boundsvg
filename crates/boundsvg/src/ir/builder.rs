@@ -243,6 +243,7 @@ fn build_node<S: std::hash::BuildHasher>(
     match input.node_type.as_str() {
         "text" | "textonpath" => {
             build_text_child(TextChildContext {
+                node_type: input.node_type.as_str(),
                 text_input: input.text.as_ref(),
                 text_path_input: input.text_path.as_ref(),
                 text_layout: outputs
@@ -445,6 +446,7 @@ fn build_border_rect(
 // ---------------------------------------------------------------------------
 
 struct TextChildContext<'a> {
+    node_type: &'a str,
     text_input: Option<&'a TextInput>,
     text_path_input: Option<&'a TextPathInput>,
     text_layout: Option<&'a TextLayoutOutput>,
@@ -513,7 +515,11 @@ fn append_text_warnings(context: &mut TextChildContext, layout: &TextLayoutOutpu
     }
 }
 
-fn append_inline_box_decorations(context: &mut TextChildContext, layout: &TextLayoutOutput) {
+fn append_inline_box_decorations(
+    context: &mut TextChildContext,
+    layout: &TextLayoutOutput,
+    placement: &super::text_placement::TextPlacement,
+) {
     for (index, decoration) in layout.inline_box_decorations.iter().enumerate() {
         let has_background = is_truthy(decoration.background.as_deref());
         let has_border_color = is_truthy(decoration.border_color.as_deref());
@@ -522,9 +528,18 @@ fn append_inline_box_decorations(context: &mut TextChildContext, layout: &TextLa
         }
         let node_id = context.node_id;
         let decoration_id = format!("{node_id}:ibox{index}");
+        let offset = placement.offsets[decoration.line_index as usize];
+        let mut x = context.bbox.x + decoration.x;
+        let mut y = context.bbox.y + decoration.y;
+        if offset.x != 0.0 {
+            x += offset.x;
+        }
+        if offset.y != 0.0 {
+            y += offset.y;
+        }
         let bbox = BBox {
-            x: context.bbox.x + decoration.x,
-            y: context.bbox.y + decoration.y,
+            x,
+            y,
             w: decoration.width,
             h: decoration.height,
         };
@@ -593,20 +608,26 @@ fn append_inline_box_decorations(context: &mut TextChildContext, layout: &TextLa
 fn append_inline_rects(
     context: &mut TextChildContext,
     layout: &TextLayoutOutput,
-    measured_bbox: &crate::text::types::TextBBox,
-    is_vertical: bool,
-    text_align: IrTextAlign,
+    placement: &super::text_placement::TextPlacement,
     paint_order: &str,
 ) {
-    let text_bbox = resolve_aligned_text_bbox(context.bbox, measured_bbox, is_vertical, text_align);
     for inline_rect in layout
         .inline_rects
         .iter()
         .filter(|inline_rect| inline_rect.paint_order == paint_order)
     {
+        let offset = placement.offsets[inline_rect.line_index as usize];
+        let mut x = context.bbox.x + inline_rect.x;
+        let mut y = context.bbox.y + inline_rect.y;
+        if offset.x != 0.0 {
+            x += offset.x;
+        }
+        if offset.y != 0.0 {
+            y += offset.y;
+        }
         let bbox = BBox {
-            x: text_bbox.x + inline_rect.x,
-            y: text_bbox.y + inline_rect.y,
+            x,
+            y,
             w: inline_rect.width,
             h: inline_rect.height,
         };
@@ -661,7 +682,7 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
     };
 
     let node_id = context.node_id.to_string();
-    let (Some(lines), Some(measured_bbox), Some(chosen_font_size_px)) = (
+    let (Some(mut lines), Some(measured_bbox), Some(chosen_font_size_px)) = (
         layout.lines.clone(),
         layout.bbox.as_ref(),
         layout.chosen_font_size_px,
@@ -690,6 +711,34 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
         Some("end") => IrTextAlign::End,
         _ => IrTextAlign::Start,
     };
+    let placement = super::text_placement::resolve(super::text_placement::TextPlacementContext {
+        node_id: &node_id,
+        node_type: context.node_type,
+        text_input,
+        path_input: text_path_input,
+        layout,
+        lines: &lines,
+        measured: measured_bbox,
+        layout_box: context.bbox,
+        align: text_align,
+    })?;
+    if matches!(
+        placement.space,
+        crate::text::types::TextPlacementSpace::BlockLocal { .. }
+    ) {
+        for (line, offset) in lines.iter_mut().zip(&placement.offsets) {
+            if let Some(glyphs) = line.positioned_glyphs.as_mut() {
+                for glyph in glyphs {
+                    if offset.x != 0.0 {
+                        glyph.origin_x += offset.x;
+                    }
+                    if offset.y != 0.0 {
+                        glyph.origin_y += offset.y;
+                    }
+                }
+            }
+        }
+    }
     let line_height_px = text_input
         .and_then(|text| text.line_height_px)
         .or_else(|| is_path.then_some(layout.measured_height))
@@ -844,18 +893,17 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
                 let mut positioned_fragment = fragment.clone();
                 for path in &mut positioned_fragment.paths {
                     let line_index = path.line_index as usize;
-                    let line = lines.get(line_index);
-                    let absolute_position = line
-                        .and_then(|value| value.positioned_glyphs.as_ref())
-                        .and_then(|glyphs| glyphs.first())
-                        .is_some_and(|glyph| glyph.absolute_position == Some(true));
-                    let (dx, dy) = if absolute_position {
-                        (context.bbox.x, context.bbox.y)
-                    } else if is_vertical {
+                    let line = &lines[line_index];
+                    let (dx, dy) = if matches!(
+                        placement.space,
+                        crate::text::types::TextPlacementSpace::LineRelative {
+                            writing_mode: crate::text::types::WritingMode::VerticalRl
+                        }
+                    ) {
                         let column_x = context.bbox.x + context.bbox.w
                             - (line_index as f64 + 1.0) * line_height_px
                             + line_height_px * 0.5;
-                        let available = line.map_or(0.0, |value| context.bbox.h - value.width);
+                        let available = context.bbox.h - line.width;
                         let inline_offset = if available <= 0.0 {
                             0.0
                         } else {
@@ -866,34 +914,36 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
                             }
                         };
                         (column_x, context.bbox.y + inline_offset)
+                    } else if matches!(
+                        placement.space,
+                        crate::text::types::TextPlacementSpace::LineRelative { .. }
+                    ) {
+                        (
+                            super::text_placement::horizontal_start(
+                                context.bbox,
+                                line.width,
+                                text_align,
+                            ),
+                            context.bbox.y,
+                        )
                     } else {
-                        let line_width = line.map_or(0.0, |value| value.width);
-                        let line_x = match text_align {
-                            IrTextAlign::Center => {
-                                context.bbox.x + (context.bbox.w - line_width) / 2.0
-                            }
-                            IrTextAlign::End => context.bbox.x + context.bbox.w - line_width,
-                            IrTextAlign::Start => context.bbox.x,
-                        };
-                        (line_x, context.bbox.y)
+                        let offset = placement.offsets[line_index];
+                        (context.bbox.x + offset.x, context.bbox.y + offset.y)
                     };
-                    path.origin_x += dx;
-                    path.origin_y += dy;
+                    if dx != 0.0 {
+                        path.origin_x += dx;
+                    }
+                    if dy != 0.0 {
+                        path.origin_y += dy;
+                    }
                 }
                 positioned_fragment
             })
             .collect()
     });
 
-    append_inline_box_decorations(&mut context, layout);
-    append_inline_rects(
-        &mut context,
-        layout,
-        measured_bbox,
-        is_vertical,
-        text_align,
-        "behind",
-    );
+    append_inline_box_decorations(&mut context, layout, &placement);
+    append_inline_rects(&mut context, layout, &placement, "behind");
 
     let resolved_text_bbox = if is_path {
         BBox {
@@ -902,6 +952,11 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
             w: measured_bbox.w,
             h: measured_bbox.h,
         }
+    } else if matches!(
+        placement.space,
+        crate::text::types::TextPlacementSpace::FlowFrame
+    ) {
+        context.bbox
     } else {
         resolve_aligned_text_bbox(context.bbox, measured_bbox, is_vertical, text_align)
     };
@@ -983,14 +1038,7 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
     };
     context.children.push(text_node);
     context.draw_order.push(node_id);
-    append_inline_rects(
-        &mut context,
-        layout,
-        measured_bbox,
-        is_vertical,
-        text_align,
-        "front",
-    );
+    append_inline_rects(&mut context, layout, &placement, "front");
     Ok(())
 }
 

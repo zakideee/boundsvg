@@ -115,6 +115,9 @@ pub(super) fn build_result(
     }
     let total_height = lines.len() as f64 * line_height_px;
     TextLayoutResult {
+        placement_space: crate::text::types::TextPlacementSpace::LineRelative {
+            writing_mode: crate::text::types::WritingMode::HorizontalTb,
+        },
         lines,
         bbox: TextBBox {
             x: 0.0,

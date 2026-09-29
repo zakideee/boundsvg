@@ -194,6 +194,7 @@ boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	chosen_font_size_p
 boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	display_text	displayText	omit-none
 boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	lines	lines	omit-none
 boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	overflow	overflow	omit-none
+boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	placement_space	placementSpace	skipped
 boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	source_text	sourceText	omit-none
 boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	unit_map	unitMap	omit-none
 boundsvg	crates/boundsvg/src/lib.rs	RenderToSvgOutput	ir	ir	omit-none

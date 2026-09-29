@@ -1041,6 +1041,9 @@ fn layout_rich_text_at_font_size(
 
     if prepared.tokens.is_empty() {
         return Ok(TextLayoutResult {
+            placement_space: crate::text::types::TextPlacementSpace::BlockLocal {
+                writing_mode: req.writing_mode,
+            },
             lines: Vec::new(),
             bbox: TextBBox {
                 x: 0.0,
@@ -1066,8 +1069,7 @@ fn layout_rich_text_at_font_size(
             &prepared.decoration_spans,
             chosen_font_size_px,
             prepared.warnings,
-        )
-        .ok_or_else(rich_preparation_error)?
+        )?
     } else {
         layout_horizontal_tokens(
             req,
@@ -1075,8 +1077,7 @@ fn layout_rich_text_at_font_size(
             &prepared.decoration_spans,
             chosen_font_size_px,
             prepared.warnings,
-        )
-        .ok_or_else(rich_preparation_error)?
+        )?
     };
 
     // Horizontal and vertical rich text share one display-projection step.
@@ -1150,8 +1151,7 @@ fn apply_rich_ellipsis(
                 &decoration_spans,
                 chosen_font_size_px,
                 warnings,
-            )
-            .ok_or_else(rich_preparation_error)?
+            )?
         } else {
             layout_horizontal_tokens(
                 &probe_req,
@@ -1159,8 +1159,7 @@ fn apply_rich_ellipsis(
                 &decoration_spans,
                 chosen_font_size_px,
                 warnings,
-            )
-            .ok_or_else(rich_preparation_error)?
+            )?
         };
         candidate_layout.source_text = Some(source_text.clone());
         candidate_layout.display_text = Some(display_text);

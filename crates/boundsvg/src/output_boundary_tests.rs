@@ -12,6 +12,7 @@ use crate::wire::finite::{FiniteOutput, OutputConstructionError};
 
 fn text_output() -> TextLayoutOutput {
     TextLayoutOutput {
+        placement_space: None,
         glyphs: Vec::new(),
         measured_width: 0.0,
         measured_height: 20.0,

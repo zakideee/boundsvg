@@ -33,6 +33,12 @@ Layout nodes such as `Box`, `Flex`, and `Image` are not allowed in text flow.
 | `letterSpacingPx` | `number`                       | `0`       | Letter spacing in px                                 |
 | `textAlign`       | `"start" \| "center" \| "end"` | `"start"` | Text alignment                                       |
 
+Alignment uses the final Text layout box. Rich text aligns each wrapped line
+independently; vertical text places columns from the right edge and aligns
+each column along its height. Inline, Ruby, InlineBox, InlineRect, and text
+decorations move with their line or column. Flow exclusions keep positions
+inside their flow frame.
+
 ### Decoration
 
 | Prop             | Type             | Default  | Description                                                                                    |
