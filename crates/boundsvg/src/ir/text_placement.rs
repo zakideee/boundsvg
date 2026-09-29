@@ -1,3 +1,5 @@
+//! Validate text coordinate frames and resolve offsets from the final layout box.
+
 use crate::diagnostics::PipelineStage;
 use crate::error::EngineError;
 use crate::ir::types::{BBox, IrTextAlign};
@@ -13,6 +15,19 @@ pub(super) struct LineOffset {
 pub(super) struct TextPlacement {
     pub space: TextPlacementSpace,
     pub offsets: Vec<LineOffset>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct TextPlacementContext<'a> {
+    pub node_id: &'a str,
+    pub node_type: &'a str,
+    pub text_input: Option<&'a TextInput>,
+    pub path_input: Option<&'a TextPathInput>,
+    pub layout: &'a TextLayoutOutput,
+    pub lines: &'a [Line],
+    pub measured: &'a TextBBox,
+    pub layout_box: BBox,
+    pub align: IrTextAlign,
 }
 
 fn invalid(node_id: &str, reason: &str) -> EngineError {
@@ -53,17 +68,18 @@ pub(crate) fn vertical_align_offset(available: f64, align: IrTextAlign) -> f64 {
     }
 }
 
-pub(super) fn resolve(
-    node_id: &str,
-    node_type: &str,
-    text_input: Option<&TextInput>,
-    path_input: Option<&TextPathInput>,
-    layout: &TextLayoutOutput,
-    lines: &[Line],
-    measured: &TextBBox,
-    layout_box: BBox,
-    align: IrTextAlign,
-) -> Result<TextPlacement, EngineError> {
+pub(super) fn resolve(context: TextPlacementContext<'_>) -> Result<TextPlacement, EngineError> {
+    let TextPlacementContext {
+        node_id,
+        node_type,
+        text_input,
+        path_input,
+        layout,
+        lines,
+        measured,
+        layout_box,
+        align,
+    } = context;
     let space = layout
         .placement_space
         .ok_or_else(|| invalid(node_id, "missing placement space"))?;

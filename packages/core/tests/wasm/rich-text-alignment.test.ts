@@ -22,6 +22,21 @@ function findTextNode(node: IRNode): IRTextNode {
   throw new Error("Text node not found in test IR");
 }
 
+function findNodeById(node: IRNode, nodeId: string): IRNode | undefined {
+  if (node.nodeId === nodeId) {
+    return node;
+  }
+  if (node.type === "group") {
+    for (const child of node.children) {
+      const found = findNodeById(child, nodeId);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return undefined;
+}
+
 describe("rich text alignment", () => {
   let engine: Engine;
 
@@ -143,6 +158,97 @@ describe("rich text alignment", () => {
     const available = 240 - (localLine?.width ?? 0);
     const expectedY = textAlign === "center" ? available / 2 : textAlign === "end" ? available : 0;
     expect((paintedGlyph?.originY ?? 0) - (localGlyph?.originY ?? 0)).toBeCloseTo(expectedY, 5);
+  });
+
+  it("aligns each vertical rich column and its rectangles", () => {
+    const scene = createElement(
+      "Canvas",
+      { width: 180, height: 130 },
+      createElement(
+        "Text",
+        {
+          font: "NotoSansJP",
+          fontSizePx: 32,
+          width: 180,
+          height: 110,
+          writingMode: "vertical-rl",
+          textAlign: "center",
+        },
+        createElement("Inline", { color: "#e22" }, "東京"),
+        createElement("InlineRect", { inlineSizePx: 10, blockSizePx: 8, color: "#238" }),
+        createElement("Inline", { color: "#e22" }, "大阪京都奈良"),
+        createElement("InlineRect", { inlineSizePx: 10, blockSizePx: 8, color: "#238" }),
+        createElement("Inline", { color: "#e22" }, "横浜"),
+      ),
+    );
+    const local = engine.renderToLayoutTree(scene).root.children[0]?.textLayout?.resolvedTextLayout;
+    const { ir } = engine.renderToSvgAndIR(scene);
+    const painted = findTextNode(ir.root);
+    const lines = local?.lines ?? [];
+    const rectangles = local?.inlineRects ?? [];
+    expect(lines).toHaveLength(4);
+    expect(new Set(lines.map((line) => line.width)).size).toBeGreaterThan(1);
+    expect(rectangles).toHaveLength(2);
+    const crossOffset = painted.layoutBox.w - (local?.bbox.w ?? 0);
+    lines.forEach((line, index) => {
+      const expectedY = (painted.layoutBox.h - line.width) / 2;
+      const localGlyphs = line.positionedGlyphs ?? [];
+      const paintedGlyphs = painted.lines[index]?.positionedGlyphs ?? [];
+      expect(localGlyphs.length).toBeGreaterThan(0);
+      expect(paintedGlyphs).toHaveLength(localGlyphs.length);
+      localGlyphs.forEach((glyph, glyphIndex) => {
+        const paintedGlyph = paintedGlyphs[glyphIndex];
+        expect((paintedGlyph?.originX ?? 0) - glyph.originX).toBeCloseTo(crossOffset, 5);
+        expect((paintedGlyph?.originY ?? 0) - glyph.originY).toBeCloseTo(expectedY, 5);
+      });
+    });
+    [0, 2].forEach((lineIndex, rectIndex) => {
+      const rectangle = rectangles[rectIndex];
+      const paintedRectangle = findNodeById(ir.root, rectangle?.fragmentId ?? "");
+      const line = lines[lineIndex];
+      expect(rectangle).toBeDefined();
+      expect(line).toBeDefined();
+      expect(paintedRectangle).toBeDefined();
+      expect((rectangle?.x ?? 0) - (line?.positionedGlyphs?.[0]?.originX ?? 0)).toBeCloseTo(
+        -(rectangle?.width ?? 0) / 2,
+        5,
+      );
+      expect(
+        (paintedRectangle?.bbox.x ?? 0) - (rectangle?.x ?? 0) - painted.layoutBox.x,
+      ).toBeCloseTo(crossOffset, 5);
+      expect(
+        (paintedRectangle?.bbox.y ?? 0) - (rectangle?.y ?? 0) - painted.layoutBox.y,
+      ).toBeCloseTo((painted.layoutBox.h - (line?.width ?? 0)) / 2, 5);
+    });
+  });
+
+  it.each([
+    "center",
+    "end",
+  ] as const)("clamps vertical rich overflow alignment: %s", (textAlign) => {
+    const scene = createElement(
+      "Canvas",
+      { width: 100, height: 40 },
+      createElement(
+        "Text",
+        {
+          font: "NotoSansJP",
+          fontSizePx: 32,
+          width: 100,
+          height: 20,
+          writingMode: "vertical-rl",
+          textAlign,
+        },
+        createElement("Inline", { color: "#e22" }, "東"),
+      ),
+    );
+    const localLine =
+      engine.renderToLayoutTree(scene).root.children[0]?.textLayout?.resolvedTextLayout.lines[0];
+    const painted = findTextNode(engine.renderToSvgAndIR(scene).ir.root);
+    expect(localLine?.width).toBeGreaterThan(painted.layoutBox.h);
+    expect(painted.lines[0]?.positionedGlyphs?.[0]?.originY).toBe(
+      localLine?.positionedGlyphs?.[0]?.originY,
+    );
   });
 
   it("uses the actual rich result for fit, text indent, ellipsis, and overflow", () => {

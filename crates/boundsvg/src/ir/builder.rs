@@ -243,6 +243,7 @@ fn build_node<S: std::hash::BuildHasher>(
     match input.node_type.as_str() {
         "text" | "textonpath" => {
             build_text_child(TextChildContext {
+                node_type: input.node_type.as_str(),
                 text_input: input.text.as_ref(),
                 text_path_input: input.text_path.as_ref(),
                 text_layout: outputs
@@ -445,6 +446,7 @@ fn build_border_rect(
 // ---------------------------------------------------------------------------
 
 struct TextChildContext<'a> {
+    node_type: &'a str,
     text_input: Option<&'a TextInput>,
     text_path_input: Option<&'a TextPathInput>,
     text_layout: Option<&'a TextLayoutOutput>,
@@ -709,17 +711,17 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
         Some("end") => IrTextAlign::End,
         _ => IrTextAlign::Start,
     };
-    let placement = super::text_placement::resolve(
-        &node_id,
-        if is_path { "textonpath" } else { "text" },
+    let placement = super::text_placement::resolve(super::text_placement::TextPlacementContext {
+        node_id: &node_id,
+        node_type: context.node_type,
         text_input,
-        text_path_input,
+        path_input: text_path_input,
         layout,
-        &lines,
-        measured_bbox,
-        context.bbox,
-        text_align,
-    )?;
+        lines: &lines,
+        measured: measured_bbox,
+        layout_box: context.bbox,
+        align: text_align,
+    })?;
     if matches!(
         placement.space,
         crate::text::types::TextPlacementSpace::BlockLocal { .. }

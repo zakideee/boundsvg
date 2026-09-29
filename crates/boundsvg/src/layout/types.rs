@@ -1049,6 +1049,7 @@ pub struct LayoutNodeOutput {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextLayoutOutput {
+    /// Coordinate frame carried internally from text layout to IR construction.
     #[serde(skip)]
     pub placement_space: Option<crate::text::types::TextPlacementSpace>,
     pub glyphs: Vec<shaping::GlyphInfo>,

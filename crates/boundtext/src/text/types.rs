@@ -61,9 +61,13 @@ impl WritingMode {
 /// Coordinate frame chosen by the algorithm that produced a text layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextPlacementSpace {
+    /// Glyphs are relative to their line; the consumer aligns each line in its final box.
     LineRelative { writing_mode: WritingMode },
+    /// Glyphs and decorations use the text block origin; the consumer aligns the block.
     BlockLocal { writing_mode: WritingMode },
+    /// Glyphs and decorations already use the resolved flow frame.
     FlowFrame,
+    /// Glyphs and decorations already follow the resolved text path.
     PathFrame,
 }
 
@@ -525,6 +529,7 @@ pub struct Line {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InlineRectFragment {
+    /// Zero-based index in the final `TextLayoutResult::lines` vector.
     #[serde(skip)]
     pub line_index: u32,
     pub fragment_id: String,
@@ -541,6 +546,7 @@ pub struct InlineRectFragment {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextLayoutResult {
+    /// Coordinate frame for glyphs and decorations, kept outside the serialized layout result.
     #[serde(skip)]
     pub placement_space: TextPlacementSpace,
     pub lines: Vec<Line>,
@@ -597,6 +603,7 @@ impl TextLayoutResult {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InlineBoxDecoration {
+    /// Zero-based index in the final `TextLayoutResult::lines` vector.
     #[serde(skip)]
     pub line_index: u32,
     pub x: f64,

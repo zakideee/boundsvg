@@ -1227,6 +1227,52 @@ fn rejects_invalid_decoration_ownership_and_mode() {
 }
 
 #[test]
+fn rejects_text_node_kind_that_contradicts_placement_input() {
+    let mut text_output = output("txt", 5.0, 7.0, 100.0, 40.0);
+    text_output.text_layout = Some(simple_text_layout("hello", 60.0, 40.0));
+    let mut text_on_path = text_node_input(&json!({}));
+    text_on_path["nodeType"] = json!("textonpath");
+    let text_on_path_root = parse_node(json!({
+        "nodeId": "root", "nodeType": "canvas", "children": [text_on_path]
+    }));
+    let outputs = outputs_map(vec![output("root", 0.0, 0.0, 200.0, 100.0), text_output]);
+    let wrong_text_on_path = build_ir(&text_on_path_root, &outputs)
+        .expect_err("textonpath with text input and line-relative placement");
+    assert!(matches!(
+        wrong_text_on_path,
+        EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID"
+    ));
+
+    let mut path_only = text_node_input(&json!({}));
+    path_only.as_object_mut().unwrap().remove("text");
+    path_only["textPath"] = json!({
+        "spans": [],
+        "decorationOwnerIds": [],
+        "sourceItemCount": 0,
+        "inlineCount": 0,
+        "d": "M0 0 L100 0",
+        "fontSizePx": 16.0,
+    });
+    let path_only_root = parse_node(json!({
+        "nodeId": "root", "nodeType": "canvas", "children": [path_only]
+    }));
+    let mut path_outputs = outputs;
+    path_outputs
+        .get_mut("txt")
+        .unwrap()
+        .text_layout
+        .as_mut()
+        .unwrap()
+        .placement_space = Some(crate::text::types::TextPlacementSpace::PathFrame);
+    let wrong_text =
+        build_ir(&path_only_root, &path_outputs).expect_err("text with path input and path frame");
+    assert!(matches!(
+        wrong_text,
+        EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID"
+    ));
+}
+
+#[test]
 fn emits_inline_rects_in_fixed_paint_order_with_fragment_animation() {
     let mut text_output = output("txt", 5.0, 7.0, 100.0, 24.0);
     let mut layout = simple_text_layout("hello", 60.0, 20.0);
