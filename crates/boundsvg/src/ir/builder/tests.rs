@@ -1257,17 +1257,46 @@ fn rejects_text_node_kind_that_contradicts_placement_input() {
         "nodeId": "root", "nodeType": "canvas", "children": [path_only]
     }));
     let mut path_outputs = outputs;
-    path_outputs
+    let path_layout = path_outputs
         .get_mut("txt")
         .unwrap()
         .text_layout
         .as_mut()
-        .unwrap()
-        .placement_space = Some(crate::text::types::TextPlacementSpace::PathFrame);
+        .unwrap();
+    path_layout.placement_space = Some(crate::text::types::TextPlacementSpace::PathFrame);
+    path_layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(Vec::new());
     let wrong_text =
         build_ir(&path_only_root, &path_outputs).expect_err("text with path input and path frame");
     assert!(matches!(
         wrong_text,
+        EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID"
+    ));
+}
+
+#[test]
+fn rejects_flow_frame_with_path_metadata() {
+    let mut text_input = text_node_input(&json!({}));
+    text_input["text"]["flow"] = json!({ "exclusions": [] });
+    text_input["textPath"] = json!({
+        "spans": [],
+        "decorationOwnerIds": [],
+        "sourceItemCount": 0,
+        "inlineCount": 0,
+        "d": "M0 0 L100 0",
+        "fontSizePx": 16.0,
+    });
+    let input = parse_node(json!({
+        "nodeId": "root", "nodeType": "canvas", "children": [text_input]
+    }));
+    let mut text_output = output("txt", 5.0, 7.0, 100.0, 40.0);
+    let mut layout = simple_text_layout("hello", 60.0, 40.0);
+    layout.placement_space = Some(crate::text::types::TextPlacementSpace::FlowFrame);
+    layout.lines.as_mut().unwrap()[0].positioned_glyphs = Some(Vec::new());
+    text_output.text_layout = Some(layout);
+    let outputs = outputs_map(vec![output("root", 0.0, 0.0, 200.0, 100.0), text_output]);
+    let error = build_ir(&input, &outputs).expect_err("flow frame with path metadata");
+    assert!(matches!(
+        error,
         EngineError::Structured { ref code, .. } if code == "TEXT_PLACEMENT_INVALID"
     ));
 }

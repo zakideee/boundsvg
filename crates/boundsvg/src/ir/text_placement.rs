@@ -100,8 +100,14 @@ pub(super) fn resolve(context: TextPlacementContext<'_>) -> Result<TextPlacement
             }
         }
         TextPlacementSpace::FlowFrame => {
-            if node_type != "text" || text_input.and_then(|input| input.flow.as_ref()).is_none() {
-                return Err(invalid(node_id, "flow frame has no flow input"));
+            if node_type != "text"
+                || text_input.and_then(|input| input.flow.as_ref()).is_none()
+                || path_input.is_some()
+            {
+                return Err(invalid(
+                    node_id,
+                    "flow frame requires text flow input without path input",
+                ));
             }
         }
         TextPlacementSpace::PathFrame => {
