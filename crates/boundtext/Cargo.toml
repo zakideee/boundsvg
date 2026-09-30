@@ -1,6 +1,6 @@
 [package]
 name = "boundtext"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["zakideee"]
 repository = "https://github.com/zakideee/boundsvg"
 edition.workspace = true
@@ -10,11 +10,6 @@ description = "Multilingual text layout engine — line breaking, kinsoku, verti
 keywords = ["text-layout", "shaping", "kinsoku", "japanese", "linebreak"]
 categories = ["text-processing"]
 exclude = ["reports/", "tools/", "scripts/"]
-
-[package.metadata.boundsvg-release]
-pending-version = "0.4.0"
-change-kind = "breaking-public-api"
-obligation-id = "rich-text-placement"
 
 [lints]
 workspace = true

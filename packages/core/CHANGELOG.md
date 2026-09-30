@@ -1,5 +1,18 @@
 # @boundsvg/core
 
+## 0.6.0
+
+### Minor Changes
+
+- [#39](https://github.com/zakideee/boundsvg/pull/39) [`9009113`](https://github.com/zakideee/boundsvg/commit/90091133e92c25f497878e07da7b68dd98e549d4) Thanks [@zakideee](https://github.com/zakideee)! - **Output-affecting:** SVG text paths now use shorter numeric path syntax, including the intermediate SVG used for PNG, WebP, GIF, frames, and layered raster output. Rounded decimal outline geometry and returned IR paths are unchanged. Raster bytes and a small number of edge pixels can change because renderers evaluate relative coordinates with floating-point arithmetic.
+
+### Patch Changes
+
+- [#40](https://github.com/zakideee/boundsvg/pull/40) [`8195190`](https://github.com/zakideee/boundsvg/commit/8195190ede076a641932a6d052b9f292413c56d7) Thanks [@zakideee](https://github.com/zakideee)! - **Output-affecting:** Rich Text with shrink, grow, Inline, Ruby, spans, or ellipsis now aligns each horizontal line and vertical column with its final layout box. Vertical rich Text columns also start at the box's right edge. InlineBox, InlineRect, and text decoration geometry follows the same line placement as glyphs. Finite flow keeps glyph placement and now places InlineRect and the text node box at the flow frame origin. SVG, PNG, WebP, GIF, frames, layered output, outlines, and animation may change for those scenes. The public layout tree JSON remains text-local.
+
+- Updated dependencies []:
+  - @boundsvg/shape@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes
