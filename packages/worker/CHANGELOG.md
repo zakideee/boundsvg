@@ -1,5 +1,13 @@
 # @boundsvg/worker
 
+## 0.6.0
+
+### Patch Changes
+
+- Updated dependencies [[`8195190`](https://github.com/zakideee/boundsvg/commit/8195190ede076a641932a6d052b9f292413c56d7), [`9009113`](https://github.com/zakideee/boundsvg/commit/90091133e92c25f497878e07da7b68dd98e549d4)]:
+  - @boundsvg/core@0.6.0
+  - @boundsvg/browser@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes
