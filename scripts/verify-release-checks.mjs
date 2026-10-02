@@ -101,6 +101,7 @@ function projectRecord(record, collection) {
             "status",
             "conclusion",
             "created_at",
+            "run_started_at",
             "check_suite_id",
             "run_attempt",
           ];
@@ -208,6 +209,13 @@ function assertMain(readJson, mainCommit) {
   }
 }
 
+function assertRunTimes(run) {
+  const createdMs = timestamp(run.created_at);
+  if (timestamp(run.run_started_at) < createdMs) {
+    reject("workflow attempt precedes run creation");
+  }
+}
+
 function selectedAuthority(readJson, { check, source, runs, releaseCommit }) {
   assertSuccessful(check, releaseCommit);
   const job = readJson(`repos/${REPOSITORY}/actions/jobs/${check.id}`);
@@ -226,6 +234,7 @@ function selectedAuthority(readJson, { check, source, runs, releaseCommit }) {
   assertId(run.id);
   assertId(run.run_attempt);
   assertId(run.check_suite_id);
+  assertRunTimes(run);
   if (
     run.id !== job.run_id ||
     run.run_attempt !== job.run_attempt ||
@@ -240,10 +249,13 @@ function selectedAuthority(readJson, { check, source, runs, releaseCommit }) {
     reject("latest workflow run has the wrong provenance or state");
   }
   const sourceRuns = runs.filter(({ path }) => path === source.path);
-  const latestRun = newest(sourceRuns, "created_at");
+  // Re-runs retain their creation time, so recency belongs to the current attempt.
+  const latestRun = newest(sourceRuns, "run_started_at");
   if (
     latestRun.id !== run.id ||
     latestRun.run_attempt !== run.run_attempt ||
+    latestRun.run_started_at !== run.run_started_at ||
+    latestRun.created_at !== run.created_at ||
     latestRun.head_sha !== releaseCommit ||
     latestRun.event !== "push" ||
     latestRun.head_branch !== "main" ||
@@ -310,7 +322,7 @@ function observe(readJson, releaseCommit, mainCommit) {
     if (typeof run.path !== "string" || run.head_sha !== releaseCommit) {
       reject("workflow inventory has invalid identity");
     }
-    timestamp(run.created_at);
+    assertRunTimes(run);
     assertId(run.run_attempt);
   }
   const selected = requiredSources.map((source) => {
@@ -408,7 +420,7 @@ export function createGitHubReader({
         env: childEnvironment,
         encoding: "utf8",
         shell: false,
-        timeout: Math.min(REQUEST_TIMEOUT_MS, remainingMs),
+        timeout: Math.min(REQUEST_TIMEOUT_MS, Math.ceil(remainingMs)),
         maxBuffer: RESPONSE_BYTES_MAX,
         stdio: ["ignore", "pipe", "pipe"],
         killSignal: "SIGKILL",

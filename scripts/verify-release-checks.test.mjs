@@ -28,7 +28,7 @@ function fixture() {
   });
   const runs = jobs.map((job, index) =>
     JSON.parse(
-      `{"id":${job.run_id},"check_suite_id":${job.check_suite.id},"run_attempt":1,"head_sha":"${RELEASE_COMMIT}","path":".github/workflows/${index === 0 ? "render-regression" : "ci"}.yml","created_at":"2026-01-01T00:00:00Z","event":"push","head_branch":"main","status":"completed","conclusion":"success"}`,
+      `{"id":${job.run_id},"check_suite_id":${job.check_suite.id},"run_attempt":1,"head_sha":"${RELEASE_COMMIT}","path":".github/workflows/${index === 0 ? "render-regression" : "ci"}.yml","created_at":"2026-01-01T00:00:00Z","run_started_at":"2026-01-01T00:00:00Z","event":"push","head_branch":"main","status":"completed","conclusion":"success"}`,
     ),
   );
   return { suites, checks, jobs, runs };
@@ -204,6 +204,7 @@ test("a newer same-path run blocks before its required job exists", () => {
     const model = fixture();
     const newerRun = { ...model.runs[0], id: 31, event, status: "queued", conclusion: null };
     newerRun.created_at = "2026-01-01T00:02:00Z";
+    newerRun.run_started_at = "2026-01-01T00:02:00Z";
     model.runs.push(newerRun);
     assert.throws(() => verify(model));
   }
@@ -219,6 +220,7 @@ test("later successful wrong-context check cannot be filtered away", () => {
   newerJob.check_run_url = "https://api.github.com/repos/zakideee/boundsvg/check-runs/3";
   const newerRun = { ...model.runs[0], id: 31, event: "workflow_dispatch" };
   newerRun.created_at = "2026-01-01T00:02:00Z";
+  newerRun.run_started_at = "2026-01-01T00:02:00Z";
   model.checks.push(newerCheck);
   model.jobs.push(newerJob);
   model.runs.push(newerRun);
@@ -494,4 +496,108 @@ test("publication CLI rejects any separate main override before reading GitHub",
   assert.equal(invocation.status, 1);
   assert.equal(invocation.stdout, "");
   assert.equal(invocation.stderr, "Release check provenance verification failed.\n");
+});
+
+test("an older wrong-context run's newer queued attempt cannot hide behind a successful run", () => {
+  for (const status of ["queued", "in_progress"]) {
+    const model = fixture();
+    const olderRun = { ...model.runs[0], id: 20, status, conclusion: null };
+    olderRun.check_suite_id = 10;
+    olderRun.head_branch = "release/next";
+    olderRun.run_attempt = 2;
+    olderRun.created_at = "2025-12-31T23:00:00Z";
+    olderRun.run_started_at = "2026-01-01T00:02:00Z";
+    model.runs.push(olderRun);
+    assert.throws(() => verify(model));
+  }
+});
+
+test("rerunning the main-push workflow recovers after a later dispatch", () => {
+  const model = fixture();
+  const dispatch = { ...model.runs[0], id: 31, event: "workflow_dispatch" };
+  dispatch.check_suite_id = 10;
+  dispatch.created_at = "2026-01-01T00:02:00Z";
+  dispatch.run_started_at = "2026-01-01T00:02:00Z";
+  model.runs.push(dispatch);
+  assert.throws(() => verify(model));
+  const newerCheck = { ...model.checks[0], id: 3 };
+  newerCheck.started_at = "2026-01-01T00:03:01Z";
+  newerCheck.completed_at = "2026-01-01T00:04:00Z";
+  const newerJob = { ...model.jobs[0], ...newerCheck };
+  newerJob.run_attempt = 2;
+  newerJob.check_run_url = "https://api.github.com/repos/zakideee/boundsvg/check-runs/3";
+  model.checks.push(newerCheck);
+  model.jobs.push(newerJob);
+  model.runs[0].run_attempt = 2;
+  model.runs[0].run_started_at = "2026-01-01T00:03:00Z";
+  const proof = verify(model);
+  assert.equal(proof.checks[0].runAttempt, 2);
+  assert.equal(proof.checks[0].checkId, 3);
+});
+
+test("attempt time must be present, valid, unchanged and match the latest endpoint", () => {
+  for (const startedAt of [undefined, null, "invalid", "2025-12-31T23:00:00Z"]) {
+    const model = fixture();
+    model.runs[0].run_started_at = startedAt;
+    assert.throws(() => verify(model));
+  }
+  for (const mode of ["inventory", "endpoint"]) {
+    const model = fixture();
+    const baseReader = reader(model);
+    assert.throws(() =>
+      verifyReleaseChecks(RELEASE_COMMIT, {
+        readJson(endpoint) {
+          const response = baseReader(endpoint);
+          if (mode === "inventory" && endpoint.includes("/actions/runs?")) {
+            response.workflow_runs[0].run_started_at = "2026-01-01T00:00:01Z";
+          }
+          if (mode === "endpoint" && endpoint.endsWith("/actions/runs/21")) {
+            response.run_started_at = "2026-01-01T00:00:01Z";
+          }
+          return response;
+        },
+      }),
+    );
+  }
+  const model = fixture();
+  const baseReader = reader(model);
+  let inventoryReads = 0;
+  let finalObservation = false;
+  assert.throws(() =>
+    verifyReleaseChecks(RELEASE_COMMIT, {
+      readJson(endpoint) {
+        const response = baseReader(endpoint);
+        if (endpoint.includes("/actions/runs?") && ++inventoryReads === 2) {
+          finalObservation = true;
+        }
+        if (finalObservation && endpoint.includes("/actions/runs?")) {
+          response.workflow_runs[0].run_started_at = "2026-01-01T00:00:01Z";
+        }
+        if (finalObservation && endpoint.endsWith("/actions/runs/21")) {
+          response.run_started_at = "2026-01-01T00:00:01Z";
+        }
+        return response;
+      },
+    }),
+  );
+});
+
+test("fractional remaining deadlines produce positive integer subprocess timeouts", () => {
+  for (const [elapsedMs, timeoutMs] of [
+    [115_000.5, 5_000],
+    [119_999.75, 1],
+  ]) {
+    let clockMs = 0;
+    const readJson = createGitHubReader({
+      now: () => clockMs,
+      spawn(_executable, _argumentsList, options) {
+        assert.equal(Number.isInteger(options.timeout), true);
+        assert.equal(options.timeout, timeoutMs);
+        assert.equal(options.timeout > 0, true);
+        return { status: 0, signal: null, stdout: "{}" };
+      },
+    });
+    clockMs = elapsedMs;
+    assert.deepEqual(readJson("repos/zakideee/boundsvg/git/ref/heads/main"), {});
+  }
 });
