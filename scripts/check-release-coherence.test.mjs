@@ -28,14 +28,18 @@ test("the release workflow exposes only explicit native publication routes", () 
     assert.match(releaseWorkflow, new RegExp(`^\\s+- ${target}$`, "m"));
   }
   for (const requiredCheck of ["CI acceptance", "Baseline Checks"]) {
-    assert.match(releaseWorkflow, new RegExp(`^\\s+${requiredCheck}$`, "m"));
+    assert.ok(
+      readFileSync(new URL("./verify-release-checks.mjs", import.meta.url), "utf8").includes(
+        `name: "${requiredCheck}"`,
+      ),
+    );
   }
 
   assert.match(releaseWorkflow, /default: select-target/);
   assert.match(releaseWorkflow, /\*\) exit 2/);
   assert.match(releaseWorkflow, /test "\$GITHUB_REF" = "refs\/heads\/main"/);
   assert.match(releaseWorkflow, /test "\$GITHUB_SHA" = "\$RELEASE_COMMIT"/);
-  assert.match(releaseWorkflow, /max_by\(\[\.started_at, \.id\]\)/);
+  assert.equal(releaseWorkflow.match(/node scripts\/verify-release-checks.mjs/g)?.length, 2);
   assert.match(releaseWorkflow, /environment:\n\s+name:.*npm-publish.*crates-publish/);
   assert.match(releaseWorkflow, /pnpm -r publish --no-git-checks/);
   assert.match(releaseWorkflow, /cargo publish --locked --package "\$crate"/);

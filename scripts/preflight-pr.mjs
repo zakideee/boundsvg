@@ -162,6 +162,17 @@ if (all) {
   ]);
 }
 
+if (
+  inPath("scripts/verify-release-checks") ||
+  isPath(".github/workflows/release.yml") ||
+  isPath(".github/workflows/ci.yml") ||
+  isPath("scripts/preflight-pr.mjs")
+) {
+  addTask("release-check-provenance", "release check authority or its test paths changed", [
+    ["node", ["--test", "scripts/verify-release-checks.test.mjs"]],
+  ]);
+}
+
 if (full) {
   addTask("wasm-builds", "full run requested", [
     ["pnpm", ["build:wasm"]],

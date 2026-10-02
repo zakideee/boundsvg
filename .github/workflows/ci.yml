@@ -44,7 +44,7 @@ jobs:
           node-version: 22
 
       - name: Test CI policy
-        run: node --test scripts/ci-policy.test.mjs
+        run: node --test scripts/ci-policy.test.mjs scripts/verify-release-checks.test.mjs
 
       - id: detect
         env:
