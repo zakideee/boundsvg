@@ -409,6 +409,7 @@ test("actual workflow wiring keeps required jobs, coverage, and unique acceptanc
   for (const pkg of ["core", "react", "cli"]) {
     assert.ok(ci.includes(`test -s packages/${pkg}/coverage/coverage-summary.json`));
   }
-  assert.match(release, /REQUIRED_CHECKS: \|-\n {4}CI acceptance\n {4}Baseline Checks/);
+  assert.equal(release.match(/node scripts\/verify-release-checks.mjs/g)?.length, 2);
+  assert.doesNotMatch(release, /REQUIRED_CHECKS:/);
   assert.doesNotMatch(release, /cache: pnpm|uses: Swatinem\/rust-cache/);
 });
