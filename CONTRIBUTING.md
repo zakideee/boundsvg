@@ -113,34 +113,6 @@ these checks. A successful full PR run does not need a second manual full run;
 manual dispatch remains available for investigation. Pushes to `main` and
 `release/**` continue to run full CI.
 
-### Release check provenance
-
-Publication requires `CI acceptance` from `.github/workflows/ci.yml` and
-`Baseline Checks` from `.github/workflows/render-regression.yml`, both successful
-`push` runs on `main` at the exact release commit. The verifier reads complete
-check-suite, check-run and workflow-run inventories twice, binds each selected
-check to its job and latest run attempt, and verifies the current `main` ref.
-Attempt recency uses `run_started_at`, which resets on re-run; `created_at`
-identifies when the workflow run was originally created. Any incomplete run
-from either required workflow blocks publication. Distinct runs sharing the
-latest attempt-start epoch are ambiguous and also block publication.
-A later pending, failed or different-context run cannot fall back to an older
-success. After a different-context run, rerun the complete `push` workflow on
-`main`; a synthetic conflicting check may require a new commit.
-
-API failures, changing observations, missing or duplicate records and resource
-limits block publication. Each inventory must contain fewer than 900 records
-and finish within 10 pages. The complete verifier permits at most 200 GETs
-within 120 seconds; each GET has a 10-second timeout and a 4 MiB response limit.
-Retained inventory fields are projected; string fields longer than 256 characters
-are rejected.
-These limits deliberately favor refusing uncertain authority over availability.
-The exported verification function can also evaluate retained checks against an
-explicit, independently verified current `main` commit. The publication CLI
-always requires `main` to equal the release commit.
-The APIs expose their retained history, so this guard does not claim to recover
-records GitHub has already removed.
-
 ### AI-generated contributions
 
 AI-assisted PRs are welcome under the same rules as any PR, plus:
