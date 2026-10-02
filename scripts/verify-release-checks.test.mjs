@@ -601,3 +601,70 @@ test("fractional remaining deadlines produce positive integer subprocess timeout
     assert.deepEqual(readJson("repos/zakideee/boundsvg/git/ref/heads/main"), {});
   }
 });
+
+test("lower-ID wrong-context attempts with tied latest epochs cannot be hidden", () => {
+  for (const status of ["queued", "in_progress", "completed"]) {
+    for (const startedAt of ["2026-01-01T00:00:00Z", "2026-01-01T00:00:00.000Z"]) {
+      const model = fixture();
+      const olderRun = {
+        ...model.runs[0],
+        id: 20,
+        status,
+        conclusion: status === "completed" ? "failure" : null,
+      };
+      olderRun.head_branch = "release/next";
+      olderRun.run_attempt = 2;
+      olderRun.created_at = "2025-12-31T23:00:00Z";
+      olderRun.run_started_at = startedAt;
+      model.runs.push(olderRun);
+      assert.throws(() => verify(model));
+    }
+  }
+});
+
+test("any incomplete required-workflow attempt blocks even with an older start time", () => {
+  for (const status of ["queued", "in_progress"]) {
+    const model = fixture();
+    const olderRun = { ...model.runs[0], id: 20, status, conclusion: null };
+    olderRun.head_branch = "release/next";
+    olderRun.run_attempt = 2;
+    olderRun.created_at = "2025-12-31T23:00:00Z";
+    olderRun.run_started_at = "2025-12-31T23:00:00Z";
+    model.runs.push(olderRun);
+    assert.throws(() => verify(model));
+  }
+});
+
+test("completed older failed or cancelled runs permit a uniquely later successful main attempt", () => {
+  for (const conclusion of ["failure", "cancelled"]) {
+    const model = fixture();
+    const olderRun = { ...model.runs[0], id: 20, conclusion };
+    olderRun.head_branch = "release/next";
+    olderRun.run_attempt = 2;
+    olderRun.created_at = "2025-12-31T23:00:00Z";
+    olderRun.run_started_at = "2025-12-31T23:00:00Z";
+    model.runs.push(olderRun);
+    assert.equal(verify(model).checks[0].runId, 21);
+  }
+});
+
+test("a complete main rerun recovers from equal-epoch ambiguity", () => {
+  const model = fixture();
+  const conflictingRun = { ...model.runs[0], id: 20, event: "workflow_dispatch" };
+  conflictingRun.run_attempt = 2;
+  conflictingRun.created_at = "2025-12-31T23:00:00Z";
+  conflictingRun.run_started_at = "2026-01-01T00:00:00.000Z";
+  model.runs.push(conflictingRun);
+  assert.throws(() => verify(model));
+  const newerCheck = { ...model.checks[0], id: 3 };
+  newerCheck.started_at = "2026-01-01T00:03:01Z";
+  newerCheck.completed_at = "2026-01-01T00:04:00Z";
+  const newerJob = { ...model.jobs[0], ...newerCheck };
+  newerJob.run_attempt = 2;
+  newerJob.check_run_url = "https://api.github.com/repos/zakideee/boundsvg/check-runs/3";
+  model.checks.push(newerCheck);
+  model.jobs.push(newerJob);
+  model.runs[0].run_attempt = 2;
+  model.runs[0].run_started_at = "2026-01-01T00:03:00Z";
+  assert.equal(verify(model).checks[0].runAttempt, 2);
+});

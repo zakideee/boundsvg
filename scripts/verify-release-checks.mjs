@@ -86,6 +86,27 @@ function newest(records, timeField) {
   )[0];
 }
 
+function selectLatestWorkflowAttempt(runs, workflowPath) {
+  const sourceRuns = runs.filter(({ path }) => path === workflowPath);
+  if (sourceRuns.length === 0) {
+    reject("required workflow authority is missing");
+  }
+  if (sourceRuns.some(({ status }) => status !== "completed")) {
+    reject("required workflow has an incomplete attempt");
+  }
+  const attempts = sourceRuns.map((run) => ({
+    run,
+    startedMs: timestamp(run.run_started_at),
+  }));
+  const latestStartedMs = Math.max(...attempts.map(({ startedMs }) => startedMs));
+  const latestAttempts = attempts.filter(({ startedMs }) => startedMs === latestStartedMs);
+  // Run IDs identify original creation, so they cannot order tied re-run attempts.
+  if (latestAttempts.length !== 1) {
+    reject("workflow attempt recency is ambiguous");
+  }
+  return latestAttempts[0].run;
+}
+
 function projectRecord(record, collection) {
   const fields =
     collection === "check_suites"
@@ -248,9 +269,7 @@ function selectedAuthority(readJson, { check, source, runs, releaseCommit }) {
   ) {
     reject("latest workflow run has the wrong provenance or state");
   }
-  const sourceRuns = runs.filter(({ path }) => path === source.path);
-  // Re-runs retain their creation time, so recency belongs to the current attempt.
-  const latestRun = newest(sourceRuns, "run_started_at");
+  const latestRun = selectLatestWorkflowAttempt(runs, source.path);
   if (
     latestRun.id !== run.id ||
     latestRun.run_attempt !== run.run_attempt ||

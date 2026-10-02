@@ -121,7 +121,9 @@ Publication requires `CI acceptance` from `.github/workflows/ci.yml` and
 check-suite, check-run and workflow-run inventories twice, binds each selected
 check to its job and latest run attempt, and verifies the current `main` ref.
 Attempt recency uses `run_started_at`, which resets on re-run; `created_at`
-identifies when the workflow run was originally created.
+identifies when the workflow run was originally created. Any incomplete run
+from either required workflow blocks publication. Distinct runs sharing the
+latest attempt-start epoch are ambiguous and also block publication.
 A later pending, failed or different-context run cannot fall back to an older
 success. After a different-context run, rerun the complete `push` workflow on
 `main`; a synthetic conflicting check may require a new commit.
