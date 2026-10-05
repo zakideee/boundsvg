@@ -1,145 +1,153 @@
-//! Animated WebP muxing.
+//! Incremental animated WebP muxing over a checked caller-owned writer.
 //!
-//! Each frame is encoded as a complete still lossless WebP, its VP8L chunk is
-//! lifted out, and the chunks are re-wrapped in an extended WebP container
-//! (VP8X + ANIM + one ANMF per frame). No compression logic lives here — only
-//! RIFF framing, so the output is exactly as deterministic as the still
-//! encoder.
-//!
-//! Reference: <https://developers.google.com/speed/webp/docs/riff_container>
+//! Each frame reuses the still lossless encoder. The RIFF size is patched only
+//! after the final metadata chunk, without retaining the complete animation.
 
-use std::sync::Arc;
+use std::io::Write;
 
+use crate::animation_writer::{AnimationPatch, AnimationWriter, GuardedWriter, animation_io_error};
 use crate::error::EngineError;
-use crate::raster_anim::{
-    AnimatedRasterIterations, AnimationCanvas, AnimationEncodeInput, rasterize_animation_frames,
-    validate_animation_input,
-};
-use crate::webp_encode::{append_riff_chunk, finalize_riff_size, pixmap_to_rgba, rgba_to_webp};
+use crate::output_generator::OutputGenerator;
+use crate::raster_anim::{AnimatedRasterFormat, AnimatedRasterIterations, AnimationCanvas};
+use crate::webp_encode::{pixmap_to_rgba, rgba_to_webp};
 
-/// VP8X feature flags: alpha (bit 4) is always set because the pipeline is
-/// RGBA, animation (bit 1) because this is an animated file.
+/// RGBA and animation feature bits shared with the original container.
 const VP8X_FLAGS_ALPHA_ANIMATION: u8 = 0x12;
-
-/// ANMF flags: blending "do not blend" (bit 1), disposal "none" (bit 0).
-/// Every frame is a full-canvas replacement, so neither is needed.
+/// Full-canvas replacement, without blending or disposal.
 const ANMF_FLAGS_REPLACE: u8 = 0x02;
-
-/// Offset of the first chunk inside a still WebP: "RIFF" + u32 size + "WEBP".
+/// RIFF prefix length before its first chunk.
 const RIFF_HEADER_LEN: usize = 12;
-
-/// Fixed part of an ANMF payload: x, y, width-1, height-1, duration (u24 each)
-/// plus the flags byte.
+/// Fixed ANMF geometry, timing and flags payload length.
 const ANMF_HEADER_LEN: usize = 16;
-
-/// Bytes before the first ANMF chunk: the RIFF header, the VP8X chunk, and
-/// the ANIM chunk.
+/// Header length through VP8X and ANIM.
 const HEADER_LEN: usize = RIFF_HEADER_LEN + (8 + 10) + (8 + 6);
-
-/// Maximum canvas edge the extended container can describe (u24 of edge - 1).
+/// Largest WebP canvas edge represented by an unsigned 24-bit edge minus one.
 const MAX_CANVAS_EDGE: u32 = 1 << 24;
-
-/// Ceiling on the assembled file. Frames are streamed one at a time so pixel
-/// buffers stay bounded, but the compressed frames all accumulate in the
-/// output; without a ceiling a large canvas times 300 frames can exhaust
-/// wasm32 memory, and an allocation failure there aborts the module instead of
-/// producing a catchable error.
-const MAX_ANIMATED_WEBP_BYTES: usize = 256 * 1024 * 1024;
-
-/// WebP's ANIM field stores the total play count directly in a u16; zero is
-/// reserved for infinite playback.
+/// Largest finite total play count represented by ANIM.
 const MAX_WEBP_ITERATIONS: u32 = 65_535;
 
-/// Encode pre-sampled SVG frames as an animated lossless WebP.
-///
-/// # Errors
-///
-/// Returns `EngineError` if validation, rasterization, still-frame encoding,
-/// or container assembly fails.
-pub fn encode_animated_webp(
-    input: &AnimationEncodeInput,
-    alias_map: &[(String, String)],
-    font_data: &[Arc<Vec<u8>>],
-) -> Result<Vec<u8>, EngineError> {
-    validate_animation_input(input)?;
-    let loop_count = webp_loop_count(input.iterations)?;
-    let options = input.options.clone().unwrap_or_default();
-    if let Some(generator) = &options.generator {
-        generator.validate()?;
+/// Incremental WebP state; only the current still frame and small header are assembled.
+pub(crate) struct WebpAnimation<W: AnimationWriter> {
+    writer: GuardedWriter<W>,
+    loop_count: u16,
+    generator: Option<OutputGenerator>,
+    has_header: bool,
+}
+
+impl<W: AnimationWriter> WebpAnimation<W> {
+    /// Validate playback before taking the first frame.
+    ///
+    /// # Errors
+    ///
+    /// Return the existing iteration diagnostic for an unrepresentable play count.
+    pub(crate) fn new(
+        writer: W,
+        iterations: AnimatedRasterIterations,
+        generator: Option<OutputGenerator>,
+    ) -> Result<Self, EngineError> {
+        Ok(Self {
+            writer: GuardedWriter::new(writer, AnimatedRasterFormat::Webp),
+            loop_count: webp_loop_count(iterations)?,
+            generator,
+            has_header: false,
+        })
     }
 
-    // The VP8X and ANIM chunks need the canvas size, which is only known once
-    // the first frame is rasterized, so reserve their bytes up front and fill
-    // them in at the end. Growing a header in front of a finished body would
-    // hold two copies of a file that can reach the output cap.
-    let mut out = vec![0u8; HEADER_LEN];
-    let canvas = rasterize_animation_frames(
-        &input.frames,
-        alias_map,
-        font_data,
-        &options,
-        |index, pixmap| {
-            let still = rgba_to_webp(&pixmap_to_rgba(pixmap), pixmap.width(), pixmap.height())?;
-            let frame_chunk = extract_vp8l_chunk(&still)?;
-            // Checked before the append, so the cap also bounds peak memory.
-            if out
-                .len()
-                .saturating_add(ANMF_HEADER_LEN + 8 + frame_chunk.len())
-                > MAX_ANIMATED_WEBP_BYTES
-            {
-                return Err(EngineError::Rasterize(format!(
-                    "Animated WebP exceeds the {MAX_ANIMATED_WEBP_BYTES} byte output limit; reduce the frame count, the scale, or the canvas size"
-                )));
-            }
-            write_anmf_chunk(
-                &mut out,
-                pixmap.width(),
-                pixmap.height(),
-                input.frames[index].duration_ms,
-                &frame_chunk,
-            )?;
-            Ok(())
-        },
-    )?;
-
-    if canvas.width == 0
-        || canvas.height == 0
-        || canvas.width > MAX_CANVAS_EDGE
-        || canvas.height > MAX_CANVAS_EDGE
-    {
-        return Err(EngineError::Rasterize(format!(
-            "Animated WebP canvas must be 1..={MAX_CANVAS_EDGE} px per edge, got {}x{}",
-            canvas.width, canvas.height
-        )));
-    }
-
-    if let Some(generator) = &options.generator {
-        let xmp = generator.xmp_packet();
-        let padded_chunk_len = 8usize
-            .saturating_add(xmp.len())
-            .saturating_add(xmp.len() % 2);
-        if out.len().saturating_add(padded_chunk_len) > MAX_ANIMATED_WEBP_BYTES {
+    /// Encode and append exactly one rasterized full-canvas frame.
+    ///
+    /// # Errors
+    ///
+    /// Return a canvas, still codec, container or writer failure.
+    pub(crate) fn push(
+        &mut self,
+        pixmap: &resvg::tiny_skia::Pixmap,
+        duration_ms: u32,
+    ) -> Result<(), EngineError> {
+        let canvas = AnimationCanvas {
+            width: pixmap.width(),
+            height: pixmap.height(),
+        };
+        if canvas.width == 0
+            || canvas.height == 0
+            || canvas.width > MAX_CANVAS_EDGE
+            || canvas.height > MAX_CANVAS_EDGE
+        {
             return Err(EngineError::Rasterize(format!(
-                "Animated WebP exceeds the {MAX_ANIMATED_WEBP_BYTES} byte output limit; reduce the frame count, the scale, or the canvas size"
+                "Animated WebP canvas must be 1..={MAX_CANVAS_EDGE} px per edge, got {}x{}",
+                canvas.width, canvas.height
             )));
         }
-        append_riff_chunk(&mut out, *b"XMP ", xmp.as_bytes())?;
+        if !self.has_header {
+            let mut header = Vec::with_capacity(HEADER_LEN);
+            header.extend_from_slice(b"RIFF\0\0\0\0WEBP");
+            write_vp8x_chunk(&mut header, canvas, self.generator.is_some());
+            write_anim_chunk(&mut header, self.loop_count);
+            self.writer
+                .write_all(&header)
+                .map_err(|error| animation_io_error(&error, "Failed to start WebP"))?;
+            self.has_header = true;
+        }
+        let still = rgba_to_webp(&pixmap_to_rgba(pixmap), canvas.width, canvas.height)?;
+        let frame_chunk = extract_vp8l_chunk(&still)?;
+        write_anmf_chunk(
+            &mut self.writer,
+            canvas.width,
+            canvas.height,
+            duration_ms,
+            frame_chunk,
+        )
     }
-    let mut header = Vec::with_capacity(HEADER_LEN);
-    header.extend_from_slice(b"RIFF");
-    header.extend_from_slice(&0u32.to_le_bytes());
-    header.extend_from_slice(b"WEBP");
-    write_vp8x_chunk(&mut header, canvas, options.generator.is_some());
-    write_anim_chunk(&mut header, loop_count);
-    debug_assert_eq!(header.len(), HEADER_LEN);
-    out[..HEADER_LEN].copy_from_slice(&header);
-    finalize_riff_size(&mut out)?;
-    Ok(out)
+
+    /// Append metadata and patch RIFF size at offset four.
+    ///
+    /// # Errors
+    ///
+    /// Return a checked container length or writer failure.
+    pub(crate) fn finish(&mut self) -> Result<AnimationPatch, EngineError> {
+        if let Some(generator) = &self.generator {
+            let packet = generator.xmp_packet();
+            let length = u32::try_from(packet.len())
+                .map_err(|_| EngineError::Rasterize("WebP chunk exceeds 4 GiB".into()))?;
+            self.writer
+                .write_all(b"XMP ")
+                .and_then(|()| self.writer.write_all(&length.to_le_bytes()))
+                .and_then(|()| self.writer.write_all(packet.as_bytes()))
+                .map_err(|error| animation_io_error(&error, "Failed to write WebP metadata"))?;
+            if packet.len() % 2 == 1 {
+                self.writer.write_all(&[0]).map_err(|error| {
+                    animation_io_error(&error, "Failed to write WebP metadata padding")
+                })?;
+            }
+        }
+        let size = self
+            .writer
+            .bytes_written()
+            .checked_sub(8)
+            .and_then(|size| u32::try_from(size).ok())
+            .ok_or_else(|| {
+                EngineError::Rasterize("WebP exceeds the 4 GiB RIFF container limit".into())
+            })?;
+        let bytes = size.to_le_bytes();
+        self.writer
+            .patch(4, &bytes)
+            .map_err(|error| animation_io_error(&error, "Failed to patch WebP size"))?;
+        Ok(AnimationPatch { offset: 4, bytes })
+    }
+
+    /// Access the checked output without changing codec ownership.
+    pub(crate) fn writer(&self) -> &GuardedWriter<W> {
+        &self.writer
+    }
+
+    /// Access staging or disable output before codec destruction.
+    pub(crate) fn writer_mut(&mut self) -> &mut GuardedWriter<W> {
+        &mut self.writer
+    }
 }
 
 /// Lift the VP8L chunk — header, payload, and any pad byte — out of a still
 /// WebP so it can be embedded verbatim in an ANMF frame.
-fn extract_vp8l_chunk(still_webp: &[u8]) -> Result<Vec<u8>, EngineError> {
+fn extract_vp8l_chunk(still_webp: &[u8]) -> Result<&[u8], EngineError> {
     if still_webp.len() < RIFF_HEADER_LEN + 8
         || &still_webp[0..4] != b"RIFF"
         || &still_webp[8..12] != b"WEBP"
@@ -166,7 +174,7 @@ fn extract_vp8l_chunk(still_webp: &[u8]) -> Result<Vec<u8>, EngineError> {
             chunk.len().abs_diff(expected_len)
         )));
     }
-    Ok(chunk.to_vec())
+    Ok(chunk)
 }
 
 /// Append a u24 little-endian value.
@@ -214,8 +222,8 @@ fn write_anim_chunk(out: &mut Vec<u8>, loop_count: u16) {
     out.extend_from_slice(&loop_count.to_le_bytes());
 }
 
-fn write_anmf_chunk(
-    out: &mut Vec<u8>,
+fn write_anmf_chunk<W: Write>(
+    out: &mut W,
     frame_width: u32,
     frame_height: u32,
     duration_ms: u32,
@@ -242,15 +250,18 @@ fn write_anmf_chunk(
             EngineError::Rasterize("Animated WebP frame exceeds the 4 GiB chunk limit".into())
         })?;
 
-    push_chunk_header(out, *b"ANMF", payload_len);
+    let mut header = Vec::with_capacity(8 + ANMF_HEADER_LEN);
+    push_chunk_header(&mut header, *b"ANMF", payload_len);
     // Frame offset, stored halved. Every frame covers the whole canvas.
-    push_u24(out, 0);
-    push_u24(out, 0);
-    push_u24(out, frame_width - 1);
-    push_u24(out, frame_height - 1);
-    push_u24(out, duration_ms);
-    out.push(ANMF_FLAGS_REPLACE);
-    out.extend_from_slice(frame_chunk);
+    push_u24(&mut header, 0);
+    push_u24(&mut header, 0);
+    push_u24(&mut header, frame_width - 1);
+    push_u24(&mut header, frame_height - 1);
+    push_u24(&mut header, duration_ms);
+    header.push(ANMF_FLAGS_REPLACE);
+    out.write_all(&header)
+        .and_then(|()| out.write_all(frame_chunk))
+        .map_err(|error| animation_io_error(&error, "Failed to write WebP frame"))?;
     Ok(())
 }
 
@@ -263,6 +274,43 @@ mod tests {
     use super::*;
     use crate::raster_anim::{AnimatedRasterInfinite, AnimationFrameInput};
 
+    struct AnimationFixture {
+        frames: Vec<AnimationFrameInput>,
+        iterations: AnimatedRasterIterations,
+        options: Option<crate::rasterize::RasterizeOptions>,
+    }
+
+    fn encode_result(input: &AnimationFixture) -> Result<Vec<u8>, EngineError> {
+        use crate::animation_writer::StagedWriter;
+        use crate::raster_anim::{AnimationSession, AnimationSessionOptions};
+        let mut session = AnimationSession::open(
+            AnimatedRasterFormat::Webp,
+            AnimationSessionOptions {
+                frame_count: input.frames.len() as u64,
+                iterations: input.iterations,
+                raster_options: input.options.clone().unwrap_or_default(),
+            },
+            vec![],
+            vec![],
+            StagedWriter::default(),
+        )?;
+        let mut bytes = Vec::new();
+        for frame in &input.frames {
+            session.push(frame.clone())?;
+            while let Some(chunk) = session.read_chunk()? {
+                bytes.extend_from_slice(&chunk);
+            }
+        }
+        let result = session.finish()?;
+        while let Some(chunk) = session.read_chunk()? {
+            bytes.extend_from_slice(&chunk);
+        }
+        if let Some(patch) = result.patch {
+            bytes[4..8].copy_from_slice(&patch.bytes);
+        }
+        Ok(bytes)
+    }
+
     fn solid_svg(width: u32, height: u32, fill: &str) -> String {
         format!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}"><rect width="{width}" height="{height}" fill="{fill}"/></svg>"#
@@ -273,8 +321,8 @@ mod tests {
         AnimatedRasterIterations::Infinite(AnimatedRasterInfinite::Infinite)
     }
 
-    fn two_frame_input(iterations: AnimatedRasterIterations) -> AnimationEncodeInput {
-        AnimationEncodeInput {
+    fn two_frame_input(iterations: AnimatedRasterIterations) -> AnimationFixture {
+        AnimationFixture {
             frames: vec![
                 AnimationFrameInput {
                     svg: solid_svg(8, 4, "#ff0000"),
@@ -290,8 +338,8 @@ mod tests {
         }
     }
 
-    fn encode(input: &AnimationEncodeInput) -> Vec<u8> {
-        encode_animated_webp(input, &[], &[]).expect("animated WebP encoding should succeed")
+    fn encode(input: &AnimationFixture) -> Vec<u8> {
+        encode_result(input).expect("animated WebP encoding should succeed")
     }
 
     fn generator() -> crate::output_generator::OutputGenerator {
@@ -429,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_animated_webp_rejects_mismatched_frame_sizes() {
-        let input = AnimationEncodeInput {
+        let input = AnimationFixture {
             frames: vec![
                 AnimationFrameInput {
                     svg: solid_svg(8, 4, "#ff0000"),
@@ -443,7 +491,7 @@ mod tests {
             iterations: infinite(),
             options: None,
         };
-        let error = encode_animated_webp(&input, &[], &[]).expect_err("size mismatch is invalid");
+        let error = encode_result(&input).expect_err("size mismatch is invalid");
         assert!(error.to_string().contains("share one canvas size"));
     }
 
@@ -458,14 +506,14 @@ mod tests {
 
     #[test]
     fn test_animated_webp_rejects_invalid_input() {
-        let empty = AnimationEncodeInput {
+        let empty = AnimationFixture {
             frames: vec![],
             iterations: infinite(),
             options: None,
         };
-        assert!(encode_animated_webp(&empty, &[], &[]).is_err());
+        assert!(encode_result(&empty).is_err());
 
-        let zero_duration = AnimationEncodeInput {
+        let zero_duration = AnimationFixture {
             frames: vec![AnimationFrameInput {
                 svg: solid_svg(8, 4, "#ff0000"),
                 duration_ms: 0,
@@ -473,7 +521,7 @@ mod tests {
             iterations: infinite(),
             options: None,
         };
-        assert!(encode_animated_webp(&zero_duration, &[], &[]).is_err());
+        assert!(encode_result(&zero_duration).is_err());
     }
 
     #[test]

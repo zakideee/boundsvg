@@ -10,15 +10,6 @@ export const RASTER_MAX_PIXELS = 3_840 * 2_160;
 /** Maximum requested-axis value reported across the Rust `u32` raster boundary. */
 export const RASTER_DIMENSION_SATURATION = 0xffff_ffff;
 
-/** Maximum number of frames accepted by an animated raster render. */
-export const MAX_ANIMATION_FRAMES = 300;
-
-/**
- * Maximum combined SVG character count transported to an animated raster
- * encoder. This is a character count, not a UTF-8 byte count.
- */
-export const MAX_ANIMATION_SVG_PAYLOAD_CHARS = 64 * 1_024 * 1_024;
-
 /** Hard limits enforced before document-timeline animation CSS is serialized. */
 export const animatedSvgTimelineLimits = Object.freeze({
   maxKeyframeStops: 16_384,

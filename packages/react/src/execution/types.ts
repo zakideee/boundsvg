@@ -43,6 +43,7 @@ export type RenderExecutionState =
 
 type EmptyFields<Fields> = { [Key in keyof Fields]: null };
 
+/** Generation state with complete current or retained output fields, or null fields when no result is available. */
 export type RenderExecutionResult<Fields> =
   | (Extract<RenderExecutionState, { status: "idle" }> & EmptyFields<Fields>)
   | (Extract<RenderExecutionState, { status: "success" }> & Fields)

@@ -10,23 +10,24 @@
  */
 import { loadWasmModule } from "@boundsvg/browser";
 import { preloadFonts } from "@boundsvg/browser/fonts";
-import { createEngineAsync, type Engine } from "@boundsvg/core";
+import { createAnimatedRasterCollector, createEngineAsync, type Engine } from "@boundsvg/core";
 import { initWasm } from "@boundsvg/core/wasm";
 
 type SceneInput = Parameters<Engine["renderToSvg"]>[0];
 
 type DeterminismHarness = {
-  renderScene: (sceneJson: string) => {
+  renderScene: (sceneJson: string) => Promise<{
     svg: string;
     pngBase64: string;
     webpBase64: string;
     animatedWebpBase64: string;
     animatedGifBase64: string;
-  };
+  }>;
 };
 
 // Must stay in sync with the Node golden suite
 // (packages/core/tests/determinism/golden.test.ts).
+/** Schedule shared with the Node golden suite to compare exact container bytes. */
 const ANIMATED_SCHEDULE = { durationMs: 300, fps: 10, iterations: "infinite" } as const;
 
 declare global {
@@ -83,13 +84,25 @@ async function main(): Promise<void> {
     });
 
     window.boundsvgDeterminism = {
-      renderScene(sceneJson: string) {
+      async renderScene(sceneJson: string) {
         const vnode = JSON.parse(sceneJson) as SceneInput;
         const svg = engine.renderToSvg(vnode);
         const png = engine.renderToPng(vnode);
         const webp = engine.renderToWebp(vnode);
-        const animatedWebp = engine.renderToAnimatedWebp(vnode, ANIMATED_SCHEDULE);
-        const animatedGif = engine.renderToAnimatedGif(vnode, ANIMATED_SCHEDULE);
+        const webpCollector = createAnimatedRasterCollector();
+        const gifCollector = createAnimatedRasterCollector();
+        let animatedWebp: Uint8Array;
+        let animatedGif: Uint8Array;
+        try {
+          await engine.renderToAnimatedWebp(vnode, ANIMATED_SCHEDULE, webpCollector);
+          animatedWebp = webpCollector.takeBytes();
+          await engine.renderToAnimatedGif(vnode, ANIMATED_SCHEDULE, gifCollector);
+          animatedGif = gifCollector.takeBytes();
+        } catch (error) {
+          webpCollector.abort(error);
+          gifCollector.abort(error);
+          throw error;
+        }
         return {
           svg,
           pngBase64: toBase64(png),

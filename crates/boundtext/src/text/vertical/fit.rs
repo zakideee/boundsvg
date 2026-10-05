@@ -188,6 +188,10 @@ struct VerticalAtSizeResult {
 ///
 /// Same algorithm as horizontal `fit_shrink`: evaluate boundaries first,
 /// then binary search with invariant `lo=fit, hi=overflow`.
+///
+/// # Errors
+///
+/// Propagates text preparation or layout failure while evaluating fitting candidates.
 pub(super) fn fit_vertical_shrink(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -297,6 +301,10 @@ fn layout_vertical_ellipsis_at_size(
 ///
 /// Same algorithm as horizontal `fit_grow`: evaluate boundaries first,
 /// then binary search with invariant `lo=fit, hi=overflow`.
+///
+/// # Errors
+///
+/// Propagates text preparation or layout failure while evaluating fitting candidates.
 pub(super) fn fit_vertical_grow(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,

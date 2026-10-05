@@ -121,16 +121,24 @@ engine.renderCompiledFrames(compiled, {
   timesMs: [0, 100, 200],
   format: "png",
 });
-engine.renderCompiledToAnimatedWebp(compiled, {
-  durationMs: 1000,
-  fps: 30,
-  iterations: "infinite",
-});
-engine.renderCompiledToAnimatedGif(compiled, {
-  durationMs: 1000,
-  fps: 25,
-  iterations: 1,
-});
+await engine.renderCompiledToAnimatedWebp(
+  compiled,
+  {
+    durationMs: 1000,
+    fps: 30,
+    iterations: "infinite",
+  },
+  webpSink,
+);
+await engine.renderCompiledToAnimatedGif(
+  compiled,
+  {
+    durationMs: 1000,
+    fps: 25,
+    iterations: 1,
+  },
+  gifSink,
+);
 await renderCompiledToMp4(engine, compiled, {
   durationMs: 1000,
   frameRate: 30,
@@ -160,13 +168,15 @@ carries the two flattened `SceneNode` states and the checkpoints — not a
 compiled scene — and each worker compiles the transition it renders:
 
 ```ts
-const webp = await workerEngine.renderLayoutTransitionToAnimatedWebp(
+const webpResult = await workerEngine.renderLayoutTransitionToAnimatedWebp(
   transition,
   options,
+  webpSink,
 );
-const gif = await workerEngine.renderLayoutTransitionToAnimatedGif(
+const gifResult = await workerEngine.renderLayoutTransitionToAnimatedGif(
   transition,
   options,
+  gifSink,
 );
 for await (const frame of workerPool.renderLayoutTransitionFrames(
   transition,
@@ -175,6 +185,9 @@ for await (const frame of workerPool.renderLayoutTransitionFrames(
   // frame.index, frame.timeMs, frame.data
 }
 ```
+
+The raster methods write to caller-provided sinks and return format, frame count,
+and byte-length metadata. They preserve the [streaming lifetime contract](/api/worker#request-lifetime-and-bounded-admission).
 
 Two properties of this route matter when sizing work:
 

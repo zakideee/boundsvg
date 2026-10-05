@@ -24,6 +24,7 @@ export type {
   WorkerConfig,
 } from "./types.js";
 
+/** Rendering resources, loading presentation, and children owned by a Provider lifecycle. */
 export type BoundSvgProviderProps = {
   /** BoundSvg configuration (WASM, fonts, render options) */
   config: BoundSvgConfig;
@@ -227,6 +228,7 @@ function useStableProviderConfig(config: BoundSvgConfig) {
   return { initializationConfig, stableDefaultCommonOptions };
 }
 
+/** Own configuration keys accepted by the Provider boundary. */
 const PROVIDER_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "wasm",
   "fonts",
@@ -239,6 +241,7 @@ const PROVIDER_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "resourcesRevision",
 ]);
 
+/** Own default keys shared by the Provider render families. */
 const DEFAULT_COMMON_OPTION_KEYS: ReadonlySet<string> = new Set([
   "skipValidation",
   "textPathMode",
@@ -249,6 +252,7 @@ const DEFAULT_COMMON_OPTION_KEYS: ReadonlySet<string> = new Set([
   "generator",
 ]);
 
+/** Removed Provider option keys recognized for targeted migration diagnostics. */
 const LEGACY_RENDER_OPTION_KEYS: ReadonlySet<string> = new Set([
   "animation",
   "loop",
@@ -312,6 +316,7 @@ function assertOwnProviderKeys(config: BoundSvgConfig): void {
   }
 }
 
+/** Initialize and dispose the configured rendering owner and publish its readiness and resources to descendant hooks. */
 export function BoundSvgProvider({ config, fallback, children }: BoundSvgProviderProps) {
   assertOwnProviderKeys(config);
   resolveRenderRevision(config.resourcesRevision, "resourcesRevision");

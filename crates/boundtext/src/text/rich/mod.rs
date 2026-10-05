@@ -522,6 +522,7 @@ struct PendingAnnotationDecoration {
     slices: Vec<DecorationByteSlice>,
 }
 
+/// Project normalized rich text and ruby decoration ownership into source byte ranges.
 pub(super) fn normalized_text_decoration_ranges(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,

@@ -6,12 +6,14 @@ import type {
   RenderPngOptions,
   RenderSvgOptions,
 } from "@boundsvg/core";
+import { createAnimatedRasterCollector } from "@boundsvg/core";
 
 // Preserve diagnostic instances so callers retain their code, stage and context.
 function toRenderError(renderError: unknown): Error {
   return renderError instanceof Error ? renderError : new Error(String(renderError));
 }
 
+/** Render preview artifacts for one animated scene and report a displayable failure without throwing. */
 export function tryRenderAnimationArtifacts(
   engine: Pick<Engine, "renderToSvgAndIR"> | null,
   input: EngineInput,
@@ -30,16 +32,19 @@ export function tryRenderAnimationArtifacts(
 /** Sampling rate for the animated downloads. 50 ms per frame, clear of GIF's 20 ms floor. */
 const ANIMATED_EXPORT_FPS = 20;
 
+/** Download media type for each animated raster container. */
 const ANIMATED_EXPORT_MIME: Record<AnimatedExportFormat, string> = {
   "animated-webp": "image/webp",
   gif: "image/gif",
 };
 
+/** Download filename suffix for each animated raster container. */
 const ANIMATED_EXPORT_EXTENSION: Record<AnimatedExportFormat, string> = {
   "animated-webp": "webp",
   gif: "gif",
 };
 
+/** Animated raster formats offered by the playground download controls. */
 export type AnimatedExportFormat = "animated-webp" | "gif";
 
 /**
@@ -93,13 +98,14 @@ export function downloadStillArtifact({
  * Package the sampled frames of the scene on screen as a single animated file
  * and hand it to the browser as a download.
  */
-export function downloadAnimatedArtifact({
+export async function downloadAnimatedArtifact({
   engine,
   input,
   renderOptions,
   durationMs,
   format,
   fileName,
+  signal,
 }: {
   engine: Pick<Engine, "renderToAnimatedWebp" | "renderToAnimatedGif"> | null;
   input: EngineInput;
@@ -107,7 +113,8 @@ export function downloadAnimatedArtifact({
   durationMs: number;
   format: AnimatedExportFormat;
   fileName: string;
-}): { error: Error | null } {
+  signal?: AbortSignal;
+}): Promise<{ error: Error | null }> {
   if (!engine) {
     return { error: new Error("Engine is not ready") };
   }
@@ -119,10 +126,19 @@ export function downloadAnimatedArtifact({
       fps: ANIMATED_EXPORT_FPS,
       iterations: "infinite" as const,
     };
-    bytes =
-      format === "gif"
-        ? engine.renderToAnimatedGif(input, animatedOptions)
-        : engine.renderToAnimatedWebp(input, animatedOptions);
+    const collector = createAnimatedRasterCollector();
+    try {
+      if (format === "gif") {
+        await engine.renderToAnimatedGif(input, animatedOptions, collector, { signal });
+      } else {
+        await engine.renderToAnimatedWebp(input, animatedOptions, collector, { signal });
+      }
+      signal?.throwIfAborted();
+      bytes = collector.takeBytes();
+    } catch (error) {
+      collector.abort(error);
+      throw error;
+    }
   } catch (renderError) {
     return { error: toRenderError(renderError) };
   }
@@ -324,6 +340,7 @@ function tryRenderLayoutReactiveArtifactsWith(
   }
 }
 
+/** Render the selected layout-reactive preview artifacts and return a displayable failure when rendering fails. */
 export function tryRenderLayoutReactiveArtifacts(
   engine: Pick<Engine, "renderToLayoutTree" | "renderToSvgAndIR"> | null,
   input: EngineInput,
@@ -342,6 +359,7 @@ export function tryRenderLayoutReactiveArtifacts(
   );
 }
 
+/** Render the selected animated layout-reactive preview artifacts and return a displayable failure when rendering fails. */
 export function tryRenderAnimatedLayoutReactiveArtifacts(
   engine: Pick<Engine, "renderToLayoutTree" | "renderToAnimatedSvgAndIR"> | null,
   input: EngineInput,

@@ -5,6 +5,7 @@ import { useRenderToAnimatedSvgAsync } from "../hooks/use-render-animated-svg-as
 import { useRenderToSvgAsync } from "../hooks/use-render-svg-async.js";
 import { toVNodeFromChildren } from "../utils/to-vnode.js";
 
+/** Font size used by the default visible render failure message. */
 const ERROR_FONT_SIZE_PX = 12;
 
 type BoundSvgBaseProps = {
@@ -30,11 +31,13 @@ type BoundSvgBaseProps = {
   errorFallback?: ReactNode | ((error: Error) => ReactNode);
 };
 
+/** Static SVG component input, execution controls, and loading or error presentation. */
 export type BoundSvgProps = BoundSvgBaseProps & {
   /** Static SVG render options. Animated scenes require an explicit `timeMs`. */
   renderOptions?: RenderSvgOptions;
 };
 
+/** Animated SVG component input with required playback options and execution controls. */
 export type AnimatedBoundSvgProps = BoundSvgBaseProps & {
   /** Declarative SVG options, including the required playback contract. */
   renderOptions: RenderAnimatedSvgOptions;

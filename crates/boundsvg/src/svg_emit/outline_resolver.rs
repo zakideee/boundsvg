@@ -27,6 +27,7 @@ use crate::svg_emit::num_format::format_js_number;
 use crate::svg_emit::path_bbox::parse_path_bbox;
 use crate::text::types::{Line, PositionedGlyph, TextRunStyle};
 
+/// Regular font weight used when an outline request omits its weight.
 const DEFAULT_FONT_WEIGHT: u16 = 400;
 
 /// Text outline grouping mode. Mirrors TS `TextPathMode`.
@@ -182,6 +183,7 @@ struct OutlineRequest {
     line_index: usize,
 }
 
+/// Resolved glyph fill geometry and ownership used to remove decoration ink intersections.
 #[derive(Debug)]
 pub(super) struct GlyphInkPath {
     pub line_index: usize,
@@ -414,6 +416,10 @@ pub(super) fn count_text_node_ink_glyphs(
 /// Resolve per-glyph fill outlines for skip-ink geometry. Missing glyphs are
 /// always represented by the deterministic synthetic tofu fill, independent
 /// of the render-time diagnostic display option.
+///
+/// # Errors
+///
+/// Propagates invalid outline requests or glyph path extraction failures.
 pub(super) fn extract_text_node_ink_paths(
     kind: &IrNodeKind,
     node_bbox: BBox,
@@ -1345,6 +1351,7 @@ mod tests {
 
     #[test]
     fn ink_glyph_preflight_counts_boundary_minus_one_boundary_and_plus_one() {
+        /// Fixture glyph count at the PNG outline preflight boundary.
         const LIMIT: usize = 16_384;
         let mut eligible_lines = HashSet::new();
         eligible_lines.insert(0);

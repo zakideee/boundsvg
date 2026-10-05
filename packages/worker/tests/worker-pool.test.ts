@@ -249,8 +249,7 @@ class PoolMockWorker {
       case "render-animated-svg":
       case "render-png":
       case "render-webp":
-      case "render-animated-webp":
-      case "render-animated-gif":
+      case "open-raster-stream":
       case "render-layered-svg":
       case "render-layered-png":
       case "render-svg-and-ir":
@@ -258,8 +257,7 @@ class PoolMockWorker {
       case "open-frame-stream":
         candidate = { ...request, scene: countScene(request.scene) };
         break;
-      case "render-layout-transition-animated-webp":
-      case "render-layout-transition-animated-gif":
+      case "open-layout-transition-raster-stream":
       case "open-layout-transition-frame-stream": {
         const states: Record<string, SceneNode> = {};
         for (const [stateName, state] of Object.entries(request.transition.states)) {
@@ -293,6 +291,7 @@ class PoolMockWorker {
   }
 }
 
+/** Shared serializable scene for Pool admission, ownership and ordering tests. */
 const SCENE: SceneNode = { type: "Canvas", width: 100, height: 100, children: [] };
 
 function transitionInput(): WorkerLayoutTransitionInput {

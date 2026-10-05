@@ -7,6 +7,8 @@ import type { CliIo } from "../src/types.js";
 function createTestIo(overrides: Partial<CliIo> = {}): CliIo & { stderr: string[] } {
   const stderr: string[] = [];
   return {
+    getFileByteLength: () => 0,
+    openAnimatedRasterSink: async () => ({ write() {}, patch() {}, finish() {}, abort() {} }),
     argv: [],
     readTextFile: () => "",
     readBinaryFile: () => new Uint8Array(),

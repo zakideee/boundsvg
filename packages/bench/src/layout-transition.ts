@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type CompiledScene,
+  createAnimatedRasterCollector,
   createEngineAsync,
   type Engine,
   type Frame,
@@ -28,14 +29,20 @@ import {
   PORTABLE_LAYOUT_TRANSITION_SLOT_HEIGHTS,
 } from "./layout-transition-fixture.js";
 
+/** Benchmark package location used to resolve local fixtures and outputs. */
 const PACKAGE_DIRECTORY = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+/** Repository location used to load the benchmark fixture font. */
 const REPOSITORY_ROOT = resolve(PACKAGE_DIRECTORY, "../..");
+/** Repository-relative injected font fixture for reproducible transition samples. */
 const FONT_RELATIVE_PATH = "fixtures/fonts/NotoSansJP-Regular.subset.ttf";
+/** Default local destination for the transition benchmark report. */
 const DEFAULT_OUTPUT_PATH = resolve(
   REPOSITORY_ROOT,
   "_build/bench/layout-transition/node-main.json",
 );
+/** Descriptions of generated binding wrappers recorded in the benchmark report. */
 const GENERATED_WRAPPER_PROVENANCE = "layout-transition-wrapper";
+/** Maximum point error used by the existing near-identity transition comparison. */
 const NEAR_IDENTITY_THRESHOLD = 0.001;
 
 type Profile = "official" | "smoke";
@@ -248,9 +255,9 @@ function aggregate(samples: readonly TimedSample[]): Aggregate {
   };
 }
 
-function measureScenario(scenario: TimedScenario): ScenarioReport {
+async function measureScenario(scenario: TimedScenario): Promise<ScenarioReport> {
   for (let warmupIndex = 0; warmupIndex < scenario.warmupIterations; warmupIndex += 1) {
-    const result = scenario.run();
+    const result = await scenario.run();
     scenario.summarize(result);
   }
 
@@ -259,7 +266,7 @@ function measureScenario(scenario: TimedScenario): ScenarioReport {
     const memoryBefore = memorySnapshot();
     const cpuStart = process.cpuUsage();
     const startTime = performance.now();
-    const result = scenario.run();
+    const result = await scenario.run();
     const wallMs = performance.now() - startTime;
     const cpu = process.cpuUsage(cpuStart);
     const memoryAfter = memorySnapshot();
@@ -281,6 +288,14 @@ function measureScenario(scenario: TimedScenario): ScenarioReport {
     samples,
     aggregate: aggregate(samples),
   };
+}
+
+async function measureAllScenarios(scenarios: TimedScenario[]): Promise<ScenarioReport[]> {
+  const reports: ScenarioReport[] = [];
+  for (const scenario of scenarios) {
+    reports.push(await measureScenario(scenario));
+  }
+  return reports;
 }
 
 function scenarioCounts(
@@ -643,23 +658,47 @@ function addPortableScenarios(scenarios: TimedScenario[], engine: Engine, profil
     },
     {
       name: "portable:compiled-animated-webp-4",
-      run: () =>
-        engine.renderCompiledToAnimatedWebp(compiled, {
-          timesMs,
-          frameDurationsMs: [300, 400, 300, 100],
-          iterations: 2,
-        }),
+      run: async () => {
+        const sink = createAnimatedRasterCollector();
+        try {
+          await engine.renderCompiledToAnimatedWebp(
+            compiled,
+            {
+              timesMs,
+              frameDurationsMs: [300, 400, 300, 100],
+              iterations: 2,
+            },
+            sink,
+          );
+          return sink.takeBytes();
+        } catch (error) {
+          sink.abort(error);
+          throw error;
+        }
+      },
       summarize: summarizeBytes,
       ...animated,
     },
     {
       name: "portable:compiled-animated-gif-4",
-      run: () =>
-        engine.renderCompiledToAnimatedGif(compiled, {
-          timesMs,
-          frameDurationsMs: [300, 400, 300, 100],
-          iterations: 2,
-        }),
+      run: async () => {
+        const sink = createAnimatedRasterCollector();
+        try {
+          await engine.renderCompiledToAnimatedGif(
+            compiled,
+            {
+              timesMs,
+              frameDurationsMs: [300, 400, 300, 100],
+              iterations: 2,
+            },
+            sink,
+          );
+          return sink.takeBytes();
+        } catch (error) {
+          sink.abort(error);
+          throw error;
+        }
+      },
       summarize: summarizeBytes,
       ...animated,
     },
@@ -825,7 +864,7 @@ async function runBenchmark(options: CliOptions): Promise<LayoutTransitionBenchm
         nearIdentityDeltaPx: NEAR_IDENTITY_DELTA_PX,
         nearIdentityThreshold: NEAR_IDENTITY_THRESHOLD,
       },
-      scenarios: scenarios.map(measureScenario),
+      scenarios: await measureAllScenarios(scenarios),
       portable,
       fanOut,
     };

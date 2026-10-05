@@ -26,6 +26,7 @@ pub const MAX_TEXT_DECORATION_PATTERN_SEGMENTS: usize = 262_144;
 /// The rendering trust boundary and TypeScript validation mirror this value.
 pub const MAX_TEXT_DECORATION_RANGES: usize = 4_096;
 
+/// Merge adjacent runs with equal layout styles while removing decoration-only shaping differences.
 #[doc(hidden)]
 #[must_use]
 pub fn coalesce_decoration_only_spans(
@@ -62,6 +63,7 @@ fn spans_have_equal_layout_style(
         && left.font_feature_settings == right.font_feature_settings
 }
 
+/// Source byte range and target role carrying one resolved text decoration.
 #[derive(Debug, Clone)]
 pub(super) struct DecorationRange {
     pub(super) source_start: u32,
@@ -70,6 +72,7 @@ pub(super) struct DecorationRange {
     pub(super) target: DecorationTarget,
 }
 
+/// Identify base text or a specific ruby annotation level for decoration ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DecorationTarget {
     Base,
@@ -513,6 +516,7 @@ fn glyph_inline_extent(glyph: &PositionedGlyph, vertical: bool) -> (f64, f64) {
     (start.min(start + advance), start.max(start + advance))
 }
 
+/// Resolve decoration center and thickness from the glyph font metrics and authored overrides.
 pub(crate) fn glyph_decoration_metrics(
     glyph: &PositionedGlyph,
     line: TextDecorationLine,
@@ -1043,6 +1047,7 @@ fn rectangle_region(min_inline: f64, max_inline: f64, min_cross: f64, max_cross:
 }
 
 fn circle_region(center_inline: f64, radius: f64) -> Region {
+    /// Cubic Bezier control factor used to approximate circular decoration contours.
     const CIRCLE_KAPPA: f64 = 0.552_284_749_830_793_6;
     let control = radius * CIRCLE_KAPPA;
     let right = Point2D {

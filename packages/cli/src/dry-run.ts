@@ -65,6 +65,36 @@ export function reportDryRunBinary(io: CliIo, outputPath: string, newData: Uint8
   io.writeStderr(`[overwrite] ${outputPath} (${oldSizeKB}KB → ${newSizeKB}KB)\n`);
 }
 
+/** Report an animated dry-run length using stat, without reading or collecting either file. */
+export function reportDryRunAnimatedRaster(
+  io: CliIo,
+  outputPath: string,
+  bytesWritten: number,
+): void {
+  if (!Number.isSafeInteger(bytesWritten) || bytesWritten < 0) {
+    throw new RangeError("Animated output size must be a non-negative safe integer");
+  }
+  const newSizeKB = (bytesWritten / 1024).toFixed(1);
+  if (!io.fileExists(outputPath)) {
+    io.writeStderr(`[new] ${outputPath} (${newSizeKB}KB)\n`);
+    return;
+  }
+  let existingSize: number;
+  try {
+    existingSize = io.getFileByteLength(outputPath);
+    if (!Number.isSafeInteger(existingSize) || existingSize < 0) {
+      throw new RangeError("Existing output size must be a non-negative safe integer");
+    }
+  } catch {
+    io.writeStderr(`[new] ${outputPath} (${newSizeKB}KB)\n`);
+    return;
+  }
+  io.writeStderr(
+    `[overwrite] ${outputPath} (${(existingSize / 1024).toFixed(1)}KB → ${newSizeKB}KB)\n`,
+  );
+}
+
+/** Report directory creation for a dry run without creating the directory. */
 export function reportDryRunDirectory(io: CliIo, outputPath: string): void {
   io.writeStderr(`[directory] ${outputPath}\n`);
 }

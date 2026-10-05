@@ -2,7 +2,7 @@ import { type DiagnosticContext, FatalError } from "@boundsvg/core";
 import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import type { WorkerRequest, WorkerResponse } from "./protocol.js";
 
-/** Construct or format a Worker transport diagnostic without changing its public envelope. */
+/** Construct an engine-stage lifecycle failure with the originating transport context. */
 export function workerLifecycleError(
   code: string,
   message: string,
@@ -16,12 +16,12 @@ export function workerLifecycleError(
   });
 }
 
-/** Construct or format a Worker transport diagnostic without changing its public envelope. */
+/** Report that a disposed WorkerEngine cannot accept another operation. */
 export function workerEngineDisposedError(): FatalError {
   return workerLifecycleError("WORKER_ENGINE_DISPOSED", "WorkerEngine has been disposed");
 }
 
-/** Construct or format a Worker transport diagnostic without changing its public envelope. */
+/** Identify a reply that violates the protocol for its outstanding request. */
 export function invalidWorkerResponseError(requestId: number): FatalError {
   return workerLifecycleError(
     "WORKER_PROTOCOL_INVALID_RESPONSE",
@@ -30,7 +30,7 @@ export function invalidWorkerResponseError(requestId: number): FatalError {
   );
 }
 
-/** Construct or format a Worker transport diagnostic without changing its public envelope. */
+/** Report a valid reply type that does not match the outstanding operation. */
 export function unexpectedWorkerResponseError(
   responseType: WorkerResponse["type"],
   expectedResponseType: WorkerResponse["type"],
@@ -43,7 +43,7 @@ export function unexpectedWorkerResponseError(
   );
 }
 
-/** Construct or format a Worker transport diagnostic without changing its public envelope. */
+/** Include the request identity and elapsed limit when a response deadline expires. */
 export function workerTimeoutError(
   request: Pick<WorkerRequest, "id" | "type">,
   timeoutMs: number,
@@ -55,7 +55,7 @@ export function workerTimeoutError(
   );
 }
 
-/** Construct or format a Worker transport diagnostic without changing its public envelope. */
+/** Report a posting failure with safe cause text and the originating request identity. */
 export function workerTransportError(request: WorkerRequest, error: unknown): FatalError {
   const causeMessage = describeWorkerFailure(error);
   return workerLifecycleError(
@@ -65,7 +65,7 @@ export function workerTransportError(request: WorkerRequest, error: unknown): Fa
   );
 }
 
-/** Construct or format a Worker transport diagnostic without changing its public envelope. */
+/** Format an unknown transport failure without invoking unchecked accessors or coercion. */
 export function describeWorkerFailure(error: unknown): string {
   return formatUnknownWorkerFailure(error, "Unknown Worker transport failure");
 }

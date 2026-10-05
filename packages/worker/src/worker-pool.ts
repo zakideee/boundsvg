@@ -44,8 +44,10 @@ export const DEFAULT_WORKER_POOL_CONCURRENCY = 2;
 /** Explicit safety ceiling for accidental Worker/WASM memory multiplication. */
 export const MAX_WORKER_POOL_CONCURRENCY = 8;
 
+/** Create a distinct Worker whose lifecycle is owned by the pool. */
 export type WorkerPoolWorkerFactory = () => WorkerLike;
 
+/** Owned Worker construction, concurrency, asset snapshot, and protocol timeout for a frame pool. */
 export type WorkerPoolOptions = {
   /** Worker module URL, or a factory whose returned Workers are owned by the pool. */
   worker: URL | WorkerPoolWorkerFactory;
@@ -61,6 +63,7 @@ export type WorkerPoolOptions = {
   timeout?: number;
 };
 
+/** Ordered sample schedule and render format with cancellation of prepared Worker streams. */
 export type WorkerPoolRenderFramesOptions =
   | (Omit<RenderSvgFramesOptions, "timesMs"> & {
       /** Non-negative finite sample times. Duplicates and non-monotonic order are preserved. */
@@ -87,6 +90,7 @@ export type MaterializedFrameSource =
   | Iterable<MaterializedFrameInput>
   | AsyncIterable<MaterializedFrameInput>;
 
+/** Render format and cancellation for lazily supplied independent scene frames. */
 export type WorkerPoolMaterializedFramesOptions =
   | (Omit<RenderSvgOptions, "timeMs"> & {
       /** Payload format for every returned frame. */
@@ -171,8 +175,10 @@ type ActivePoolOperation = {
   close(): Promise<void>;
 };
 
+/** Optional runtime disposal hook for an existing worker pool. */
 const workerPoolDisposeSymbol = Symbol.dispose;
 
+/** Own isolated Worker engines and merge their frame results in requested order with bounded admission. */
 export class WorkerPool {
   readonly concurrency: number;
 
@@ -298,6 +304,7 @@ export class WorkerPool {
     return this.runMaterializedFrames({ source, ...splitOptions });
   }
 
+  /** Fail active operations and dispose every engine and Worker owned by this pool once. */
   dispose(): void {
     if (this.disposed) {
       return;
@@ -316,6 +323,7 @@ export class WorkerPool {
     }
   }
 
+  /** Release the pool through the explicit resource management protocol. */
   [workerPoolDisposeSymbol](): void {
     this.dispose();
   }

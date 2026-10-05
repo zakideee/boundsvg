@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { EngineOptions } from "../../src/engine.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
+import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
 type TransportCounts = {
@@ -49,8 +50,7 @@ function countingTransports(
 ): Partial<EngineOptions> {
   const rasterizePng = handle.createSvgToPngFn();
   const encodeWebp = handle.createSvgToWebpFn();
-  const encodeAnimatedWebp = handle.createSvgsToAnimatedWebpFn();
-  const encodeAnimatedGif = handle.createSvgsToAnimatedGifFn();
+  const openAnimation = handle.createOpenAnimatedRasterSessionFn();
   return {
     renderToIrFn: (inputJson, optionsJson) => {
       counts.wasmCalls += 1;
@@ -83,26 +83,31 @@ function countingTransports(
       counts.wasmCalls += 1;
       counts.sceneFullIrInputs += 1;
       const scene = handle.preflightRasterScene(irJson, optionsJson);
-      return {
+      const resolveAndEmit = scene.resolveAndEmitToSvg.bind(scene);
+      const resolveToIr = scene.resolveToIr.bind(scene);
+      const resolve = scene.resolve.bind(scene);
+      const renderToSvg = scene.renderToSvg.bind(scene);
+      const dispose = scene.dispose.bind(scene);
+      return Object.assign(scene, {
         resolveAndEmitToSvg: () => {
           counts.wasmCalls += 1;
-          return scene.resolveAndEmitToSvg();
+          return resolveAndEmit();
         },
         resolveToIr: () => {
           counts.wasmCalls += 1;
           counts.sceneFullIrOutputs += 1;
-          return scene.resolveToIr();
+          return resolveToIr();
         },
         resolve: () => {
           counts.wasmCalls += 1;
-          scene.resolve();
+          resolve();
         },
-        renderToSvg: (renderOptionsJson) => {
+        renderToSvg: (renderOptionsJson: string) => {
           counts.wasmCalls += 1;
-          return scene.renderToSvg(renderOptionsJson);
+          return renderToSvg(renderOptionsJson);
         },
-        dispose: () => scene.dispose(),
-      };
+        dispose,
+      });
     },
     resolveAndEmitSvgFromIrFn: (irJson, optionsJson) => {
       counts.wasmCalls += 1;
@@ -114,7 +119,7 @@ function countingTransports(
       counts.sceneFullIrInputs += 1;
       const prepared = handle.prepareScene(irJson, optionsJson);
       return {
-        renderToSvg: (renderOptionsJson) => {
+        renderToSvg: (renderOptionsJson: string) => {
           counts.wasmCalls += 1;
           return prepared.renderToSvg(renderOptionsJson);
         },
@@ -136,16 +141,20 @@ function countingTransports(
         return encodeWebp(svg, options);
       },
     }),
-    ...(encodeAnimatedWebp && {
-      svgsToAnimatedWebpFn: (input) => {
+    ...(openAnimation && {
+      openAnimatedRasterSessionFn: (input) => {
         counts.wasmCalls += 1;
-        return encodeAnimatedWebp(input);
-      },
-    }),
-    ...(encodeAnimatedGif && {
-      svgsToAnimatedGifFn: (input) => {
-        counts.wasmCalls += 1;
-        return encodeAnimatedGif(input);
+        const session = openAnimation(input);
+        return {
+          push: (scene, timeMs, durationMs) => {
+            counts.wasmCalls += 1;
+            session.push(scene, timeMs, durationMs);
+          },
+          readChunk: () => session.readChunk(),
+          finish: () => session.finish(),
+          abort: () => session.abort(),
+          dispose: () => session.dispose(),
+        };
       },
     }),
   };
@@ -162,7 +171,7 @@ describe("outline ownership transport budget", () => {
     handle.dispose();
   });
 
-  it("records native calls and full-IR transfers for every outline-bearing path", () => {
+  it("records native calls and full-IR transfers for every outline-bearing path", async () => {
     const counts: TransportCounts = {
       wasmCalls: 0,
       sceneFullIrInputs: 0,
@@ -249,11 +258,17 @@ describe("outline ownership transport budget", () => {
     });
 
     reset(counts);
-    engine.renderToAnimatedWebp(lightScene, {
-      iterations: "infinite",
-      timesMs: [0, 10],
-      frameDurationsMs: [10, 10],
-    });
+    await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        lightScene,
+        {
+          iterations: "infinite",
+          timesMs: [0, 10],
+          frameDurationsMs: [10, 10],
+        },
+        sink,
+      ),
+    );
     expect(counts).toEqual({
       wasmCalls: 6,
       sceneFullIrInputs: 1,
@@ -262,11 +277,17 @@ describe("outline ownership transport budget", () => {
     });
 
     reset(counts);
-    engine.renderToAnimatedGif(lightScene, {
-      iterations: "infinite",
-      timesMs: [0, 10],
-      frameDurationsMs: [20, 20],
-    });
+    await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(
+        lightScene,
+        {
+          iterations: "infinite",
+          timesMs: [0, 10],
+          frameDurationsMs: [20, 20],
+        },
+        sink,
+      ),
+    );
     expect(counts).toEqual({
       wasmCalls: 6,
       sceneFullIrInputs: 1,

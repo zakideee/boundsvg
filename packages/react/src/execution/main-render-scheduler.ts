@@ -1,5 +1,6 @@
 import { FatalError } from "@boundsvg/core";
 
+/** Maximum waiting main-thread jobs while another job occupies the scheduler. */
 const QUEUE_LIMIT = 32;
 
 type RenderJob = {
@@ -16,6 +17,10 @@ export class MainRenderScheduler {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private isDisposed = false;
 
+  /**
+   * Queue a synchronous computation for a separate task.
+   * Cancellation removes work before it starts; it cannot interrupt a running computation.
+   */
   enqueue<T>(compute: () => T, signal: AbortSignal): Promise<T> {
     if (this.isDisposed || signal.aborted) {
       return Promise.reject(this.disposedError());
@@ -59,6 +64,7 @@ export class MainRenderScheduler {
     });
   }
 
+  /** Cancel pending tasks and permanently reject further admission. */
   dispose(): void {
     if (this.isDisposed) {
       return;

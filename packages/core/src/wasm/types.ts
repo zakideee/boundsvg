@@ -14,6 +14,7 @@ export type WasmPreparedSceneInstance = {
   free(): void;
 };
 
+/** Generated native raster-scene capability; its owner must call free once. */
 export type WasmRasterSceneInstance = {
   /** Release the retained preflighted raster IR. */
   free(): void;
@@ -37,6 +38,19 @@ type LayoutTransitionJson<WireShape> = string & {
   readonly __layoutTransitionWireShape?: WireShape;
 };
 
+/** Generated animated raster class; read_chunk uses an explicit null drain marker. */
+export type WasmAnimatedRasterSessionInstance = {
+  /** Return copied bytes or null after the current operation is drained. */
+  read_chunk(): Uint8Array | null;
+  /** Complete the container and serialize its length and optional patch. */
+  finish(): string;
+  /** Disable output and release owned codec and font resources. */
+  abort(): void;
+  /** Free this generated capability exactly once. */
+  free(): void;
+};
+
+/** Generated native engine capability whose fonts and retained scenes belong to that instance. */
 export type WasmEngineInstance = {
   /** Register a font into this instance's registry */
   register_font(data: Uint8Array, alias: string, weight: number, style: string): void;
@@ -130,10 +144,15 @@ export type WasmEngineInstance = {
   svg_to_png_with_options?(svgString: string, optionsJson: string): Uint8Array;
   /** Rasterize SVG string to lossless WebP bytes with options */
   svg_to_webp_with_options?(svgString: string, optionsJson: string): Uint8Array;
-  /** Encode pre-sampled SVG frames into an animated lossless WebP */
-  svgs_to_animated_webp?(inputJson: string): Uint8Array;
-  /** Encode pre-sampled SVG frames into an animated GIF */
-  svgs_to_animated_gif?(inputJson: string): Uint8Array;
+  /** Open one owned single-frame animated raster encoder from a JSON string. */
+  open_animated_raster?(inputJson: string): WasmAnimatedRasterSessionInstance;
+  /** Sample and encode one frame while native scene/session borrows remain synchronous. */
+  push_animated_raster_frame?(
+    session: WasmAnimatedRasterSessionInstance,
+    scene: WasmRasterSceneInstance,
+    timeMs: number,
+    durationMs: number,
+  ): void;
   /** Validate layered SVG composition by rasterizing and diffing against a single SVG */
   validate_layered_svg_composition?(inputJson: string): string;
   /** Extract glyph outline paths */
@@ -392,6 +411,7 @@ export type RenderToIrEnvelope = {
   warnings: SerializedRecoverableError[];
 };
 
+/** Structured native raster preflight result identifying the first glyph-limit overflow. */
 export type PngOutlineGlyphLimitExceeded = {
   actualGlyphs: number;
   maxGlyphs: number;

@@ -25,6 +25,11 @@ use super::types::{
 };
 use crate::diagnostics::text_warning_to_recoverable;
 
+/// Build and measure the Taffy tree, then collect layout and text results.
+///
+/// # Errors
+///
+/// Propagates tree-depth, node construction, text measurement, and Taffy layout failures.
 pub(super) fn compute_layout_core(
     input: &LayoutInput,
     mut context: MeasureContext,
@@ -191,7 +196,9 @@ fn validate_text_path_input(
     node: &LayoutNodeInput,
     text_path: &TextPathInput,
 ) -> Result<(), EngineError> {
+    /// Maximum authored source items checked before preparing a text-on-path node.
     const MAX_TEXT_PATH_SOURCE_ITEMS: usize = 65_536;
+    /// Maximum inline containers accepted within one text-on-path node.
     const MAX_TEXT_PATH_INLINE_CONTAINERS: usize = 4_096;
 
     if text_path.source_item_count == 0
@@ -406,6 +413,7 @@ fn validate_text_path_input(
 }
 
 fn validate_text_path_span_paint(span: &TextSpanInput, node_id: &str) -> Result<(), EngineError> {
+    /// Maximum stroke or shadow layers accepted for a text-on-path span.
     const MAX_TEXT_EFFECT_LAYERS: usize = 8;
     let Some(fill) = span.color.as_deref() else {
         return Err(text_path_error(
@@ -1609,6 +1617,7 @@ fn build_text_path_layout_output(
     })
 }
 
+/// Attach node identity and rendering-stage diagnostics to a text-on-path failure.
 pub(super) fn map_text_path_layout_error(
     error: &crate::text::path::TextOnPathError,
     node_id: &str,

@@ -2,9 +2,10 @@
 // boundsvg CLI — main entry with subcommand dispatch
 // ---------------------------------------------------------------------------
 
-import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { openAnimatedRasterSink } from "./animation-io.js";
 import { runConvert } from "./convert.js";
 import { runDoctor } from "./doctor.js";
 import { runExport } from "./export.js";
@@ -12,10 +13,12 @@ import { runInspect } from "./inspect.js";
 import type { CliIo } from "./types.js";
 
 export { convertSceneToComponent } from "./convert.js";
-export type { CliIo } from "./types.js";
+export type { AnimatedRasterCliTarget, CliIo, OpenAnimatedRasterSink } from "./types.js";
 
 function createDefaultIo(): CliIo {
   return {
+    openAnimatedRasterSink,
+    getFileByteLength: (path) => statSync(path).size,
     argv: process.argv,
     readTextFile: (path) => readFileSync(path, "utf-8"),
     readBinaryFile: (path) => readFileSync(path),
@@ -84,6 +87,7 @@ Run "boundsvg <command> --help" for more information on a command.
 `);
 }
 
+/** Run the selected CLI command with the supplied IO overrides and return its exit code. */
 export function runCli(overrides: Partial<CliIo> = {}): number | Promise<number> {
   const io: CliIo = { ...createDefaultIo(), ...overrides };
   const args = io.argv.slice(2);

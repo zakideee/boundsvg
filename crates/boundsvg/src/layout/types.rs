@@ -20,6 +20,7 @@ pub struct LayoutInput {
     pub fonts: Vec<FontInput>,
 }
 
+/// Font bytes and registration identity carried by the layout input transport.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FontInput {
@@ -31,6 +32,7 @@ pub struct FontInput {
     pub data: Vec<u8>,
 }
 
+/// One serialized layout node with its children, styles, and type-specific payload.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutNodeInput {
@@ -70,6 +72,7 @@ pub struct LayoutNodeInput {
     pub visual: Option<VisualInput>,
 }
 
+/// Optional layout style fields translated from the transport into Taffy styles.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaffyStyleInput {
@@ -234,6 +237,7 @@ pub struct TaffyStyleInput {
     pub aspect_ratio: Option<f32>,
 }
 
+/// Serialized text sources and typography used to measure a layout node.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextInput {
@@ -392,6 +396,7 @@ pub struct TextInput {
     pub text_decoration_range_count: Option<usize>,
 }
 
+/// Serialized path, text runs, and placement controls for text-on-path layout.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextPathInput {
@@ -474,6 +479,7 @@ pub struct TextPathInput {
     pub unit_map: Option<TextUnitMapRequest>,
 }
 
+/// Exclusions and minimum region width used by a text node with flow layout.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowLayoutInput {
@@ -486,6 +492,7 @@ pub(crate) struct TextFlowLayoutInput {
     pub(crate) min_region_width_px: Option<f64>,
 }
 
+/// Requested paint-unit granularity and ruby treatment for text metadata.
 #[derive(Debug, Clone, Copy, Deserialize, Hash)]
 #[serde(rename_all = "camelCase")]
 pub struct TextUnitMapRequest {
@@ -493,20 +500,24 @@ pub struct TextUnitMapRequest {
     pub ruby: crate::text::unit_map::TextUnitRubyMode,
 }
 
+/// Supply character wrapping when the layout transport omits its wrap mode.
 pub(crate) fn default_wrap() -> String {
     "char".to_string()
 }
 
+/// Parse supplied CSS variation settings, or return an empty list when absent.
 pub(crate) fn parse_variation_settings_opt(css: Option<&str>) -> Vec<shaping::VariationSetting> {
     css.map(shaping::parse_css_font_variation_settings)
         .unwrap_or_default()
 }
 
+/// Parse supplied CSS feature settings, or return an empty list when absent.
 pub(crate) fn parse_feature_settings_opt(css: Option<&str>) -> Vec<shaping::FeatureSetting> {
     css.map(shaping::parse_css_font_feature_settings)
         .unwrap_or_default()
 }
 
+/// Optional width and height supplied to content measurement.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreferredFrame {
@@ -522,6 +533,7 @@ pub struct PreferredFrame {
     pub h: Option<f32>,
 }
 
+/// Decoded image dimensions used for intrinsic layout measurement.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageInput {
@@ -837,6 +849,7 @@ pub enum BorderRadiusInputValue {
 pub struct PartPaintMap(pub Vec<(String, PartPaintOverrideInput)>);
 
 impl PartPaintMap {
+    /// Return the first authored paint override for a matching part identifier.
     #[must_use]
     pub fn get(&self, part_id: &str) -> Option<&PartPaintOverrideInput> {
         self.0
@@ -1034,6 +1047,7 @@ pub struct LayoutOutput {
     pub measure_cache_hits: usize,
 }
 
+/// Computed node geometry and optional text details returned by layout.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutNodeOutput {
@@ -1046,6 +1060,7 @@ pub struct LayoutNodeOutput {
     pub text_layout: Option<TextLayoutOutput>,
 }
 
+/// Measured text, resolved glyph data, and decorations passed from layout to IR construction.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextLayoutOutput {
@@ -1086,6 +1101,7 @@ pub struct TextLayoutOutput {
     pub inline_rects: Vec<crate::text::types::InlineRectFragment>,
 }
 
+/// Maximum number of text measurement results retained in one layout cache.
 pub(super) const MEASURE_CACHE_MAX: usize = 256;
 
 impl TextLayoutOutput {

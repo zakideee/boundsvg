@@ -2,14 +2,22 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine, OutputGenerator } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
 import { createElement } from "../../src/vnode/create-element.js";
-import type { AnimationEncodeInput, WasmEngineHandle } from "../../src/wasm/index.js";
+import type { WasmEngineHandle } from "../../src/wasm/index.js";
+import {
+  type CapturedRasterSession,
+  captureRasterSession,
+  collectAnimatedRaster,
+} from "../helpers/animation-collector.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
+/** Software metadata injected into every tested output format. */
 const GENERATOR: OutputGenerator = {
   name: "@scope/aaaa",
   version: "1.2.3-beta.1",
 };
+/** Expected serialized software metadata shared by the output fixtures. */
 const SOFTWARE = "@scope/aaaa/1.2.3-beta.1";
+/** Text decoder for serialized software metadata in raster containers. */
 const decoder = new TextDecoder();
 
 let handle: WasmEngineHandle;
@@ -94,16 +102,13 @@ function countBytes(bytes: Uint8Array, expected: Uint8Array): number {
 beforeAll(async () => {
   handle = await createFontedWasmHandle();
   const svgToWebpFn = handle.createSvgToWebpFn();
-  const svgsToAnimatedWebpFn = handle.createSvgsToAnimatedWebpFn();
-  const svgsToAnimatedGifFn = handle.createSvgsToAnimatedGifFn();
+  const openAnimatedRasterSessionFn = handle.createOpenAnimatedRasterSessionFn();
   expect(svgToWebpFn).toBeDefined();
-  expect(svgsToAnimatedWebpFn).toBeDefined();
-  expect(svgsToAnimatedGifFn).toBeDefined();
+  expect(openAnimatedRasterSessionFn).toBeDefined();
   engine = createEngineFromHandle(handle, {
     svgToPngFn: handle.createSvgToPngFn(),
     ...(svgToWebpFn !== undefined && { svgToWebpFn }),
-    ...(svgsToAnimatedWebpFn !== undefined && { svgsToAnimatedWebpFn }),
-    ...(svgsToAnimatedGifFn !== undefined && { svgsToAnimatedGifFn }),
+    openAnimatedRasterSessionFn,
   });
 });
 
@@ -134,41 +139,47 @@ describe("output generator metadata", () => {
     expect(engine.renderToWebp(staticScene(), { generator: GENERATOR })).toEqual(webp);
   });
 
-  it("writes metadata once on each completed animated container", () => {
-    let capturedWebpInput: AnimationEncodeInput | undefined;
-    const encodeWebp = handle.createSvgsToAnimatedWebpFn();
-    const encodeGif = handle.createSvgsToAnimatedGifFn();
-    expect(encodeWebp).toBeDefined();
-    expect(encodeGif).toBeDefined();
+  it("writes metadata once on each completed animated container", async () => {
+    const captured: CapturedRasterSession[] = [];
+    const open = handle.createOpenAnimatedRasterSessionFn();
+    expect(open).toBeDefined();
+    if (!open) {
+      throw new TypeError("animated session is unavailable");
+    }
     const capturingEngine = createEngineFromHandle(handle, {
-      svgsToAnimatedWebpFn: (input) => {
-        capturedWebpInput = input;
-        if (!encodeWebp) {
-          throw new TypeError("animated WebP encoder is unavailable");
-        }
-        return encodeWebp(input);
-      },
-      ...(encodeGif !== undefined && { svgsToAnimatedGifFn: encodeGif }),
+      openAnimatedRasterSessionFn: captureRasterSession(open, captured),
     });
 
-    const webp = capturingEngine.renderToAnimatedWebp(animatedScene(), {
-      iterations: "infinite",
-      durationMs: 200,
-      fps: 10,
-      generator: GENERATOR,
-    });
-    expect(capturedWebpInput?.options.generator).toEqual(GENERATOR);
+    const webp = await collectAnimatedRaster((sink) =>
+      capturingEngine.renderToAnimatedWebp(
+        animatedScene(),
+        {
+          iterations: "infinite",
+          durationMs: 200,
+          fps: 10,
+          generator: GENERATOR,
+        },
+        sink,
+      ),
+    );
+    expect(captured[0]?.options.generator).toEqual(GENERATOR);
     expect(
-      capturedWebpInput?.frames.every((frame) => !frame.svg.includes("data-boundsvg-generator")),
+      captured[0]?.frames.every((frame) => !frame.svg.includes("data-boundsvg-generator")),
     ).toBe(true);
     expect(countBytes(webp, new TextEncoder().encode("XMP "))).toBe(1);
 
-    const gif = capturingEngine.renderToAnimatedGif(animatedScene(), {
-      iterations: "infinite",
-      durationMs: 200,
-      fps: 10,
-      generator: GENERATOR,
-    });
+    const gif = await collectAnimatedRaster((sink) =>
+      capturingEngine.renderToAnimatedGif(
+        animatedScene(),
+        {
+          iterations: "infinite",
+          durationMs: 200,
+          fps: 10,
+          generator: GENERATOR,
+        },
+        sink,
+      ),
+    );
     const comment = new TextEncoder().encode(
       'boundsvg-generator:{"name":"@scope/aaaa","version":"1.2.3-beta.1"}',
     );

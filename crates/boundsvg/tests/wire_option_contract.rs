@@ -10,6 +10,7 @@ use syn::{Attribute, Field, ItemEnum, ItemImpl, ItemMacro, ItemStruct, ItemType,
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+/// Reviewed omission policies for every inventoried optional output field.
 const OPTION_INVENTORY_GOLDEN: &str = include_str!("fixtures/wire-option-contract.golden.txt");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +30,7 @@ struct WorkspaceCratePolicy {
 // scanned recursively; an exclusion needs a durable boundary reason. This is
 // intentionally exact so adding, removing, or renaming a crate requires an
 // explicit contract decision instead of silently changing coverage.
+/// Exact workspace membership and the reason each crate participates in the wire scan.
 const WORKSPACE_CRATE_POLICIES: &[WorkspaceCratePolicy] = &[
     WorkspaceCratePolicy {
         package: "boundsvg",
@@ -67,6 +69,7 @@ struct SourceAllowance {
 // Manual serialization is normally forbidden because source-AST field
 // inventory cannot prove its omission policy. These exact projections have a
 // separately tested structural contract that cannot be expressed by deriving.
+/// Narrow manual serializer projections whose structural contracts have independent coverage.
 const MANUAL_SERIALIZE_ALLOWLIST: &[SourceAllowance] = &[
     SourceAllowance {
         source: "crates/boundsvg/src/wire/finite.rs",
@@ -160,9 +163,15 @@ const MANUAL_SERIALIZE_ALLOWLIST: &[SourceAllowance] = &[
     },
 ];
 
-// Item macros can emit DTOs invisible to syn's unexpanded AST. These three
+// Item macros can emit DTOs invisible to syn's unexpanded AST. These
 // invocations generate test counters or font backend helpers, never serde DTOs.
+/// Exact macros proven to create helpers rather than unexpanded wire DTOs.
 const ITEM_MACRO_ALLOWLIST: &[SourceAllowance] = &[
+    SourceAllowance {
+        source: "crates/boundsvg/src/animation_frame_tests.rs",
+        item: "thread_local@04e3059c5905515e",
+        reason: "generates cfg(test) weak lifetime probes for frame-local allocations, not a wire DTO",
+    },
     SourceAllowance {
         source: "crates/boundshape/src/lib.rs",
         item: "thread_local@56b2357ad021f1a3",
@@ -193,6 +202,7 @@ const ITEM_MACRO_ALLOWLIST: &[SourceAllowance] = &[
 // declarations in engine crates. A new derive is reviewable by extending this
 // list; this prevents an opaque derive on a marker type from generating an
 // unscanned sibling DTO.
+/// Derives whose generated behavior cannot introduce sibling wire DTO definitions.
 const SAFE_TYPE_DERIVES: &[&str] = &[
     "Clone",
     "Copy",
@@ -212,6 +222,7 @@ const SAFE_TYPE_DERIVES: &[&str] = &[
 // Built-in attributes and serde metadata do not generate sibling DTOs.
 // Procedural attributes on any struct/enum require a source-specific allowance,
 // because their expansion is otherwise invisible to this test.
+/// Attributes whose omission or type policy remains visible to the source inventory.
 const SAFE_TYPE_ATTRIBUTES: &[&str] = &[
     "allow",
     "cfg",
@@ -224,6 +235,7 @@ const SAFE_TYPE_ATTRIBUTES: &[&str] = &[
     "schemars",
     "serde",
 ];
+/// Opaque JavaScript class wrappers requiring exact attribute-specific review.
 const TYPE_ATTRIBUTE_ALLOWLIST: &[SourceAllowance] = &[
     SourceAllowance {
         source: "crates/boundsvg/src/lib.rs",
@@ -240,8 +252,14 @@ const TYPE_ATTRIBUTE_ALLOWLIST: &[SourceAllowance] = &[
         item: "BoundSvgRasterScene#wasm_bindgen",
         reason: "exports one opaque retained IR handle to JS; all serialized render DTOs remain explicit Rust types",
     },
+    SourceAllowance {
+        source: "crates/boundsvg/src/lib.rs",
+        item: "AnimatedRasterSession#wasm_bindgen",
+        reason: "exports one opaque encoder handle with explicit frame and finish DTOs; the attribute generates class bindings rather than serde DTOs",
+    },
 ];
 
+/// Authoritative structural owners of stroke and shadow effects shared across wire layers.
 const CANONICAL_TEXT_EFFECTS: &[(&str, &str)] = &[
     ("crates/boundtext/src/text/types.rs", "TextShadowLayer"),
     ("crates/boundtext/src/text/types.rs", "TextStrokeLayer"),

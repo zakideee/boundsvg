@@ -42,14 +42,22 @@ type PayloadTarget = {
 
 type FieldShape = Map<string, boolean>;
 
+/** Source root used to compare Rust and TypeScript wire declarations. */
 const repoRoot = resolve(fileURLToPath(new URL("../../../..", import.meta.url)));
+/** WASM bridge source containing the actual DTO payload producers. */
 const wasmIndexFile = "packages/core/src/wasm/index.ts";
+/** Protocol decoder source checked against the wire boundary. */
 const protocolDecoderFile = "packages/core/src/wasm/protocol-decoders.ts";
+/** Layout adapter source containing native layout payloads. */
 const layoutAdapterFile = "packages/core/src/layout/taffy-layout-adapter.ts";
+/** Handwritten intermediate-representation wire types. */
 const irTypesFile = "packages/core/src/ir/types.ts";
+/** Generated structural mirror of the intermediate-representation wire types. */
 const generatedIrTypesFile = "packages/core/src/generated/ir/structural-ir.ts";
+/** Typed mirror of the text wire boundary. */
 const textTypesFile = "packages/core/src/text/types.ts";
 
+/** Rust DTO declarations paired with their TypeScript structural mirrors. */
 const typeTargets: Record<string, TypeTarget[]> = {
   AnimationKeyframe: [{ file: "packages/core/src/vnode/types.ts", typeName: "AnimationKeyframe" }],
   AnimationSpec: [{ file: "packages/core/src/vnode/types.ts", typeName: "AnimationSpec" }],
@@ -247,12 +255,28 @@ const typeTargets: Record<string, TypeTarget[]> = {
     { file: wasmIndexFile, typeName: "PngRenderOptions" },
     { file: wasmIndexFile, typeName: "WasmLayeredCompositionValidationInput", path: ["options"] },
   ],
-  AnimationEncodeInput: [{ file: wasmIndexFile, typeName: "AnimationEncodeInput" }],
-  AnimationFrameInput: [
-    { file: wasmIndexFile, typeName: "AnimationEncodeInput", path: ["frames", "[]"] },
+  AnimationFinishOutput: [
+    {
+      file: "packages/core/src/wasm/animation-session.ts",
+      typeName: "AnimationSessionFinishOutput",
+    },
+  ],
+  AnimationPatch: [
+    {
+      file: "packages/core/src/wasm/animation-session.ts",
+      typeName: "AnimationSessionFinishOutput",
+      path: ["patch"],
+    },
+  ],
+  AnimationRenderOptionsInput: [
+    {
+      file: "packages/core/src/wasm/animation-session.ts",
+      typeName: "AnimationRenderOptions",
+    },
   ],
 };
 
+/** Direction-specific DTO names that must not be treated as symmetric mirrors. */
 const directionalStructNames = [
   "HandlersRef",
   "TextOutlinePath",
@@ -279,6 +303,7 @@ for (const name of directionalStructNames) {
   delete typeTargets[name];
 }
 
+/** Rust input DTOs paired with the TypeScript code that constructs their payloads. */
 const payloadTargets: Record<string, PayloadTarget> = {
   CompileShapeSvgInput: {
     file: wasmIndexFile,
@@ -301,7 +326,17 @@ const payloadTargets: Record<string, PayloadTarget> = {
   },
 };
 
+/** Closed Rust unit enums paired with TypeScript keyword unions. */
 const unitEnumTargets: Record<string, TypeTarget> = {
+  AnimatedRasterFormat: {
+    file: "packages/core/src/animation-errors.ts",
+    typeName: "AnimatedRasterFormat",
+  },
+  AnimationStaticMode: {
+    file: "packages/core/src/wasm/animation-session.ts",
+    typeName: "AnimationRenderOptions",
+    path: ["animation"],
+  },
   AnimationRenderModeInput: {
     file: "packages/core/src/engine.ts",
     typeName: "InternalRenderOptions",
@@ -828,6 +863,7 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       "AnimatedSvgTimelineIterationsInput",
       "AnimatedRasterInfinite",
       "AnimatedRasterIterations",
+      "OpenFieldTokens",
       "ReducedMotionInput",
       "DebugOverlayInput",
       "FlowExclusionMargin",
@@ -842,15 +878,15 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       rustDtos.size,
     );
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(146);
+    expect(rustDtos.size).toBe(150);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(1023);
-    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(92);
+    ).toBe(1036);
+    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(95);
   });
 
   it("keeps struct wire fields and requiredness directionally compatible", () => {
@@ -1106,8 +1142,8 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       ["infinite"],
     );
     const animatedRasterIterationTypes = declarationType(program, checker, {
-      file: wasmIndexFile,
-      typeName: "AnimationEncodeInput",
+      file: "packages/core/src/wasm/animation-session.ts",
+      typeName: "AnimationSessionOpenInput",
       path: ["iterations"],
     });
     expect(

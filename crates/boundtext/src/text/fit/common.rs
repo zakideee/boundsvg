@@ -154,6 +154,10 @@ pub(super) fn collect_warnings_from_lines(lines: &[Line], font_alias: &str) -> V
 }
 
 /// Shape text at a given font size using the font registry.
+///
+/// # Errors
+///
+/// Returns a checked text-shaping failure, including missing font or invalid preparation output.
 pub(super) fn shape_at_size(
     font_ctx: &FontContext<'_>,
     text: &str,
@@ -172,6 +176,7 @@ pub(super) fn shape_at_size(
     )
 }
 
+/// Return the language spelling expected by kinsoku profile selection.
 pub(super) fn language_to_str(lang: Language) -> &'static str {
     match lang {
         Language::Ja => "ja",
@@ -181,6 +186,10 @@ pub(super) fn language_to_str(lang: Language) -> &'static str {
 }
 
 /// Measure whether text fits at the given font size (lightweight, no Line construction).
+///
+/// # Errors
+///
+/// Propagates failure to shape the text at the requested size.
 pub(super) fn measure_fits_at_size(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -211,6 +220,10 @@ pub(super) fn measure_fits_at_size(
 
 /// Build a full layout result at the given font size, using the same break
 /// conditions as the normal layout path.
+///
+/// # Errors
+///
+/// Propagates failure to shape the text at the requested size.
 pub(super) fn layout_at_size(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,

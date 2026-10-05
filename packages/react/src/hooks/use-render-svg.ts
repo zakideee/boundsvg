@@ -12,6 +12,7 @@ import {
 import { useRenderInput } from "./use-render-input.js";
 import { useStructurallyStableRenderOptions } from "./use-structurally-stable-value.js";
 
+/** Synchronous SVG output with readiness or failure state. */
 export type UseRenderToSvgResult = {
   /** Rendered SVG string (null while engine is not ready or on error) */
   svg: string | null;

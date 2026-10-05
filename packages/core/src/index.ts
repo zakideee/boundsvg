@@ -1,6 +1,15 @@
 // Aiming (camera-style math for animated transforms)
 export type { AimRect, AimViewport } from "./aim.js";
 export { aimTransform, clampAimCenter, fitZoom } from "./aim.js";
+export type {
+  AnimatedRasterCollector,
+  AnimatedRasterSink,
+  AnimatedRasterSpool,
+  AnimatedRasterWriteOptions,
+  AnimatedRasterWriteResult,
+  AnimatedWebpSink,
+} from "./animation-output.js";
+export { createAnimatedRasterCollector, createAnimatedWebpSpoolSink } from "./animation-output.js";
 // Animation track building
 export type { TrackFrameInput } from "./animation-track.js";
 export { buildAnimationTrack } from "./animation-track.js";
@@ -124,8 +133,6 @@ export { assertUniqueNodeIds, collectNodeIds, validateNodeIds } from "./node-ids
 export type { RasterScaleOptions, ResolvedRasterScale } from "./render-capabilities.js";
 export {
   animatedSvgTimelineLimits,
-  MAX_ANIMATION_FRAMES,
-  MAX_ANIMATION_SVG_PAYLOAD_CHARS,
   RASTER_DIMENSION_SATURATION,
   RASTER_MAX_LONG_EDGE,
   RASTER_MAX_PIXELS,

@@ -233,6 +233,7 @@
               "$ref": "#/$defs/BBox"
             },
             "writingMode": {
+              "description": "Choose horizontal lines or right-to-left vertical columns.",
               "type": "string",
               "enum": [
                 "horizontal-tb",
@@ -240,6 +241,7 @@
               ]
             },
             "language": {
+              "description": "Select Japanese, English, or automatic language-dependent layout behavior.",
               "type": "string",
               "enum": [
                 "ja",
@@ -1224,6 +1226,7 @@
           }
         },
         "language": {
+          "description": "Select Japanese, English, or automatic language-dependent layout behavior.",
           "type": "string",
           "enum": [
             "ja",
@@ -1242,6 +1245,7 @@
       ]
     },
     "TextOrientation": {
+      "description": "Choose mixed glyph orientation or upright glyphs in vertical writing.",
       "type": "string",
       "enum": [
         "mixed",
@@ -1310,6 +1314,7 @@
       ]
     },
     "PositionedGlyph": {
+      "description": "Shaped glyph with physical placement, font identity, and logical source metadata.",
       "type": "object",
       "properties": {
         "glyphId": {
@@ -1429,6 +1434,7 @@
           ]
         },
         "outlineWritingMode": {
+          "description": "Choose horizontal lines or right-to-left vertical columns.",
           "type": "string",
           "enum": [
             "horizontal-tb",
@@ -1475,6 +1481,7 @@
           "type": "number"
         },
         "textAnchor": {
+          "description": "Align the text advance start, center, or end at the requested path offset.",
           "type": "string",
           "enum": [
             "start",
@@ -1483,6 +1490,7 @@
           ]
         },
         "pathDirection": {
+          "description": "Choose forward or reverse traversal of the authored path.",
           "type": "string",
           "enum": [
             "forward",
@@ -1490,6 +1498,7 @@
           ]
         },
         "pathNormal": {
+          "description": "Choose the side of the path used for normal displacement.",
           "type": "string",
           "enum": [
             "left",
@@ -1500,6 +1509,7 @@
           "type": "number"
         },
         "pathFit": {
+          "description": "Choose spacing or glyph scaling used to fit text along the path.",
           "type": "string",
           "enum": [
             "none",
@@ -1509,6 +1519,7 @@
           ]
         },
         "pathOverflow": {
+          "description": "Choose clipping, a fatal error, or ellipsis when text exceeds the available path.",
           "type": "string",
           "enum": [
             "hidden",
@@ -1786,6 +1797,7 @@
       ]
     },
     "TextDecorationFragment": {
+      "description": "Resolved decoration paint paths associated with a logical source range.",
       "type": "object",
       "properties": {
         "line": {
@@ -1828,6 +1840,7 @@
       ]
     },
     "TextDecorationLine": {
+      "description": "Select an underline, overline, or line through the text.",
       "type": "string",
       "enum": [
         "underline",
@@ -1836,6 +1849,7 @@
       ]
     },
     "TextDecorationStyle": {
+      "description": "Choose the solid, double, dotted, dashed, or wavy decoration pattern.",
       "type": "string",
       "enum": [
         "solid",
@@ -1846,6 +1860,7 @@
       ]
     },
     "TextDecorationPaintPath": {
+      "description": "Resolved physical decoration path with complexity counts and internal placement ownership.",
       "type": "object",
       "properties": {
         "d": {

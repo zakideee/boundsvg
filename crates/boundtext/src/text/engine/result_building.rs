@@ -8,6 +8,11 @@ use crate::text::types::{Line, PositionedGlyph, TextBBox, TextLayoutResult, Text
 // ---------------------------------------------------------------------------
 
 // line building requires break indices, char data, glyph mappings, spans, and text
+/// Build horizontal lines with first-line indentation, baselines, and source-mapped glyph positions.
+///
+/// # Panics
+///
+/// Panics when advances or glyph ranges do not cover the supplied character ranges.
 #[expect(
     clippy::too_many_arguments,
     reason = "text layout pipeline passes font context and layout constraints through stages"
@@ -76,6 +81,7 @@ pub(super) fn build_lines_from_breaks(
     lines
 }
 
+/// Position one shaped horizontal run at a baseline using the shared source mapping.
 pub(super) fn build_horizontal_positioned_glyphs(
     glyphs: &[GlyphInfo],
     glyph_spans: &[GlyphCharSpan],
@@ -264,6 +270,7 @@ pub fn apply_feature_settings_to_lines(lines: &mut [Line], settings: &[shaping::
 // Result building
 // ---------------------------------------------------------------------------
 
+/// Build a horizontal result with truncation and kinsoku status and no warnings.
 #[must_use]
 pub fn build_horizontal_result(
     truncated_lines: Vec<Line>,
@@ -282,6 +289,7 @@ pub fn build_horizontal_result(
     )
 }
 
+/// Build a horizontal result with warnings but no explicit width or height constraints.
 #[must_use]
 pub fn build_horizontal_result_with_warnings(
     truncated_lines: Vec<Line>,
@@ -303,6 +311,7 @@ pub fn build_horizontal_result_with_warnings(
     )
 }
 
+/// Build horizontal geometry and report truncation, constraint overflow, or unresolved kinsoku in priority order.
 #[expect(
     clippy::too_many_arguments,
     reason = "result construction combines layout metrics, constraints, and warnings"
@@ -362,8 +371,10 @@ pub fn build_horizontal_result_with_constraints(
     }
 }
 
+/// Absolute pixel tolerance used when comparing text bounds with layout constraints.
 const CONSTRAINT_EPSILON: f64 = 0.001;
 
+/// Report width before height overflow using the shared floating-point comparison tolerance.
 pub(crate) fn detect_constraint_overflow(
     width: f64,
     height: f64,

@@ -1,6 +1,7 @@
-import { defineConfig } from "tsup";
+import { defineConfig, type Options } from "tsup";
 
-export default defineConfig({
+/** Keep module builds and declaration generation on the same public entries. */
+const sharedConfig: Options = {
   entry: {
     index: "src/index.ts",
     "jsx-runtime": "src/vnode/jsx-runtime.ts",
@@ -13,11 +14,34 @@ export default defineConfig({
     codegen: "src/codegen.ts",
     wasm: "src/wasm.ts",
   },
-  format: ["esm", "cjs"],
+  // Package entries must share diagnostic constructors and Engine factory capabilities.
+  splitting: true,
   shims: true,
-  dts: true,
   tsconfig: "./tsconfig.build.json",
   sourcemap: false,
-  clean: true,
   external: ["node:module"],
-});
+};
+
+export default defineConfig([
+  {
+    ...sharedConfig,
+    format: ["esm"],
+    dts: false,
+    clean: ["!**/*.cjs", "!**/*.d.cts", "!**/*.d.{ts,cts,mts}"],
+  },
+  {
+    ...sharedConfig,
+    format: ["cjs"],
+    dts: false,
+    // Rollup preserves native dynamic imports used by Node initialization.
+    treeshake: "safest",
+    clean: ["!**/*.js", "!**/*.d.ts", "!**/*.d.{ts,cts,mts}"],
+  },
+  {
+    ...sharedConfig,
+    format: ["esm", "cjs"],
+    // One declaration task owns cleanup and generation for both type formats.
+    dts: { only: true },
+    clean: true,
+  },
+]);

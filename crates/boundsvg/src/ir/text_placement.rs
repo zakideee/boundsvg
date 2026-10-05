@@ -6,17 +6,20 @@ use crate::ir::types::{BBox, IrTextAlign};
 use crate::layout::types::{TextInput, TextLayoutOutput, TextPathInput};
 use crate::text::types::{Line, TextBBox, TextPlacementSpace, WritingMode};
 
+/// Translation applied to one line when placing text in the final layout box.
 #[derive(Clone, Copy)]
 pub(super) struct LineOffset {
     pub x: f64,
     pub y: f64,
 }
 
+/// Validated coordinate frame and per-line translations consumed by IR construction.
 pub(super) struct TextPlacement {
     pub space: TextPlacementSpace,
     pub offsets: Vec<LineOffset>,
 }
 
+/// Node inputs, measured text, and final layout geometry needed to validate placement.
 #[derive(Clone, Copy)]
 pub(super) struct TextPlacementContext<'a> {
     pub node_id: &'a str,
@@ -39,6 +42,7 @@ fn invalid(node_id: &str, reason: &str) -> EngineError {
     }
 }
 
+/// Resolve a horizontal line origin, preserving overflow for center and end alignment.
 pub(crate) fn horizontal_start(layout_box: BBox, line_width: f64, align: IrTextAlign) -> f64 {
     match align {
         IrTextAlign::Center => {
@@ -57,6 +61,7 @@ fn horizontal_align_offset(available: f64, align: IrTextAlign) -> f64 {
     }
 }
 
+/// Resolve vertical inline alignment, leaving overflowing content at its starting origin.
 pub(crate) fn vertical_align_offset(available: f64, align: IrTextAlign) -> f64 {
     if available <= 0.0 {
         return 0.0;
@@ -68,6 +73,12 @@ pub(crate) fn vertical_align_offset(available: f64, align: IrTextAlign) -> f64 {
     }
 }
 
+/// Validate text coordinate ownership and compute translations from the final layout box.
+///
+/// # Errors
+///
+/// Returns `TEXT_PLACEMENT_INVALID` for missing or contradictory coordinate frames,
+/// glyph position flags, or decoration line ownership.
 pub(super) fn resolve(context: TextPlacementContext<'_>) -> Result<TextPlacement, EngineError> {
     let TextPlacementContext {
         node_id,

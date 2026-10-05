@@ -25,6 +25,7 @@ import { useShallowRenderOptions } from "./use-shallow-render-options.js";
 type CallbackOptions = Pick<OutputCommonOptions, "onWarning"> &
   Pick<RasterEmissionOptions, "onPngResolutionAdjusted">;
 
+/** Pair main-thread and Worker render operations for one shared asynchronous hook result. */
 export type RenderAdapter<Value, Options> = {
   main: (engine: Engine, scene: VNode, options: Options) => Value;
   worker: (

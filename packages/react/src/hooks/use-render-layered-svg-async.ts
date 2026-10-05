@@ -6,8 +6,10 @@ import {
   type RenderExecutionResult,
 } from "../execution/types.js";
 import { type RenderAdapter, useRenderExecution } from "./use-render-execution.js";
+/** Generation state with layered SVG output, including retained-result status. */
 export type UseRenderToLayeredSvgAsyncResult = RenderExecutionResult<{ result: LayeredSvgResult }>;
 
+/** Main-engine and worker dispatch for asynchronous layered svg rendering. */
 const adapter: RenderAdapter<LayeredSvgResult, LayeredSvgOptions> = {
   main: (engine, scene, options) => engine.renderToLayeredSvg(scene, options),
   worker: (engine, scene, { options, signal }) =>

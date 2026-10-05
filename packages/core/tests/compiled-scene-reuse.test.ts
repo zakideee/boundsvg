@@ -1,3 +1,4 @@
+import { collectAnimatedRaster, createMockRasterSession } from "./helpers/animation-collector.js";
 /**
  * Contract test: compile-once → render-many is stable.
  *
@@ -27,14 +28,13 @@ afterAll(() => {
 function createTestEngine(): Engine {
   return createEngineFromHandle(handle, {
     svgToPngFn: () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
-    svgsToAnimatedWebpFn: () => new Uint8Array([0x52, 0x49, 0x46, 0x46]),
-    svgsToAnimatedGifFn: () => new Uint8Array([0x47, 0x49, 0x46, 0x38]),
+    openAnimatedRasterSessionFn: createMockRasterSession,
   });
 }
 
-function expectFatal(run: () => unknown, code: string, message: string): void {
+async function expectFatal(run: () => unknown, code: string, message: string): Promise<void> {
   try {
-    run();
+    await run();
   } catch (error) {
     expect(error).toBeInstanceOf(FatalError);
     expect(error).toMatchObject({ code, message, stage: "engine" });
@@ -62,6 +62,7 @@ function collectObjectReferences(value: unknown, references = new Set<object>())
 // The URL-string image is deliberate: it produces an IMAGE_SRC_NOT_EMBEDDED
 // warning at compile time, so the warning-accumulation assertion below starts
 // from a non-empty warnings array instead of vacuously comparing 0 to 0.
+/** Warning-bearing image scene that makes compiled warning accumulation observable. */
 const scene = createElement(
   "Canvas",
   { width: 320, height: 180 },
@@ -133,7 +134,7 @@ describe("CompiledScene reuse", () => {
     expect(compiled.width).toBe(secondSnapshot.width);
   });
 
-  it("rejects every unauthentic clone form with the stable error", () => {
+  it("rejects every unauthentic clone form with the stable error", async () => {
     const engine = createTestEngine();
     const compiled = engine.compile(scene);
     const candidates: unknown[] = [
@@ -144,7 +145,7 @@ describe("CompiledScene reuse", () => {
     ];
 
     for (const candidate of candidates) {
-      expectFatal(
+      await expectFatal(
         () => renderUnknownCompiled(engine, candidate),
         "COMPILED_SCENE_INVALID",
         "Compiled scene is not an authentic artifact",
@@ -152,7 +153,7 @@ describe("CompiledScene reuse", () => {
     }
   });
 
-  it("authenticates before every compiled-route option or resource check", () => {
+  it("authenticates before every compiled-route option or resource check", async () => {
     const ownerEngine = createTestEngine();
     const receivingEngine = createTestEngine();
     const compiled = ownerEngine.compile(scene);
@@ -191,26 +192,38 @@ describe("CompiledScene reuse", () => {
       },
       {
         name: "animated WebP",
-        run: () =>
-          receivingEngine.renderCompiledToAnimatedWebp(compiled, {
-            durationMs: -1,
-            fps: 0,
-            iterations: 1,
-          }),
+        run: async () =>
+          await collectAnimatedRaster((sink) =>
+            receivingEngine.renderCompiledToAnimatedWebp(
+              compiled,
+              {
+                durationMs: -1,
+                fps: 0,
+                iterations: 1,
+              },
+              sink,
+            ),
+          ),
       },
       {
         name: "animated GIF",
-        run: () =>
-          receivingEngine.renderCompiledToAnimatedGif(compiled, {
-            durationMs: -1,
-            fps: 0,
-            iterations: 1,
-          }),
+        run: async () =>
+          await collectAnimatedRaster((sink) =>
+            receivingEngine.renderCompiledToAnimatedGif(
+              compiled,
+              {
+                durationMs: -1,
+                fps: 0,
+                iterations: 1,
+              },
+              sink,
+            ),
+          ),
       },
     ];
 
     for (const route of routes) {
-      expectFatal(
+      await expectFatal(
         route.run,
         "COMPILED_SCENE_WRONG_ENGINE",
         "Compiled scene belongs to a different Engine",
@@ -218,7 +231,7 @@ describe("CompiledScene reuse", () => {
     }
   });
 
-  it("binds ownership to Engine identity regardless of font registry similarity", () => {
+  it("binds ownership to Engine identity regardless of font registry similarity", async () => {
     const ownerEngine = createTestEngine();
     const compiled = ownerEngine.compile(scene);
     const receivingEngines = [
@@ -231,7 +244,7 @@ describe("CompiledScene reuse", () => {
     ];
 
     for (const receivingEngine of receivingEngines) {
-      expectFatal(
+      await expectFatal(
         () => receivingEngine.renderCompiledToSvg(compiled),
         "COMPILED_SCENE_WRONG_ENGINE",
         "Compiled scene belongs to a different Engine",
@@ -239,17 +252,17 @@ describe("CompiledScene reuse", () => {
     }
   });
 
-  it("reports disposed receiver state before authenticity and options", () => {
+  it("reports disposed receiver state before authenticity and options", async () => {
     const engine = createTestEngine();
     const compiled = engine.compile(scene);
     engine.dispose();
 
-    expectFatal(
+    await expectFatal(
       () => engine.renderCompiledToSvg(compiled),
       "ENGINE_DISPOSED",
       "Engine has been disposed",
     );
-    expectFatal(
+    await expectFatal(
       () => Reflect.apply(engine.renderCompiledToSvg, engine, [{ width: 1 }, { scale: 0 }]),
       "ENGINE_DISPOSED",
       "Engine has been disposed",
@@ -298,7 +311,7 @@ describe("CompiledScene reuse", () => {
     expect(engine.snapshotCompiledIR(compiled).warnings.length).toBe(warningCount);
   });
 
-  it("detaches callback warnings across every compiled render route", () => {
+  it("detaches callback warnings across every compiled render route", async () => {
     const engine = createTestEngine();
     const compiled = engine.compile(scene);
     const baselineWarnings = engine
@@ -350,28 +363,40 @@ describe("CompiledScene reuse", () => {
       },
       {
         name: "animated WebP",
-        run: (onWarning) =>
-          engine.renderCompiledToAnimatedWebp(compiled, {
-            timesMs: [0],
-            frameDurationsMs: [100],
-            iterations: 1,
-            onWarning,
-          }),
+        run: async (onWarning) =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderCompiledToAnimatedWebp(
+              compiled,
+              {
+                timesMs: [0],
+                frameDurationsMs: [100],
+                iterations: 1,
+                onWarning,
+              },
+              sink,
+            ),
+          ),
       },
       {
         name: "animated GIF",
-        run: (onWarning) =>
-          engine.renderCompiledToAnimatedGif(compiled, {
-            timesMs: [0],
-            frameDurationsMs: [100],
-            iterations: 1,
-            onWarning,
-          }),
+        run: async (onWarning) =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderCompiledToAnimatedGif(
+              compiled,
+              {
+                timesMs: [0],
+                frameDurationsMs: [100],
+                iterations: 1,
+                onWarning,
+              },
+              sink,
+            ),
+          ),
       },
     ];
 
     for (const route of routes) {
-      route.run(mutateWarning);
+      await route.run(mutateWarning);
       expect(
         engine.snapshotCompiledIR(compiled).warnings.map((warning) => warning.toJSON()),
       ).toEqual(baselineWarnings);

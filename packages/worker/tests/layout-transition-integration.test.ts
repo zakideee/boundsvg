@@ -6,12 +6,14 @@ import type {
   SerializedFatalError,
   SerializedRecoverableError,
 } from "@boundsvg/core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { type AnimatedRasterJob, createAnimatedRasterJob } from "../../core/src/animation-job.js";
 import type { WasmEngineHandle } from "../../core/src/wasm/index.js";
 import {
   createPortableLayoutTransitionInput,
   PORTABLE_LAYOUT_TRANSITION_CHECKPOINTS,
 } from "../../core/tests/animation/fixtures/layout-transition.js";
+import { collectAnimatedRaster } from "../../core/tests/helpers/animation-collector.js";
 import {
   createEngineFromHandle,
   createFontedWasmHandle,
@@ -56,8 +58,15 @@ class CoreBackedWorker implements WorkerLike {
   compileCount = 0;
   private readonly listeners = new Map<string, Set<WorkerListener>>();
   private readonly streams = new Map<number, ActiveStream>();
+  private readonly rasterStreams = new Map<number, AnimatedRasterJob>();
 
-  constructor(private readonly engine: Engine) {}
+  constructor(private readonly engine: Engine) {
+    const compile = engine.compileLayoutTransition.bind(engine);
+    vi.spyOn(engine, "compileLayoutTransition").mockImplementation((...args) => {
+      this.compileCount += 1;
+      return compile(...args);
+    });
+  }
 
   postMessage(message: unknown): void {
     const request = structuredClone(message) as WorkerRequest;
@@ -85,26 +94,46 @@ class CoreBackedWorker implements WorkerLike {
       case "init":
         this.respond({ id: request.id, type: "init-ok" });
         return;
-      case "render-layout-transition-animated-webp": {
-        const { skipValidation, textPathMode, ...renderOptions } = request.options;
-        const compiled = this.compile(request.transition, { skipValidation, textPathMode });
-        const warnings: SerializedRecoverableError[] = [];
-        const webp = this.engine.renderCompiledToAnimatedWebp(compiled, {
-          ...renderOptions,
-          onWarning: collectWarning(warnings),
-        });
-        this.respond({ id: request.id, type: "render-animated-webp-ok", webp, warnings });
+      case "open-layout-transition-raster-stream": {
+        this.rasterStreams.set(
+          request.id,
+          createAnimatedRasterJob(this.engine, {
+            format: request.format,
+            source: { kind: "transition", input: request.transition },
+            options: request.options,
+          }),
+        );
+        this.respond({ id: request.id, type: "open-raster-stream-ok", streamId: request.id });
         return;
       }
-      case "render-layout-transition-animated-gif": {
-        const { skipValidation, textPathMode, ...renderOptions } = request.options;
-        const compiled = this.compile(request.transition, { skipValidation, textPathMode });
-        const warnings: SerializedRecoverableError[] = [];
-        const gif = this.engine.renderCompiledToAnimatedGif(compiled, {
-          ...renderOptions,
-          onWarning: collectWarning(warnings),
+      case "next-raster-stream": {
+        const job = this.rasterStreams.get(request.streamId);
+        if (!job) {
+          throw new TypeError("No active raster fixture stream");
+        }
+        const step = job.advance();
+        const response = {
+          id: request.id,
+          type: "next-raster-stream-ok" as const,
+          streamId: request.streamId,
+        };
+        if (step.kind === "chunk") {
+          this.respond({ ...response, kind: "chunk", chunk: step.chunk.slice().buffer });
+        } else if (step.kind === "ready") {
+          this.respond({ ...response, kind: "ready", warnings: [...step.warnings] });
+        } else {
+          this.respond({ ...response, ...step });
+        }
+        return;
+      }
+      case "close-raster-stream": {
+        this.rasterStreams.get(request.streamId)?.dispose();
+        this.rasterStreams.delete(request.streamId);
+        this.respond({
+          id: request.id,
+          type: "close-raster-stream-ok",
+          streamId: request.streamId,
         });
-        this.respond({ id: request.id, type: "render-animated-gif-ok", gif, warnings });
         return;
       }
       case "open-layout-transition-frame-stream": {
@@ -183,7 +212,6 @@ class CoreBackedWorker implements WorkerLike {
     transition: WorkerLayoutTransitionInput,
     options: { skipValidation?: boolean; textPathMode?: "merged" | "glyphs" },
   ) {
-    this.compileCount += 1;
     return this.engine.compileLayoutTransition(transition, options);
   }
 
@@ -192,6 +220,10 @@ class CoreBackedWorker implements WorkerLike {
       stream.iterator.return?.();
     }
     this.streams.clear();
+    for (const job of this.rasterStreams.values()) {
+      job.dispose();
+    }
+    this.rasterStreams.clear();
   }
 
   private respond(response: WorkerResponse): void {
@@ -214,8 +246,7 @@ afterAll(() => {
 function realEngine(): Engine {
   return createEngineFromHandle(handle, {
     svgToPngFn: handle.createSvgToPngFn(),
-    svgsToAnimatedWebpFn: handle.createSvgsToAnimatedWebpFn(),
-    svgsToAnimatedGifFn: handle.createSvgsToAnimatedGifFn(),
+    openAnimatedRasterSessionFn: handle.createOpenAnimatedRasterSessionFn(),
   });
 }
 
@@ -258,6 +289,43 @@ async function collectFrames(frames: AsyncIterable<Frame>): Promise<Frame[]> {
 }
 
 describe("portable layout transition through fixed Worker protocol families", () => {
+  it("preserves the Core render fatal for native raster failures in both Worker containers", async () => {
+    const workerEngine = await WorkerEngine.create({
+      worker: new CoreBackedWorker(realEngine()),
+      fonts: [],
+    });
+    const options = {
+      timesMs: [0, 100],
+      frameDurationsMs: [50, 50],
+      iterations: 1,
+      rasterBackground: "not-a-color",
+    } as const;
+    try {
+      for (const write of [
+        workerEngine.renderLayoutTransitionToAnimatedGif.bind(
+          workerEngine,
+          portableTransition(),
+          options,
+        ),
+        workerEngine.renderLayoutTransitionToAnimatedWebp.bind(
+          workerEngine,
+          portableTransition(),
+          options,
+        ),
+      ]) {
+        const destination = { write: vi.fn(), patch: vi.fn(), finish: vi.fn(), abort: vi.fn() };
+        await expect(write(destination)).rejects.toMatchObject({
+          code: "WASM_RENDER_FAILED",
+          stage: "engine",
+        });
+        expect(destination.abort).toHaveBeenCalledOnce();
+        expect(destination.finish).not.toHaveBeenCalled();
+      }
+    } finally {
+      workerEngine.dispose();
+    }
+  });
+
   it("encodes actual WebP and GIF bytes after one Worker-local compile each", async () => {
     const coreWorker = new CoreBackedWorker(realEngine());
     const workerEngine = await WorkerEngine.create({ worker: coreWorker, fonts: [] });
@@ -268,13 +336,11 @@ describe("portable layout transition through fixed Worker protocol families", ()
       iterations: 2,
     } as const;
 
-    const webp = await workerEngine.renderLayoutTransitionToAnimatedWebp(
-      portableTransition(),
-      schedule,
+    const webp = await collectAnimatedRaster((sink) =>
+      workerEngine.renderLayoutTransitionToAnimatedWebp(portableTransition(), schedule, sink),
     );
-    const gif = await workerEngine.renderLayoutTransitionToAnimatedGif(
-      portableTransition(),
-      schedule,
+    const gif = await collectAnimatedRaster((sink) =>
+      workerEngine.renderLayoutTransitionToAnimatedGif(portableTransition(), schedule, sink),
     );
 
     expect(new TextDecoder().decode(webp.subarray(0, 4))).toBe("RIFF");

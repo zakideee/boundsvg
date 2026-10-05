@@ -21,6 +21,7 @@ import {
   multiplyAffineMatrices,
 } from "../../src/transform.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
+import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 import {
   collectFixtureNodes,
@@ -297,12 +298,9 @@ describe("portable layout transition fixture", () => {
 
   beforeAll(async () => {
     handle = await createFontedWasmHandle();
-    const encodeAnimatedWebp = handle.createSvgsToAnimatedWebpFn();
-    const encodeAnimatedGif = handle.createSvgsToAnimatedGifFn();
     engine = createEngineFromHandle(handle, {
       svgToPngFn: handle.createSvgToPngFn(),
-      ...(encodeAnimatedWebp ? { svgsToAnimatedWebpFn: encodeAnimatedWebp } : {}),
-      ...(encodeAnimatedGif ? { svgsToAnimatedGifFn: encodeAnimatedGif } : {}),
+      openAnimatedRasterSessionFn: handle.createOpenAnimatedRasterSessionFn(),
     });
   });
 
@@ -402,7 +400,7 @@ describe("portable layout transition fixture", () => {
     ]);
   });
 
-  it("returns an ordinary CompiledScene accepted by every compiled output family", () => {
+  it("returns an ordinary CompiledScene accepted by every compiled output family", async () => {
     const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput(), {
       textPathMode: "merged",
     });
@@ -420,18 +418,34 @@ describe("portable layout transition fixture", () => {
     ]);
     expect(engine.renderCompiledToTextOutlines(compiled).length).toBeGreaterThan(0);
     expect(
-      engine.renderCompiledToAnimatedWebp(compiled, {
-        durationMs: 1000,
-        fps: 2,
-        iterations: 1,
-      }).length,
+      (
+        await collectAnimatedRaster((sink) =>
+          engine.renderCompiledToAnimatedWebp(
+            compiled,
+            {
+              durationMs: 1000,
+              fps: 2,
+              iterations: 1,
+            },
+            sink,
+          ),
+        )
+      ).length,
     ).toBeGreaterThan(0);
     expect(
-      engine.renderCompiledToAnimatedGif(compiled, {
-        durationMs: 1000,
-        fps: 2,
-        iterations: 1,
-      }).length,
+      (
+        await collectAnimatedRaster((sink) =>
+          engine.renderCompiledToAnimatedGif(
+            compiled,
+            {
+              durationMs: 1000,
+              fps: 2,
+              iterations: 1,
+            },
+            sink,
+          ),
+        )
+      ).length,
     ).toBeGreaterThan(0);
   });
 

@@ -7,8 +7,10 @@ import {
   type RenderExecutionResult,
 } from "../execution/types.js";
 import { type RenderAdapter, useRenderExecution } from "./use-render-execution.js";
+/** Generation state with SVG and resolved IR, including retained-result status. */
 export type UseRenderToSvgAndIrAsyncResult = RenderExecutionResult<{ svg: string; ir: IR }>;
 
+/** Main-engine and worker dispatch for asynchronous svg and ir rendering. */
 const adapter: RenderAdapter<{ svg: string; ir: IR }, RenderSvgOptions> = {
   main: (engine, scene, options) => engine.renderToSvgAndIR(scene, options),
   worker: (engine, scene, { options, signal }) =>

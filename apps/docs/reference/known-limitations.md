@@ -219,12 +219,19 @@ supported props and error codes.
   long; a smaller overshoot is unavoidable for most durations and is not
   reported, so one short frame inside a long animation can be stretched
   quietly.
-- Animated output is capped at 300 frames and per-frame durations at 1–60000
-  ms. Total plays are explicit: animated WebP accepts 1–65535, GIF accepts
-  1–65536, and both accept `"infinite"`. GIF stores finite total plays as one
-  fewer repeat and omits the repeat extension when the total is one.
-- Animated output is additionally capped at 256 MiB for the assembled file and
-  64 MiB of characters for the sampled SVG frames.
+- Animated writes require a sink and return a Promise. There is no fixed frame
+  count or aggregate-SVG cap. Single-frame display durations remain integers
+  in 1–60000 ms, and derived indices and counters must remain exactly
+  representable. WebP is bounded by its RIFF length field. Total plays are
+  explicit: WebP accepts 1–65535, GIF 1–65536, and both accept `"infinite"`.
+- Sampled schedules and sequential encoding retain constant schedule/transport
+  state, but full validation and encoding work grow with the number of frames.
+  Explicit arrays require one snapshot each. An explicit memory collector uses
+  O(output) RAM and retains a 256 MiB limit; file and external spool sinks avoid
+  that complete-file RAM cost.
+- Cancellation waits for an invoked Core callback; successful pending finish
+  wins. Worker timeout may reject before finish settles, leaving commit
+  uncertain. Do not delete or retry output merely because that Promise rejected.
 - Reading animated WebP or GIF is not supported. `<Image>` decodes still WebP
   and GIF, but only the first frame of an animated file. The typed `mediaType`
   prop covers PNG, JPEG, and SVG; WebP and GIF arrive through the `src` itself.

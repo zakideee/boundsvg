@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 
+/** Callback keys excluded from structural render-option invalidation. */
 const CALLBACK_KEYS = new Set(["onWarning", "onPngResolutionAdjusted"]);
 
 /** Compare own values, leaving nested values under the caller's immutable identity contract. */

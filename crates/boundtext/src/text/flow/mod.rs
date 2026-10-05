@@ -66,6 +66,7 @@ fn resolve_flow_line_metrics(
     )
 }
 
+/// Resolve flow line height from explicit controls and registered font metrics.
 pub(super) fn resolve_flow_line_height_px(
     font_ctx: &FontContext<'_>,
     font_size_px: f64,
@@ -75,6 +76,7 @@ pub(super) fn resolve_flow_line_height_px(
     resolve_flow_line_metrics(font_ctx, font_size_px, line_height, line_height_px).line_height_px
 }
 
+/// Resolve the flow baseline offset using the same metrics as flow line height.
 pub(super) fn resolve_flow_baseline_offset_px(
     font_ctx: &FontContext<'_>,
     font_size_px: f64,
@@ -169,8 +171,14 @@ pub trait RegionProvider {
 /// Operation-internal provider after public failures and deterministic budgets
 /// have been normalized into the single text-layout error.
 pub(crate) trait LayoutRegionProvider {
+    /// Return complete regions with provider and budget failures normalized for text layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text layout error when geometry or the per-layout query budget fails.
     fn regions(&self, query: RegionQuery) -> Result<Vec<FlowRegion>, TextLayoutError>;
 
+    /// Expose the provider's certification for monotone font-size fitting.
     fn fit_search_kind(&self) -> FitSearchKind;
 }
 
@@ -220,6 +228,7 @@ pub(crate) struct BudgetedRegionProvider<'a, P> {
 }
 
 impl<'a, P> BudgetedRegionProvider<'a, P> {
+    /// Wrap a region provider with an empty per-layout cache and the standard query and region budgets.
     pub(crate) fn new(source: &'a P) -> Self {
         Self {
             source,
@@ -560,6 +569,7 @@ pub struct FlowRubyAnnotationRun {
     pub style: FlowFragmentStyle,
 }
 
+/// One ruby annotation level with its position and styled text runs.
 #[derive(Debug, Clone)]
 pub struct FlowRubyAnnotationLevel {
     pub text: String,
@@ -590,6 +600,7 @@ pub struct FlowRubyAnnotation {
     pub levels: Vec<FlowRubyAnnotationLevel>,
 }
 
+/// Authored inline rectangle and its offset within a resolved flow fragment.
 #[derive(Debug, Clone)]
 pub(crate) struct FlowInlineRect {
     pub inline_offset: f64,
@@ -743,6 +754,7 @@ pub struct FlowTextSpan {
 }
 
 impl FlowTextSpan {
+    /// Create a flow span that inherits every style from its enclosing request.
     #[must_use]
     pub fn plain(text: String) -> Self {
         Self {
@@ -1025,6 +1037,7 @@ fn inline_line_box_metrics(
     (before_reference + after_reference, before_reference)
 }
 
+/// Compare ordered region offsets and capacities within the existing absolute tolerance.
 pub(crate) fn regions_approx_eq(a: &[(f64, f64)], b: &[(f64, f64)]) -> bool {
     a.len() == b.len()
         && a.iter()
@@ -1065,6 +1078,7 @@ pub fn flow_layout_is_contained(flow_layout: &FlowLayoutResult) -> bool {
     })
 }
 
+/// Map intentional paragraph overflow causes to their flow result spelling.
 pub(crate) fn layout_overflow_reason_name(reason: paragraph::LayoutOverflowReason) -> String {
     match reason {
         paragraph::LayoutOverflowReason::KinsokuAbsorb => "kinsokuAbsorb".to_string(),
@@ -2032,6 +2046,11 @@ impl<'a> NormalizedFlowSource<'a> {
     }
 }
 
+/// Dispatch flow layout while preserving the caller-supplied region provider budget.
+///
+/// # Errors
+///
+/// Returns conflicting-source, text preparation, rich-layout, or region-provider failures.
 pub(crate) fn layout_flow_with_regions_budgeted(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
@@ -2303,6 +2322,7 @@ pub fn layout_resolved_flow_with_regions(
     Ok(layout_result)
 }
 
+/// Record final flow allocations when phase tracing is enabled; otherwise perform no work.
 pub(crate) fn record_flow_materialization(flow_layout: &FlowLayoutResult) {
     #[cfg(any(test, feature = "phase-trace"))]
     {
@@ -2329,6 +2349,11 @@ pub(crate) fn record_flow_materialization(flow_layout: &FlowLayoutResult) {
     let _ = flow_layout;
 }
 
+/// Check rich-text resource limits before preparing flow layout.
+///
+/// # Errors
+///
+/// Returns a rich-text depth or inline-rectangle limit violation.
 pub(crate) fn validate_flow_request_resources(
     req: &FlowLayoutRequest<'_>,
 ) -> Result<(), TextLayoutError> {

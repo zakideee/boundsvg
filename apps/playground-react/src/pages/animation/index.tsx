@@ -56,12 +56,15 @@ import {
 } from "./static-playback";
 import { collectTimelineTracks, TimelineTracks, ValueInspector } from "./timeline";
 
+/** Initial scene selected when the animation page has no valid preset query. */
 const DEFAULT_PRESET: AnimationPresetKey = "hero-card";
 type AnimationPagePresetKey = AnimationPresetKey | LayoutReactivePresetKey;
+/** Preset choices shown by the animation page selector. */
 const ANIMATION_PAGE_PRESET_OPTIONS = [
   ...ANIMATION_PRESET_OPTIONS,
   ...LAYOUT_REACTIVE_PRESET_OPTIONS,
 ];
+/** Debug settings applied consistently to the animation preview. */
 const ANIMATION_DEBUG_MODE =
   import.meta.env.DEV ||
   (typeof window !== "undefined" &&
@@ -85,6 +88,7 @@ function missingAnimationPreset(presetKey: string): never {
   throw new RangeError(`Missing animation preset ${presetKey}`);
 }
 
+/** Media query used to respect the viewer's reduced-motion preference. */
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
 function subscribeToReducedMotion(onStoreChange: () => void): () => void {
@@ -732,6 +736,7 @@ function LayoutReactivePreviewPanels({
   );
 }
 
+/** Preview animated scenes and export their selected output format. */
 export function AnimationPage() {
   const { engine, defaultCommonOptions } = useBoundSvg();
   const mobileViewer = useMobileViewer();
@@ -895,28 +900,42 @@ export function AnimationPage() {
   const [animatedExportError, setAnimatedExportError] = useState<Error | null>(null);
   const [animatedExportPending, setAnimatedExportPending] = useState(false);
   const animatedExportFrameRef = useRef(0);
+  const animatedRasterBusyRef = useRef(false);
+  const animatedRasterAbortRef = useRef<AbortController | null>(null);
+  const animatedRasterGenerationRef = useRef(0);
+  const isExportMountedRef = useRef(true);
   const mp4GenerationRef = useRef(0);
   const mp4AbortRef = useRef<AbortController | null>(null);
   // Switching presets makes a previous failure meaningless.
   useEffect(() => {
     // Read the generation key explicitly: changing it is the reset signal.
     void presetKey;
+    isExportMountedRef.current = true;
     setAnimatedExportError(null);
-    setAnimatedExportPending(false);
+    animatedRasterGenerationRef.current += 1;
+    animatedRasterAbortRef.current?.abort();
     mp4GenerationRef.current += 1;
     mp4AbortRef.current?.abort();
     mp4AbortRef.current = null;
     if (animatedExportFrameRef.current !== 0) {
       cancelAnimationFrame(animatedExportFrameRef.current);
       animatedExportFrameRef.current = 0;
+      animatedRasterAbortRef.current = null;
+      animatedRasterBusyRef.current = false;
     }
+    setAnimatedExportPending(animatedRasterBusyRef.current);
     return () => {
+      isExportMountedRef.current = false;
+      animatedRasterGenerationRef.current += 1;
+      animatedRasterAbortRef.current?.abort();
       mp4GenerationRef.current += 1;
       mp4AbortRef.current?.abort();
       mp4AbortRef.current = null;
       if (animatedExportFrameRef.current !== 0) {
         cancelAnimationFrame(animatedExportFrameRef.current);
         animatedExportFrameRef.current = 0;
+        animatedRasterAbortRef.current = null;
+        animatedRasterBusyRef.current = false;
       }
     };
   }, [presetKey]);
@@ -937,36 +956,63 @@ export function AnimationPage() {
 
   const downloadAnimated = useCallback(
     (format: AnimatedExportFormat) => {
+      if (animatedRasterBusyRef.current || animatedExportPending) {
+        return;
+      }
       if (!vnode) {
         setAnimatedExportError(new Error("The preset has not rendered yet"));
         return;
       }
-      // Encoding is seconds of synchronous WASM work; paint the pending state
-      // before starting it.
+      animatedRasterBusyRef.current = true;
+      const generation = ++animatedRasterGenerationRef.current;
+      const controller = new AbortController();
+      animatedRasterAbortRef.current = controller;
+      // Paint the pending state before the first frame, then await sink completion.
       setAnimatedExportPending(true);
       if (animatedExportFrameRef.current !== 0) {
         cancelAnimationFrame(animatedExportFrameRef.current);
       }
       animatedExportFrameRef.current = requestAnimationFrame(() => {
         animatedExportFrameRef.current = 0;
-        try {
-          const { error } = downloadAnimatedArtifact({
-            engine,
-            input: vnode,
-            renderOptions: animatedRasterOptions,
-            durationMs,
-            format,
-            fileName: `animation-${presetKey}`,
+        void downloadAnimatedArtifact({
+          engine,
+          input: vnode,
+          renderOptions: animatedRasterOptions,
+          durationMs,
+          format,
+          fileName: `animation-${presetKey}`,
+          signal: controller.signal,
+        })
+          .then(
+            ({ error }) => {
+              if (
+                isExportMountedRef.current &&
+                animatedRasterGenerationRef.current === generation
+              ) {
+                setAnimatedExportError(error);
+              }
+            },
+            (error) => {
+              if (
+                isExportMountedRef.current &&
+                animatedRasterGenerationRef.current === generation
+              ) {
+                setAnimatedExportError(error instanceof Error ? error : new Error(String(error)));
+              }
+            },
+          )
+          .finally(() => {
+            if (animatedRasterAbortRef.current === controller) {
+              animatedRasterAbortRef.current = null;
+              animatedRasterBusyRef.current = false;
+              if (isExportMountedRef.current) {
+                setAnimatedExportPending(false);
+              }
+            }
           });
-          setAnimatedExportError(error);
-        } finally {
-          // Without this the buttons stay disabled and the notice stuck for the
-          // rest of the session.
-          setAnimatedExportPending(false);
-        }
       });
     },
-    [animatedRasterOptions, durationMs, engine, presetKey, vnode],
+    [animatedExportPending, animatedRasterOptions, durationMs, engine, presetKey, vnode],
   );
 
   // Support cannot change for the life of the page, so it is read once rather
@@ -975,6 +1021,9 @@ export function AnimationPage() {
 
   const downloadMp4 = useCallback(
     (frameRate: Mp4ExportFrameRate) => {
+      if (animatedRasterBusyRef.current || animatedExportPending) {
+        return;
+      }
       if (!vnode) {
         setAnimatedExportError(new Error("The preset has not rendered yet"));
         return;
@@ -1006,7 +1055,7 @@ export function AnimationPage() {
           }
         });
     },
-    [durationMs, engine, presetKey, staticOptions, vnode],
+    [animatedExportPending, durationMs, engine, presetKey, staticOptions, vnode],
   );
 
   const staticRenderResult = useMemo(() => {

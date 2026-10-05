@@ -24,6 +24,7 @@ struct Choice {
 }
 
 impl Choice {
+    /// Empty path command choice used before coordinate candidates are populated.
     const EMPTY: Self = Self {
         op: 0,
         values: [0; COORDINATE_COUNT_MAX],
@@ -57,6 +58,7 @@ struct NumberProperties {
 }
 
 impl NumberProperties {
+    /// Empty numeric spelling metadata used before a coordinate is formatted.
     const EMPTY: Self = Self {
         length: 0,
         has_dot: false,
@@ -593,6 +595,7 @@ fn write_segments(segments: &[Segment]) -> Option<String> {
     }
 }
 
+/// Use a shorter equivalent path spelling when parsing and rewriting succeed; otherwise preserve the input.
 pub(super) fn compact_text_path(input: &str) -> String {
     let Some(output) = parse(input).and_then(|segments| write_segments(&segments)) else {
         return input.to_owned();

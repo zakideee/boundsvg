@@ -7,11 +7,13 @@ import {
   type RenderExecutionResult,
 } from "../execution/types.js";
 import { type RenderAdapter, useRenderExecution } from "./use-render-execution.js";
+/** Generation state with layered PNG output and layer data URLs, including retained-result status. */
 export type UseRenderToLayeredPngAsyncResult = RenderExecutionResult<{
   result: LayeredPngResult;
   layerDataUrls: string[];
 }>;
 
+/** Main-engine and worker dispatch for asynchronous layered png rendering. */
 const adapter: RenderAdapter<LayeredPngResult, LayeredPngOptions> = {
   main: (engine, scene, options) => engine.renderToLayeredPng(scene, options),
   worker: (engine, scene, { options, signal }) =>

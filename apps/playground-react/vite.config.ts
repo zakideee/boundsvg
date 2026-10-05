@@ -4,10 +4,12 @@ import { defineConfig } from "vite";
 
 // Deploy under a GitHub Pages subpath by setting PAGES_BASE at build time
 // (e.g. "/boundsvg/playground/react/"). Defaults to "/" for local dev.
+/** Build-time deployment base, with the root path retained for local development. */
 const pagesBase = process.env.PAGES_BASE;
 
 // The Pages build ships only the main app. The e2e harness pages are internal
 // Playwright scaffolding (they assume base "/") and must not be published.
+/** Build entries that keep local test harness pages out of the deployed app. */
 const input = pagesBase
   ? { main: resolve(__dirname, "index.html") }
   : {
@@ -15,6 +17,7 @@ const input = pagesBase
       "e2e-layered-composition": resolve(__dirname, "e2e-layered-composition.html"),
       "e2e-worker": resolve(__dirname, "e2e-worker.html"),
       "e2e-determinism": resolve(__dirname, "e2e-determinism.html"),
+      "e2e-animated-raster": resolve(__dirname, "e2e-animated-raster.html"),
     };
 
 export default defineConfig({

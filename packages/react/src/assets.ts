@@ -24,18 +24,21 @@ import { resolveMainThreadEngineError } from "./utils/main-thread-only.js";
 import { resolveRenderRevision } from "./utils/render-input-options.js";
 import { pickCompileOptions, pickOutputCommonOptions } from "./utils/render-options.js";
 
+/** Compiled artifact and readiness or failure state for the Provider's main-thread Engine. */
 export type UseCompiledSceneResult = {
   compiled: CompiledScene | null;
   error: Error | null;
   isReady: boolean;
 };
 
+/** Separate compile, SVG emission, and PNG emission choices for a shared scene artifact. */
 export type UseRenderAssetOptions = {
   compileOptions?: CompileOptions;
   svgOptions?: EmitSvgOptions;
   pngOptions?: EmitPngOptions;
 };
 
+/** Shared compiled artifact, SVG, PNG, and data URL with their readiness or failure state. */
 export type UseRenderAssetResult = {
   compiled: CompiledScene | null;
   svg: string | null;

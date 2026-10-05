@@ -10,6 +10,7 @@ import type { AnimationSpec } from "../../src/vnode/types.js";
 import { EXPECTED_WASM_SCHEMA_VERSION } from "../../src/wasm/index.js";
 import { createConformanceEngine } from "../conformance/conformance-engine.js";
 import { CONFORMANCE_SCENES } from "../conformance/scenes/index.js";
+import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 
 /**
  * Literal-byte oracle for behavior-preserving refactors. The fixture was
@@ -21,10 +22,15 @@ import { CONFORMANCE_SCENES } from "../conformance/scenes/index.js";
  *     tests/regression/refactor-output-parity.test.ts
  */
 const REFERENCE_COMMIT = "442833c415f049b86ba5fd510e6d253a6a025295";
+/** Version of the preserved literal-byte parity fixture manifest. */
 const REFERENCE_FORMAT_VERSION = 1;
+/** Root of preserved byte fixtures used to compare output behavior. */
 const referenceRoot = path.resolve(__dirname, "fixtures/refactor-output-parity-base");
+/** Manifest that identifies the preserved output fixtures. */
 const referenceManifestPath = path.join(referenceRoot, "manifest.json");
+/** Explicit opt-in for regenerating the preserved reference fixtures. */
 const updateReference = process.env.REFACTOR_PARITY_UPDATE === "1";
+/** Text-path SVG references whose outlining behavior is checked separately. */
 const textPathSvgArtifacts = new Set([
   "conformance/native-layered-parts.layer-2-content.svg",
   "conformance/native-layered-parts.layer-5-content.svg",
@@ -50,7 +56,9 @@ function withoutTextOutlineData(svg: string): string {
     return tag;
   });
 }
+/** Deterministic UTF-8 encoding for literal SVG byte comparisons. */
 const utf8Encoder = new TextEncoder();
+/** Former default-engine exports that must be absent from the runtime entry. */
 const removedDefaultEngineRuntimeExports = new Set([
   "compileLayoutTransition",
   "compileScene",
@@ -81,7 +89,9 @@ const removedDefaultEngineRuntimeExports = new Set([
   "renderToWebp",
   "snapshotCompiledIR",
 ]);
+/** Former scene validators replaced by the current decoding boundary. */
 const replacedSceneRuntimeExports = new Set(["assertSerializableSceneTransport", "isSceneNode"]);
+/** Scene decoder symbols checked in both runtime and type entries. */
 const sceneDecoderRuntimeExports = [
   "MAX_SCENE_DECODE_COLLECTION_LENGTH",
   "MAX_SCENE_DECODE_DEPTH",
@@ -119,13 +129,16 @@ function architectureIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
     ...previousRootExports.filter(
       (exportName) =>
         !replacedSceneRuntimeExports.has(exportName) &&
-        !removedDefaultEngineRuntimeExports.has(exportName),
+        !removedDefaultEngineRuntimeExports.has(exportName) &&
+        !["MAX_ANIMATION_FRAMES", "MAX_ANIMATION_SVG_PAYLOAD_CHARS"].includes(exportName),
     ),
     ...sceneDecoderRuntimeExports,
+    "createAnimatedRasterCollector",
+    "createAnimatedWebpSpoolSink",
   ].sort();
   return new Map([
     ["contracts/root-runtime-exports.json", jsonBytes(currentRootExports)],
-    ["contracts/wasm-schema-version.txt", utf8("32")],
+    ["contracts/wasm-schema-version.txt", utf8("33")],
     [
       "fallback/missing-glyph.warnings.json",
       jsonBytes([
@@ -354,8 +367,18 @@ async function captureCorpus(engine: Engine): Promise<CapturedCorpus> {
   artifacts.set("p1/frame.png", engine.renderToPng(timelineInput, { timeMs: 0.5 }));
   artifacts.set("p1/frame.webp", engine.renderToWebp(timelineInput, { timeMs: 0.5 }));
   const rasterSchedule = { durationMs: 200, fps: 10, iterations: 1 } as const;
-  artifacts.set("p1/animation.webp", engine.renderToAnimatedWebp(timelineInput, rasterSchedule));
-  artifacts.set("p1/animation.gif", engine.renderToAnimatedGif(timelineInput, rasterSchedule));
+  artifacts.set(
+    "p1/animation.webp",
+    await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(timelineInput, rasterSchedule, sink),
+    ),
+  );
+  artifacts.set(
+    "p1/animation.gif",
+    await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(timelineInput, rasterSchedule, sink),
+    ),
+  );
 
   const missingGlyphWarnings: RecoverableError[] = [];
   const fallbackSvg = engine.renderToSvg(missingGlyphScene(), {

@@ -15,6 +15,7 @@ use super::{
     TextLayoutRequest, shift_glyphs_x, shift_glyphs_y,
 };
 
+/// Resolve whether either token boundary enables Japanese kinsoku, honoring explicit overrides.
 pub(super) fn token_uses_ja_kinsoku(
     token: &LayoutToken,
     fallback: Option<&KinsokuProfile>,
@@ -23,6 +24,7 @@ pub(super) fn token_uses_ja_kinsoku(
     token.kinsoku_start.unwrap_or(fallback_enabled) || token.kinsoku_end.unwrap_or(fallback_enabled)
 }
 
+/// Apply the fallback profile when either adjacent token enables kinsoku at this boundary.
 pub(super) fn kinsoku_profile_at_boundary<'a>(
     tokens: &[LayoutToken],
     boundary: usize,
@@ -45,6 +47,11 @@ pub(super) fn kinsoku_profile_at_boundary<'a>(
     }
 }
 
+/// Break rich tokens into horizontal lines and assemble positioned glyphs and decorations.
+///
+/// # Errors
+///
+/// Returns preparation failure or an invariant violation when a line index cannot be represented.
 pub(super) fn layout_horizontal_tokens(
     req: &TextLayoutRequest,
     tokens: &[LayoutToken],
@@ -194,6 +201,11 @@ pub(super) fn layout_horizontal_tokens(
     })
 }
 
+/// Break rich tokens into vertical columns and assemble positioned glyphs and decorations.
+///
+/// # Errors
+///
+/// Returns preparation failure or an invariant violation when a column index cannot be represented.
 pub(super) fn layout_vertical_tokens(
     req: &TextLayoutRequest,
     tokens: &[LayoutToken],
@@ -515,6 +527,7 @@ fn assemble_empty_line(newline_token: &LayoutToken, indent: f64) -> LayoutLine {
     }
 }
 
+/// Select horizontal token ranges using wrap, indentation, newline, and kinsoku constraints.
 #[expect(
     clippy::unnecessary_wraps,
     reason = "rich flow callers use Option to share the same break-helper contract"
@@ -627,6 +640,7 @@ pub(super) fn break_tokens_horizontal(
     Some(lines)
 }
 
+/// Select vertical token ranges using wrap, indentation, newline, and kinsoku constraints.
 #[expect(
     clippy::unnecessary_wraps,
     reason = "rich flow callers use Option to share the same break-helper contract"
@@ -739,6 +753,7 @@ pub(super) fn break_tokens_vertical(
     Some(columns)
 }
 
+/// Align token reference offsets and gather horizontal glyphs, rectangles, and decoration ownership.
 pub(super) fn assemble_horizontal_line(
     tokens: &[LayoutToken],
     indent: f64,
@@ -858,6 +873,7 @@ pub(super) fn assemble_horizontal_line(
     }
 }
 
+/// Align token reference offsets and gather vertical glyphs, rectangles, and decoration ownership.
 pub(super) fn assemble_vertical_line(
     tokens: &[LayoutToken],
     indent: f64,
@@ -976,6 +992,7 @@ pub(super) fn assemble_vertical_line(
     }
 }
 
+/// Project supplied or computed Unicode line-break offsets onto token boundaries.
 pub(super) fn build_uax14_break_set_for_tokens(
     tokens: &[LayoutToken],
     uax14_breaks: Option<&[usize]>,
@@ -1020,6 +1037,7 @@ pub(super) fn build_uax14_break_set_for_tokens(
     }
 }
 
+/// Remember this boundary only when the projected Unicode break set permits it.
 pub(super) fn update_last_normal_break(
     break_set: Option<&[bool]>,
     boundary_index: usize,
@@ -1039,6 +1057,7 @@ struct RichBreakResolution {
     kinsoku_unresolved: bool,
 }
 
+/// Choose a rich-token break under wrap and kinsoku rules, preferring permitted normal boundaries.
 pub(super) fn resolve_break_pos_for_rich(
     wrap: WrapMode,
     start: usize,

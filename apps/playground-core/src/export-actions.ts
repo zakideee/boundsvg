@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Engine, VNode } from "@boundsvg/core";
+import { createAnimatedRasterCollector } from "@boundsvg/core";
 import { presets } from "./presets/index";
 import { coreState, resolveDebugOverlayConfig } from "./state";
 import type { Preset } from "./types";
@@ -12,6 +13,7 @@ const ANIMATION_FPS = 20;
 
 type ExportFormat = "png" | "webp" | "animated-webp" | "gif";
 
+/** Media types used when downloading each playground export format. */
 const MIME_TYPES: Record<ExportFormat, string> = {
   png: "image/png",
   webp: "image/webp",
@@ -19,6 +21,7 @@ const MIME_TYPES: Record<ExportFormat, string> = {
   gif: "image/gif",
 };
 
+/** Filename suffixes paired with the playground export formats. */
 const FILE_EXTENSIONS: Record<ExportFormat, string> = {
   png: "png",
   webp: "webp",
@@ -27,6 +30,8 @@ const FILE_EXTENSIONS: Record<ExportFormat, string> = {
 };
 
 let currentSource: { engine: Engine; presetKey: string } | null = null;
+/** Keep preset changes from admitting another download while callbacks remain pending. */
+let isExporting = false;
 
 /** Point the buttons at the preset currently on screen. */
 export function setExportSource(engine: Engine, presetKey: string, preset: Preset): void {
@@ -65,12 +70,12 @@ function setNote(message: string): void {
 
 async function downloadCurrent(format: ExportFormat): Promise<void> {
   const requestedSource = currentSource;
-  if (!requestedSource) {
+  if (!requestedSource || isExporting) {
     return;
   }
 
-  // Encoding an animation is seconds of synchronous WASM work. Disable the
-  // buttons and let the browser paint the notice before starting.
+  isExporting = true;
+  // Paint the notice before the first frame; encoding later yields between callbacks.
   const buttons = exportButtons();
   for (const button of buttons) {
     button.disabled = true;
@@ -83,12 +88,14 @@ async function downloadCurrent(format: ExportFormat): Promise<void> {
   // A preset switch during that gap replaces the source; downloading the one
   // that is no longer on screen would be worse than doing nothing.
   if (currentSource !== requestedSource) {
+    isExporting = false;
     restoreButtons();
     return;
   }
   const { engine, presetKey } = requestedSource;
   const preset = presets[presetKey];
   if (!preset) {
+    isExporting = false;
     restoreButtons();
     return;
   }
@@ -98,7 +105,10 @@ async function downloadCurrent(format: ExportFormat): Promise<void> {
   try {
     // Rebuilt rather than cached: dragging an obstacle rebuilds the scene in
     // place, so a cached VNode would download the pre-drag layout.
-    const bytes = renderFormat(engine, preset, preset.build(engine), format);
+    const bytes = await renderFormat(engine, preset, preset.build(engine), format);
+    if (currentSource !== requestedSource) {
+      return;
+    }
     url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: MIME_TYPES[format] }));
     link.href = url;
     link.download = `${slugify(preset.title)}${scaleSuffix()}.${FILE_EXTENSIONS[format]}`;
@@ -114,6 +124,7 @@ async function downloadCurrent(format: ExportFormat): Promise<void> {
     }
     // Re-derived rather than replayed: `setExportSource` may have changed which
     // buttons belong enabled while the encode was running.
+    isExporting = false;
     restoreButtons();
   }
 }
@@ -124,7 +135,8 @@ function restoreButtons(): void {
   const animated = preset?.animationDurationMs !== undefined;
   for (const button of exportButtons()) {
     const format = button.dataset.export as ExportFormat | undefined;
-    button.disabled = format === "animated-webp" || format === "gif" ? !animated : false;
+    button.disabled =
+      isExporting || ((format === "animated-webp" || format === "gif") && !animated);
   }
 }
 
@@ -133,12 +145,12 @@ function scaleSuffix(): string {
   return coreState.pngScale > 1 ? `@${coreState.pngScale}x` : "";
 }
 
-function renderFormat(
+async function renderFormat(
   engine: Engine,
   preset: Preset,
   vnode: VNode,
   format: ExportFormat,
-): Uint8Array {
+): Promise<Uint8Array> {
   const options = {
     debug: resolveDebugOverlayConfig(),
     textPathMode: coreState.textPathMode,
@@ -161,9 +173,18 @@ function renderFormat(
     fps: ANIMATION_FPS,
     iterations: "infinite" as const,
   };
-  return format === "gif"
-    ? engine.renderToAnimatedGif(vnode, animated)
-    : engine.renderToAnimatedWebp(vnode, animated);
+  const collector = createAnimatedRasterCollector();
+  try {
+    if (format === "gif") {
+      await engine.renderToAnimatedGif(vnode, animated, collector);
+    } else {
+      await engine.renderToAnimatedWebp(vnode, animated, collector);
+    }
+    return collector.takeBytes();
+  } catch (error) {
+    collector.abort(error);
+    throw error;
+  }
 }
 
 function slugify(title: string): string {

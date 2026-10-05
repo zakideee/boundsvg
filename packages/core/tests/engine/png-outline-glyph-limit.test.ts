@@ -4,12 +4,14 @@ import { FatalError, type RecoverableError } from "../../src/errors.js";
 import type { IR, IRNode, IRTextNode } from "../../src/ir/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
+import { collectAnimatedRaster, createMockRasterSession } from "../helpers/animation-collector.js";
 import {
   createEngineFromHandle,
   createFontedWasmHandle,
   engineOptionsFromHandle,
 } from "../helpers/wasm-render-engine.js";
 
+/** Existing raster outline limit exercised at its exact glyph boundary. */
 const MAX_OUTLINE_GLYPHS = 16_384;
 
 let handle: WasmEngineHandle;
@@ -114,13 +116,13 @@ function createHarness() {
         },
       });
     }
-    return {
+    const rasterScene = handle.preflightRasterScene(irJson, "{}");
+    return Object.assign(rasterScene, {
       resolveAndEmitToSvg: rasterResolveAndEmitFn,
       resolveToIr: () => JSON.stringify({ ir: JSON.parse(irJson), warnings: [] }),
       resolve: () => undefined,
       renderToSvg: () => "<svg/>",
-      dispose: () => undefined,
-    };
+    });
   });
   const resolveAndEmitSvgFromIrFn = vi.fn((irJson: string, optionsJson: string) =>
     handle.resolveAndEmitSvgFromIr(irJson, optionsJson),
@@ -131,8 +133,7 @@ function createHarness() {
   const preflightIrFn = vi.fn((irJson: string) => handle.preflightIr(irJson));
   const svgToPngFn = vi.fn(() => new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
   const svgToWebpFn = vi.fn(() => new Uint8Array([0x52, 0x49, 0x46, 0x46]));
-  const svgsToAnimatedGifFn = vi.fn(() => new Uint8Array([0x47, 0x49, 0x46]));
-  const svgsToAnimatedWebpFn = vi.fn(() => new Uint8Array([0x52, 0x49, 0x46, 0x46]));
+  const openAnimatedRasterSessionFn = vi.fn(createMockRasterSession);
   const engine = createEngineFromHandle(handle, {
     resolveAndEmitSvgFromIrFn,
     preflightRasterSceneFn,
@@ -140,8 +141,7 @@ function createHarness() {
     preflightIrFn,
     svgToPngFn,
     svgToWebpFn,
-    svgsToAnimatedGifFn,
-    svgsToAnimatedWebpFn,
+    openAnimatedRasterSessionFn,
   });
   return {
     engine,
@@ -152,15 +152,14 @@ function createHarness() {
     resolveIrFn,
     svgToPngFn,
     svgToWebpFn,
-    svgsToAnimatedGifFn,
-    svgsToAnimatedWebpFn,
+    openAnimatedRasterSessionFn,
   };
 }
 
-function expectOutlineGlyphLimitError(run: () => unknown): void {
+async function expectOutlineGlyphLimitError(run: () => unknown): Promise<void> {
   let thrown: unknown;
   try {
-    run();
+    await run();
   } catch (error) {
     thrown = error;
   }
@@ -175,10 +174,10 @@ function expectOutlineGlyphLimitError(run: () => unknown): void {
   });
 }
 
-function captureFatalError(run: () => unknown): FatalError {
+async function captureFatalError(run: () => unknown): Promise<FatalError> {
   let thrown: unknown;
   try {
-    run();
+    await run();
   } catch (error) {
     thrown = error;
   }
@@ -228,10 +227,10 @@ describe("PNG outline glyph limit", () => {
   it.each([
     false,
     true,
-  ])("rejects the 16,385th direct PNG glyph before extraction or rasterization (skipValidation=%s)", (skipValidation) => {
+  ])("rejects the 16,385th direct PNG glyph before extraction or rasterization (skipValidation=%s)", async (skipValidation) => {
     const { engine, preflightRasterSceneFn, rasterResolveAndEmitFn, svgToPngFn } = createHarness();
 
-    expectOutlineGlyphLimitError(() =>
+    await expectOutlineGlyphLimitError(() =>
       engine.renderToPng(createScene(MAX_OUTLINE_GLYPHS + 1), { skipValidation }),
     );
 
@@ -240,12 +239,12 @@ describe("PNG outline glyph limit", () => {
     expect(svgToPngFn).not.toHaveBeenCalled();
   });
 
-  it("rejects batch PNG before delivering recoverable warnings", () => {
+  it("rejects batch PNG before delivering recoverable warnings", async () => {
     const { engine, preflightRasterSceneFn, rasterResolveAndEmitFn, svgToPngFn } = createHarness();
     const warningCodes: string[] = [];
     const scene = createTextScene(`${"A".repeat(MAX_OUTLINE_GLYPHS + 1)}日本語`);
 
-    expectOutlineGlyphLimitError(() =>
+    await expectOutlineGlyphLimitError(() =>
       engine.renderFrames(scene, {
         timesMs: [0],
         format: "png",
@@ -259,7 +258,7 @@ describe("PNG outline glyph limit", () => {
     expect(svgToPngFn).not.toHaveBeenCalled();
   });
 
-  it("keeps glyph preflight ahead of the strict pixel limit for every raster path", () => {
+  it("keeps glyph preflight ahead of the strict pixel limit for every raster path", async () => {
     const { engine } = createHarness();
     const scene = createTextScene("A".repeat(MAX_OUTLINE_GLYPHS + 1), {
       width: 5_000,
@@ -293,32 +292,46 @@ describe("PNG outline glyph limit", () => {
       },
       {
         label: "animated GIF",
-        render: () =>
-          engine.renderToAnimatedGif(scene, {
-            iterations: "infinite",
-            timesMs: [0],
-            frameDurationsMs: [20],
-            ...rasterOptions,
-          }),
+        render: async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedGif(
+              scene,
+              {
+                iterations: "infinite",
+                timesMs: [0],
+                frameDurationsMs: [20],
+                ...rasterOptions,
+              },
+              sink,
+            ),
+          ),
       },
       {
         label: "animated WebP",
-        render: () =>
-          engine.renderToAnimatedWebp(scene, {
-            iterations: "infinite",
-            timesMs: [0],
-            frameDurationsMs: [20],
-            ...rasterOptions,
-          }),
+        render: async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(
+              scene,
+              {
+                iterations: "infinite",
+                timesMs: [0],
+                frameDurationsMs: [20],
+                ...rasterOptions,
+              },
+              sink,
+            ),
+          ),
       },
     ];
 
     for (const route of routes) {
-      expect(captureFatalError(route.render).code, route.label).toBe("PNG_OUTLINE_GLYPH_LIMIT");
+      expect((await captureFatalError(route.render)).code, route.label).toBe(
+        "PNG_OUTLINE_GLYPH_LIMIT",
+      );
     }
   }, 30_000);
 
-  it("delivers the same missing-glyph warning before strict pixel rejection on every path", () => {
+  it("delivers the same missing-glyph warning before strict pixel rejection on every path", async () => {
     const { engine } = createHarness();
     const scene = createTextScene("A日本語", { width: 5_000, height: 1_000 });
     const compiled = engine.compile(scene);
@@ -338,7 +351,7 @@ describe("PNG outline glyph limit", () => {
         rasterOversizeBehavior: "error" as const,
         onWarning: (warning: RecoverableError) => warningCodes.push(warning.code),
       };
-      const render = (): unknown => {
+      const render = async (): Promise<unknown> => {
         switch (route) {
           case "still PNG":
             return engine.renderToPng(scene, commonOptions);
@@ -357,43 +370,58 @@ describe("PNG outline glyph limit", () => {
           case "layered PNG":
             return engine.renderToLayeredPng(scene, commonOptions);
           case "animated GIF":
-            return engine.renderToAnimatedGif(scene, {
-              iterations: "infinite",
-              timesMs: [0],
-              frameDurationsMs: [20],
-              ...commonOptions,
-            });
+            return await collectAnimatedRaster((sink) =>
+              engine.renderToAnimatedGif(
+                scene,
+                {
+                  iterations: "infinite",
+                  timesMs: [0],
+                  frameDurationsMs: [20],
+                  ...commonOptions,
+                },
+                sink,
+              ),
+            );
           case "animated WebP":
-            return engine.renderToAnimatedWebp(scene, {
-              iterations: "infinite",
-              timesMs: [0],
-              frameDurationsMs: [20],
-              ...commonOptions,
-            });
+            return await collectAnimatedRaster((sink) =>
+              engine.renderToAnimatedWebp(
+                scene,
+                {
+                  iterations: "infinite",
+                  timesMs: [0],
+                  frameDurationsMs: [20],
+                  ...commonOptions,
+                },
+                sink,
+              ),
+            );
         }
       };
 
-      expect(captureFatalError(render).code, route).toBe("PNG_PIXEL_LIMIT");
+      expect((await captureFatalError(render)).code, route).toBe("PNG_PIXEL_LIMIT");
       expect(warningCodes, route).toContain("MISSING_GLYPH");
     }
   });
 
-  it("reports strict pixel overflow before resolving a missing compiled font alias", () => {
+  it("reports strict pixel overflow before resolving a missing compiled font alias", async () => {
     const resolveAndEmitToSvg = vi.fn(() => "<svg/>");
     const preflightRasterSceneFn = vi.fn((irJson: string, optionsJson: string) => {
       const ir = JSON.parse(irJson) as IR;
       replacePositionedGlyphFontAlias(ir, "review-missing-font-alias");
       const sceneHandle = handle.preflightRasterScene(JSON.stringify(ir), optionsJson);
-      return {
+      const emit = sceneHandle.resolveAndEmitToSvg.bind(sceneHandle);
+      const resolveToIr = sceneHandle.resolveToIr.bind(sceneHandle);
+      const resolve = sceneHandle.resolve.bind(sceneHandle);
+      const renderToSvg = sceneHandle.renderToSvg.bind(sceneHandle);
+      return Object.assign(sceneHandle, {
         resolveAndEmitToSvg: () => {
           resolveAndEmitToSvg();
-          return sceneHandle.resolveAndEmitToSvg();
+          return emit();
         },
-        resolveToIr: () => sceneHandle.resolveToIr(),
-        resolve: () => sceneHandle.resolve(),
-        renderToSvg: (renderOptionsJson: string) => sceneHandle.renderToSvg(renderOptionsJson),
-        dispose: () => sceneHandle.dispose(),
-      };
+        resolveToIr,
+        resolve,
+        renderToSvg,
+      });
     });
     const strictEngine = createEngineFromHandle(handle, {
       preflightRasterSceneFn,
@@ -402,22 +430,24 @@ describe("PNG outline glyph limit", () => {
     const compiled = strictEngine.compile(createTextScene("A", { width: 5_000, height: 1_000 }));
 
     expect(
-      captureFatalError(() =>
-        strictEngine.renderCompiledToPng(compiled, {
-          scale: 2,
-          rasterOversizeBehavior: "error",
-        }),
+      (
+        await captureFatalError(() =>
+          strictEngine.renderCompiledToPng(compiled, {
+            scale: 2,
+            rasterOversizeBehavior: "error",
+          }),
+        )
       ).code,
     ).toBe("PNG_PIXEL_LIMIT");
     expect(resolveAndEmitToSvg).not.toHaveBeenCalled();
     strictEngine.dispose();
   });
 
-  it("rejects compiled PNG before extraction or rasterization", () => {
+  it("rejects compiled PNG before extraction or rasterization", async () => {
     const { engine, preflightRasterSceneFn, rasterResolveAndEmitFn, svgToPngFn } = createHarness();
     const compiled = engine.compile(createScene(MAX_OUTLINE_GLYPHS + 1));
 
-    expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
+    await expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
 
     expect(preflightRasterSceneFn).toHaveBeenCalledTimes(1);
     expect(rasterResolveAndEmitFn).not.toHaveBeenCalled();
@@ -438,14 +468,14 @@ describe("PNG outline glyph limit", () => {
     expect(svgToPngFn).toHaveBeenCalledTimes(2);
   });
 
-  it("ignores a detached snapshot mutated from above to below the glyph limit", () => {
+  it("ignores a detached snapshot mutated from above to below the glyph limit", async () => {
     const { engine, preflightRasterSceneFn, rasterResolveAndEmitFn, svgToPngFn } = createHarness();
     const compiled = engine.compile(createScene(MAX_OUTLINE_GLYPHS + 1));
 
-    expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
+    await expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
     replacePositionedGlyphs(engine.snapshotCompiledIR(compiled), 1);
 
-    expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
+    await expectOutlineGlyphLimitError(() => engine.renderCompiledToPng(compiled));
 
     expect(preflightRasterSceneFn).toHaveBeenCalledTimes(2);
     expect(rasterResolveAndEmitFn).not.toHaveBeenCalled();
@@ -529,11 +559,11 @@ describe("PNG outline glyph limit", () => {
     expect(replacementEncoder).not.toHaveBeenCalled();
   });
 
-  it("rejects layered PNG before extraction or rasterization", () => {
+  it("rejects layered PNG before extraction or rasterization", async () => {
     const { engine, preflightRasterSceneFn, rasterResolveAndEmitFn, resolveIrFn, svgToPngFn } =
       createHarness();
 
-    expectOutlineGlyphLimitError(() =>
+    await expectOutlineGlyphLimitError(() =>
       engine.renderToLayeredPng(createScene(MAX_OUTLINE_GLYPHS + 1)),
     );
 

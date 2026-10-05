@@ -62,6 +62,39 @@ detached editable inspection copy, which is not accepted by compiled render
 methods. Forged values fail with `COMPILED_SCENE_INVALID`, and authentic
 artifacts passed to another Engine fail with `COMPILED_SCENE_WRONG_ENGINE`.
 
+## Animated raster output
+
+Animated WebP/GIF methods require a destination and return a Promise. Use a
+file or external spool sink to avoid collecting the entire output. For a small
+download, opt into the memory collector:
+
+```ts
+import { createAnimatedRasterCollector } from "@boundsvg/core";
+
+const collector = createAnimatedRasterCollector();
+try {
+  const result = await engine.renderToAnimatedWebp(
+    vnode,
+    {
+      durationMs: 2000,
+      fps: 23.976,
+      iterations: 1,
+    },
+    collector,
+  );
+  const bytes = collector.takeBytes();
+} catch (error) {
+  await collector.abort(error);
+  throw error;
+}
+```
+
+The collector retains O(output) memory and a 256 MiB limit; file sinks have no
+corresponding total cap. WebP sinks patch four RIFF length bytes before finish.
+Core cancellation waits for pending callbacks, and a successfully completed
+pending finish returns success. See the [full contract](https://zakideee.github.io/boundsvg/api/core#animated-webp-and-gif-writes)
+for ownership, structured errors, and migration from the old bytes-returning calls.
+
 ## When to use the utility entry points
 
 ```ts

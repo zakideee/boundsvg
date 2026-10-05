@@ -9,8 +9,6 @@ import {
   createEngineAsync,
   type Engine,
   FatalError,
-  MAX_ANIMATION_FRAMES,
-  MAX_ANIMATION_SVG_PAYLOAD_CHARS,
   RASTER_DIMENSION_SATURATION,
   RASTER_MAX_LONG_EDGE,
   RASTER_MAX_PIXELS,
@@ -20,6 +18,7 @@ import {
 } from "../src/index.js";
 import { initNodeWasm } from "../src/node.js";
 import { createWasmEngineInstance, type WasmEngineHandle } from "../src/wasm/index.js";
+import { collectAnimatedRaster } from "./helpers/animation-collector.js";
 
 function pngSize(bytes: Uint8Array): { width: number; height: number } {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -47,12 +46,14 @@ function webpSize(bytes: Uint8Array): { width: number; height: number } {
   throw new Error(`Unsupported WebP dimension chunk: ${chunk}`);
 }
 
+/** Raster prediction tuple that exercises integer pixel rounding at the area limit. */
 const INTEGER_PIXEL_ROUNDING_BOUNDARY = {
   width: 22,
   height: 38,
   requestedScale: Math.sqrt(RASTER_MAX_PIXELS / (22 * 38)),
 };
 
+/** Raster prediction tuple whose emitter-rounded dimensions exactly fill the pixel limit. */
 const EXACT_PIXEL_CAP = {
   width: 19,
   height: 19,
@@ -94,12 +95,14 @@ type RasterContractFixture = {
   canvasQuantization?: boolean;
 };
 
+/** Versioned raster-domain fixture document shared by boundary tests. */
 const rasterContractFixtureDocument = JSON.parse(
   fs.readFileSync(
     path.resolve(__dirname, "../../../fixtures/conformance/raster-contract-cases.json"),
     "utf8",
   ),
 ) as { schemaVersion: number; cases: RasterContractFixture[] };
+/** Numeric raster cases used to compare domain errors and warnings. */
 const rasterContractFixtures = rasterContractFixtureDocument.cases;
 
 function decodeContractNumber(value: RasterContractNumber): number {
@@ -117,10 +120,10 @@ function decodeContractNumber(value: RasterContractNumber): number {
   }
 }
 
-function captureFatalCode(run: () => unknown): string {
+async function captureFatalCode(run: () => unknown): Promise<string> {
   let thrown: unknown;
   try {
-    run();
+    await run();
   } catch (error) {
     thrown = error;
   }
@@ -128,10 +131,12 @@ function captureFatalCode(run: () => unknown): string {
   return (thrown as FatalError).code;
 }
 
-function captureFatalContract(run: () => unknown): { code: string; stage: string | undefined } {
+async function captureFatalContract(
+  run: () => unknown,
+): Promise<{ code: string; stage: string | undefined }> {
   let thrown: unknown;
   try {
-    run();
+    await run();
   } catch (error) {
     thrown = error;
   }
@@ -249,8 +254,6 @@ describe("public render capability contract", () => {
     expect(RASTER_MAX_LONG_EDGE).toBe(3_840);
     expect(RASTER_MAX_PIXELS).toBe(8_294_400);
     expect(RASTER_DIMENSION_SATURATION).toBe(4_294_967_295);
-    expect(MAX_ANIMATION_FRAMES).toBe(300);
-    expect(MAX_ANIMATION_SVG_PAYLOAD_CHARS).toBe(67_108_864);
     expect(animatedSvgTimelineLimits).toEqual({
       maxKeyframeStops: 16_384,
       maxCssBytes: 16_777_216,
@@ -336,7 +339,7 @@ describe("public render capability contract", () => {
     });
   });
 
-  it("passes every shared contract case through both TS and the real Rust boundary", () => {
+  it("passes every shared contract case through both TS and the real Rust boundary", async () => {
     let parityCases = 0;
     for (const fixture of rasterContractFixtures) {
       const input = {
@@ -345,10 +348,9 @@ describe("public render capability contract", () => {
         requestedScale: decodeContractNumber(fixture.requestedScale),
       };
       if (fixture.expected.kind === "error") {
-        expect(
-          captureFatalCode(() => resolveRasterScale(input)),
-          fixture.label,
-        ).toBe(fixture.expected.code);
+        expect(await captureFatalCode(() => resolveRasterScale(input)), fixture.label).toBe(
+          fixture.expected.code,
+        );
         expect(
           captureWasmStructuredCode(() =>
             rustHandle.resolveRasterScale(input.width, input.height, input.requestedScale),
@@ -376,7 +378,7 @@ describe("public render capability contract", () => {
     expect(parityCases).toBe(rasterContractFixtures.length);
   });
 
-  it("keeps authored resolver results explicit when Canvas layout changes the raster base", () => {
+  it("keeps authored resolver results explicit when Canvas layout changes the raster base", async () => {
     let authoredResolverCases = 0;
     for (const fixture of rasterContractFixtures) {
       const expected = fixture.authoredResolverExpected;
@@ -389,10 +391,9 @@ describe("public render capability contract", () => {
         requestedScale: decodeContractNumber(fixture.requestedScale),
       };
       if (expected.kind === "error") {
-        expect(
-          captureFatalCode(() => resolveRasterScale(input)),
-          fixture.label,
-        ).toBe(expected.code);
+        expect(await captureFatalCode(() => resolveRasterScale(input)), fixture.label).toBe(
+          expected.code,
+        );
         expect(
           captureWasmStructuredCode(() =>
             rustHandle.resolveRasterScale(input.width, input.height, input.requestedScale),
@@ -471,12 +472,14 @@ describe("public render capability contract", () => {
     }
   });
 
-  it("rejects a degenerate prediction and render with the same structured code", () => {
+  it("rejects a degenerate prediction and render with the same structured code", async () => {
     expect(
-      captureFatalCode(() => resolveRasterScale({ width: 0, height: 20, requestedScale: 2 })),
+      await captureFatalCode(() => resolveRasterScale({ width: 0, height: 20, requestedScale: 2 })),
     ).toBe("INVALID_CANVAS_SIZE");
     expect(
-      captureFatalCode(() => engine.renderToPng(createElement("Canvas", { width: 0, height: 20 }))),
+      await captureFatalCode(() =>
+        engine.renderToPng(createElement("Canvas", { width: 0, height: 20 })),
+      ),
     ).toBe("INVALID_CANVAS_SIZE");
   });
 
@@ -622,7 +625,7 @@ describe("public render capability contract", () => {
     rasterContractFixtures.filter(
       (fixture) => fixture.allRasterPaths === true && fixture.expected.kind === "error",
     ),
-  )("returns $expected.code from every raster path for $label", (fixture) => {
+  )("returns $expected.code from every raster path for $label", async (fixture) => {
     const width = decodeContractNumber(fixture.width);
     const height = decodeContractNumber(fixture.height);
     const requestedScale = decodeContractNumber(fixture.requestedScale);
@@ -652,23 +655,35 @@ describe("public render capability contract", () => {
       },
       {
         label: "animated GIF",
-        run: () =>
-          engine.renderToAnimatedGif(scene, {
-            iterations: "infinite",
-            durationMs: 20,
-            fps: 50,
-            scale: requestedScale,
-          }),
+        run: async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedGif(
+              scene,
+              {
+                iterations: "infinite",
+                durationMs: 20,
+                fps: 50,
+                scale: requestedScale,
+              },
+              sink,
+            ),
+          ),
       },
       {
         label: "animated WebP",
-        run: () =>
-          engine.renderToAnimatedWebp(scene, {
-            iterations: "infinite",
-            durationMs: 20,
-            fps: 50,
-            scale: requestedScale,
-          }),
+        run: async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(
+              scene,
+              {
+                iterations: "infinite",
+                durationMs: 20,
+                fps: 50,
+                scale: requestedScale,
+              },
+              sink,
+            ),
+          ),
       },
     ];
 
@@ -676,11 +691,11 @@ describe("public render capability contract", () => {
       throw new Error("Expected an error fixture");
     }
     for (const renderer of renderers) {
-      expect(captureFatalCode(renderer.run), renderer.label).toBe(fixture.expected.code);
+      expect(await captureFatalCode(renderer.run), renderer.label).toBe(fixture.expected.code);
     }
   }, 30_000);
 
-  it("decodes Scene numbers before applying VNode raster dimension checks", () => {
+  it("decodes Scene numbers before applying VNode raster dimension checks", async () => {
     const nonFiniteValues = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
     const mismatches: Array<{
       inputKind: "VNode" | "SceneNode";
@@ -690,13 +705,13 @@ describe("public render capability contract", () => {
     }> = [];
     let routeChecks = 0;
 
-    const inspect = (
+    const inspect = async (
       inputKind: "VNode" | "SceneNode",
       route: string,
       value: number,
       run: () => unknown,
-    ): void => {
-      const actual = captureFatalContract(run);
+    ): Promise<void> => {
+      const actual = await captureFatalContract(run);
       routeChecks += 1;
       const expected =
         inputKind === "SceneNode"
@@ -724,25 +739,37 @@ describe("public render capability contract", () => {
           { label: "layered PNG", run: () => engine.renderToLayeredPng(input) },
           {
             label: "animated GIF",
-            run: () =>
-              engine.renderToAnimatedGif(input, {
-                iterations: "infinite",
-                timesMs: [0],
-                frameDurationsMs: [20],
-              }),
+            run: async () =>
+              await collectAnimatedRaster((sink) =>
+                engine.renderToAnimatedGif(
+                  input,
+                  {
+                    iterations: "infinite",
+                    timesMs: [0],
+                    frameDurationsMs: [20],
+                  },
+                  sink,
+                ),
+              ),
           },
           {
             label: "animated WebP",
-            run: () =>
-              engine.renderToAnimatedWebp(input, {
-                iterations: "infinite",
-                timesMs: [0],
-                frameDurationsMs: [20],
-              }),
+            run: async () =>
+              await collectAnimatedRaster((sink) =>
+                engine.renderToAnimatedWebp(
+                  input,
+                  {
+                    iterations: "infinite",
+                    timesMs: [0],
+                    frameDurationsMs: [20],
+                  },
+                  sink,
+                ),
+              ),
           },
         ];
         for (const route of routes) {
-          inspect(inputKind, route.label, width, route.run);
+          await inspect(inputKind, route.label, width, route.run);
         }
       }
     }
@@ -750,7 +777,7 @@ describe("public render capability contract", () => {
     expect({ routeChecks, mismatches }).toEqual({ routeChecks: 36, mismatches: [] });
   }, 30_000);
 
-  it("checks raster dimensions before resolving Shape resources", () => {
+  it("checks raster dimensions before resolving Shape resources", async () => {
     const input = createElement(
       "Canvas",
       { width: Number.NaN, height: 10 },
@@ -766,30 +793,46 @@ describe("public render capability contract", () => {
       { label: "layered PNG", run: () => engine.renderToLayeredPng(input) },
       {
         label: "animated GIF",
-        run: () =>
-          engine.renderToAnimatedGif(input, {
-            iterations: "infinite",
-            timesMs: [0],
-            frameDurationsMs: [20],
-          }),
+        run: async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedGif(
+              input,
+              {
+                iterations: "infinite",
+                timesMs: [0],
+                frameDurationsMs: [20],
+              },
+              sink,
+            ),
+          ),
       },
       {
         label: "animated WebP",
-        run: () =>
-          engine.renderToAnimatedWebp(input, {
-            iterations: "infinite",
-            timesMs: [0],
-            frameDurationsMs: [20],
-          }),
+        run: async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(
+              input,
+              {
+                iterations: "infinite",
+                timesMs: [0],
+                frameDurationsMs: [20],
+              },
+              sink,
+            ),
+          ),
       },
     ];
 
-    expect(routes.map(({ label, run }) => ({ label, ...captureFatalContract(run) }))).toEqual(
+    const errors = [];
+    for (const { label, run } of routes) {
+      errors.push({ label, ...(await captureFatalContract(run)) });
+    }
+    expect(errors).toEqual(
       routes.map(({ label }) => ({ label, code: "INVALID_CANVAS_SIZE", stage: "emit" })),
     );
   }, 30_000);
 
-  it("rejects a root Canvas accessor without reading it across every raster route", () => {
+  it("rejects a root Canvas accessor without reading it across every raster route", async () => {
     let getterReadCount = 0;
     const sceneNode = {
       type: "Canvas",
@@ -814,37 +857,52 @@ describe("public render capability contract", () => {
       { label: "layered PNG", run: () => engine.renderToLayeredPng(sceneNode) },
       {
         label: "animated GIF",
-        run: () =>
-          engine.renderToAnimatedGif(sceneNode, {
-            iterations: "infinite",
-            timesMs: [0],
-            frameDurationsMs: [20],
-          }),
+        run: async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedGif(
+              sceneNode,
+              {
+                iterations: "infinite",
+                timesMs: [0],
+                frameDurationsMs: [20],
+              },
+              sink,
+            ),
+          ),
       },
       {
         label: "animated WebP",
-        run: () =>
-          engine.renderToAnimatedWebp(sceneNode, {
-            iterations: "infinite",
-            timesMs: [0],
-            frameDurationsMs: [20],
-          }),
+        run: async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(
+              sceneNode,
+              {
+                iterations: "infinite",
+                timesMs: [0],
+                frameDurationsMs: [20],
+              },
+              sink,
+            ),
+          ),
       },
     ];
-    const results = routes.map(({ label, run }) => {
+    const results = [];
+    for (const { label, run } of routes) {
       try {
-        run();
-        return { label, code: "accepted", stage: undefined };
+        await run();
+        results.push({ label, code: "accepted", stage: undefined });
       } catch (error) {
-        return error instanceof FatalError
-          ? { label, code: error.code, stage: error.stage }
-          : {
-              label,
-              code: error instanceof Error ? error.message : String(error),
-              stage: undefined,
-            };
+        results.push(
+          error instanceof FatalError
+            ? { label, code: error.code, stage: error.stage }
+            : {
+                label,
+                code: error instanceof Error ? error.message : String(error),
+                stage: undefined,
+              },
+        );
       }
-    });
+    }
 
     expect({ getterReadCount, results }).toEqual({
       getterReadCount: 0,
@@ -856,7 +914,7 @@ describe("public render capability contract", () => {
     });
   }, 30_000);
 
-  it("matches Canvas quantization across 10 compile and 120 auto/strict raster route checks", () => {
+  it("matches Canvas quantization across 10 compile and 120 auto/strict raster route checks", async () => {
     const quantizationFixtures = rasterContractFixtures.filter(
       (fixture) => fixture.canvasQuantization === true,
     );
@@ -869,10 +927,7 @@ describe("public render capability contract", () => {
       const requestedScale = decodeContractNumber(fixture.requestedScale);
       const scene = createElement("Canvas", { width, height, background: "#2563eb" });
       if (fixture.expected.kind === "error") {
-        expect(
-          captureFatalContract(() => engine.compile(scene)),
-          fixture.label,
-        ).toEqual({
+        expect(await captureFatalContract(() => engine.compile(scene)), fixture.label).toEqual({
           code: fixture.expected.code,
           stage: "emit",
         });
@@ -887,7 +942,7 @@ describe("public render capability contract", () => {
         const commonOptions = { scale: requestedScale, rasterOversizeBehavior };
         const routes: Array<{
           label: string;
-          run: () => { width: number; height: number };
+          run: () => { width: number; height: number } | Promise<{ width: number; height: number }>;
         }> = [
           {
             label: "still PNG",
@@ -922,26 +977,38 @@ describe("public render capability contract", () => {
           },
           {
             label: "animated GIF",
-            run: () =>
+            run: async () =>
               gifSize(
-                engine.renderToAnimatedGif(scene, {
-                  iterations: "infinite",
-                  ...commonOptions,
-                  timesMs: [0],
-                  frameDurationsMs: [20],
-                }),
+                await collectAnimatedRaster((sink) =>
+                  engine.renderToAnimatedGif(
+                    scene,
+                    {
+                      iterations: "infinite",
+                      ...commonOptions,
+                      timesMs: [0],
+                      frameDurationsMs: [20],
+                    },
+                    sink,
+                  ),
+                ),
               ),
           },
           {
             label: "animated WebP",
-            run: () =>
+            run: async () =>
               webpSize(
-                engine.renderToAnimatedWebp(scene, {
-                  iterations: "infinite",
-                  ...commonOptions,
-                  timesMs: [0],
-                  frameDurationsMs: [20],
-                }),
+                await collectAnimatedRaster((sink) =>
+                  engine.renderToAnimatedWebp(
+                    scene,
+                    {
+                      iterations: "infinite",
+                      ...commonOptions,
+                      timesMs: [0],
+                      frameDurationsMs: [20],
+                    },
+                    sink,
+                  ),
+                ),
               ),
           },
         ];
@@ -949,12 +1016,12 @@ describe("public render capability contract", () => {
         for (const route of routes) {
           const assertionLabel = `${fixture.label} / ${rasterOversizeBehavior} / ${route.label}`;
           if (fixture.expected.kind === "error") {
-            expect(captureFatalContract(route.run), assertionLabel).toEqual({
+            expect(await captureFatalContract(route.run), assertionLabel).toEqual({
               code: fixture.expected.code,
               stage: "emit",
             });
           } else {
-            expect(route.run(), assertionLabel).toEqual({
+            expect(await route.run(), assertionLabel).toEqual({
               width: fixture.expected.outputWidth,
               height: fixture.expected.outputHeight,
             });
@@ -996,7 +1063,7 @@ describe("public render capability contract", () => {
     rasterContractFixtures.filter(
       (fixture) => fixture.allRasterPaths === true && fixture.expected.kind === "ok",
     ),
-  )("applies the fixture dimensions to every raster path at $label", (fixture) => {
+  )("applies the fixture dimensions to every raster path at $label", async (fixture) => {
     const width = decodeContractNumber(fixture.width);
     const height = decodeContractNumber(fixture.height);
     const requestedScale = decodeContractNumber(fixture.requestedScale);
@@ -1034,17 +1101,19 @@ describe("public render capability contract", () => {
     for (const layer of layered.layers) {
       expect(pngSize(layer.png)).toEqual(expected);
     }
-    expect(gifSize(engine.renderToAnimatedGif(scene, animatedRasterOptions))).toEqual(expected);
-    expect(webpSize(engine.renderToAnimatedWebp(scene, animatedRasterOptions))).toEqual(expected);
+    expect(
+      gifSize(
+        await collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedGif(scene, animatedRasterOptions, sink),
+        ),
+      ),
+    ).toEqual(expected);
+    expect(
+      webpSize(
+        await collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedWebp(scene, animatedRasterOptions, sink),
+        ),
+      ),
+    ).toEqual(expected);
   }, 60_000);
-
-  it("keeps the public frame cap in step with the Rust trust boundary", () => {
-    const rustSource = fs.readFileSync(
-      path.resolve(__dirname, "../../../crates/boundsvg/src/raster_anim.rs"),
-      "utf8",
-    );
-    expect(rustSource).toContain(
-      `pub const MAX_ANIMATION_FRAMES: usize = ${MAX_ANIMATION_FRAMES};`,
-    );
-  });
 });

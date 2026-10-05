@@ -81,11 +81,19 @@ deterministic.
 muxes them into an animated file:
 
 ```ts
-const webp = engine.renderToAnimatedWebp(node, {
-  durationMs: 2000,
-  fps: 20,
-  iterations: "infinite",
-});
+import { createAnimatedRasterCollector } from "@boundsvg/core";
+
+const collector = createAnimatedRasterCollector();
+await engine.renderToAnimatedWebp(
+  node,
+  {
+    durationMs: 2000,
+    fps: 20,
+    iterations: "infinite",
+  },
+  collector,
+);
+const webp = collector.takeBytes();
 ```
 
 `renderToAnimatedGif` writes the same sampling as a GIF. GIF quantizes each
@@ -96,6 +104,8 @@ Both APIs require `iterations`, which means total plays rather than extra
 repeats. Animated WebP accepts 1–65535, GIF accepts 1–65536, and both accept
 `"infinite"`. GIF omits its repeat extension for `iterations: 1`.
 
-Both cap at 300 frames. See [Animation](/guides/animation) for how the frames
+Both require a destination sink and return a Promise with output metadata.
+Use file or spool sinks for bounded output memory; an explicit collector retains
+O(output) memory and a 256 MiB limit. A native session may retain one empty staging buffer of up to 64 KiB after draining; cleanup releases it before normal Core completion. Freeing native allocations does not shrink the WASM memory high-water mark. There is no fixed frame-count cap. See [Animation](/guides/animation) for how the frames
 are sampled, and [Known Limitations](/reference/known-limitations) for the
 format-specific constraints.

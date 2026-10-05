@@ -50,7 +50,13 @@ export type IrNode1 =
       color: string;
       textAlign: IrTextAlign;
       layoutBox: BBox1;
+      /**
+       * Choose horizontal lines or right-to-left vertical columns.
+       */
       writingMode?: "horizontal-tb" | "vertical-rl";
+      /**
+       * Select Japanese, English, or automatic language-dependent layout behavior.
+       */
       language?: "ja" | "en" | "auto";
       lineHeightPx: number;
       textLayoutKind?: "path";
@@ -169,6 +175,9 @@ export type StrokeLinecap = "butt" | "round" | "square";
  */
 export type StrokeLinejoin = "miter" | "round" | "bevel";
 export type FontStyle = "normal" | "italic";
+/**
+ * Choose mixed glyph orientation or upright glyphs in vertical writing.
+ */
 export type TextOrientation = "mixed" | "upright";
 /**
  * Text alignment for SVG emission.
@@ -178,7 +187,13 @@ export type TextUnitKind = "cluster" | "line";
 export type TextUnitRubyMode = "with-base" | "separate";
 export type TextUnitSourceRole = "content" | "rubyBase" | "rubyAnnotation";
 export type TextUnitAnimationOrder = "logical" | "visual";
+/**
+ * Select an underline, overline, or line through the text.
+ */
 export type TextDecorationLine = "underline" | "overline" | "line-through";
+/**
+ * Choose the solid, double, dotted, dashed, or wavy decoration pattern.
+ */
 export type TextDecorationStyle = "solid" | "double" | "dotted" | "dashed" | "wavy";
 /**
  * Fill rule for paths.
@@ -364,6 +379,9 @@ export interface TextRunStyleProjection {
   color: string;
   textStrokes?: TextStrokeLayer[];
   textShadows?: TextShadowLayer[];
+  /**
+   * Select Japanese, English, or automatic language-dependent layout behavior.
+   */
   language?: "ja" | "en" | "auto";
 }
 /**
@@ -389,6 +407,9 @@ export interface TextShadowLayer {
   blurPx?: number;
   color: string;
 }
+/**
+ * Shaped glyph with physical placement, font identity, and logical source metadata.
+ */
 export interface PositionedGlyph {
   glyphId: number;
   text: string;
@@ -441,6 +462,9 @@ export interface PositionedGlyph {
    * authored text.
    */
   syntheticKind?: "ellipsis";
+  /**
+   * Choose horizontal lines or right-to-left vertical columns.
+   */
   outlineWritingMode?: "horizontal-tb" | "vertical-rl";
   absolutePosition?: boolean;
 }
@@ -456,11 +480,26 @@ export interface BBox1 {
 export interface TextPathMetadata {
   d: string;
   startOffsetPx: number;
+  /**
+   * Align the text advance start, center, or end at the requested path offset.
+   */
   textAnchor: "start" | "middle" | "end";
+  /**
+   * Choose forward or reverse traversal of the authored path.
+   */
   pathDirection: "forward" | "reverse";
+  /**
+   * Choose the side of the path used for normal displacement.
+   */
   pathNormal: "left" | "right";
   pathOffsetPx: number;
+  /**
+   * Choose spacing or glyph scaling used to fit text along the path.
+   */
   pathFit: "none" | "spacing" | "scale" | "shrink";
+  /**
+   * Choose clipping, a fatal error, or ellipsis when text exceeds the available path.
+   */
   pathOverflow: "hidden" | "error" | "ellipsis";
 }
 /**
@@ -532,6 +571,9 @@ export interface TextUnitAnimationSample {
   opacity?: number;
   transform?: Transform2D;
 }
+/**
+ * Resolved decoration paint paths associated with a logical source range.
+ */
 export interface TextDecorationFragment {
   line: TextDecorationLine;
   style: TextDecorationStyle;
@@ -541,6 +583,9 @@ export interface TextDecorationFragment {
   sourceStart: number;
   sourceEnd: number;
 }
+/**
+ * Resolved physical decoration path with complexity counts and internal placement ownership.
+ */
 export interface TextDecorationPaintPath {
   d: string;
   originX: number;

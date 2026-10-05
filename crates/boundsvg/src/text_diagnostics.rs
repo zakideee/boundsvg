@@ -8,8 +8,11 @@ use serde_json::{Map, Value};
 use crate::diagnostics::PipelineStage;
 use crate::error::EngineError;
 
+/// Maximum requested font aliases retained in structured diagnostic context.
 const MAX_REQUESTED_ALIASES: usize = 16;
+/// Maximum UTF-8 bytes retained for one diagnostic font alias.
 const MAX_ALIAS_BYTES: usize = 256;
+/// Maximum serialized bytes retained in structured text diagnostic context.
 const MAX_CONTEXT_BYTES: usize = 4_096;
 
 /// Closed public operation identity carried by every text-layout diagnostic.
@@ -25,6 +28,7 @@ pub(crate) enum TextLayoutOperation {
 }
 
 impl TextLayoutOperation {
+    /// Return the public operation name stored in structured text diagnostics.
     #[must_use]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -50,6 +54,7 @@ pub(crate) struct TextLayoutDiagnostic {
 }
 
 impl TextLayoutDiagnostic {
+    /// Move diagnostic context into the rendering pipeline error envelope.
     #[must_use]
     pub(crate) fn into_engine_error(self) -> EngineError {
         EngineError::StructuredContext {

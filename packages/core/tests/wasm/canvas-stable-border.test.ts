@@ -6,8 +6,10 @@ import { initNodeWasm } from "../../src/node.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { AnimationSpec, StrokeScaling, VNode } from "../../src/vnode/types.js";
 import { createWasmEngineInstance, type WasmEngineHandle } from "../../src/wasm/index.js";
+import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 import { assertWasmPkgAvailable } from "./test-prerequisites.js";
 
+/** Canvas dimensions shared by the stable-border raster fixtures. */
 const CANVAS_SIZE = 64;
 
 function sha256(value: string | Uint8Array): string {
@@ -467,19 +469,31 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
     expect(Math.abs(highResolutionEnergy - unitEnergy * 2)).toBeLessThanOrEqual(16);
   });
 
-  it("encodes WebP, animated WebP, GIF, and PNG containers from canvas-stable frames", () => {
+  it("encodes WebP, animated WebP, GIF, and PNG containers from canvas-stable frames", async () => {
     const scene = animatedCameraScene();
     const webp = engine.renderToWebp(scene, { timeMs: 50 });
-    const animatedWebp = engine.renderToAnimatedWebp(scene, {
-      iterations: "infinite",
-      timesMs: [0, 50, 100],
-      frameDurationsMs: [50, 50, 50],
-    });
-    const gif = engine.renderToAnimatedGif(scene, {
-      iterations: "infinite",
-      timesMs: [0, 50, 100],
-      frameDurationsMs: [50, 50, 50],
-    });
+    const animatedWebp = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        scene,
+        {
+          iterations: "infinite",
+          timesMs: [0, 50, 100],
+          frameDurationsMs: [50, 50, 50],
+        },
+        sink,
+      ),
+    );
+    const gif = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(
+        scene,
+        {
+          iterations: "infinite",
+          timesMs: [0, 50, 100],
+          frameDurationsMs: [50, 50, 50],
+        },
+        sink,
+      ),
+    );
     const pngFrames = [...engine.renderFrames(scene, { timesMs: [0, 50, 100], format: "png" })];
 
     expect(String.fromCharCode(...webp.slice(0, 4))).toBe("RIFF");
@@ -670,19 +684,31 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
     expect(Math.abs(highResolutionEnergy - unitEnergy * 2)).toBeLessThanOrEqual(16);
   });
 
-  it("encodes Path frames across static, animated, and layered raster formats", () => {
+  it("encodes Path frames across static, animated, and layered raster formats", async () => {
     const scene = animatedPathStrokeScene();
     const webp = engine.renderToWebp(scene, { timeMs: 50 });
-    const animatedWebp = engine.renderToAnimatedWebp(scene, {
-      iterations: "infinite",
-      timesMs: [0, 50, 100],
-      frameDurationsMs: [50, 50, 50],
-    });
-    const gif = engine.renderToAnimatedGif(scene, {
-      iterations: "infinite",
-      timesMs: [0, 50, 100],
-      frameDurationsMs: [50, 50, 50],
-    });
+    const animatedWebp = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        scene,
+        {
+          iterations: "infinite",
+          timesMs: [0, 50, 100],
+          frameDurationsMs: [50, 50, 50],
+        },
+        sink,
+      ),
+    );
+    const gif = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(
+        scene,
+        {
+          iterations: "infinite",
+          timesMs: [0, 50, 100],
+          frameDurationsMs: [50, 50, 50],
+        },
+        sink,
+      ),
+    );
     const canvasLayered = engine.renderToLayeredSvg(
       stablePathStrokeScene({ cameraScale: 1.6, strokeScaling: "canvas", layer: "path" }),
       { validateComposition: { enabled: true } },

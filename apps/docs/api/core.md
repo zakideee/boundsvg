@@ -367,7 +367,7 @@ Fonts are registered inside the WASM engine instance. Pass the ones you know up 
 
 ### Engine Methods
 
-All render methods are **synchronous**: layout, text shaping, and rasterization run in WASM without async I/O.
+Static renders and animated SVG are synchronous. Animated WebP/GIF write one frame at a time to a required sink and return a Promise; layout, shaping, and rasterization still run in WASM.
 
 Use the Scene document boundary when input came from JSON, a cache, or another
 process:
@@ -433,11 +433,15 @@ interface Engine {
   renderToAnimatedWebp(
     input: EngineInput,
     options: RenderAnimatedWebpOptions,
-  ): Uint8Array;
+    sink: AnimatedWebpSink,
+    writeOptions?: AnimatedRasterWriteOptions,
+  ): Promise<AnimatedRasterWriteResult>;
   renderToAnimatedGif(
     input: EngineInput,
     options: RenderAnimatedGifOptions,
-  ): Uint8Array;
+    sink: AnimatedRasterSink,
+    writeOptions?: AnimatedRasterWriteOptions,
+  ): Promise<AnimatedRasterWriteResult>;
   renderToLayeredSvg(
     input: EngineInput,
     options?: LayeredSvgOptions,
@@ -469,6 +473,18 @@ interface Engine {
     compiled: CompiledScene,
     options?: EmitPngOptions,
   ): Uint8Array;
+  renderCompiledToAnimatedWebp(
+    compiled: CompiledScene,
+    options: RenderCompiledAnimatedWebpOptions,
+    sink: AnimatedWebpSink,
+    writeOptions?: AnimatedRasterWriteOptions,
+  ): Promise<AnimatedRasterWriteResult>;
+  renderCompiledToAnimatedGif(
+    compiled: CompiledScene,
+    options: RenderCompiledAnimatedGifOptions,
+    sink: AnimatedRasterSink,
+    writeOptions?: AnimatedRasterWriteOptions,
+  ): Promise<AnimatedRasterWriteResult>;
   renderCompiledToTextOutlines(
     compiled: CompiledScene,
     options?: {
@@ -551,7 +567,7 @@ import {
 } from "@boundsvg/core/wasm";
 ```
 
-All nine functions require a matching schema-32 WASM module. A custom module
+All nine functions require a matching schema-33 WASM module. A custom module
 must provide the complete capability set; `isShapeWasmAvailable()` is `true`
 only when all nine exports are functions. Each call also checks its own
 capability and throws `SHAPE_WASM_CAPABILITY_MISSING` when it is absent.
@@ -650,79 +666,127 @@ const webp: Uint8Array = engine.renderToWebp(node, { scale: 2 });
 
 Throws `WEBP_NO_ENCODER` when the loaded WASM build predates the encoder.
 
-### `engine.renderToAnimatedWebp(input, options)`
+### Animated WebP and GIF writes
 
-Samples a declarative animation into static frames and muxes them into an
-animated lossless WebP. Every frame is a full-canvas replacement.
-
-```ts
-const webp = engine.renderToAnimatedWebp(node, {
-  durationMs: 2000,
-  fps: 20,
-  iterations: "infinite",
-});
-```
-
-### `engine.renderToAnimatedGif(input, options)`
-
-The same sampling, written as an animated GIF. Lossy — 256 colors per frame and
-1-bit alpha — but still byte-deterministic.
+`renderToAnimatedWebp(input, options, sink, writeOptions?)` and
+`renderToAnimatedGif(input, options, sink, writeOptions?)` return
+`Promise<AnimatedRasterWriteResult>`. The compiled variants have the same
+sink and result contract and accept a `CompiledScene` as their first argument.
+WebP is lossless and uses full-canvas replacement frames. GIF uses a per-frame
+256-color palette and 1-bit alpha. Valid schedules retain their deterministic
+container bytes, sample order, and timing.
 
 ```ts
-const gif = engine.renderToAnimatedGif(node, {
-  durationMs: 2000,
-  fps: 20,
-  iterations: 3,
-});
+import { createAnimatedRasterCollector } from "@boundsvg/core";
+
+const collector = createAnimatedRasterCollector();
+try {
+  const result = await engine.renderToAnimatedWebp(
+    node,
+    {
+      durationMs: 2000,
+      fps: 20,
+      iterations: "infinite",
+    },
+    collector,
+  );
+  const webp = collector.takeBytes();
+  // result: { format: "webp", frameCount: 40, bytesWritten: webp.length }
+} catch (error) {
+  await collector.abort(error);
+  throw error;
+}
 ```
+
+The collector is an explicit choice for previews or small downloads. It retains
+O(output) memory, rejects beyond 256 MiB, and transfers its completed buffer
+view through `takeBytes()` once. Spare backing-buffer capacity is retained;
+this is not a bounded-memory destination. File sinks and external spools avoid
+collecting the whole file. See the [browser adapters](/api/browser#animated-raster-storage)
+and [Node adapter](/api/cli#animated-raster-storage).
+
+A GIF sink implements `write(chunk)`, `finish()`, and `abort(reason)`. A WebP
+sink additionally implements `patch(offset, bytes)`: exactly one four-byte RIFF
+length patch at offset 4 occurs after the final container bytes and before
+`finish()`. Each callback may return a Promise and is awaited before the next
+callback. Output chunks contain at most 64 KiB. `finish()` commits the output;
+`abort()` cleans up only the sink's uncommitted resources and must preserve a
+successful commit. A sequential WebP destination needs
+`createAnimatedWebpSpoolSink(spool, destination)`, which takes both a patchable
+external spool and the final sequential destination. Its finish callback
+forwards bounded reads; cancellation does not interrupt that callback midway.
+
+The write result contains `format`, `frameCount`, and `bytesWritten`. The old
+two-argument, bytes-returning calls and `ToSink` aliases are removed. Required
+sink writes replace them in this version; no compatibility overload remains.
+
+One animation owns an Engine token across preparation, writes, warning
+callbacks, finish, and cleanup. A nested or concurrent animation rejects with
+`ANIMATED_RASTER_JOB_BUSY` and does not adopt or abort its sink. A caller must
+clean up any fresh sink that was opened but never adopted. Reusing the outer
+animation's sink in a nested call does not transfer its ownership.
+
+`writeOptions` is a closed record containing only an optional genuine
+`AbortSignal`. Cancellation is cooperative: Core waits for an already invoked
+callback to settle, then checks cancellation. If an already invoked finish
+succeeds, Core returns success. Local cleanup and token release complete before
+the Promise settles. Disposal is checked after entrance snapshots and between
+operations. A sequential sink may already contain partial bytes after failure;
+its abort callback defines how those bytes are handled.
 
 ### `RenderAnimatedWebpOptions` / `RenderAnimatedGifOptions`
 
-`RenderAnimatedWebpOptions` extends the WebP raster options and
-`RenderAnimatedGifOptions` extends the PNG-compatible raster options with a
-frame schedule and a required total-play count. SVG-only options are not
-accepted. The two option types otherwise share the schedule shape, but their
-container limits differ.
+The options extend the corresponding raster options with a schedule and a
+required total-play count. Compiled options omit the compile-time
+`skipValidation` and `textPathMode` choices. SVG-only options are rejected.
 
-| Option             | Type                   | Default | Description                                                                  |
-| ------------------ | ---------------------- | ------- | ---------------------------------------------------------------------------- |
-| `durationMs`       | `number` (> 0)         | —       | Total animation length. Required unless `timesMs` is given                   |
-| `fps`              | `number` (1–60)        | `20`    | Sampling rate. Rejected when `timesMs` is given                              |
-| `timesMs`          | `readonly number[]`    | —       | Explicit sample times. Mutually exclusive with `fps` / `durationMs`          |
-| `frameDurationsMs` | `readonly number[]`    | —       | Per-frame display durations. Required with `timesMs`, and the same length    |
-| `iterations`       | `number \| "infinite"` | —       | Required total plays. WebP: 1–65535; GIF: 1–65536; `"infinite"` is unbounded |
+| Option             | Type                               | Default | Description                                                                             |
+| ------------------ | ---------------------------------- | ------- | --------------------------------------------------------------------------------------- |
+| `durationMs`       | positive finite primitive `number` | —       | Required in sampled mode; includes positive subnormal values                            |
+| `fps`              | finite primitive `number`, 1–60    | `20`    | Fractional rates are accepted without rounding down                                     |
+| `timesMs`          | `readonly number[]`                | —       | Explicit finite non-negative sample times, including duplicates and non-monotonic order |
+| `frameDurationsMs` | `readonly number[]`                | —       | Required with `timesMs`; same length, integers 1–60000                                  |
+| `iterations`       | `number \| "infinite"`             | —       | Integer total plays: WebP 1–65535; GIF 1–65536; `"infinite"` is unbounded               |
 
-`iterations` counts total plays, not repeats after the first play. For GIF,
-`iterations: 1` omits the repeat extension; finite `N >= 2` stores `N - 1` in
-that extension. Animated WebP stores finite `N` directly.
+Only missing or `undefined` optional fields mean absence. `null`, boxed
+numbers, strings, typed arrays, and custom iterables are not coerced into
+schedule values. Actual arrays are accepted across realms. Explicit mode
+requires nonempty `timesMs` and matching `frameDurationsMs`, and rejects
+`fps` or `durationMs`; sampled mode rejects `frameDurationsMs`.
 
-Schedule derivation, fixed by tests:
+Scene and options are snapshotted at entry; explicit arrays are each copied
+once. Every schedule entry is validated before scene compilation, shaping,
+prepared-scene creation, or raster session opening. Sampled schedules are
+lazy and retain constant schedule state. They still require a full validation
+scan and work proportional to the frame count; removing a fixed frame cap does
+not make an arbitrarily long render cheap.
 
-- With `timesMs`, `frameDurationsMs` must have one whole-millisecond entry per
-  frame, each in 1–60000.
-- Otherwise `frameCount = max(2, ceil(durationMs * fps / 1000))` and
-  `timesMs[i] = min(i * 1000 / fps, durationMs)`. Frame durations are the
-  differences between rounded frame boundaries anchored to `durationMs`, so
-  playback lasts exactly as long as requested rather than drifting off the
-  sample grid.
-- More than 300 frames is an error.
+Sampled mode preserves `frameCount = max(2, ceil(durationMs * fps / 1000))` and
+`timeMs[i] = min(i * 1000 / fps, durationMs)`. Its integer total is
+`max(frameCount, round(durationMs))`; rounded sample boundaries reserve at
+least 1 ms for each remaining frame. Each derived display duration must remain
+in 1–60000. Frame counts and total boundaries must be exact safe integers.
+There is no fixed total-frame, total-duration, total-work, or aggregate-SVG cap.
+The raster pixel/dimension limits remain unchanged. Container and counter
+representation still apply: WebP's RIFF length is a 32-bit field and byte
+counters must remain exact JavaScript safe integers.
 
-Errors: `ANIMATED_WEBP_INVALID_SCHEDULE` / `ANIMATED_GIF_INVALID_SCHEDULE` for a
-malformed schedule, `ANIMATED_WEBP_TOO_MANY_FRAMES` / `ANIMATED_GIF_TOO_MANY_FRAMES`
-past the cap, `ANIMATED_WEBP_PAYLOAD_LIMIT` / `ANIMATED_GIF_PAYLOAD_LIMIT` when the
-sampled frames exceed the transport limit, and `WEBP_NO_ENCODER` / `GIF_NO_ENCODER`
-when the loaded WASM build predates the encoder. The shared raster caps report
-through the existing `PNG_*` codes and `onPngResolutionAdjusted`.
+`iterations` counts total plays. GIF omits the repeat extension for 1 and stores
+`N - 1` for finite `N >= 2`; WebP stores finite `N` directly. GIF quantizes
+delays to 10 ms and floors each delay at 20 ms. It warns with
+`ANIMATED_GIF_TIMING_ADJUSTED` when playback is more than 5% longer than the
+requested display durations. This behavior also applies to short sampled
+durations; a positive subnormal duration does not imply submillisecond output.
 
-GIF additionally warns with `ANIMATED_GIF_TIMING_ADJUSTED` when the emitted
-animation runs more than 5% longer than requested. GIF cannot express a frame
-shorter than 20 ms, so a schedule with shorter frames — typically an `fps`
-above 50, or a very short `durationMs` — stretches. A smaller overshoot is not
-reported: GIF's 10 ms quantum makes one unavoidable for most durations.
-
-The assembled animated file is capped at 256 MiB and the sampled SVG frames at
-64 MiB of characters; exceeding the former surfaces as `WASM_RENDER_FAILED` and the
-latter as `ANIMATED_WEBP_PAYLOAD_LIMIT` / `ANIMATED_GIF_PAYLOAD_LIMIT`.
+Malformed schedules reject with `ANIMATED_WEBP_INVALID_SCHEDULE` or
+`ANIMATED_GIF_INVALID_SCHEDULE`. New streaming boundary failures use structured
+`ANIMATED_RASTER_*` diagnostics for invalid input/state, cancellation, sink
+failure/unavailability, and numeric representation. They include the format,
+actual operation, and reason when available. Existing raster failures retain
+`PNG_*` diagnostics and resolution warnings. An absent loaded session encoder
+retains `WEBP_NO_ENCODER` / `GIF_NO_ENCODER`. The old frame/payload-cap errors
+are removed. Runtime `null`/falsy or iterable acceptance and raw TypeErrors are
+intentionally replaced with authenticated input and structured rejection.
 
 ### `engine.renderToLayeredSvg(input, options?)`
 
@@ -1059,13 +1123,11 @@ of another. Merely different values are insufficient; for example, `doc-` and
 `@boundsvg/core` exports the immutable hard limits needed by preflight and UI
 consumers without requiring WASM initialization:
 
-| Export                            |         Value | Unit                               |
-| --------------------------------- | ------------: | ---------------------------------- |
-| `RASTER_MAX_LONG_EDGE`            |         3,840 | pixels on either output axis       |
-| `RASTER_MAX_PIXELS`               |     8,294,400 | total output pixels                |
-| `RASTER_DIMENSION_SATURATION`     | 4,294,967,295 | reported requested pixels per axis |
-| `MAX_ANIMATION_FRAMES`            |           300 | frames per animated raster         |
-| `MAX_ANIMATION_SVG_PAYLOAD_CHARS` |    67,108,864 | transported SVG characters         |
+| Export                        |         Value | Unit                               |
+| ----------------------------- | ------------: | ---------------------------------- |
+| `RASTER_MAX_LONG_EDGE`        |         3,840 | pixels on either output axis       |
+| `RASTER_MAX_PIXELS`           |     8,294,400 | total output pixels                |
+| `RASTER_DIMENSION_SATURATION` | 4,294,967,295 | reported requested pixels per axis |
 
 `resolveRasterScale({ width, height, requestedScale })` computes the raster
 plan for the base dimensions supplied to it. Raster entry points supply the
@@ -1502,3 +1564,16 @@ module has been installed, passing a different module instance throws a
 not replaced.
 
 Fonts are registered on the engine, not on the WASM module. Pass them to `createEngineAsync({ fonts: [...] })`, or add them later with [`engine.registerFonts()`](#createengineasync-options).
+
+### Animated raster backend hooks
+
+`EngineOptions.openAnimatedRasterSessionFn` receives fixed `renderOptions` once, after preparation and warning callbacks. Its managed session `push(scene, timeMs, durationMs)` accepts finite nonnegative fractional sample times and integer display durations from 1 to 60000 ms. The default backend snapshots emission settings at open; per-frame pushes do not change them. Invalid fixed settings reject at open. The managed hook takes primitive numbers without coercion: duration presence/type is checked before time presence/type, then duration and time domains.
+
+The generated WASM frame method uses four arguments: session, scene, primitive time, and primitive duration. Native open JSON requires `renderOptions` and rejects duplicate object keys.
+
+### `decodeAnimatedRasterFatal(value)`
+
+Import this low-level adapter helper from `@boundsvg/core/wasm`. Its signature is
+`decodeAnimatedRasterFatal(value: unknown): FatalError | undefined`. It validates
+a local or serialized animated raster diagnostic and returns a `FatalError`, or
+`undefined` when the diagnostic envelope or closed context is invalid.
