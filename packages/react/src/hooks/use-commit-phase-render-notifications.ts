@@ -6,6 +6,7 @@ type RenderCallbackOptions = {
   onPngResolutionAdjusted?: (warning: PngResolutionAdjustedWarning) => void;
 };
 
+/** Render-local warning events buffered until their React generation commits. */
 export type CapturedRenderNotifications = {
   events: Array<
     | { type: "warning"; warning: RecoverableError }
@@ -13,6 +14,7 @@ export type CapturedRenderNotifications = {
   >;
 };
 
+/** Captured events, committed callback targets, and an exactly-once delivery marker. */
 export type RenderNotificationDelivery = CapturedRenderNotifications & {
   onWarning: RenderCallbackOptions["onWarning"];
   onPngResolutionAdjusted: RenderCallbackOptions["onPngResolutionAdjusted"];
@@ -25,6 +27,7 @@ type CapturedRenderOptions<O> = {
   delivery: RenderNotificationDelivery;
 };
 
+/** Shared empty notification list for generations that produced no deliverable events. */
 export const NO_RENDER_NOTIFICATION_DELIVERIES: readonly RenderNotificationDelivery[] = [];
 
 function createRenderNotificationDelivery(

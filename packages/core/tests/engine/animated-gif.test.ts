@@ -1,15 +1,49 @@
-import { beforeAll, describe, expect, it } from "vitest";
-import { resolveAnimationFrameSchedule, resolveGifDelaysCs } from "../../src/animation-schedule.js";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { RenderAnimatedGifOptions } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
 import { createElement } from "../../src/vnode/create-element.js";
-import type { AnimationEncodeInput, WasmEngineHandle } from "../../src/wasm/index.js";
+import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import {
   createPortableLayoutTransitionInput,
   PORTABLE_LAYOUT_TRANSITION_CHECKPOINTS,
 } from "../animation/fixtures/layout-transition.js";
+import {
+  type CapturedRasterSession,
+  captureRasterSession,
+  collectAnimatedRaster,
+  createMockRasterSession,
+} from "../helpers/animation-collector.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
+/** Independent cumulative-boundary oracle; fixture arrays are confined to tests. */
+function expectedGifDelaysCs(durations: readonly number[]): number[] {
+  let elapsedMs = 0;
+  let previousCs = 0;
+  return durations.map((duration) => {
+    elapsedMs += duration;
+    const boundaryCs = Math.floor((elapsedMs + 5) / 10);
+    const delay = Math.max(2, Math.min(65_535, boundaryCs - previousCs));
+    previousCs = boundaryCs;
+    return delay;
+  });
+}
+
+/** Materialize the previous sampled formula only for finite test fixtures. */
+function expectedSampledSchedule({ durationMs, fps }: { durationMs: number; fps: number }) {
+  const count = Math.max(2, Math.ceil((durationMs * fps) / 1000));
+  const total = Math.max(count, Math.round(durationMs));
+  const boundaries = Array.from({ length: count + 1 }, (_, index) =>
+    index === count ? total : Math.min(Math.round((index * 1000) / fps), total - (count - index)),
+  );
+  return {
+    frameDurationsMs: Array.from(
+      { length: count },
+      (_, index) => boundaries[index + 1]! - boundaries[index]!,
+    ),
+  };
+}
+
+/** Text decoder for GIF signatures and application extension markers. */
 const decoder = new TextDecoder();
 
 /** GIF87a / GIF89a signature. */
@@ -119,12 +153,14 @@ function createFadingScene(): ReturnType<typeof createElement> {
 
 describe("renderToAnimatedGif", () => {
   let handle: WasmEngineHandle;
-  let encodeAnimatedGif: NonNullable<ReturnType<WasmEngineHandle["createSvgsToAnimatedGifFn"]>>;
+  let encodeAnimatedGif: NonNullable<
+    ReturnType<WasmEngineHandle["createOpenAnimatedRasterSessionFn"]>
+  >;
 
   beforeAll(async () => {
     handle = await createFontedWasmHandle();
-    const created = handle.createSvgsToAnimatedGifFn();
-    expect(created, "WASM build must expose svgs_to_animated_gif").toBeDefined();
+    const created = handle.createOpenAnimatedRasterSessionFn();
+    expect(created, "WASM build must expose open_animated_raster").toBeDefined();
     if (!created) {
       throw new Error("unreachable");
     }
@@ -133,23 +169,58 @@ describe("renderToAnimatedGif", () => {
 
   function createEngine(overrides = {}) {
     return createEngineFromHandle(handle, {
-      svgsToAnimatedGifFn: encodeAnimatedGif,
+      openAnimatedRasterSessionFn: encodeAnimatedGif,
       ...overrides,
     });
   }
 
-  it("emits an animated GIF at the canvas size", () => {
-    const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 500,
-      fps: 10,
-    });
+  it("maps invalid raster backgrounds to the same render fatal across both containers and source routes", async () => {
+    const engine = createEngine();
+    const scene = createFadingScene();
+    const compiled = engine.compile(scene);
+    const options = {
+      durationMs: 100,
+      fps: 20,
+      iterations: 1,
+      rasterBackground: "not-a-color",
+    } as const;
+    try {
+      for (const write of [
+        engine.renderToAnimatedGif.bind(engine, scene, options),
+        engine.renderToAnimatedWebp.bind(engine, scene, options),
+        engine.renderCompiledToAnimatedGif.bind(engine, compiled, options),
+        engine.renderCompiledToAnimatedWebp.bind(engine, compiled, options),
+      ]) {
+        const destination = { write: vi.fn(), patch: vi.fn(), finish: vi.fn(), abort: vi.fn() };
+        const failure: unknown = await write(destination).catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(FatalError);
+        expect(failure).toMatchObject({ code: "WASM_RENDER_FAILED", stage: "engine" });
+        expect(destination.abort).toHaveBeenCalledExactlyOnceWith(failure);
+        expect(destination.finish).not.toHaveBeenCalled();
+      }
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it("emits an animated GIF at the canvas size", async () => {
+    const gif = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedGif(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 500,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
 
     expect(readSignature(gif)).toBe("GIF89a");
     expect(readCanvasSize(gif)).toEqual({ width: 60, height: 40 });
   });
 
-  it("encodes a compiled scene without re-entering the compile transport", () => {
+  it("encodes a compiled scene without re-entering the compile transport", async () => {
     let compileCount = 0;
     let rasterPreflightCount = 0;
     const engine = createEngine({
@@ -172,31 +243,38 @@ describe("renderToAnimatedGif", () => {
       frameDurationsMs: [250, 650, 100],
       iterations: 3,
     } as const;
-    const compiledGif = engine.renderCompiledToAnimatedGif(compiled, options);
+    const compiledGif = await collectAnimatedRaster((sink) =>
+      engine.renderCompiledToAnimatedGif(compiled, options, sink),
+    );
     expect(compileCount).toBe(0);
     expect(rasterPreflightCount).toBe(1);
 
-    const sourceGif = engine.renderToAnimatedGif(scene, options);
+    const sourceGif = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(scene, options, sink),
+    );
     expect(compileCount).toBe(1);
     expect(rasterPreflightCount).toBe(2);
     expect(compiledGif).toEqual(sourceGif);
   });
 
-  it("accepts a layout transition CompiledScene directly", () => {
-    const captured: AnimationEncodeInput[] = [];
+  it("accepts a layout transition CompiledScene directly", async () => {
+    const captured: CapturedRasterSession[] = [];
     const engine = createEngine({
-      svgsToAnimatedGifFn: (input: AnimationEncodeInput) => {
-        captured.push(input);
-        return encodeAnimatedGif(input);
-      },
+      openAnimatedRasterSessionFn: captureRasterSession(encodeAnimatedGif, captured),
     });
     const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput());
     const timesMs = PORTABLE_LAYOUT_TRANSITION_CHECKPOINTS.map((checkpoint) => checkpoint.timeMs);
-    const gif = engine.renderCompiledToAnimatedGif(compiled, {
-      timesMs,
-      frameDurationsMs: [300, 400, 300, 100],
-      iterations: 2,
-    });
+    const gif = await collectAnimatedRaster((sink) =>
+      engine.renderCompiledToAnimatedGif(
+        compiled,
+        {
+          timesMs,
+          frameDurationsMs: [300, 400, 300, 100],
+          iterations: 2,
+        },
+        sink,
+      ),
+    );
 
     expect(readSignature(gif)).toBe("GIF89a");
     expect(readCanvasSize(gif)).toEqual({ width: 480, height: 480 });
@@ -212,31 +290,43 @@ describe("renderToAnimatedGif", () => {
     }
   });
 
-  it("derives centisecond delays from the frame schedule", () => {
-    const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 500,
-      fps: 10,
-    });
+  it("derives centisecond delays from the frame schedule", async () => {
+    const gif = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedGif(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 500,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
 
     // Five 100 ms frames become five 10 cs delays.
     expect(readFrameDelaysCs(gif)).toEqual([10, 10, 10, 10, 10]);
   });
 
-  it("keeps the total delay equal to the animation length", () => {
+  it("keeps the total delay equal to the animation length", async () => {
     // 33/34 ms frames: independent rounding would lose a centisecond per pair.
-    const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 1000,
-      fps: 30,
-    });
+    const gif = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedGif(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 1000,
+          fps: 30,
+        },
+        sink,
+      ),
+    );
 
     const delays = readFrameDelaysCs(gif);
     expect(delays).toHaveLength(30);
     expect(delays.reduce((sum, delay) => sum + delay, 0)).toBe(100);
   });
 
-  it("maps total plays to the GIF repeat extension", () => {
+  it("maps total plays to the GIF repeat extension", async () => {
     const engine = createEngine();
     const scene = createFadingScene();
 
@@ -248,33 +338,40 @@ describe("renderToAnimatedGif", () => {
       [65_536, 65_535],
     ] as const) {
       expect(
-        readLoopCount(engine.renderToAnimatedGif(scene, { durationMs: 200, fps: 10, iterations })),
+        readLoopCount(
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedGif(scene, { durationMs: 200, fps: 10, iterations }, sink),
+          ),
+        ),
       ).toBe(expectedField);
     }
   });
 
-  it("applies scale through the shared emitted-root dimensions", () => {
-    const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 200,
-      fps: 10,
-      scale: 2,
-    });
+  it("applies scale through the shared emitted-root dimensions", async () => {
+    const gif = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedGif(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 200,
+          fps: 10,
+          scale: 2,
+        },
+        sink,
+      ),
+    );
 
     expect(readCanvasSize(gif)).toEqual({ width: 120, height: 80 });
   });
 
-  it("keeps scale auto-adjustment and warning delivery identical for compiled input", () => {
+  it("keeps scale auto-adjustment and warning delivery identical for compiled input", async () => {
     const scene = createElement("Canvas", { width: 2000, height: 500 });
-    const run = (compiledInput: boolean) => {
-      const captured: AnimationEncodeInput[] = [];
+    const run = async (compiledInput: boolean) => {
+      const captured: CapturedRasterSession[] = [];
       const adjustments: Array<{ requestedScale: number; appliedScale: number }> = [];
       const warningCodes: string[] = [];
       const engine = createEngine({
-        svgsToAnimatedGifFn: (input: AnimationEncodeInput) => {
-          captured.push(input);
-          return new Uint8Array([1]);
-        },
+        openAnimatedRasterSessionFn: captureRasterSession(createMockRasterSession, captured),
       });
       const options = {
         timesMs: [0],
@@ -286,62 +383,71 @@ describe("renderToAnimatedGif", () => {
         onWarning: (warning: { code: string }) => warningCodes.push(warning.code),
       } as const;
       if (compiledInput) {
-        engine.renderCompiledToAnimatedGif(engine.compile(scene), options);
+        await collectAnimatedRaster((sink) =>
+          engine.renderCompiledToAnimatedGif(engine.compile(scene), options, sink),
+        );
       } else {
-        engine.renderToAnimatedGif(scene, options);
+        await collectAnimatedRaster((sink) => engine.renderToAnimatedGif(scene, options, sink));
       }
       return { adjustments, warningCodes, svg: captured[0]?.frames[0]?.svg };
     };
 
-    const source = run(false);
-    const compiled = run(true);
+    const source = await run(false);
+    const compiled = await run(true);
     expect(compiled).toEqual(source);
     expect(compiled.adjustments).toHaveLength(1);
     expect(compiled.warningCodes).toEqual(["PNG_RESOLUTION_ADJUSTED"]);
     expect(compiled.svg).toContain('width="3840"');
   });
 
-  it("produces identical bytes for identical input", () => {
+  it("produces identical bytes for identical input", async () => {
     const engine = createEngine();
-    const first = engine.renderToAnimatedGif(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 400,
-      fps: 10,
-    });
-    const second = engine.renderToAnimatedGif(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 400,
-      fps: 10,
-    });
+    const first = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 400,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
+    const second = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 400,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
 
     expect(Array.from(second)).toEqual(Array.from(first));
   });
 
-  it("reports GIF-specific schedule error codes", () => {
+  it("reports GIF-specific schedule error codes", async () => {
     const engine = createEngine();
     const scene = createFadingScene();
 
     try {
-      engine.renderToAnimatedGif(scene, { iterations: "infinite", timesMs: [0, 100] });
+      await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedGif(scene, { iterations: "infinite", timesMs: [0, 100] }, sink),
+      );
       expect.unreachable("a schedule without frameDurationsMs must be rejected");
     } catch (error) {
       expect((error as FatalError).code).toBe("ANIMATED_GIF_INVALID_SCHEDULE");
     }
-
-    try {
-      engine.renderToAnimatedGif(scene, { iterations: "infinite", durationMs: 20_000, fps: 60 });
-      expect.unreachable("301+ frames must be rejected");
-    } catch (error) {
-      expect((error as FatalError).code).toBe("ANIMATED_GIF_TOO_MANY_FRAMES");
-    }
   });
 
-  it("requires a valid total play count before sampling or encoding", () => {
+  it("requires a valid total play count before sampling or encoding", async () => {
     let encodeCount = 0;
     const engine = createEngine({
-      svgsToAnimatedGifFn: () => {
+      openAnimatedRasterSessionFn: () => {
         encodeCount += 1;
-        return new Uint8Array([1]);
+        throw new Error("invalid input must fail before session.open");
       },
     });
     const invalidIterations: unknown[] = [
@@ -358,10 +464,16 @@ describe("renderToAnimatedGif", () => {
 
     for (const iterations of invalidIterations) {
       try {
-        engine.renderToAnimatedGif(createFadingScene(), {
-          durationMs: 200,
-          iterations,
-        } as RenderAnimatedGifOptions);
+        await collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedGif(
+            createFadingScene(),
+            {
+              durationMs: 200,
+              iterations,
+            } as RenderAnimatedGifOptions,
+            sink,
+          ),
+        );
         expect.unreachable(`iterations ${String(iterations)} must be rejected`);
       } catch (error) {
         expect(error, String(iterations)).toBeInstanceOf(FatalError);
@@ -373,11 +485,33 @@ describe("renderToAnimatedGif", () => {
     expect(encodeCount).toBe(0);
   });
 
-  it("reports GIF_NO_ENCODER when no encoder is wired", () => {
-    const engine = createEngineFromHandle(handle);
+  it.each([
+    326, 1001,
+  ])("encodes every frame of a long sampled GIF with %i frames", async (frameCount) => {
+    const engine = createEngine();
+    const bytes = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(
+        createElement("Canvas", { width: 2, height: 2, background: "#369" }),
+        { durationMs: frameCount * 100, fps: 10, iterations: 1 },
+        sink,
+      ),
+    );
+    expect(readFrameDelaysCs(bytes)).toEqual(Array.from({ length: frameCount }, () => 10));
+    expect(bytes.at(-1)).toBe(0x3b);
+    engine.dispose();
+  }, 120000);
+
+  it("reports GIF_NO_ENCODER when no encoder is wired", async () => {
+    const engine = createEngineFromHandle(handle, { openAnimatedRasterSessionFn: undefined });
 
     try {
-      engine.renderToAnimatedGif(createFadingScene(), { iterations: "infinite", durationMs: 200 });
+      await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedGif(
+          createFadingScene(),
+          { iterations: "infinite", durationMs: 200 },
+          sink,
+        ),
+      );
       expect.unreachable("renderToAnimatedGif must fail without an encoder");
     } catch (error) {
       expect(error).toBeInstanceOf(FatalError);
@@ -385,7 +519,7 @@ describe("renderToAnimatedGif", () => {
     }
   });
 
-  it("emits exactly the delays the TS-side derivation predicts", () => {
+  it("emits exactly the delays the TS-side derivation predicts", async () => {
     // The derivation is duplicated: Rust owns the bytes, TS needs it to decide
     // whether to warn. Comparing against the encoded container pins both.
     const engine = createEngine();
@@ -397,45 +531,60 @@ describe("renderToAnimatedGif", () => {
     ];
 
     for (const { durationMs, fps } of cases) {
-      const schedule = resolveAnimationFrameSchedule(
-        { durationMs, fps },
-        { invalidSchedule: "x", tooManyFrames: "y" },
+      const schedule = expectedSampledSchedule({ durationMs, fps });
+      const gif = await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedGif(
+          createFadingScene(),
+          {
+            iterations: "infinite",
+            durationMs,
+            fps,
+          },
+          sink,
+        ),
       );
-      const gif = engine.renderToAnimatedGif(createFadingScene(), {
-        iterations: "infinite",
-        durationMs,
-        fps,
-      });
       expect(readFrameDelaysCs(gif), `${durationMs} ms at ${fps} fps`).toEqual(
-        resolveGifDelaysCs(schedule.frameDurationsMs),
+        expectedGifDelaysCs(schedule.frameDurationsMs),
       );
     }
   });
 
-  it("agrees with the encoder on a heterogeneous explicit schedule", () => {
+  it("agrees with the encoder on a heterogeneous explicit schedule", async () => {
     // Uniform sampling never exercises the carry or the floor together; an
     // explicit schedule is the only route to mixed short and long frames.
     const frameDurationsMs = [5, 5, 190, 5, 1];
-    const gif = createEngine().renderToAnimatedGif(createFadingScene(), {
-      iterations: "infinite",
-      timesMs: [0, 5, 10, 200, 205],
-      frameDurationsMs,
-    });
+    const gif = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedGif(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          timesMs: [0, 5, 10, 200, 205],
+          frameDurationsMs,
+        },
+        sink,
+      ),
+    );
 
-    expect(resolveGifDelaysCs(frameDurationsMs)).toEqual([2, 2, 19, 2, 2]);
+    expect(expectedGifDelaysCs(frameDurationsMs)).toEqual([2, 2, 19, 2, 2]);
     expect(readFrameDelaysCs(gif)).toEqual([2, 2, 19, 2, 2]);
   });
 
-  it("rejects an invalid scale the way renderToWebp does", () => {
+  it("rejects an invalid scale the way renderToWebp does", async () => {
     const engine = createEngine();
 
     for (const scale of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       try {
-        engine.renderToAnimatedGif(createFadingScene(), {
-          iterations: "infinite",
-          durationMs: 200,
-          scale,
-        });
+        await collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedGif(
+            createFadingScene(),
+            {
+              iterations: "infinite",
+              durationMs: 200,
+              scale,
+            },
+            sink,
+          ),
+        );
         expect.unreachable(`scale ${String(scale)} must be rejected`);
       } catch (error) {
         expect((error as FatalError).code, String(scale)).toBe("PNG_INVALID_SCALE");
@@ -451,7 +600,7 @@ describe("renderToAnimatedGif", () => {
         { length: 1 + (seed % 7) },
         (_unused, index) => ((seed * 37 + index * 13) % 120) + 1,
       );
-      const delays = resolveGifDelaysCs(frameDurationsMs);
+      const delays = expectedGifDelaysCs(frameDurationsMs);
       let elapsedMs = 0;
       let previousCs = 0;
       frameDurationsMs.forEach((durationMs, index) => {
@@ -464,37 +613,57 @@ describe("renderToAnimatedGif", () => {
     }
   });
 
-  it("tells a sampled caller to change the schedule, not the frames", () => {
+  it("tells a sampled caller to change the schedule, not the frames", async () => {
     const messages: string[] = [];
-    createEngine().renderToAnimatedGif(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 150,
-      fps: 1,
-      onWarning: (warning) => messages.push(warning.message),
-    });
+    await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedGif(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 150,
+          fps: 1,
+          onWarning: (warning) => messages.push(warning.message),
+        },
+        sink,
+      ),
+    );
     // The 1 ms frame that trips this is synthesized by the schedule, so
     // "keep every frame longer" is not something the caller can act on.
     expect(messages.join("")).toContain("Raise durationMs, or lower fps");
 
     const explicit: string[] = [];
-    createEngine().renderToAnimatedGif(createFadingScene(), {
-      iterations: "infinite",
-      timesMs: [0],
-      frameDurationsMs: [15],
-      onWarning: (warning) => explicit.push(warning.message),
-    });
+    await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedGif(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          timesMs: [0],
+          frameDurationsMs: [15],
+          onWarning: (warning) => explicit.push(warning.message),
+        },
+        sink,
+      ),
+    );
     expect(explicit.join("")).toContain("frameDurationsMs entry");
   });
 
-  it("warns when the centisecond floor stretches the animation", () => {
+  it("warns when the centisecond floor stretches the animation", async () => {
     const engine = createEngine();
-    const warnCodes = (options: Parameters<typeof engine.renderToAnimatedGif>[1]): string[] => {
+    const warnCodes = async (
+      options: Omit<Parameters<typeof engine.renderToAnimatedGif>[1], "iterations">,
+    ): Promise<string[]> => {
       const codes: string[] = [];
-      engine.renderToAnimatedGif(createFadingScene(), {
-        iterations: "infinite",
-        ...options,
-        onWarning: (warning) => codes.push(warning.code),
-      });
+      await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedGif(
+          createFadingScene(),
+          {
+            iterations: "infinite",
+            ...options,
+            onWarning: (warning) => codes.push(warning.code),
+          },
+          sink,
+        ),
+      );
       return codes;
     };
 
@@ -511,7 +680,9 @@ describe("renderToAnimatedGif", () => {
       { timesMs: [0, 19, 38, 57, 76], frameDurationsMs: [19, 19, 19, 19, 19] },
       { timesMs: [0], frameDurationsMs: [15] },
     ]) {
-      expect(warnCodes(options), JSON.stringify(options)).toContain("ANIMATED_GIF_TIMING_ADJUSTED");
+      expect(await warnCodes(options), JSON.stringify(options)).toContain(
+        "ANIMATED_GIF_TIMING_ADJUSTED",
+      );
     }
 
     // Quiet where the 10 ms quantum alone accounts for the difference: any
@@ -524,13 +695,13 @@ describe("renderToAnimatedGif", () => {
       { durationMs: 2000, fps: 24 },
       { timesMs: [0, 5, 505], frameDurationsMs: [5, 500, 500] },
     ]) {
-      expect(warnCodes(options), JSON.stringify(options)).not.toContain(
+      expect(await warnCodes(options), JSON.stringify(options)).not.toContain(
         "ANIMATED_GIF_TIMING_ADJUSTED",
       );
     }
   });
 
-  it("keeps GIF quantum and timing warnings identical for compiled input", () => {
+  it("keeps GIF quantum and timing warnings identical for compiled input", async () => {
     const engine = createEngine();
     const scene = createFadingScene();
     const compiled = engine.compile(scene);
@@ -538,16 +709,28 @@ describe("renderToAnimatedGif", () => {
     const sourceWarnings: string[] = [];
     const compiledWarnings: string[] = [];
 
-    const source = engine.renderToAnimatedGif(scene, {
-      iterations: "infinite",
-      ...options,
-      onWarning: (warning) => sourceWarnings.push(warning.code),
-    });
-    const prepared = engine.renderCompiledToAnimatedGif(compiled, {
-      ...options,
-      iterations: "infinite",
-      onWarning: (warning) => compiledWarnings.push(warning.code),
-    });
+    const source = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(
+        scene,
+        {
+          iterations: "infinite",
+          ...options,
+          onWarning: (warning) => sourceWarnings.push(warning.code),
+        },
+        sink,
+      ),
+    );
+    const prepared = await collectAnimatedRaster((sink) =>
+      engine.renderCompiledToAnimatedGif(
+        compiled,
+        {
+          ...options,
+          iterations: "infinite",
+          onWarning: (warning) => compiledWarnings.push(warning.code),
+        },
+        sink,
+      ),
+    );
 
     expect(readFrameDelaysCs(source)).toEqual([2]);
     expect(readFrameDelaysCs(prepared)).toEqual([2]);

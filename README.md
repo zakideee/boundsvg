@@ -20,6 +20,8 @@ SVG has no built-in text measurement or layout: you cannot auto-size text to fit
 
 boundsvg takes OS font measurement out of the equation. Font shaping (rustybuzz, HarfBuzz-compatible) and layout (Taffy flexbox and CSS Grid) run in version-pinned WASM against fonts you supply. Within one boundsvg version, accepted owned inputs produce byte-identical SVG, PNG, WebP, and GIF artifacts across supported runtimes after any documented normalization. Raw embedded SVG, live animation scheduling, and external video encoders have explicit boundaries in the [determinism contract](apps/docs/reference/determinism.md). Text can shrink or grow to fit its container, wrap, truncate with an ellipsis, or stop at a line limit.
 
+Animated WebP/GIF exports write sequentially to a required sink and return a Promise with frame-count and byte-length metadata. File and external spool destinations avoid retaining the whole animation; an explicit memory collector is available for small downloads. See the [animated output API](apps/docs/api/core.md#animated-webp-and-gif-writes) for migration and cancellation behavior.
+
 ## Examples
 
 The following images are generated entirely by boundsvg from JSX components —

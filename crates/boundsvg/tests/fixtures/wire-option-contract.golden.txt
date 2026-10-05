@@ -198,6 +198,7 @@ boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	placement_space	pl
 boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	source_text	sourceText	omit-none
 boundsvg	crates/boundsvg/src/layout/types.rs	TextLayoutOutput	unit_map	unitMap	omit-none
 boundsvg	crates/boundsvg/src/lib.rs	RenderToSvgOutput	ir	ir	omit-none
+boundsvg	crates/boundsvg/src/raster_anim.rs	AnimationFinishOutput	patch	patch	omit-none
 boundtext	crates/boundtext/src/font/outline.rs	GlyphPath	glyph_id	glyphId	omit-none
 boundtext	crates/boundtext/src/font/outline.rs	GlyphPath	request_index	requestIndex	omit-none
 boundtext	crates/boundtext/src/font/shaping.rs	GlyphInfo	font_alias	fontAlias	omit-none

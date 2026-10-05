@@ -1,5 +1,6 @@
 import { defineConfig } from "tsup";
 
+/** Common ESM, declaration, and TypeScript settings for library and executable builds. */
 const shared = {
   format: ["esm" as const],
   dts: true,
@@ -12,7 +13,7 @@ const shared = {
 export default defineConfig([
   {
     ...shared,
-    entry: ["src/index.ts", "src/index-convert.ts"],
+    entry: ["src/index.ts", "src/index-convert.ts", "src/animation.ts"],
     clean: true,
   },
   {

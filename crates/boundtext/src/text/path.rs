@@ -20,18 +20,30 @@ use super::types::{
 };
 use super::unit_map::{TextUnitKind, TextUnitMap, TextUnitRubyMode, build_text_unit_map};
 
+/// Maximum UTF-8 path-source bytes accepted by text-on-path layout.
 pub const TEXT_PATH_SOURCE_BYTE_LIMIT: usize = 1_048_576;
+/// Maximum absolute starting offset in pixels for text-on-path placement.
 pub const TEXT_PATH_OFFSET_ABSOLUTE_LIMIT_PX: f64 = 1e12;
+/// Maximum shaped text clusters accepted by one text-on-path request.
 pub const TEXT_PATH_CLUSTER_LIMIT: usize = 16_384;
+/// Maximum shaping runs accepted by one text-on-path request.
 pub const TEXT_PATH_SHAPING_RUN_LIMIT: usize = 16_384;
+/// Maximum paint ranges accepted by one text-on-path request.
 pub const TEXT_PATH_PAINT_RANGE_LIMIT: usize = 16_384;
+/// Maximum painted text layers materialized by one text-on-path request.
 pub const TEXT_PATH_PAINTED_LAYER_LIMIT: usize = 65_536;
+/// Maximum decoration fragments materialized for one text-on-path request.
 pub const TEXT_PATH_DECORATION_FRAGMENT_LIMIT: usize = 16_384;
+/// Maximum geometry samples used to construct text-on-path decorations.
 pub const TEXT_PATH_DECORATION_SAMPLE_LIMIT: usize = 262_144;
+/// Minimum cluster step used to keep text-on-path placement progressing.
 const TEXT_PATH_MIN_CLUSTER_STEP_PX: f64 = 0.01;
+/// Smallest permitted glyph scaling factor for text-on-path fitting.
 const TEXT_PATH_MIN_INLINE_SCALE: f64 = 1.0 / 16.0;
+/// Largest permitted glyph scaling factor for text-on-path fitting.
 const TEXT_PATH_MAX_INLINE_SCALE: f64 = 16.0;
 
+/// Align the text advance start, center, or end at the requested path offset.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schema", schemars(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +53,7 @@ pub enum TextPathAnchor {
     End,
 }
 
+/// Choose clipping, a fatal error, or ellipsis when text exceeds the available path.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schema", schemars(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +63,7 @@ pub enum TextPathOverflow {
     Ellipsis,
 }
 
+/// Choose spacing or glyph scaling used to fit text along the path.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schema", schemars(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +74,7 @@ pub enum TextPathFit {
     Shrink,
 }
 
+/// Choose forward or reverse traversal of the authored path.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schema", schemars(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +83,7 @@ pub enum TextPathDirection {
     Reverse,
 }
 
+/// Choose the side of the path used for normal displacement.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schema", schemars(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +92,7 @@ pub enum TextPathNormal {
     Right,
 }
 
+/// Borrowed path, text request, and paint controls for a single text-on-path layout.
 pub struct TextOnPathRequest<'a> {
     pub d: &'a str,
     pub text: TextLayoutRequest<'a>,
@@ -90,12 +107,14 @@ pub struct TextOnPathRequest<'a> {
     pub unit_map: Option<TextOnPathUnitMapRequest>,
 }
 
+/// Paint-unit granularity and ruby treatment requested for text-on-path metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextOnPathUnitMapRequest {
     pub kind: TextUnitKind,
     pub ruby: TextUnitRubyMode,
 }
 
+/// Invalid input, resource limits, geometry failures, or text layout failures encountered along a path.
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum TextOnPathError {
     #[error("TextOnPath input contains an invalid numeric value")]

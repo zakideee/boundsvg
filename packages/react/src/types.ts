@@ -78,6 +78,7 @@ export type FontDefinition = {
   source: string | URL | Uint8Array;
 };
 
+/** Worker initialization mode, module URL, timeout, and fallback notification for the Provider. */
 export type WorkerConfig = {
   mode: "prefer" | "required";
   url?: URL;

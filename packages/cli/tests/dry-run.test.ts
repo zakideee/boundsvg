@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { reportDryRun, reportDryRunBinary, reportDryRunDirectory } from "../src/dry-run.js";
+import {
+  reportDryRun,
+  reportDryRunAnimatedRaster,
+  reportDryRunBinary,
+  reportDryRunDirectory,
+} from "../src/dry-run.js";
 import type { CliIo } from "../src/types.js";
 
 function createTestIo(overrides: Partial<CliIo> = {}): CliIo & { stderr: string[] } {
   const stderr: string[] = [];
   return {
+    openAnimatedRasterSink: async () => ({
+      write: () => undefined,
+      patch: () => undefined,
+      finish: () => undefined,
+      abort: () => undefined,
+    }),
+    getFileByteLength: () => 0,
     argv: [],
     readTextFile: () => "",
     readBinaryFile: () => new Uint8Array(),
@@ -124,5 +136,28 @@ describe("reportDryRunDirectory", () => {
     reportDryRunDirectory(io, "/out/card.layers");
 
     expect(io.stderr.join("")).toContain("[directory] /out/card.layers");
+  });
+});
+
+describe("reportDryRunAnimatedRaster", () => {
+  it("reports stat lengths without reading or materializing either output", () => {
+    const io = createTestIo({
+      fileExists: () => true,
+      getFileByteLength: () => 1024,
+      readBinaryFile: () => {
+        throw new Error("whole-file read is forbidden in this path");
+      },
+    });
+    reportDryRunAnimatedRaster(io, "/out/animation.gif", 3072);
+    expect(io.stderr.join("")).toContain("[overwrite] /out/animation.gif (1.0KB → 3.0KB)");
+  });
+
+  it("handles stat failures and rejects unsafe candidate sizes", () => {
+    const io = createTestIo({ fileExists: () => true, getFileByteLength: () => NaN });
+    reportDryRunAnimatedRaster(io, "/out/animation.gif", 1024);
+    expect(io.stderr.join("")).toContain("[new] /out/animation.gif (1.0KB)");
+    expect(() =>
+      reportDryRunAnimatedRaster(io, "/out/animation.gif", Number.MAX_SAFE_INTEGER + 1),
+    ).toThrow();
   });
 });

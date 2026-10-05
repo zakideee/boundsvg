@@ -7,8 +7,10 @@ import {
   type RenderExecutionResult,
 } from "../execution/types.js";
 import { type RenderAdapter, useRenderExecution } from "./use-render-execution.js";
+/** Generation state with PNG bytes and a data URL, including retained-result status. */
 export type UseRenderToPngAsyncResult = RenderExecutionResult<{ png: Uint8Array; dataUrl: string }>;
 
+/** Main-engine and worker dispatch for asynchronous png rendering. */
 const adapter: RenderAdapter<Uint8Array, RenderPngOptions> = {
   main: (engine, scene, options) => engine.renderToPng(scene, options),
   worker: (engine, scene, { options, signal }) => engine.renderToPng(scene, options, { signal }),

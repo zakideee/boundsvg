@@ -21,6 +21,7 @@ export type {
   SceneInspection,
 } from "@boundsvg/core/inspect";
 
+/** Scene inspection data with readiness or failure state for the Provider's main-thread Engine. */
 export type UseBoundSvgInspectionResult = {
   inspection: SceneInspection | null;
   error: Error | null;

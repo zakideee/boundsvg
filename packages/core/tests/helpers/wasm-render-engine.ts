@@ -36,6 +36,7 @@ export type WasmEmitOptions = {
   };
 };
 
+/** Animated SVG transport options used by real-WASM render fixtures. */
 export type WasmAnimatedEmitOptions = WasmEmitOptions & {
   playback: { mode: "independent" };
   reducedMotion?: "keep" | "pause";
@@ -87,6 +88,7 @@ export function engineOptionsFromHandle(
       handle.resolveAndEmitAnimatedSvgFromIr(irJson, optionsJson),
     sampleAnimationStateFn: (irJson, timeMs) => handle.sampleAnimationState(irJson, timeMs),
     prepareSceneFn: (irJson, optionsJson) => handle.prepareScene(irJson, optionsJson),
+    openAnimatedRasterSessionFn: handle.createOpenAnimatedRasterSessionFn(),
     ...overrides,
   };
 }

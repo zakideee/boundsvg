@@ -1,3 +1,4 @@
+import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 /**
  * Which raster formats an Image's `mediaType` may declare. The rasterizer
  * decodes PNG, JPEG, GIF and WebP, so all four have to be expressible — a
@@ -13,7 +14,9 @@ import { createElement } from "../../src/vnode/create-element.js";
 import type { ImageProps } from "../../src/vnode/types.js";
 import { assertWasmPkgAvailable } from "./test-prerequisites.js";
 
+/** Output dimensions shared by the injected-image media fixtures. */
 const SIZE = 16;
+/** Background paint used to reveal embedded-image alpha behavior. */
 const FILL = "#c0397b";
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
@@ -58,18 +61,24 @@ describe("Image mediaType raster formats", () => {
     { mediaType: "image/webp", encode: (): Uint8Array => engine.renderToWebp(solidScene(FILL)) },
     {
       mediaType: "image/gif",
-      encode: (): Uint8Array =>
-        engine.renderToAnimatedGif(solidScene(FILL), {
-          iterations: "infinite",
-          timesMs: [0],
-          frameDurationsMs: [100],
-        }),
+      encode: async (): Promise<Uint8Array> =>
+        await collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedGif(
+            solidScene(FILL),
+            {
+              iterations: "infinite",
+              timesMs: [0],
+              frameDurationsMs: [100],
+            },
+            sink,
+          ),
+        ),
     },
   ] as const;
 
   for (const { mediaType, encode } of cases) {
-    it(`rasterizes an embedded ${mediaType} buffer`, () => {
-      const rendered = engine.renderToPng(embeddedScene(encode(), mediaType));
+    it(`rasterizes an embedded ${mediaType} buffer`, async () => {
+      const rendered = engine.renderToPng(embeddedScene(await encode(), mediaType));
       // A format the rasterizer cannot decode is dropped with a warning
       // rather than an error, which would leave the canvas blank.
       expect(bytesEqual(rendered, blankPng)).toBe(false);

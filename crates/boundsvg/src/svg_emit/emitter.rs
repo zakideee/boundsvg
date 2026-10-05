@@ -37,6 +37,7 @@ use crate::svg_emit::paint::{
 use crate::svg_emit::text_path_writer::compact_text_path;
 use crate::svg_emit::xml::{escape_css_identifier, escape_xml};
 
+/// SVG attribute used to associate emitted elements with their IR node identity.
 const NODE_ID_ATTR: &str = "data-boundsvg-node-id";
 
 /// Whether generated node identity metadata is serialized into the SVG.
@@ -67,10 +68,15 @@ const MISSING_GLYPH_STROKE_RATIO: f64 = 0.06;
 const MISSING_GLYPH_OPACITY: &str = "0.5";
 
 // Debug overlay stroke colors (see the TS emitter's constants).
+/// Overlay color identifying explicitly requested geometry.
 const DEBUG_SPECIFIED_STROKE: &str = "#38bdf8";
+/// Overlay color identifying the computed layout box.
 const DEBUG_LAYOUT_STROKE: &str = "#22c55e";
+/// Dash pattern distinguishing layout boxes from other debug bounds.
 const DEBUG_LAYOUT_STROKE_DASHARRAY: &str = "4,2";
+/// Overlay color identifying actual painted bounds.
 const DEBUG_ACTUAL_STROKE: &str = "#ff0000";
+/// Overlay color identifying text baselines.
 const DEBUG_BASELINE_STROKE: &str = "#fbbf24";
 
 fn indent_str(depth: usize) -> String {
@@ -721,6 +727,11 @@ fn timeline_css_byte_count(scene: &PaintScene) -> Result<usize, EngineError> {
     Ok(counter.bytes)
 }
 
+/// Count timeline CSS bytes without retaining the generated stylesheet.
+///
+/// # Errors
+///
+/// Returns an emission error when formatting fails or the timeline CSS byte limit is exceeded.
 pub(crate) fn timeline_plan_css_byte_count(
     plan: &DocumentAnimationPlan,
     resource_id_prefix: &str,
@@ -1937,5 +1948,6 @@ mod tests {
         assert_ne!(short, long);
     }
 
+    /// Exact CSS easing oracle for the existing 400 ms spring sampling fixture.
     const SPRING_LINEAR_400MS_GOLDEN: &str = "linear(0.000000, 0.001912, 0.007487, 0.016481, 0.028654, 0.043765, 0.061581, 0.081870, 0.104405, 0.128966, 0.155335, 0.183304, 0.212670, 0.243237, 0.274817, 0.307229, 0.340300, 0.373864, 0.407765, 0.441854, 0.475990, 0.510042, 0.543885, 0.577404, 0.610493, 0.643051, 0.674987, 0.706219, 0.736671, 0.766275, 0.794970, 0.822702, 0.849426, 0.875100, 0.899692, 0.923173, 0.945522, 0.966724, 0.986767, 1.005646, 1.023360, 1.039912, 1.055310, 1.069565, 1.082694, 1.094714, 1.105648, 1.115519, 1.124355, 1.132184, 1.139039, 1.144953, 1.149959, 1.154094, 1.157396, 1.159901, 1.161650, 1.162681, 1.163033, 1.162747, 1.161862, 1.160418, 1.158454, 1.156010, 1.000000)";
 }

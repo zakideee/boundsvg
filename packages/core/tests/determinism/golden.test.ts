@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createEngineAsync, type Engine } from "../../src/engine.js";
 import { initNodeWasm } from "../../src/node.js";
+import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 import {
   assertWasmPkgAvailable,
   loadInterVariableFont,
@@ -27,6 +28,7 @@ import { DETERMINISM_SCENES } from "./scenes.js";
  *   GOLDEN_UPDATE=1 pnpm --filter @boundsvg/core exec vitest run tests/determinism
  */
 const goldensPath = path.resolve(__dirname, "goldens.json");
+/** Explicit opt-in for regenerating golden fixtures during maintenance. */
 const updateMode = process.env.GOLDEN_UPDATE === "1";
 
 type GoldenEntry = {
@@ -39,6 +41,7 @@ type GoldenEntry = {
 
 // Must stay in sync with the browser harness
 // (apps/playground-react/src/e2e/e2e-determinism-harness.ts).
+/** Fixed animation schedule used by the preserved literal-byte golden fixtures. */
 const ANIMATED_SCHEDULE = { durationMs: 300, fps: 10, iterations: "infinite" } as const;
 
 function sha256(data: string | Uint8Array): string {
@@ -82,15 +85,19 @@ describe("determinism goldens", () => {
     expect(Object.keys(goldens).sort()).toEqual([...sceneNames].sort());
   });
 
-  it("renders every scene byte-identically to the pinned goldens", () => {
+  it("renders every scene byte-identically to the pinned goldens", async () => {
     const rendered: Record<string, GoldenEntry> = {};
     for (const name of sceneNames) {
       const vnode = DETERMINISM_SCENES[name];
       const svg = engine.renderToSvg(vnode);
       const png = engine.renderToPng(vnode);
       const webp = engine.renderToWebp(vnode);
-      const animatedWebp = engine.renderToAnimatedWebp(vnode, ANIMATED_SCHEDULE);
-      const animatedGif = engine.renderToAnimatedGif(vnode, ANIMATED_SCHEDULE);
+      const animatedWebp = await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedWebp(vnode, ANIMATED_SCHEDULE, sink),
+      );
+      const animatedGif = await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedGif(vnode, ANIMATED_SCHEDULE, sink),
+      );
       rendered[name] = {
         svgSha256: sha256(svg),
         pngSha256: sha256(png),
@@ -133,22 +140,34 @@ describe("determinism goldens", () => {
     }
   });
 
-  it("pins animated WebP and GIF bytes against encoder and mux drift", () => {
+  it("pins animated WebP and GIF bytes against encoder and mux drift", async () => {
     // Separate from the per-scene goldens: the animated APIs take a schedule,
     // so they cannot ride the same table. The WebP hash covers the frame
     // sampler, the still encoder, and the RIFF mux; the GIF hash also covers
     // the NeuQuant palette, which is the part most at risk from a crate bump.
     const animatedPath = path.resolve(__dirname, "animated-goldens.json");
-    const webp = engine.renderToAnimatedWebp(DETERMINISM_SCENES["grid-cards"], {
-      iterations: "infinite",
-      durationMs: 400,
-      fps: 10,
-    });
-    const gif = engine.renderToAnimatedGif(DETERMINISM_SCENES["grid-cards"], {
-      iterations: "infinite",
-      durationMs: 400,
-      fps: 10,
-    });
+    const webp = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        DETERMINISM_SCENES["grid-cards"],
+        {
+          iterations: "infinite",
+          durationMs: 400,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
+    const gif = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(
+        DETERMINISM_SCENES["grid-cards"],
+        {
+          iterations: "infinite",
+          durationMs: 400,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
     const rendered = {
       "grid-cards@10fps/400ms": sha256(webp),
       "grid-cards@10fps/400ms.gif": sha256(gif),

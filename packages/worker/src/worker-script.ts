@@ -25,14 +25,17 @@ import {
   type TextFlowWithExclusionsInput,
   type VNode,
 } from "@boundsvg/core";
-import { initWasm } from "@boundsvg/core/wasm";
+import {
+  type AnimatedRasterJob,
+  type AnimatedRasterJobInput,
+  createAnimatedRasterJob,
+  initWasm,
+} from "@boundsvg/core/wasm";
 import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import {
   collectResponseTransferables,
   type DecodedWorkerRequest,
   decodeWorkerRequestMessage,
-  type WorkerAnimatedGifRenderOptions,
-  type WorkerAnimatedWebpRenderOptions,
   type WorkerLayeredPngRenderOptions,
   type WorkerLayeredSvgRenderOptions,
   type WorkerRenderAnimatedSvgOptions,
@@ -53,7 +56,10 @@ type ActiveFrameStream = {
   schedule: ReadonlyArray<{ index: number; timeMs: number }>;
 };
 
+/** Standalone frame iterators retained by request ID until close or exhaustion. */
 const activeFrameStreams = new Map<number, ActiveFrameStream>();
+/** At most one logical raster job shares the Engine animation capability. */
+const activeRasterStreams = new Map<number, AnimatedRasterJob>();
 
 // ---------------------------------------------------------------------------
 // Message handler
@@ -112,17 +118,15 @@ async function handleMessage(request: DecodedWorkerRequest): Promise<void> {
       case "render-webp":
         handleRenderWebp(request.id, request.scene, request.options);
         break;
-      case "render-animated-webp":
-        handleRenderAnimatedWebp(request.id, request.scene, request.options);
+      case "open-raster-stream":
+      case "open-layout-transition-raster-stream":
+        handleOpenRasterStream(request);
         break;
-      case "render-animated-gif":
-        handleRenderAnimatedGif(request.id, request.scene, request.options);
+      case "next-raster-stream":
+        handleNextRasterStream(request.id, request.streamId);
         break;
-      case "render-layout-transition-animated-webp":
-        handleRenderLayoutTransitionAnimatedWebp(request.id, request.transition, request.options);
-        break;
-      case "render-layout-transition-animated-gif":
-        handleRenderLayoutTransitionAnimatedGif(request.id, request.transition, request.options);
+      case "close-raster-stream":
+        handleCloseRasterStream(request.id, request.streamId);
         break;
       case "render-layered-svg":
         handleRenderLayeredSvg(request.id, request.scene, request.options);
@@ -178,7 +182,7 @@ async function handleMessage(request: DecodedWorkerRequest): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function handleInit(request: Extract<DecodedWorkerRequest, { type: "init" }>): Promise<void> {
-  closeAllFrameStreams();
+  closeAllStreams();
   if (engine) {
     engine.dispose();
     engine = null;
@@ -298,90 +302,82 @@ function handleRenderWebp(id: number, scene: VNode, options?: WorkerRenderWebpOp
   self.postMessage(response, collectResponseTransferables(response));
 }
 
-function handleRenderAnimatedWebp(
-  id: number,
-  scene: VNode,
-  options: WorkerAnimatedWebpRenderOptions,
-): void {
-  const eng = requireEngine(id);
-  if (!eng) {
-    return;
-  }
-
-  const warnings: SerializedRecoverableError[] = [];
-  const webp = eng.renderToAnimatedWebp(scene, {
-    ...options,
-    onWarning: (warning) => warnings.push(warning.toJSON()),
-  });
-  const response: WorkerResponse = { id, type: "render-animated-webp-ok", webp, warnings };
-  // Transfer the WebP buffer for zero-copy
-  self.postMessage(response, collectResponseTransferables(response));
-}
-
-function handleRenderAnimatedGif(
-  id: number,
-  scene: VNode,
-  options: WorkerAnimatedGifRenderOptions,
-): void {
-  const eng = requireEngine(id);
-  if (!eng) {
-    return;
-  }
-
-  const warnings: SerializedRecoverableError[] = [];
-  const gif = eng.renderToAnimatedGif(scene, {
-    ...options,
-    onWarning: (warning) => warnings.push(warning.toJSON()),
-  });
-  const response: WorkerResponse = { id, type: "render-animated-gif-ok", gif, warnings };
-  // Transfer the GIF buffer for zero-copy
-  self.postMessage(response, collectResponseTransferables(response));
-}
-
-function handleRenderLayoutTransitionAnimatedWebp(
-  id: number,
-  transition: Extract<
+/** Register the shared Core job without preparing or encoding a frame. */
+function handleOpenRasterStream(
+  request: Extract<
     DecodedWorkerRequest,
-    { type: "render-layout-transition-animated-webp" }
-  >["transition"],
-  options: WorkerAnimatedWebpRenderOptions,
+    { type: "open-raster-stream" | "open-layout-transition-raster-stream" }
+  >,
 ): void {
-  const eng = requireEngine(id);
+  const eng = requireEngine(request.id);
   if (!eng) {
     return;
   }
-  const { skipValidation, textPathMode, ...renderOptions } = options;
-  const compiled = eng.compileLayoutTransition(transition, { skipValidation, textPathMode });
-  const warnings: SerializedRecoverableError[] = [];
-  const webp = eng.renderCompiledToAnimatedWebp(compiled, {
-    ...renderOptions,
-    onWarning: (warning) => warnings.push(warning.toJSON()),
-  });
-  const response: WorkerResponse = { id, type: "render-animated-webp-ok", webp, warnings };
+  if (activeFrameStreams.size !== 0 || activeRasterStreams.size !== 0) {
+    throw new FatalError("ANIMATED_RASTER_JOB_BUSY", "Worker already has an active stream", {
+      stage: "engine",
+      context: { format: request.format, operation: "open", reason: "activeAnimation" },
+    });
+  }
+  const { skipValidation, textPathMode, ...emitOptions } = request.options;
+  const source =
+    request.type === "open-raster-stream"
+      ? { kind: "scene" as const, input: request.scene }
+      : {
+          kind: "transition" as const,
+          input: request.transition,
+          compileOptions: { skipValidation, textPathMode },
+        };
+  const input: AnimatedRasterJobInput =
+    request.type === "open-raster-stream"
+      ? ({
+          format: request.format,
+          source: { kind: "scene", input: request.scene },
+          options: request.options,
+        } as AnimatedRasterJobInput)
+      : ({ format: request.format, source, options: emitOptions } as AnimatedRasterJobInput);
+  activeRasterStreams.set(request.id, createAnimatedRasterJob(eng, input));
+  respond({ id: request.id, type: "open-raster-stream-ok", streamId: request.id });
+}
+
+/** Advance once; transfer only the current copied chunk, never future output. */
+function handleNextRasterStream(id: number, streamId: number): void {
+  const job = activeRasterStreams.get(streamId);
+  if (!job) {
+    throw new FatalError("WORKER_STREAM_NOT_FOUND", "Raster stream does not exist", {
+      stage: "engine",
+    });
+  }
+  const step = job.advance();
+  let response: WorkerResponse;
+  if (step.kind === "chunk") {
+    const chunk =
+      step.chunk.byteOffset === 0 &&
+      step.chunk.byteLength === step.chunk.buffer.byteLength &&
+      step.chunk.buffer instanceof ArrayBuffer
+        ? step.chunk.buffer
+        : step.chunk.slice().buffer;
+    response = { id, type: "next-raster-stream-ok", streamId, kind: "chunk", chunk };
+  } else if (step.kind === "ready") {
+    response = {
+      id,
+      type: "next-raster-stream-ok",
+      streamId,
+      kind: "ready",
+      warnings: [...step.warnings],
+    };
+  } else {
+    response = { id, type: "next-raster-stream-ok", streamId, ...step };
+  }
   self.postMessage(response, collectResponseTransferables(response));
 }
 
-function handleRenderLayoutTransitionAnimatedGif(
-  id: number,
-  transition: Extract<
-    DecodedWorkerRequest,
-    { type: "render-layout-transition-animated-gif" }
-  >["transition"],
-  options: WorkerAnimatedGifRenderOptions,
-): void {
-  const eng = requireEngine(id);
-  if (!eng) {
-    return;
-  }
-  const { skipValidation, textPathMode, ...renderOptions } = options;
-  const compiled = eng.compileLayoutTransition(transition, { skipValidation, textPathMode });
-  const warnings: SerializedRecoverableError[] = [];
-  const gif = eng.renderCompiledToAnimatedGif(compiled, {
-    ...renderOptions,
-    onWarning: (warning) => warnings.push(warning.toJSON()),
-  });
-  const response: WorkerResponse = { id, type: "render-animated-gif-ok", gif, warnings };
-  self.postMessage(response, collectResponseTransferables(response));
+/** Idempotently close the remote owner before acknowledging physical slot reuse. */
+function handleCloseRasterStream(id: number, streamId: number): void {
+  const job = activeRasterStreams.get(streamId);
+  activeRasterStreams.delete(streamId);
+  job?.dispose();
+  respond({ id, type: "close-raster-stream-ok", streamId });
 }
 
 function handleRenderLayeredSvg(
@@ -438,7 +434,7 @@ function handleOpenFrameStream(
   if (!eng) {
     return;
   }
-  if (activeFrameStreams.has(request.id)) {
+  if (activeRasterStreams.size > 0 || activeFrameStreams.has(request.id)) {
     throw new FatalError(
       "WORKER_FRAME_STREAM_EXISTS",
       `Frame stream ${request.id} already exists`,
@@ -472,7 +468,7 @@ function handleOpenLayoutTransitionFrameStream(
   if (!eng) {
     return;
   }
-  if (activeFrameStreams.has(request.id)) {
+  if (activeRasterStreams.size > 0 || activeFrameStreams.has(request.id)) {
     throw new FatalError(
       "WORKER_FRAME_STREAM_EXISTS",
       `Frame stream ${request.id} already exists`,
@@ -608,7 +604,7 @@ function handleMeasureIntrinsicInlineSize(id: number, input: IntrinsicInlineSize
 }
 
 function handleDispose(id: number): void {
-  closeAllFrameStreams();
+  closeAllStreams();
   if (engine) {
     engine.dispose();
     engine = null;
@@ -616,7 +612,11 @@ function handleDispose(id: number): void {
   respond({ id, type: "dispose-ok" });
 }
 
-function closeAllFrameStreams(): void {
+function closeAllStreams(): void {
+  for (const job of activeRasterStreams.values()) {
+    job.dispose();
+  }
+  activeRasterStreams.clear();
   for (const activeStream of activeFrameStreams.values()) {
     activeStream.iterator.return?.();
   }
@@ -648,8 +648,6 @@ function respond(response: WorkerResponse): void {
   if (
     response.type === "render-png-ok" ||
     response.type === "render-webp-ok" ||
-    response.type === "render-animated-webp-ok" ||
-    response.type === "render-animated-gif-ok" ||
     response.type === "render-layered-png-ok"
   ) {
     // Raster bytes are transferred separately by their own handlers

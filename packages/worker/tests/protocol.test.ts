@@ -11,9 +11,7 @@ import {
   type InitRequest,
   isWorkerRequest,
   isWorkerResponse,
-  type RenderAnimatedGifOkResponse,
   type RenderAnimatedSvgOkResponse,
-  type RenderAnimatedWebpOkResponse,
   type RenderLayeredPngOkResponse,
   type RenderLayeredSvgOkResponse,
   type RenderPngOkResponse,
@@ -23,6 +21,7 @@ import {
   type WorkerResponse,
 } from "../src/protocol.js";
 
+/** Closed four-checkpoint transition used to exercise request authentication. */
 const TRANSITION: WorkerLayoutTransitionInput = {
   states: {
     A: { type: "Canvas", width: 100, height: 100, children: [] },
@@ -177,7 +176,8 @@ describe("isWorkerRequest", () => {
     expect(
       decodeWorkerRequestMessage({
         id: 4,
-        type: "render-layout-transition-animated-webp",
+        type: "open-layout-transition-raster-stream",
+        format: "webp",
         transition,
       }),
     ).toEqual({ id: 4, message: undefined });
@@ -185,7 +185,8 @@ describe("isWorkerRequest", () => {
 
     const decoded = decodeWorkerRequestMessage({
       id: 4,
-      type: "render-layout-transition-animated-webp",
+      type: "open-layout-transition-raster-stream",
+      format: "webp",
       transition,
       options: {},
     });
@@ -284,7 +285,8 @@ describe("isWorkerRequest", () => {
   it("returns true for valid render-animated-webp request", () => {
     const request: WorkerRequest = {
       id: 6,
-      type: "render-animated-webp",
+      type: "open-raster-stream",
+      format: "webp",
       scene: { type: "Canvas", width: 100, height: 100, children: [] },
       options: { durationMs: 500 },
     };
@@ -295,7 +297,8 @@ describe("isWorkerRequest", () => {
     expect(
       isWorkerRequest({
         id: 6,
-        type: "render-animated-webp",
+        type: "open-raster-stream",
+        format: "webp",
         scene: { type: "Canvas", width: 100, height: 100, children: [] },
       }),
     ).toBe(false);
@@ -304,7 +307,8 @@ describe("isWorkerRequest", () => {
   it("returns true for valid render-animated-gif request", () => {
     const request: WorkerRequest = {
       id: 8,
-      type: "render-animated-gif",
+      type: "open-raster-stream",
+      format: "gif",
       scene: { type: "Canvas", width: 100, height: 100, children: [] },
       options: { durationMs: 500 },
     };
@@ -315,7 +319,8 @@ describe("isWorkerRequest", () => {
     expect(
       isWorkerRequest({
         id: 20,
-        type: "render-layout-transition-animated-webp",
+        type: "open-layout-transition-raster-stream",
+        format: "webp",
         transition: TRANSITION,
         options: { durationMs: 300 },
       }),
@@ -323,7 +328,8 @@ describe("isWorkerRequest", () => {
     expect(
       isWorkerRequest({
         id: 21,
-        type: "render-layout-transition-animated-gif",
+        type: "open-layout-transition-raster-stream",
+        format: "gif",
         transition: TRANSITION,
         options: { durationMs: 300 },
       }),
@@ -343,7 +349,8 @@ describe("isWorkerRequest", () => {
     expect(
       isWorkerRequest({
         id: 20,
-        type: "render-layout-transition-animated-webp",
+        type: "open-layout-transition-raster-stream",
+        format: "webp",
         transition: { states: { A: TRANSITION.states.A }, checkpoints: [] },
         options: {},
       }),
@@ -363,7 +370,8 @@ describe("isWorkerRequest", () => {
     expect(
       isWorkerRequest({
         id: 8,
-        type: "render-animated-gif",
+        type: "open-raster-stream",
+        format: "gif",
         scene: { type: "Canvas", width: 100, height: 100, children: [] },
       }),
     ).toBe(false);
@@ -800,38 +808,6 @@ describe("isWorkerResponse", () => {
     expect(isWorkerResponse({ id: 5, type: "render-webp-ok", webp: [1, 2], warnings: [] })).toBe(
       false,
     );
-  });
-
-  it("returns true for valid render-animated-webp-ok response", () => {
-    const response: RenderAnimatedWebpOkResponse = {
-      id: 7,
-      type: "render-animated-webp-ok",
-      webp: new Uint8Array([1, 2, 3]),
-      warnings: [],
-    };
-    expect(isWorkerResponse(response)).toBe(true);
-  });
-
-  it("returns false for render-animated-webp-ok with non-Uint8Array webp", () => {
-    expect(
-      isWorkerResponse({ id: 7, type: "render-animated-webp-ok", webp: [1, 2], warnings: [] }),
-    ).toBe(false);
-  });
-
-  it("returns true for valid render-animated-gif-ok response", () => {
-    const response: RenderAnimatedGifOkResponse = {
-      id: 9,
-      type: "render-animated-gif-ok",
-      gif: new Uint8Array([1, 2, 3]),
-      warnings: [],
-    };
-    expect(isWorkerResponse(response)).toBe(true);
-  });
-
-  it("returns false for render-animated-gif-ok with non-Uint8Array gif", () => {
-    expect(
-      isWorkerResponse({ id: 9, type: "render-animated-gif-ok", gif: [1, 2], warnings: [] }),
-    ).toBe(false);
   });
 
   it("returns true for valid render-layered-svg-ok response", () => {
@@ -1700,32 +1676,6 @@ describe("collectResponseTransferables", () => {
     expect(transferables[0]).toBe(webp.buffer);
   });
 
-  it("returns WebP buffer for render-animated-webp-ok response", () => {
-    const webp = new Uint8Array([1, 2, 3]);
-    const response: RenderAnimatedWebpOkResponse = {
-      id: 3,
-      type: "render-animated-webp-ok",
-      webp,
-      warnings: [],
-    };
-    const transferables = collectResponseTransferables(response);
-    expect(transferables).toHaveLength(1);
-    expect(transferables[0]).toBe(webp.buffer);
-  });
-
-  it("returns GIF buffer for render-animated-gif-ok response", () => {
-    const gif = new Uint8Array([1, 2, 3]);
-    const response: RenderAnimatedGifOkResponse = {
-      id: 4,
-      type: "render-animated-gif-ok",
-      gif,
-      warnings: [],
-    };
-    const transferables = collectResponseTransferables(response);
-    expect(transferables).toHaveLength(1);
-    expect(transferables[0]).toBe(gif.buffer);
-  });
-
   it("returns all layer PNG buffers for render-layered-png-ok response", () => {
     const layerPngA = new Uint8Array([1]);
     const layerPngB = new Uint8Array([2]);
@@ -1974,5 +1924,94 @@ describe("prepared frame stream protocol", () => {
         frame: { index: 0, timeMs: 0, format: "png", data: png },
       }),
     ).toEqual([png.buffer]);
+  });
+});
+
+describe("animated raster stream trust boundary", () => {
+  it("rejects removed bulk request and response discriminants", () => {
+    for (const type of [
+      "render-animated-webp",
+      "render-animated-gif",
+      "render-layout-transition-animated-webp",
+      "render-layout-transition-animated-gif",
+    ]) {
+      expect(
+        isWorkerRequest({
+          id: 1,
+          type,
+          scene: { type: "Canvas", width: 8, height: 8, children: [] },
+          transition: TRANSITION,
+          options: {},
+        }),
+      ).toBe(false);
+    }
+    for (const type of ["render-animated-webp-ok", "render-animated-gif-ok"]) {
+      expect(
+        isWorkerResponse({
+          id: 1,
+          type,
+          warnings: [],
+          webp: new Uint8Array(12),
+          gif: new Uint8Array(12),
+        }),
+      ).toBe(false);
+    }
+  });
+  it("accepts one copied bounded chunk and transfers only its buffer", () => {
+    const chunk = new ArrayBuffer(65536);
+    const response: WorkerResponse = {
+      id: 2,
+      type: "next-raster-stream-ok",
+      streamId: 1,
+      kind: "chunk",
+      chunk,
+    };
+    expect(isWorkerResponse(response)).toBe(true);
+    expect(collectResponseTransferables(response)).toEqual([chunk]);
+    for (const chunk of [
+      null,
+      undefined,
+      new ArrayBuffer(0),
+      new ArrayBuffer(65537),
+      new Uint8Array(4),
+      [1, 2],
+    ]) {
+      expect(isWorkerResponse({ ...response, chunk })).toBe(false);
+    }
+    expect(isWorkerResponse({ ...response, warnings: [] })).toBe(false);
+  });
+  it("authenticates closed completion counters and format-specific patches", () => {
+    const base = { id: 3, type: "next-raster-stream-ok", streamId: 1, kind: "finished" };
+    const gif = { ...base, result: { format: "gif", frameCount: 326, bytesWritten: 256 } };
+    expect(isWorkerResponse(gif)).toBe(true);
+    for (const patch of [null, undefined, { offset: 4, bytes: new Uint8Array(4) }]) {
+      expect(isWorkerResponse({ ...gif, patch })).toBe(false);
+    }
+    const webp = {
+      ...base,
+      result: { format: "webp", frameCount: 326, bytesWritten: 256 },
+      patch: { offset: 4, bytes: new Uint8Array(4) },
+    };
+    expect(isWorkerResponse(webp)).toBe(true);
+    for (const patch of [
+      null,
+      undefined,
+      { offset: 5, bytes: new Uint8Array(4) },
+      { offset: 4, bytes: new Uint8Array(3) },
+      { offset: 4, bytes: [1, 2, 3, 4] },
+      { offset: 4, bytes: new Uint8Array(4), extra: 1 },
+    ]) {
+      expect(isWorkerResponse({ ...webp, patch })).toBe(false);
+    }
+    for (const result of [
+      null,
+      undefined,
+      { ...gif.result, frameCount: 0 },
+      { ...gif.result, frameCount: 1.5 },
+      { ...gif.result, bytesWritten: 2 ** 53 },
+      { ...gif.result, extra: 1 },
+    ]) {
+      expect(isWorkerResponse({ ...gif, result })).toBe(false);
+    }
   });
 });

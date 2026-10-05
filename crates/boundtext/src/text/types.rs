@@ -8,6 +8,7 @@ use crate::font::shaping::{FeatureSetting, GlyphInfo, VariationSetting};
 // Enums
 // ---------------------------------------------------------------------------
 
+/// Choose unwrapped text, Unicode word breaks, or grapheme breaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WrapMode {
     None,
@@ -16,6 +17,7 @@ pub enum WrapMode {
 }
 
 impl WrapMode {
+    /// Parse the supported wrap spelling, defaulting to character wrapping for other values.
     #[must_use]
     pub fn parse_str(value: &str) -> Self {
         match value {
@@ -26,6 +28,7 @@ impl WrapMode {
     }
 }
 
+/// Choose fixed, shrinking, or growing font-size layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FitMode {
     None,
@@ -33,6 +36,7 @@ pub enum FitMode {
     Grow,
 }
 
+/// Align text to the start, center, or end of the available inline extent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextAlign {
     Start,
@@ -40,6 +44,7 @@ pub enum TextAlign {
     End,
 }
 
+/// Choose horizontal lines or right-to-left vertical columns.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schema", schemars(rename_all = "kebab-case"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +54,7 @@ pub enum WritingMode {
 }
 
 impl WritingMode {
+    /// Parse vertical writing when requested, defaulting to horizontal writing otherwise.
     #[must_use]
     pub fn from_option(value: Option<&str>) -> Self {
         match value {
@@ -71,6 +77,7 @@ pub enum TextPlacementSpace {
     PathFrame,
 }
 
+/// Choose whitespace collapsing, wrapping suppression, or preserved line breaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WhiteSpaceMode {
     Normal,
@@ -79,6 +86,7 @@ pub enum WhiteSpaceMode {
 }
 
 impl WhiteSpaceMode {
+    /// Parse supported whitespace modes, defaulting to normal whitespace otherwise.
     #[must_use]
     pub fn from_option(value: Option<&str>) -> Self {
         match value {
@@ -89,6 +97,7 @@ impl WhiteSpaceMode {
     }
 }
 
+/// Select Japanese, English, or automatic language-dependent layout behavior.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "schema", schemars(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +107,7 @@ pub enum Language {
     Auto,
 }
 
+/// Choose mixed glyph orientation or upright glyphs in vertical writing.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,6 +117,7 @@ pub enum TextOrientation {
 }
 
 impl TextOrientation {
+    /// Parse upright orientation when requested, defaulting to mixed orientation otherwise.
     #[must_use]
     pub fn from_option(value: Option<&str>) -> Self {
         match value {
@@ -117,6 +128,7 @@ impl TextOrientation {
 }
 
 impl Language {
+    /// Parse Japanese or English when requested, defaulting to automatic language selection otherwise.
     #[must_use]
     pub fn from_option(value: Option<&str>) -> Self {
         match value {
@@ -131,6 +143,7 @@ impl Language {
 // Text layout result types (Rust → TS via JSON)
 // ---------------------------------------------------------------------------
 
+/// Serialized overflow status with an optional explanation of the violated constraint.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextOverflow {
@@ -147,6 +160,7 @@ impl TextOverflow {
         !matches!(self.overflow_type.as_str(), "none" | "kinsoku_unresolved")
     }
 
+    /// Create the status for text that fits its layout constraints.
     #[must_use]
     pub fn none() -> Self {
         Self {
@@ -155,6 +169,7 @@ impl TextOverflow {
         }
     }
 
+    /// Create a constraint overflow status with the supplied explanation.
     #[must_use]
     pub fn overflow(reason: &str) -> Self {
         Self {
@@ -163,6 +178,7 @@ impl TextOverflow {
         }
     }
 
+    /// Create the status for a line break whose kinsoku constraints could not be resolved.
     #[must_use]
     pub fn kinsoku_unresolved() -> Self {
         Self {
@@ -171,6 +187,7 @@ impl TextOverflow {
         }
     }
 
+    /// Create the status for text that cannot fit within the selected fitting range.
     #[must_use]
     pub fn cannot_fit() -> Self {
         Self {
@@ -180,6 +197,7 @@ impl TextOverflow {
     }
 }
 
+/// Physical text bounds in pixels relative to the result coordinate frame.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextBBox {
@@ -189,6 +207,7 @@ pub struct TextBBox {
     pub h: f64,
 }
 
+/// Select an underline, overline, or line through the text.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -198,6 +217,7 @@ pub enum TextDecorationLine {
     LineThrough,
 }
 
+/// Choose the solid, double, dotted, dashed, or wavy decoration pattern.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -210,6 +230,7 @@ pub enum TextDecorationStyle {
     Wavy,
 }
 
+/// Choose whether decoration geometry avoids glyph fill intersections.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -224,7 +245,9 @@ struct SerializedTextDecorationSkipInk;
 
 #[cfg(feature = "schema")]
 impl crate::schema::StringEnumSchemaDomain for SerializedTextDecorationSkipInk {
+    /// Stable type name used by the directional JSON schema domain.
     const NAME: &'static str = "SerializedTextDecorationSkipInk";
+    /// Serialized spellings exposed by this directional JSON schema domain.
     const VALUES: &'static [&'static str] = &["all"];
 }
 
@@ -233,7 +256,9 @@ struct TextStrokeLinecapSchema;
 
 #[cfg(feature = "schema")]
 impl crate::schema::StringEnumSchemaDomain for TextStrokeLinecapSchema {
+    /// Stable type name used by the directional JSON schema domain.
     const NAME: &'static str = "TextStrokeLinecapSchema";
+    /// Serialized spellings exposed by this directional JSON schema domain.
     const VALUES: &'static [&'static str] = &["butt", "round", "square"];
 }
 
@@ -242,7 +267,9 @@ struct TextStrokeLinejoinSchema;
 
 #[cfg(feature = "schema")]
 impl crate::schema::StringEnumSchemaDomain for TextStrokeLinejoinSchema {
+    /// Stable type name used by the directional JSON schema domain.
     const NAME: &'static str = "TextStrokeLinejoinSchema";
+    /// Serialized spellings exposed by this directional JSON schema domain.
     const VALUES: &'static [&'static str] = &["miter", "round", "bevel"];
 }
 
@@ -251,7 +278,9 @@ struct SyntheticGlyphKindSchema;
 
 #[cfg(feature = "schema")]
 impl crate::schema::StringEnumSchemaDomain for SyntheticGlyphKindSchema {
+    /// Stable type name used by the directional JSON schema domain.
     const NAME: &'static str = "SyntheticGlyphKindSchema";
+    /// Serialized spellings exposed by this directional JSON schema domain.
     const VALUES: &'static [&'static str] = &["ellipsis"];
 }
 
@@ -259,6 +288,7 @@ const fn is_skip_ink_none(value: &TextDecorationSkipInk) -> bool {
     matches!(value, TextDecorationSkipInk::None)
 }
 
+/// Authored decoration lines, paint, thickness, displacement, and skip-ink choice.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextDecorationInput {
@@ -274,6 +304,7 @@ pub struct TextDecorationInput {
     pub skip_ink: TextDecorationSkipInk,
 }
 
+/// Resolved physical decoration path with complexity counts and internal placement ownership.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -305,6 +336,7 @@ pub struct TextDecorationPaintPath {
     pub path_sample_count: usize,
 }
 
+/// Deferred decoration failure reported when rendering the resolved paint path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextDecorationPaintError {
     ComplexityLimit,
@@ -312,6 +344,7 @@ pub enum TextDecorationPaintError {
     PatternLimit,
 }
 
+/// Resolved decoration paint paths associated with a logical source range.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -343,6 +376,7 @@ pub struct TextDecorationGlyphGeometry {
     pub block_half_extent: f64,
 }
 
+/// Shaped glyph with physical placement, font identity, and logical source metadata.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -446,6 +480,7 @@ pub struct PositionedGlyph {
 }
 
 impl PositionedGlyph {
+    /// Translate the glyph origin and its optional vertical inline decoration geometry together.
     pub(crate) fn translate(&mut self, dx: f64, dy: f64) {
         self.origin_x += dx;
         self.origin_y += dy;
@@ -501,6 +536,7 @@ pub struct TextRunStyle {
     pub language: Option<String>,
 }
 
+/// One styled horizontal text run within a resolved line.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LineFragment {
@@ -512,6 +548,7 @@ pub struct LineFragment {
     pub style: TextRunStyle,
 }
 
+/// Resolved line or column metrics with optional run fragments and positioned glyphs.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Line {
@@ -543,6 +580,7 @@ pub struct InlineRectFragment {
     pub paint_order: String,
 }
 
+/// Resolved text geometry, chosen font size, overflow diagnostics, and paint metadata.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextLayoutResult {
@@ -674,6 +712,7 @@ pub struct PlainTextMeasurementRequest<'a> {
 }
 
 impl PlainTextMeasurementRequest<'_> {
+    /// Disable wrapping for nowrap whitespace; otherwise retain the requested wrap mode.
     #[must_use]
     pub fn effective_wrap(&self) -> WrapMode {
         if self.white_space == WhiteSpaceMode::NoWrap {
@@ -683,12 +722,14 @@ impl PlainTextMeasurementRequest<'_> {
         }
     }
 
+    /// Return whether pre-wrap whitespace preserves authored newline breaks.
     #[must_use]
     pub fn has_forced_newline_breaks(&self) -> bool {
         self.white_space == WhiteSpaceMode::PreWrap
     }
 }
 
+/// Borrowed text sources and typography, constraints, and fitting controls for layout.
 #[derive(Clone)]
 pub struct TextLayoutRequest<'a> {
     pub text: &'a str,
@@ -748,6 +789,7 @@ impl TextLayoutRequest<'_> {
         self.writing_mode == WritingMode::VerticalRl
     }
 
+    /// Return whether the request contains a nonempty rich-text source.
     #[must_use]
     pub fn has_rich_text(&self) -> bool {
         self.rich_text.is_some_and(|nodes| !nodes.is_empty())
@@ -966,6 +1008,7 @@ pub fn preprocess_span_texts_for_white_space(
 // Text input types (moved from engine layout.rs)
 // ---------------------------------------------------------------------------
 
+/// Supply the regular font weight when serialized text input omits it.
 #[must_use]
 pub fn default_weight() -> u16 {
     400
@@ -1015,6 +1058,7 @@ pub struct TextShadowLayer {
     pub color: String,
 }
 
+/// Serialized text run with font, paint, language, and decoration overrides.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextSpanInput {
@@ -1050,6 +1094,7 @@ pub struct TextSpanInput {
     pub decoration_transport_only: bool,
 }
 
+/// Serialized typography and paint carried by a rich-text style owner.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RichTextStyleInput {
@@ -1084,6 +1129,7 @@ pub struct RichTextStyleInput {
     pub text_decoration: Option<TextDecorationInput>,
 }
 
+/// Text and decoration ownership preserved inside a combined rich-text run.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RichTextDecorationRunInput {
@@ -1092,6 +1138,7 @@ pub struct RichTextDecorationRunInput {
     pub text_decoration: Option<TextDecorationInput>,
 }
 
+/// Choose an inline rectangle block size in pixels or relative to its line.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum InlineRectBlockSizeInput {
@@ -1099,6 +1146,7 @@ pub enum InlineRectBlockSizeInput {
     Line(String),
 }
 
+/// Authored inline rectangle geometry, paint, alignment, and logical advance.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InlineRectInput {
@@ -1119,6 +1167,7 @@ pub struct InlineRectInput {
     pub paint_order: Option<String>,
 }
 
+/// Serialized recursive rich-text content with styled runs, ruby, inline boxes, and rectangles.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum RichTextNodeInput {
@@ -1370,6 +1419,7 @@ impl TextWarningCode {
     }
 }
 
+/// Recoverable text diagnostic with the fallback actually taken.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextWarning {
@@ -1382,6 +1432,11 @@ pub struct TextWarning {
 }
 
 impl TextWarning {
+    /// Construct a recoverable warning after validating its policy and nonempty descriptions.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the warning policy, message, or fallback description is incomplete.
     pub(crate) fn recoverable(
         code: TextWarningCode,
         message: impl Into<String>,

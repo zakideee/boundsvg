@@ -21,6 +21,15 @@ import type {
 } from "../shape/types.js";
 import type { MeasurementTextLayoutOperation } from "../text/layout-operation.js";
 import type { GlyphInfo, RichTextNode, ShapeFn, ShapingOptions } from "../text/types.js";
+import type {
+  AnimatedRasterSessionHandle,
+  AnimationSessionOpenInput,
+} from "./animation-session.js";
+import {
+  normalizeAnimationWasmError,
+  snapshotAnimationOpenInput,
+  WasmAnimatedRasterSessionHandle,
+} from "./animation-session.js";
 import {
   decodeIntrinsicInlineSizeResult,
   decodeMeasureTextBlockResult,
@@ -52,6 +61,7 @@ import {
   textLayoutWasmBoundaryFailure,
 } from "./text-layout-fatal-decoder.js";
 import type {
+  WasmAnimatedRasterSessionInstance,
   WasmEngineInstance,
   WasmModule,
   WasmPreparedSceneInstance,
@@ -65,7 +75,7 @@ let wasmModule: WasmModule | null = null;
  * `crates/boundsvg/src/lib.rs`; both sides change in the same commit.
  * Bump whenever a WASM-boundary DTO shape or export signature changes.
  */
-export const EXPECTED_WASM_SCHEMA_VERSION = 32;
+export const EXPECTED_WASM_SCHEMA_VERSION = 33;
 
 function assertWasmSchemaVersion(preloaded: WasmModule): void {
   const readSchemaVersion = preloaded.wasm_schema_version;
@@ -295,6 +305,7 @@ function isResolvedRasterScale(value: unknown): value is ResolvedRasterScale {
   );
 }
 
+/** Paint and viewport options for compiling injected shape geometry. */
 export type ShapeCompileOptions = {
   /**
    * Emit one path per addressable part with data-boundsvg-part-id attributes.
@@ -320,6 +331,7 @@ export type ShapeCompileOptions = {
   };
 };
 
+/** Target pixel dimensions for resolving a reusable symbol geometry. */
 export type ShapeSymbolResolutionOptions = {
   width: number;
   height: number;
@@ -361,16 +373,6 @@ export function createWasmShapeFn(fontData: Uint8Array): ShapeFn {
     );
   };
 }
-
-/**
- * Transport shape for the animated raster WASM exports. Field names are the
- * camelCase serde names of `AnimationEncodeInput` in Rust.
- */
-export type AnimationEncodeInput = {
-  frames: Array<{ svg: string; durationMs: number }>;
-  iterations: number | "infinite";
-  options: PngRenderOptions;
-};
 
 /** Options for PNG rasterization */
 export type PngRenderOptions = {
@@ -432,6 +434,7 @@ export type GlyphPathFn = (
   },
 ) => WasmGlyphPath[];
 
+/** One glyph outline request with its positioned transform and font variation coordinates. */
 export type PositionedGlyphPathRequest = {
   glyphId: number;
   text?: string;
@@ -450,6 +453,7 @@ export type PositionedGlyphPathRequest = {
   showMissingGlyphs?: boolean;
 };
 
+/** Owner-bound transport that extracts outlines for already positioned glyph requests. */
 export type ExtractPositionedGlyphPathsFn = (
   glyphs: PositionedGlyphPathRequest[],
 ) => WasmGlyphPath[];
@@ -590,6 +594,7 @@ export function wasmReplaceImageHrefs(
   return wasm.replace_image_hrefs(svgString, JSON.stringify(replacements));
 }
 
+/** Report whether the initialized module exposes every required shape operation. */
 export function isShapeWasmAvailable(): boolean {
   if (!isWasmInitialized()) {
     return false;
@@ -604,6 +609,7 @@ export function isShapeWasmAvailable(): boolean {
   }
 }
 
+/** Shape exports required to expose the complete shape transport capability. */
 const SHAPE_WASM_EXPORTS = {
   compileShapeSvg: "compile_shape_svg",
   hitTestShapeParts: "hit_test_shape_parts",
@@ -681,6 +687,7 @@ function invokeWasmShapeOperation<Output>(
   return decodeShapeOutput(operation, rawOutput, decode);
 }
 
+/** Compile injected geometry into SVG after depth validation and structured result decoding. */
 export function wasmCompileShapeSvg(geometry: GeometryDoc, options?: ShapeCompileOptions): string {
   const operation = "compileShapeSvg";
   assertGeometryTreeDepth(geometry, { operation });
@@ -697,6 +704,7 @@ export function wasmCompileShapeSvg(geometry: GeometryDoc, options?: ShapeCompil
   );
 }
 
+/** Return addressable geometry parts hit by the supplied point. */
 export function wasmHitTestShapeParts(
   geometry: GeometryDoc,
   point: { x: number; y: number },
@@ -707,6 +715,7 @@ export function wasmHitTestShapeParts(
   return invokeWasmShapeOperation(operation, () => ({ geometry, point, options }), decodeShapeHits);
 }
 
+/** Compile validated geometry into detached addressable path parts. */
 export function wasmCompileShapePaths(
   geometry: GeometryDoc,
   options?: ShapeCompileOptions,
@@ -726,6 +735,7 @@ export function wasmCompileShapePaths(
   );
 }
 
+/** Resolve a supplied symbol definition at the requested pixel dimensions. */
 export function wasmResolveSymbolGeometry(
   definition: SymbolDefinition,
   options: ShapeSymbolResolutionOptions,
@@ -742,18 +752,21 @@ export function wasmResolveSymbolGeometry(
   );
 }
 
+/** Evaluate supplied geometry into its addressable parts through the shape transport. */
 export function wasmEvaluateShapeParts(geometry: GeometryDoc): GeometryPart[] {
   const operation = "evaluateShapeParts";
   assertGeometryTreeDepth(geometry, { operation });
   return invokeWasmShapeOperation(operation, () => ({ geometry }), decodeEvaluatedShapeParts);
 }
 
+/** Evaluate supplied geometry into a decoded region. */
 export function wasmEvaluateShapeRegion(geometry: GeometryDoc): Region {
   const operation = "evaluateShapeRegion";
   assertGeometryTreeDepth(geometry, { operation });
   return invokeWasmShapeOperation(operation, () => ({ geometry }), decodeEvaluatedShapeRegion);
 }
 
+/** Emit SVG for a supplied region using the requested paint and viewport. */
 export function wasmRenderShapeRegionSvg(region: Region, options?: ShapeCompileOptions): string {
   const operation = "renderShapeRegionSvg";
   return invokeWasmShapeOperation(
@@ -768,6 +781,7 @@ export function wasmRenderShapeRegionSvg(region: Region, options?: ShapeCompileO
   );
 }
 
+/** Divide two depth-validated geometries into decoded intersection and remainder regions. */
 export function wasmDivideShapeRegions(lhs: GeometryDoc, rhs: GeometryDoc): DivideRegions {
   const operation = "divideShapeRegions";
   assertGeometryTreeDepth(lhs, { operation, operand: "lhs" });
@@ -775,6 +789,7 @@ export function wasmDivideShapeRegions(lhs: GeometryDoc, rhs: GeometryDoc): Divi
   return invokeWasmShapeOperation(operation, () => ({ lhs, rhs }), decodeDividedShapeRegions);
 }
 
+/** Return decoded intersections of two depth-validated geometries. */
 export function wasmComputeShapeIntersections(
   lhs: GeometryDoc,
   rhs: GeometryDoc,
@@ -820,7 +835,9 @@ type PreparedSceneOwnerRecord = {
   disposed: boolean;
 };
 
+/** Native scene ownership and disposal state associated with each genuine handle. */
 const preparedSceneStates = new WeakMap<WasmPreparedSceneHandle, PreparedSceneState>();
+/** Scene records retained for cleanup when their owning engine is disposed. */
 const preparedScenesByOwner = new WeakMap<WasmEngineHandle, Set<PreparedSceneOwnerRecord>>();
 type PreparedSceneFinalizerState = {
   ownerRecords: Set<PreparedSceneOwnerRecord>;
@@ -835,6 +852,7 @@ function releasePreparedSceneRecord(ownerRecord: PreparedSceneOwnerRecord): void
   ownerRecord.instance.free();
 }
 
+/** Fallback native cleanup for unreachable scene handles; explicit disposal remains primary. */
 const preparedSceneFinalizer =
   typeof FinalizationRegistry === "undefined"
     ? undefined
@@ -843,6 +861,7 @@ const preparedSceneFinalizer =
         releasePreparedSceneRecord(ownerRecord);
       });
 
+/** Optional runtime disposal hook for owned scene handles. */
 const preparedSceneDisposeSymbol = Symbol.dispose;
 
 function requirePreparedSceneState(prepared: WasmPreparedSceneHandle): PreparedSceneState {
@@ -860,6 +879,7 @@ function requirePreparedSceneState(prepared: WasmPreparedSceneHandle): PreparedS
  * Call `dispose()` when sampling is complete; repeated disposal is safe.
  */
 export class WasmPreparedSceneHandle {
+  /** Adopt a prepared native scene under the supplied engine owner until disposal. */
   constructor(owner: WasmEngineHandle, instance: WasmPreparedSceneInstance) {
     const ownerRecords = preparedScenesByOwner.get(owner);
     if (!ownerRecords) {
@@ -876,15 +896,18 @@ export class WasmPreparedSceneHandle {
     preparedSceneFinalizer?.register(this, { ownerRecords, ownerRecord }, this);
   }
 
+  /** Report whether the retained native scene has been released. */
   get isDisposed(): boolean {
     return preparedSceneStates.get(this)?.ownerRecord.disposed ?? true;
   }
 
+  /** Sample the retained scene; reject after either its scene or engine owner is disposed. */
   renderToSvg(optionsJson: string): string {
     const state = requirePreparedSceneState(this);
     return state.owner.renderPreparedToSvg(this, optionsJson);
   }
 
+  /** Release the retained native scene once and remove it from its engine owner. */
   dispose(): void {
     const state = preparedSceneStates.get(this);
     if (!state || state.ownerRecord.disposed) {
@@ -895,6 +918,7 @@ export class WasmPreparedSceneHandle {
     releasePreparedSceneRecord(state.ownerRecord);
   }
 
+  /** Release the retained scene through explicit resource management. */
   [preparedSceneDisposeSymbol](): void {
     this.dispose();
   }
@@ -911,7 +935,9 @@ type RasterSceneOwnerRecord = {
   disposed: boolean;
 };
 
+/** Native raster scene ownership and disposal state associated with each genuine handle. */
 const rasterSceneStates = new WeakMap<WasmRasterSceneHandle, RasterSceneState>();
+/** Raster scene records retained for cleanup when their owning engine is disposed. */
 const rasterScenesByOwner = new WeakMap<WasmEngineHandle, Set<RasterSceneOwnerRecord>>();
 
 function releaseRasterSceneRecord(ownerRecord: RasterSceneOwnerRecord): void {
@@ -922,6 +948,7 @@ function releaseRasterSceneRecord(ownerRecord: RasterSceneOwnerRecord): void {
   ownerRecord.instance.free();
 }
 
+/** Fallback native cleanup for unreachable raster scene handles. */
 const rasterSceneFinalizer =
   typeof FinalizationRegistry === "undefined"
     ? undefined
@@ -945,6 +972,7 @@ function requireRasterSceneState(scene: WasmRasterSceneHandle): RasterSceneState
 
 /** Opaque preflighted raster IR retained across user callbacks. */
 export class WasmRasterSceneHandle {
+  /** Adopt one preflighted native raster scene under the supplied engine owner. */
   constructor(owner: WasmEngineHandle, instance: WasmRasterSceneInstance) {
     const ownerRecords = rasterScenesByOwner.get(owner);
     if (!ownerRecords) {
@@ -961,22 +989,27 @@ export class WasmRasterSceneHandle {
     rasterSceneFinalizer?.register(this, { ownerRecords, ownerRecord }, this);
   }
 
+  /** Resolve outlines and emit SVG from this retained raster scene. */
   resolveAndEmitToSvg(): string {
     return requireRasterSceneState(this).owner.resolveAndEmitRasterScene(this);
   }
 
+  /** Resolve this retained raster scene into serialized IR. */
   resolveToIr(): string {
     return requireRasterSceneState(this).owner.resolveRasterSceneToIr(this);
   }
 
+  /** Resolve the retained raster scene for subsequent emission. */
   resolve(): void {
     requireRasterSceneState(this).owner.resolveRasterScene(this);
   }
 
+  /** Emit the retained raster scene with the supplied render options. */
   renderToSvg(optionsJson: string): string {
     return requireRasterSceneState(this).owner.renderRasterSceneToSvg(this, optionsJson);
   }
 
+  /** Release the retained raster scene once and detach it from its engine owner. */
   dispose(): void {
     const state = rasterSceneStates.get(this);
     if (!state || state.ownerRecord.disposed) {
@@ -996,16 +1029,19 @@ export class WasmEngineHandle {
   private readonly instance: WasmEngineInstance;
   private _disposed = false;
 
+  /** Adopt one native engine instance and own its prepared and raster scene handles. */
   constructor(instance: WasmEngineInstance) {
     this.instance = instance;
     preparedScenesByOwner.set(this, new Set());
     rasterScenesByOwner.set(this, new Set());
   }
 
+  /** Report whether this handle has released its native engine instance. */
   get isDisposed(): boolean {
     return this._disposed;
   }
 
+  /** Register caller-injected font bytes in this engine instance's private font registry. */
   registerFont(
     data: Uint8Array,
     options: { alias: string; weight?: number; style?: "normal" | "italic" },
@@ -1015,6 +1051,7 @@ export class WasmEngineHandle {
     this.instance.register_font(data, alias, weight, style);
   }
 
+  /** Create a layout transport bound to this engine; calls reject after owner disposal. */
   createComputeLayoutFn(): ComputeLayoutTransportFn {
     return (inputJson: string) => {
       this.ensureNotDisposed();
@@ -1164,6 +1201,7 @@ export class WasmEngineHandle {
     );
   }
 
+  /** Resolve and emit a preflighted raster scene authenticated to this engine owner. */
   resolveAndEmitRasterScene(scene: WasmRasterSceneHandle): string {
     this.ensureNotDisposed();
     const state = requireRasterSceneState(scene);
@@ -1177,6 +1215,7 @@ export class WasmEngineHandle {
     return this.instance.resolve_and_emit_raster_scene(state.ownerRecord.instance);
   }
 
+  /** Resolve an authenticated preflighted raster scene into serialized IR. */
   resolveRasterSceneToIr(scene: WasmRasterSceneHandle): string {
     this.ensureNotDisposed();
     const state = requireRasterSceneState(scene);
@@ -1190,6 +1229,7 @@ export class WasmEngineHandle {
     return this.instance.resolve_raster_scene_to_ir(state.ownerRecord.instance);
   }
 
+  /** Resolve a preflighted raster scene after authenticating this engine owner. */
   resolveRasterScene(scene: WasmRasterSceneHandle): void {
     this.ensureNotDisposed();
     const state = requireRasterSceneState(scene);
@@ -1203,6 +1243,7 @@ export class WasmEngineHandle {
     this.instance.resolve_raster_scene(state.ownerRecord.instance);
   }
 
+  /** Emit an authenticated raster scene through the owning native engine. */
   renderRasterSceneToSvg(scene: WasmRasterSceneHandle, optionsJson: string): string {
     this.ensureNotDisposed();
     const state = requireRasterSceneState(scene);
@@ -1289,6 +1330,7 @@ export class WasmEngineHandle {
     return this.instance.render_prepared_to_svg(state.ownerRecord.instance, optionsJson);
   }
 
+  /** Create an owner-bound text shaper using a registered font alias. */
   createShapeFnRegistered(
     alias: string,
     weight = DEFAULT_FONT_WEIGHT,
@@ -1324,6 +1366,7 @@ export class WasmEngineHandle {
     };
   }
 
+  /** Create an owner-bound registered-font shaper with the supplied fallback aliases. */
   createShapeFnRegisteredWithFallback(
     aliases: readonly string[],
     weight = DEFAULT_FONT_WEIGHT,
@@ -1394,6 +1437,7 @@ export class WasmEngineHandle {
     };
   }
 
+  /** Create an owner-bound static PNG rasterizer with optional raster options. */
   createSvgToPngFn(): (svg: string, options?: PngRenderOptions) => Uint8Array {
     return (svg: string, options?: PngRenderOptions) => {
       this.ensureNotDisposed();
@@ -1442,40 +1486,60 @@ export class WasmEngineHandle {
     };
   }
 
-  /**
-   * Animated WebP muxing has no options-free export either, so a runtime built
-   * before it exists yields `undefined` and the engine reports
-   * `WEBP_NO_ENCODER`.
-   */
-  createSvgsToAnimatedWebpFn(): ((input: AnimationEncodeInput) => Uint8Array) | undefined {
+  /** Push a native sample after authenticating the managed raster-scene capability. */
+  pushAnimatedRasterFrame(
+    session: WasmAnimatedRasterSessionInstance,
+    scene: WasmRasterSceneHandle,
+    timeMs: number,
+    durationMs: number,
+  ): void {
+    this.ensureNotDisposed();
+    const state = requireRasterSceneState(scene);
+    if (state.owner !== this) {
+      throw new FatalError(
+        "RASTER_SCENE_WRONG_ENGINE",
+        "Raster scene belongs to a different engine instance",
+        { stage: "engine" },
+      );
+    }
+    const push = this.instance.push_animated_raster_frame;
+    if (typeof push !== "function") {
+      throw new FatalError(
+        "WASM_NO_ANIMATED_RASTER_FRAME_API",
+        "push_animated_raster_frame is unavailable for this WASM engine.",
+        { stage: "wasm" },
+      );
+    }
+    push.call(this.instance, session, state.ownerRecord.instance, timeMs, durationMs);
+  }
+
+  /** Open the common single-frame animation encoder, when the build provides it. */
+  createOpenAnimatedRasterSessionFn():
+    | ((input: AnimationSessionOpenInput) => AnimatedRasterSessionHandle)
+    | undefined {
     const instance = this.instance;
-    const encodeAnimatedWebp = instance.svgs_to_animated_webp;
-    if (typeof encodeAnimatedWebp !== "function") {
+    const open = instance.open_animated_raster;
+    if (typeof open !== "function" || typeof instance.push_animated_raster_frame !== "function") {
       return undefined;
     }
-    return (input: AnimationEncodeInput) => {
+    return (input: AnimationSessionOpenInput) => {
       this.ensureNotDisposed();
-      // wasm-bindgen methods read `this.__wbg_ptr`, so the call must keep the
-      // instance as its receiver.
-      return encodeAnimatedWebp.call(instance, JSON.stringify(input));
+      try {
+        const snapshot = snapshotAnimationOpenInput(input);
+        const native = open.call(instance, JSON.stringify(snapshot));
+        return new WasmAnimatedRasterSessionHandle(
+          native,
+          snapshot.format,
+          (scene, timeMs, durationMs) =>
+            this.pushAnimatedRasterFrame(native, scene, timeMs, durationMs),
+        );
+      } catch (error) {
+        throw normalizeAnimationWasmError(error);
+      }
     };
   }
 
-  /** Animated GIF muxing, absent on runtimes built before the export existed. */
-  createSvgsToAnimatedGifFn(): ((input: AnimationEncodeInput) => Uint8Array) | undefined {
-    const instance = this.instance;
-    const encodeAnimatedGif = instance.svgs_to_animated_gif;
-    if (typeof encodeAnimatedGif !== "function") {
-      return undefined;
-    }
-    return (input: AnimationEncodeInput) => {
-      this.ensureNotDisposed();
-      // wasm-bindgen methods read `this.__wbg_ptr`, so the call must keep the
-      // instance as its receiver.
-      return encodeAnimatedGif.call(instance, JSON.stringify(input));
-    };
-  }
-
+  /** Expose native layered composition validation when the required export is available. */
   createValidateLayeredSvgCompositionFn():
     | ((input: WasmLayeredCompositionValidationInput) => WasmLayeredCompositionValidationMetrics)
     | undefined {
@@ -1499,6 +1563,7 @@ export class WasmEngineHandle {
     };
   }
 
+  /** Create an owner-bound glyph outline lookup for a registered font. */
   createGlyphPathFn(
     alias: string,
     weight = DEFAULT_FONT_WEIGHT,
@@ -1551,6 +1616,7 @@ export class WasmEngineHandle {
     };
   }
 
+  /** Create an owner-bound glyph outline lookup with fallback font aliases. */
   createGlyphPathFnWithFallback(
     aliases: readonly string[],
     weight = DEFAULT_FONT_WEIGHT,
@@ -1635,6 +1701,7 @@ export class WasmEngineHandle {
     };
   }
 
+  /** Extract positioned glyph outlines with structured validation of the native result. */
   extractPositionedGlyphPaths(glyphs: PositionedGlyphPathRequest[]): WasmGlyphPath[] {
     this.ensureNotDisposed();
     const invalidGlyph = glyphs.find(
@@ -1676,6 +1743,7 @@ export class WasmEngineHandle {
     );
   }
 
+  /** Expose owner-bound variable-font shaping when the native variation export is available. */
   createShapeWithVariationsFn(
     alias: string,
     weight = DEFAULT_FONT_WEIGHT,
@@ -1734,6 +1802,7 @@ export class WasmEngineHandle {
     };
   }
 
+  /** Lay out an injected text-flow DTO and decode its structured native result. */
   layoutTextFlow(input: TextFlowInput): TextFlowResult {
     this.ensureNotDisposed();
     const layoutTextFlow = this.instance.layout_text_flow;
@@ -1751,6 +1820,7 @@ export class WasmEngineHandle {
     );
   }
 
+  /** Lay out text around supplied exclusions and decode its structured native result. */
   layoutTextFlowWithExclusions(input: TextFlowWithExclusionsInput): TextFlowWithExclusionsResult {
     this.ensureNotDisposed();
     const layoutTextFlowWithExclusions = this.instance.layout_text_flow_with_exclusions;
@@ -1768,6 +1838,7 @@ export class WasmEngineHandle {
     );
   }
 
+  /** Measure an injected text block through this engine's registered fonts. */
   measureTextBlock(input: MeasureTextBlockInput): MeasureTextBlockResult {
     this.ensureNotDisposed();
     const measureTextBlock = this.instance.measure_text_block;
@@ -1785,6 +1856,7 @@ export class WasmEngineHandle {
     );
   }
 
+  /** Measure the native shrinkwrapped text result from the supplied DTO. */
   shrinkwrapText(input: ShrinkwrapTextInput): ShrinkwrapTextResult {
     this.ensureNotDisposed();
     const shrinkwrapText = this.instance.shrinkwrap_text;
@@ -1802,6 +1874,7 @@ export class WasmEngineHandle {
     );
   }
 
+  /** Measure the native shrinkwrapped flow result from the supplied DTO. */
   shrinkwrapFlow(input: ShrinkwrapFlowInput): ShrinkwrapFlowResult {
     this.ensureNotDisposed();
     const shrinkwrapFlow = this.instance.shrinkwrap_flow;
@@ -1819,6 +1892,7 @@ export class WasmEngineHandle {
     );
   }
 
+  /** Measure intrinsic inline dimensions with native result validation. */
   measureIntrinsicInlineSize(input: IntrinsicInlineSizeInput): IntrinsicInlineSizeResult {
     this.ensureNotDisposed();
     const measureIntrinsicInlineSize = this.instance.measure_intrinsic_inline_size;
@@ -1836,6 +1910,7 @@ export class WasmEngineHandle {
     );
   }
 
+  /** Release owned prepared scenes, raster scenes and the native engine once. */
   dispose(): void {
     if (!this._disposed) {
       for (const ownerRecord of preparedScenesByOwner.get(this) ?? []) {
@@ -1924,6 +1999,7 @@ export type FlowExclusionMarginPx =
       left?: number;
     };
 
+/** Pixel geometry of one exclusion supplied to native text-flow layout. */
 export type FlowExclusionShape =
   | {
       kind: "rect";

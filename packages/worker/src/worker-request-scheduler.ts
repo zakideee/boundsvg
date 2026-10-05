@@ -27,6 +27,9 @@ type ScheduledRequest = {
   completion: Completion | undefined;
 };
 
+/** Existing per-request timeout with an optional animation-wide absolute deadline. */
+type RequestTiming = { deadline?: number; error?: (cause: unknown) => unknown };
+
 type StreamControl = {
   streamId: number;
   entry: ScheduledRequest;
@@ -51,12 +54,16 @@ export class WorkerRequestScheduler {
   private inFlight: ScheduledRequest | undefined;
   private control: StreamControl | undefined;
   private streamId: number | undefined;
+  private streamKind: "frame" | "raster" | undefined;
+  /** A raster job has one pull reservation independent of ordinary queue admission. */
+  private pull: ScheduledRequest | undefined;
   private streamFailure: unknown;
   private idleWait: IdleWait | undefined;
   private drainPromise: Promise<void> | undefined;
   private isDraining = false;
   private isDisposed = false;
 
+  /** Bind the per-request deadline and Worker dispatch transport to this scheduler. */
   constructor(
     private readonly timeoutMs: number,
     private readonly transport: SchedulerTransport,
@@ -70,10 +77,17 @@ export class WorkerRequestScheduler {
     if (this.isDraining) {
       throw workerLifecycleError("WORKER_ENGINE_DRAINING", "WorkerEngine is draining");
     }
+    if (this.streamFailure !== undefined) {
+      throw this.streamFailure;
+    }
   }
 
   /** Admit an ordinary request without replacing any other consumer's work. */
-  send(request: WorkerRequest, signal?: AbortSignal): Promise<WorkerResponse> {
+  send(
+    request: WorkerRequest,
+    signal?: AbortSignal,
+    timing?: RequestTiming,
+  ): Promise<WorkerResponse> {
     try {
       this.assertAccepting();
       if (signal?.aborted) {
@@ -85,11 +99,70 @@ export class WorkerRequestScheduler {
         });
       }
       const snapshot = snapshotRequest(request);
-      const { entry, promise } = this.createEntry(snapshot, signal);
+      const { entry, promise } = this.createEntry(snapshot, signal, timing);
       this.queue.push(entry);
       this.pump();
       return promise;
     } catch (error: unknown) {
+      return Promise.reject(error);
+    }
+  }
+
+  /** Adopt a detached animation entry without copying its explicit schedule again. */
+  sendRasterOpen(
+    request: Extract<
+      WorkerRequest,
+      { type: "open-raster-stream" | "open-layout-transition-raster-stream" }
+    >,
+    timing: RequestTiming,
+  ): Promise<WorkerResponse> {
+    try {
+      this.assertAccepting();
+      if (this.streamId !== undefined && !this.control) {
+        throw workerLifecycleError("WORKER_POOL_BUSY", "Worker already owns a stream", {
+          operationLimit: 1,
+        });
+      }
+      if (this.queue.length >= QUEUE_LIMIT) {
+        throw workerLifecycleError("WORKER_QUEUE_FULL", "Worker request queue is full", {
+          queueLimit: QUEUE_LIMIT,
+        });
+      }
+      const { entry, promise } = this.createEntry(request, undefined, timing);
+      this.queue.push(entry);
+      this.pump();
+      return promise;
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  /** Reserve one raster pull without filling or jumping ahead of the existing generic FIFO. */
+  sendRasterPull(
+    request: Extract<WorkerRequest, { type: "next-raster-stream" }>,
+    timing: RequestTiming,
+    signal?: AbortSignal,
+  ): Promise<WorkerResponse> {
+    try {
+      if (this.isDisposed) {
+        throw workerEngineDisposedError();
+      }
+      if (this.streamFailure !== undefined) {
+        throw this.streamFailure;
+      }
+      if (this.pull) {
+        throw workerLifecycleError("WORKER_POOL_BUSY", "An animation pull is already pending", {
+          operationLimit: 1,
+        });
+      }
+      if (signal?.aborted) {
+        throw abortedRequestError(request);
+      }
+      const { entry, promise } = this.createEntry({ ...request }, signal, timing);
+      this.pull = entry;
+      this.pump();
+      return promise;
+    } catch (error) {
       return Promise.reject(error);
     }
   }
@@ -105,6 +178,10 @@ export class WorkerRequestScheduler {
     if (this.streamFailure !== undefined) {
       return Promise.reject(this.streamFailure);
     }
+    const unopened = this.queue.find((entry) => entry.id === streamId && isStreamOpen(entry.type));
+    if (unopened) {
+      this.cancel(unopened, abortedRequestError(unopened));
+    }
     if (this.streamId !== streamId) {
       return Promise.resolve({ id: streamId, type: "close-frame-stream-ok", streamId });
     }
@@ -118,7 +195,7 @@ export class WorkerRequestScheduler {
     try {
       const request: WorkerRequest = {
         id: this.transport.nextRequestId(),
-        type: "close-frame-stream",
+        type: this.streamKind === "raster" ? "close-raster-stream" : "close-frame-stream",
         streamId,
       };
       const { entry, promise } = this.createEntry(request);
@@ -140,9 +217,16 @@ export class WorkerRequestScheduler {
     if (entry.completion && performance.now() >= entry.completion.deadline) {
       this.expire(entry);
     }
-    if (entry.type === "close-frame-stream") {
-      if (response?.type === "close-frame-stream-ok" && response.streamId === this.streamId) {
+    if (entry.type === "close-frame-stream" || entry.type === "close-raster-stream") {
+      const expected =
+        entry.type === "close-raster-stream" ? "close-raster-stream-ok" : "close-frame-stream-ok";
+      if (
+        response?.type === expected &&
+        "streamId" in response &&
+        response.streamId === this.streamId
+      ) {
         this.streamId = undefined;
+        this.streamKind = undefined;
       } else {
         this.streamFailure =
           response?.type === "error"
@@ -157,6 +241,9 @@ export class WorkerRequestScheduler {
       this.settle(entry, { error: invalidWorkerResponseError(id) });
     }
     this.inFlight = undefined;
+    if (this.pull === entry) {
+      this.pull = undefined;
+    }
     this.pump();
     return true;
   }
@@ -199,6 +286,11 @@ export class WorkerRequestScheduler {
     return this.drainPromise;
   }
 
+  /** Close new admission while an already admitted main-thread sink callback settles. */
+  closeAdmission(): void {
+    this.isDraining = true;
+  }
+
   /** Terminate all local requests and release timers, signal listeners, and payloads. */
   dispose(error: unknown | ((id: number) => unknown) = workerEngineDisposedError()): void {
     if (this.isDisposed) {
@@ -207,6 +299,7 @@ export class WorkerRequestScheduler {
     this.isDisposed = true;
     const entries = new Set([
       ...this.queue,
+      ...(this.pull ? [this.pull] : []),
       ...(this.inFlight ? [this.inFlight] : []),
       ...(this.control ? [this.control.entry] : []),
     ]);
@@ -214,6 +307,8 @@ export class WorkerRequestScheduler {
     this.inFlight = undefined;
     this.control = undefined;
     this.streamId = undefined;
+    this.streamKind = undefined;
+    this.pull = undefined;
     this.streamFailure = undefined;
     for (const entry of entries) {
       this.settle(entry, { error: typeof error === "function" ? error(entry.id) : error });
@@ -222,7 +317,7 @@ export class WorkerRequestScheduler {
     this.rejectIdleWait(typeof error === "function" ? workerEngineDisposedError() : error);
   }
 
-  private createEntry(request: WorkerRequest, signal?: AbortSignal) {
+  private createEntry(request: WorkerRequest, signal?: AbortSignal, timing?: RequestTiming) {
     const entry: ScheduledRequest = {
       id: request.id,
       type: request.type,
@@ -230,14 +325,17 @@ export class WorkerRequestScheduler {
       completion: undefined,
     };
     const promise = new Promise<WorkerResponse>((resolve, reject) => {
-      const deadline = performance.now() + this.timeoutMs;
-      const timer = setTimeout(() => this.expire(entry), this.timeoutMs);
+      const deadline = timing?.deadline ?? performance.now() + this.timeoutMs;
+      const timer = setTimeout(() => this.expire(entry), Math.max(0, deadline - performance.now()));
       const handleAbort = signal ? () => this.cancel(entry, abortedRequestError(entry)) : undefined;
       entry.completion = { resolve, reject, timer, deadline, signal, handleAbort };
       if (signal && handleAbort) {
         signal.addEventListener("abort", handleAbort, { once: true });
       }
     });
+    if (timing?.error) {
+      deadlineErrors.set(entry, timing.error);
+    }
     return { entry, promise };
   }
 
@@ -262,7 +360,8 @@ export class WorkerRequestScheduler {
   }
 
   private expire(entry: ScheduledRequest): void {
-    this.cancel(entry, workerTimeoutError(entry, this.timeoutMs));
+    const cause = workerTimeoutError(entry, this.timeoutMs);
+    this.cancel(entry, deadlineErrors.get(entry)?.(cause) ?? cause);
   }
 
   private cancel(entry: ScheduledRequest, error: unknown): void {
@@ -271,6 +370,9 @@ export class WorkerRequestScheduler {
     const queueIndex = this.queue.indexOf(entry);
     if (queueIndex !== -1) {
       this.queue.splice(queueIndex, 1);
+    }
+    if (this.pull === entry && this.inFlight !== entry) {
+      this.pull = undefined;
     }
     if (entry === this.control?.entry) {
       this.streamFailure = error;
@@ -289,10 +391,26 @@ export class WorkerRequestScheduler {
     if (this.isDisposed || this.inFlight) {
       return;
     }
-    const entry = this.control?.entry ?? this.queue.shift();
+    if (this.streamFailure !== undefined) {
+      for (const waiting of this.queue.splice(0)) {
+        this.settle(waiting, { error: this.streamFailure });
+        waiting.request = undefined;
+      }
+      if (this.pull) {
+        this.settle(this.pull, { error: this.streamFailure });
+        this.pull.request = undefined;
+        this.pull = undefined;
+      }
+      this.rejectIdleWait(this.streamFailure);
+      return;
+    }
+    const entry = this.control?.entry ?? this.queue.shift() ?? this.pull;
     if (entry) {
       const request = entry.request;
       if (!request || !entry.completion) {
+        if (this.pull === entry) {
+          this.pull = undefined;
+        }
         this.pump();
         return;
       }
@@ -304,6 +422,11 @@ export class WorkerRequestScheduler {
       entry.request = undefined;
       if (isStreamOpen(request.type)) {
         this.streamId = request.id;
+        this.streamKind =
+          request.type === "open-raster-stream" ||
+          request.type === "open-layout-transition-raster-stream"
+            ? "raster"
+            : "frame";
       }
       try {
         this.transport.post(request);
@@ -313,10 +436,17 @@ export class WorkerRequestScheduler {
         this.inFlight = undefined;
         if (isStreamOpen(request.type)) {
           this.streamId = undefined;
-        } else if (request.type === "close-frame-stream") {
+          this.streamKind = undefined;
+        } else if (
+          request.type === "close-frame-stream" ||
+          request.type === "close-raster-stream"
+        ) {
           // A failed close did not release the remote stream; finish must report it.
           this.streamFailure = transportError;
           this.control = undefined;
+        }
+        if (this.pull === entry) {
+          this.pull = undefined;
         }
         this.pump();
       }
@@ -348,8 +478,16 @@ export class WorkerRequestScheduler {
 }
 
 function isStreamOpen(type: WorkerRequest["type"]): boolean {
-  return type === "open-frame-stream" || type === "open-layout-transition-frame-stream";
+  return (
+    type === "open-frame-stream" ||
+    type === "open-layout-transition-frame-stream" ||
+    type === "open-raster-stream" ||
+    type === "open-layout-transition-raster-stream"
+  );
 }
+
+/** Keep deadline diagnostics outside payloads so they are never cloned or transferred. */
+const deadlineErrors = new WeakMap<ScheduledRequest, (cause: unknown) => unknown>();
 
 function abortedRequestError(request: Pick<WorkerRequest, "id" | "type">): FatalError {
   return workerLifecycleError("WORKER_REQUEST_ABORTED", "Worker request was aborted", {

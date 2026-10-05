@@ -78,8 +78,8 @@ test("fixed static playback prepares its SVG schedule once", () => {
   );
 });
 
-test("animated artifact failures are returned instead of thrown", () => {
-  const result = downloadAnimatedArtifact({
+test("animated artifact failures are returned instead of thrown", async () => {
+  const result = await downloadAnimatedArtifact({
     engine: {
       renderToAnimatedWebp: () => {
         throw new Error("encoder exploded");

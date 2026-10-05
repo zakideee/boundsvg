@@ -5,6 +5,13 @@ import { watchAndRun } from "../src/watch.js";
 function createTestIo(overrides: Partial<CliIo> = {}): CliIo & { stderr: string[] } {
   const stderr: string[] = [];
   return {
+    openAnimatedRasterSink: async () => ({
+      write: () => undefined,
+      patch: () => undefined,
+      finish: () => undefined,
+      abort: () => undefined,
+    }),
+    getFileByteLength: () => 0,
     argv: [],
     readTextFile: () => "",
     readBinaryFile: () => new Uint8Array(),

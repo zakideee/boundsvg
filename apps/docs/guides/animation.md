@@ -401,12 +401,12 @@ const stillPng = engine.renderToPng(scene, {
 });
 ```
 
-| Output                            | Behavior                                                                                                                                          |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `renderToAnimatedSvg`             | Emits CSS `@keyframes`; `independent` preserves authored clocks, while `timeline` compiles them onto one caller-defined document clock.           |
-| `renderToSvg`                     | Emits a static pose with no animation CSS. Animated input requires an explicit `timeMs`.                                                          |
-| `renderToPng` / `renderToWebp`    | Samples a static pose at `timeMs`; SVG-only playback and namespace options are rejected.                                                          |
-| `renderToAnimatedWebp` / `...Gif` | Samples the requested frame schedule; a required `iterations` controls total container plays and is separate from animated SVG timeline playback. |
+| Output                            | Behavior                                                                                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `renderToAnimatedSvg`             | Emits CSS `@keyframes`; `independent` preserves authored clocks, while `timeline` compiles them onto one caller-defined document clock.                       |
+| `renderToSvg`                     | Emits a static pose with no animation CSS. Animated input requires an explicit `timeMs`.                                                                      |
+| `renderToPng` / `renderToWebp`    | Samples a static pose at `timeMs`; SVG-only playback and namespace options are rejected.                                                                      |
+| `renderToAnimatedWebp` / `...Gif` | Writes the requested schedule to a required sink; returns a Promise with metadata; `iterations` controls total container plays independently of SVG playback. |
 
 `timeMs` must be a non-negative finite number. It is optional for nonanimated
 static input and selects the base pose of animated SVG output. When more
@@ -689,7 +689,10 @@ pending/buffered results by concurrency, and supports `AbortSignal`. See the
 [`@boundsvg/worker` API](/api/worker).
 
 `renderToAnimatedWebp` and `renderToAnimatedGif` package the same sampling into
-a single animated file. Their required `iterations` option controls total
+a single animated file through a required sink and return a Promise with output
+metadata. Each frame is sampled and encoded within WASM before its chunks are
+written; animated file generation does not return intermediate frame SVGs to JS.
+File and external spool sinks avoid collecting all output in memory. Their required `iterations` option controls total
 container plays independently of each node animation's own iteration setting —
 see [PNG, WebP & GIF Export](/guides/png-export).
 There is still no APNG API; for MP4 see [Video Export](/guides/video-export),

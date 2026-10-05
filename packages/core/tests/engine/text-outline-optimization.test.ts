@@ -2,6 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { IRNode, IRTextNode } from "../../src/ir/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
+import {
+  type CapturedRasterSession,
+  captureRasterSession,
+  collectAnimatedRaster,
+  createMockRasterSession,
+} from "../helpers/animation-collector.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
 function findTextNode(node: IRNode): IRTextNode | undefined {
@@ -107,8 +113,9 @@ describe("text outline SVG serialization", () => {
     }
   });
 
-  it("passes shortened paths through every raster entry", () => {
+  it("passes shortened paths through every raster entry", async () => {
     const rasterSvgs: string[] = [];
+    const animatedSessions: CapturedRasterSession[] = [];
     const pngRasterizer = handle.createSvgToPngFn();
     const webpRasterizer = handle.createSvgToWebpFn();
     const engine = createEngineFromHandle(handle, {
@@ -120,14 +127,7 @@ describe("text outline SVG serialization", () => {
         rasterSvgs.push(svg);
         return webpRasterizer(svg, options);
       },
-      svgsToAnimatedWebpFn: (input) => {
-        rasterSvgs.push(...input.frames.map((frame) => frame.svg));
-        return new Uint8Array([1]);
-      },
-      svgsToAnimatedGifFn: (input) => {
-        rasterSvgs.push(...input.frames.map((frame) => frame.svg));
-        return new Uint8Array([1]);
-      },
+      openAnimatedRasterSessionFn: captureRasterSession(createMockRasterSession, animatedSessions),
     });
     const input = scene();
     const compiled = engine.compile(input);
@@ -135,8 +135,15 @@ describe("text outline SVG serialization", () => {
     engine.renderToPng(input);
     engine.renderCompiledToPng(compiled);
     engine.renderToWebp(input);
-    engine.renderToAnimatedWebp(input, { durationMs: 100, fps: 10, iterations: 1 });
-    engine.renderToAnimatedGif(input, { durationMs: 100, fps: 10, iterations: 1 });
+    await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(input, { durationMs: 100, fps: 10, iterations: 1 }, sink),
+    );
+    await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedGif(input, { durationMs: 100, fps: 10, iterations: 1 }, sink),
+    );
+    rasterSvgs.push(
+      ...animatedSessions.flatMap((session) => session.frames.map((frame) => frame.svg)),
+    );
     engine.renderToLayeredPng(input);
     [...engine.renderFrames(input, { format: "png", timesMs: [0] })];
     [...engine.renderCompiledFrames(compiled, { format: "png", timesMs: [0] })];

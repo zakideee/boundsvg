@@ -61,33 +61,61 @@ export type PipelineStage =
   | "engine"
   | "analyzer";
 
+/** Stable constructor for detached diagnostic field lookup tables. */
 const CapturedMap = Map;
+/** Stable conversion of validated array-index property names. */
 const CapturedNumber = Number;
+/** Stable constructor for closed diagnostic field and stage sets. */
 const CapturedSet = Set;
+/** Stable conversion of primitive diagnostics and validated array indices. */
 const CapturedString = String;
+/** Stable cycle tracking for diagnostic context snapshots. */
 const CapturedWeakSet = WeakSet;
+/** Expected prototype for ordinary diagnostic context arrays. */
 const arrayPrototype = Array.prototype;
+/** Captured stack removal used during iterative context cloning. */
 const arrayPrototypePop = Array.prototype.pop;
+/** Captured stack insertion used during iterative context cloning. */
 const arrayPrototypePush = Array.prototype.push;
+/** Captured array brand check for diagnostic containers and envelopes. */
 const arrayIsArray = Array.isArray;
+/** Captured lookup for authenticated envelope fields. */
 const mapPrototypeGet = Map.prototype.get;
+/** Captured presence check for required diagnostic fields. */
 const mapPrototypeHas = Map.prototype.has;
+/** Captured insertion into detached envelope field maps. */
 const mapPrototypeSet = Map.prototype.set;
+/** Captured finite-number check before context values reach JSON. */
 const numberIsFinite = Number.isFinite;
+/** Captured exact-index check for diagnostic context arrays. */
 const numberIsSafeInteger = Number.isSafeInteger;
+/** Captured creation of detached null-prototype context records. */
 const objectCreate = Object.create;
+/** Captured own-data-property construction for context snapshots. */
 const objectDefineProperty = Object.defineProperty;
+/** Captured prototype inspection that cannot be replaced during validation. */
 const objectGetPrototypeOf = Object.getPrototypeOf;
+/** Captured equality predicate for normalizing negative-zero context values. */
 const objectIs = Object.is;
+/** Expected prototype for ordinary diagnostic envelope and context records. */
 const objectPrototype = Object.prototype;
+/** Captured invocation of stored built-ins without caller-controlled methods. */
 const reflectApply = Reflect.apply;
+/** Captured descriptor inspection without invoking user accessors. */
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+/** Captured complete own-key inspection, including non-enumerable and symbol keys. */
 const reflectOwnKeys = Reflect.ownKeys;
+/** Captured matching for diagnostic code grammar. */
 const regexpPrototypeTest = RegExp.prototype.test;
+/** Captured membership check for closed diagnostic vocabularies. */
 const setPrototypeHas = Set.prototype.has;
+/** Captured whitespace check for required non-empty diagnostic strings. */
 const stringPrototypeTrim = String.prototype.trim;
+/** Captured cycle-tracking insertion when entering a context container. */
 const weakSetPrototypeAdd = WeakSet.prototype.add;
+/** Captured cycle-tracking removal when leaving a context container. */
 const weakSetPrototypeDelete = WeakSet.prototype.delete;
+/** Captured check that rejects a currently active context container cycle. */
 const weakSetPrototypeHas = WeakSet.prototype.has;
 
 function arrayPop<Value>(target: Value[]): Value | undefined {
@@ -134,6 +162,7 @@ function weakSetHas<Value extends object>(target: WeakSet<Value>, value: Value):
   return reflectApply(weakSetPrototypeHas, target, [value]) as boolean;
 }
 
+/** Closed stage identities accepted by fatal and recoverable diagnostics. */
 const PIPELINE_STAGES = new CapturedSet<string>([
   "validate",
   "layout",
@@ -146,7 +175,9 @@ const PIPELINE_STAGES = new CapturedSet<string>([
   "analyzer",
 ]);
 
+/** Uppercase identifier grammar for stable public diagnostic codes. */
 const DIAGNOSTIC_CODE_PATTERN = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
+/** Envelope field names forbidden inside user diagnostic context. */
 const RESERVED_CONTEXT_KEYS = new CapturedSet([
   "severity",
   "code",
@@ -649,7 +680,9 @@ export const INTERNAL_RECOVERABLE_POLICIES = [
 
 type InternalRecoverableCode = (typeof INTERNAL_RECOVERABLE_POLICIES)[number]["code"];
 
+/** Closed optional fields accepted by the FatalError constructor. */
 const FATAL_OPTION_FIELDS = new CapturedSet(["stage", "nodeId", "context"]);
+/** Complete key set accepted by serialized fatal diagnostics. */
 const FATAL_SERIALIZED_FIELDS = new CapturedSet([
   "severity",
   "code",
@@ -658,7 +691,9 @@ const FATAL_SERIALIZED_FIELDS = new CapturedSet([
   "nodeId",
   "context",
 ]);
+/** Closed fields accepted by the RecoverableError constructor. */
 const RECOVERABLE_OPTION_FIELDS = new CapturedSet(["fallback", "stage", "nodeId", "context"]);
+/** Complete key set accepted by serialized recoverable diagnostics. */
 const RECOVERABLE_SERIALIZED_FIELDS = new CapturedSet([
   "severity",
   "code",
@@ -777,6 +812,10 @@ export class FatalError extends Error {
   readonly nodeId?: string;
   readonly context?: DiagnosticContext;
 
+  /**
+   * Validate the fatal envelope and detach any caller-owned diagnostic context.
+   * @throws {TypeError} When the code, message, options or context violate the diagnostic contract.
+   */
   constructor(code: string, message: string, options?: FatalErrorOptions) {
     const validatedCode = requireDiagnosticCode(code);
     const validatedMessage = requireNonEmptyDiagnosticString(message, "message");
@@ -799,7 +838,10 @@ export class FatalError extends Error {
     }
   }
 
-  /** Rehydrate an exact serialized fatal diagnostic. */
+  /**
+   * Rehydrate an exact serialized fatal diagnostic with detached context.
+   * @throws {TypeError} When the input is not a valid serialized fatal envelope.
+   */
   static fromSerialized(value: unknown): FatalError {
     const parsed = parseSerializedFatal(value);
     return new FatalError(parsed.code, parsed.message, {
@@ -809,7 +851,10 @@ export class FatalError extends Error {
     });
   }
 
-  /** Serialize the current mutable context into a fresh detached value. */
+  /**
+   * Serialize the current mutable context into a fresh detached value.
+   * @throws {TypeError} When a later context mutation makes it invalid for serialization.
+   */
   toJSON(): SerializedFatalError {
     const context = this.context === undefined ? undefined : cloneDiagnosticContext(this.context);
     return {
@@ -832,6 +877,10 @@ export class RecoverableError extends Error {
   readonly nodeId?: string;
   readonly context?: DiagnosticContext;
 
+  /**
+   * Validate the completed fallback description and detach caller-owned diagnostic context.
+   * @throws {TypeError} When the envelope, required fallback/stage or context is invalid.
+   */
   constructor(code: string, message: string, options: RecoverableErrorOptions) {
     const validatedCode = requireDiagnosticCode(code);
     const validatedMessage = requireNonEmptyDiagnosticString(message, "message");
@@ -855,7 +904,10 @@ export class RecoverableError extends Error {
     }
   }
 
-  /** Rehydrate an exact serialized recoverable diagnostic. */
+  /**
+   * Rehydrate a completed fallback diagnostic with detached context.
+   * @throws {TypeError} When the input is not a valid serialized recoverable envelope.
+   */
   static fromSerialized(value: unknown): RecoverableError {
     const parsed = parseSerializedRecoverable(value);
     return new RecoverableError(parsed.code, parsed.message, {
@@ -866,7 +918,10 @@ export class RecoverableError extends Error {
     });
   }
 
-  /** Serialize the current mutable context into a fresh detached value. */
+  /**
+   * Serialize the current mutable context into a fresh detached value.
+   * @throws {TypeError} When a later context mutation makes it invalid for serialization.
+   */
   toJSON(): SerializedRecoverableError {
     const context = this.context === undefined ? undefined : cloneDiagnosticContext(this.context);
     return {
@@ -927,4 +982,29 @@ export function createInternalRecoverableError(
     throw new TypeError(`Internal recoverable ${code} has untracked legacy debt`);
   }
   return new RecoverableError(code, message, options);
+}
+
+/**
+ * Rebuild a FatalError from a WASM render export failure. The exports throw
+ * a structured JSON envelope (code / message / stage / nodeId); anything
+ * else becomes a generic engine-stage failure.
+ */
+export function wrapWasmRenderError(error: unknown): FatalError {
+  try {
+    if (error instanceof FatalError) {
+      return error;
+    }
+  } catch {
+    // A hostile proxy may make instanceof itself throw.
+  }
+  const text = formatUnknownDiagnosticValue(error, "Unknown WASM render failure");
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (FatalError.isSerialized(parsed)) {
+      return FatalError.fromSerialized(parsed);
+    }
+  } catch {
+    // Non-JSON and malformed structured diagnostics use the stable boundary error.
+  }
+  return new FatalError("WASM_RENDER_FAILED", text, { stage: "engine" });
 }

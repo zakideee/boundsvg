@@ -13,15 +13,22 @@ use crate::ir::types::BBox;
 /// SVG-order affine matrix: `(x, y) -> (a*x + c*y + e, b*x + d*y + f)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct AffineMatrix {
+    /// Horizontal contribution of the input x coordinate.
     pub a: f64,
+    /// Vertical contribution of the input x coordinate.
     pub b: f64,
+    /// Horizontal contribution of the input y coordinate.
     pub c: f64,
+    /// Vertical contribution of the input y coordinate.
     pub d: f64,
+    /// Horizontal translation.
     pub e: f64,
+    /// Vertical translation.
     pub f: f64,
 }
 
 impl AffineMatrix {
+    /// Return the transform that preserves both coordinates.
     #[must_use]
     pub const fn identity() -> Self {
         Self {
@@ -34,6 +41,7 @@ impl AffineMatrix {
         }
     }
 
+    /// Compose this matrix with the right-hand matrix in SVG transform order.
     #[must_use]
     pub fn multiply(self, rhs: Self) -> Self {
         Self {
@@ -140,11 +148,15 @@ pub fn transform_to_svg(transform: &Transform2D) -> String {
     commands.join(" ")
 }
 
-/// Mirror of TS `hasTransform`: a transform paints only when its SVG
-/// attribute value is non-empty.
+/// Check whether SVG emission would contain a transform command.
+/// Zero translation is omitted; explicit rotation or scale still emits.
 #[must_use]
 pub fn has_transform(transform: &Transform2D) -> bool {
-    !transform_to_svg(transform).is_empty()
+    transform.translate_x.unwrap_or(0.0) != 0.0
+        || transform.translate_y.unwrap_or(0.0) != 0.0
+        || transform.rotate_deg.is_some()
+        || transform.scale_x.is_some()
+        || transform.scale_y.is_some()
 }
 
 /// Rebase the transform origin onto the node's bbox origin.
@@ -220,6 +232,75 @@ mod tests {
 
     fn bbox(x: f64, y: f64) -> BBox {
         BBox::new(x, y, 10.0, 10.0)
+    }
+
+    #[test]
+    fn transform_presence_matches_emitted_commands() {
+        let optional_values = [None, Some(0.0), Some(1.25)];
+        for case_index in 0..3_usize.pow(7) {
+            let mut selection = case_index;
+            let values: [Option<f64>; 7] = std::array::from_fn(|_| {
+                let value = optional_values[selection % optional_values.len()];
+                selection /= optional_values.len();
+                value
+            });
+            let transform = Transform2D {
+                translate_x: values[0],
+                translate_y: values[1],
+                rotate_deg: values[2],
+                scale_x: values[3],
+                scale_y: values[4],
+                origin_x: values[5],
+                origin_y: values[6],
+            };
+            assert_eq!(
+                has_transform(&transform),
+                !transform_to_svg(&transform).is_empty()
+            );
+        }
+        for value in [
+            -0.0,
+            f64::from_bits(1),
+            -f64::from_bits(1),
+            f64::MAX,
+            -f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ] {
+            for transform in [
+                Transform2D {
+                    translate_x: Some(value),
+                    ..Transform2D::default()
+                },
+                Transform2D {
+                    translate_y: Some(value),
+                    ..Transform2D::default()
+                },
+                Transform2D {
+                    rotate_deg: Some(value),
+                    ..Transform2D::default()
+                },
+                Transform2D {
+                    scale_x: Some(value),
+                    ..Transform2D::default()
+                },
+                Transform2D {
+                    scale_y: Some(value),
+                    ..Transform2D::default()
+                },
+                Transform2D {
+                    origin_x: Some(value),
+                    origin_y: Some(value),
+                    ..Transform2D::default()
+                },
+            ] {
+                assert_eq!(
+                    has_transform(&transform),
+                    !transform_to_svg(&transform).is_empty()
+                );
+            }
+        }
     }
 
     #[test]

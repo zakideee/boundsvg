@@ -19,9 +19,12 @@ Given the same
 - render options,
 
 `renderToSvg` and `renderToAnimatedSvg` return the same SVG string, and
-`renderToPng`, `renderToWebp`, `renderToAnimatedWebp`, and
-`renderToAnimatedGif` return the same bytes on Node.js, in the browser, and in
-a Web Worker, subject to the mode boundaries and exceptions on this page.
+`renderToPng` and `renderToWebp` return the same bytes on Node.js, in the browser,
+and in a Web Worker. `renderToAnimatedWebp` and `renderToAnimatedGif` write the
+same completed artifact to the required sink and resolve with its format,
+frame count, and byte count. A WebP sink must apply the final RIFF patch; an
+explicit collector can return the completed bytes. These guarantees are
+subject to the mode boundaries and exceptions on this page.
 Structured fatal failures and ordered recoverable warnings are deterministic
 contract artifacts too.
 

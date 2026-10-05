@@ -7,6 +7,10 @@
     reason = "layout/style mapping and text measurement encode many independent SVG/CSS compatibility branches"
 )]
 
+#[cfg(all(test, feature = "resvg-backend"))]
+mod animation_frame_tests;
+#[cfg(feature = "resvg-backend")]
+pub mod animation_writer;
 pub mod diagnostics;
 pub mod error;
 pub mod flow;
@@ -39,6 +43,158 @@ pub mod webp_anim;
 pub mod webp_encode;
 mod wire;
 pub use boundtext::text;
+
+#[cfg(feature = "resvg-backend")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_name = String)]
+    type AnimationInputString;
+    #[wasm_bindgen(method, getter, js_name = length)]
+    fn code_unit_length(this: &AnimationInputString) -> u32;
+    #[wasm_bindgen(method, getter, js_name = isWellFormed)]
+    fn well_formed_method(this: &AnimationInputString) -> JsValue;
+    #[wasm_bindgen(method, js_name = isWellFormed)]
+    fn is_well_formed(this: &AnimationInputString) -> bool;
+    #[wasm_bindgen(method, js_name = charCodeAt)]
+    fn code_unit_at(this: &AnimationInputString, index: u32) -> u16;
+
+    #[wasm_bindgen(js_name = Uint8Array)]
+    type AnimationChunkArray;
+    #[wasm_bindgen(constructor, js_class = "Uint8Array")]
+    fn copy_chunk(bytes: &[u8]) -> AnimationChunkArray;
+}
+
+/// Authenticate primitive JSON and raw UTF-16 before wasm-bindgen's lossy string conversion.
+///
+/// # Errors
+///
+/// Return a closed wrongType or invalidUnicode diagnostic without coercion.
+#[cfg(feature = "resvg-backend")]
+fn animation_primitive_json(
+    input: &JsValue,
+    format: raster_anim::AnimatedRasterFormat,
+    operation: &str,
+) -> Result<String, error::EngineError> {
+    use wasm_bindgen::JsCast;
+    if !input.is_string() {
+        return Err(raster_anim::animation_failure(
+            format,
+            operation,
+            raster_anim::AnimationFailureReason::WrongType,
+            None,
+            None,
+        ));
+    }
+    let string: &AnimationInputString = input.unchecked_ref();
+    let is_valid = if string.well_formed_method().is_function() {
+        string.is_well_formed()
+    } else {
+        let mut index = 0;
+        let mut is_valid = true;
+        while index < string.code_unit_length() {
+            let unit = string.code_unit_at(index);
+            if (0xd800..=0xdbff).contains(&unit) {
+                index += 1;
+                if index == string.code_unit_length()
+                    || !(0xdc00..=0xdfff).contains(&string.code_unit_at(index))
+                {
+                    is_valid = false;
+                    break;
+                }
+            } else if (0xdc00..=0xdfff).contains(&unit) {
+                is_valid = false;
+                break;
+            }
+            index += 1;
+        }
+        is_valid
+    };
+    if !is_valid {
+        return Err(raster_anim::animation_failure(
+            format,
+            operation,
+            raster_anim::AnimationFailureReason::InvalidUnicode,
+            None,
+            None,
+        ));
+    }
+    input.as_string().ok_or_else(|| {
+        raster_anim::animation_failure(
+            format,
+            operation,
+            raster_anim::AnimationFailureReason::WrongType,
+            None,
+            None,
+        )
+    })
+}
+
+/// Incremental animated encoder capability owned by its generated JavaScript class.
+#[cfg(feature = "resvg-backend")]
+#[wasm_bindgen]
+pub struct AnimatedRasterSession {
+    format: raster_anim::AnimatedRasterFormat,
+    owner: Arc<()>,
+    render_options: Option<RenderSvgOptions>,
+    session: raster_anim::AnimationSession<animation_writer::StagedWriter>,
+}
+
+#[cfg(feature = "resvg-backend")]
+#[wasm_bindgen]
+impl AnimatedRasterSession {
+    /// Return a copied `Uint8Array` of at most 64 KiB, or explicit null after a drain.
+    ///
+    /// # Errors
+    ///
+    /// Return the primary failure or terminal-state diagnostic.
+    pub fn read_chunk(&mut self) -> Result<JsValue, JsValue> {
+        catch_unwind_to_js(AssertUnwindSafe(|| {
+            let chunk = self.session.read_chunk();
+            if chunk.is_err() {
+                self.render_options = None;
+            }
+            chunk
+                .map(|chunk| match chunk {
+                    Some(chunk) => AnimationChunkArray::copy_chunk(&chunk).into(),
+                    None => JsValue::NULL,
+                })
+                .map_err(raster_error_to_js_value)
+        }))
+    }
+
+    /// Complete the container and serialize checked counters and its optional patch.
+    ///
+    /// # Errors
+    ///
+    /// Return a session, writer or serialization diagnostic.
+    pub fn finish(&mut self) -> Result<String, JsValue> {
+        catch_unwind_to_js(AssertUnwindSafe(|| {
+            self.render_options = None;
+            let result = self.session.finish().map_err(raster_error_to_js_value)?;
+            serde_json::to_string(&result).map_err(|_| {
+                raster_error_to_js_value(self.session.fail(raster_anim::animation_failure(
+                    self.format,
+                    "finish",
+                    raster_anim::AnimationFailureReason::OutOfDomain,
+                    None,
+                    None,
+                )))
+            })
+        }))
+    }
+
+    /// Release session resources idempotently without finishing or removing external output.
+    ///
+    /// # Errors
+    ///
+    /// Propagate a native abort failure; current cleanup cannot fail.
+    pub fn abort(&mut self) -> Result<(), JsValue> {
+        catch_unwind_to_js(AssertUnwindSafe(|| {
+            self.render_options = None;
+            self.session.abort().map_err(raster_error_to_js_value)
+        }))
+    }
+}
 
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -814,6 +970,7 @@ fn validate_text_decoration_wire_value(
     value: &serde_json::Value,
     node_id: Option<&str>,
 ) -> Result<(), error::EngineError> {
+    /// Closed decoration properties accepted before serde conversion.
     const ALLOWED_KEYS: [&str; 6] = [
         "line",
         "color",
@@ -1137,18 +1294,55 @@ fn parse_emit_ir(ir_json: &str) -> Result<ir::types::Ir, JsValue> {
     Ok(parsed_ir)
 }
 
+/// Preserve the existing generic emitter envelope when a session stores a primary failure.
+fn canonical_emitter_error(error: error::EngineError) -> error::EngineError {
+    match error {
+        structured @ (error::EngineError::Structured { .. }
+        | error::EngineError::StructuredContext { .. }) => structured,
+        other => error::EngineError::Structured {
+            code: "WASM_RENDER_FAILED".into(),
+            message: other.to_string(),
+            stage: None,
+            node_id: None,
+        },
+    }
+}
+
+impl From<wire::animation::AnimationRenderOptionsInput> for RenderSvgOptions {
+    fn from(options: wire::animation::AnimationRenderOptionsInput) -> Self {
+        let animation = match options.animation {
+            wire::animation::AnimationStaticMode::Static => AnimationRenderModeInput::Static,
+        };
+        Self {
+            scale: options.scale,
+            debug: options.debug,
+            resource_id_prefix: options.resource_id_prefix,
+            node_id_metadata: options.node_id_metadata,
+            rasterizer_compat: options.rasterizer_compat,
+            generator: options.generator,
+            animation: Some(animation),
+            ..Self::default()
+        }
+    }
+}
+
 fn emit_prepared_ir(
     prepared_ir: &ir::types::Ir,
     options: &RenderSvgOptions,
-) -> Result<String, JsValue> {
-    let (sampled_ir, timeline_plan) = sample_svg_animation(prepared_ir, options)?;
-    let mut paint_options =
-        to_paint_scene_options(options).map_err(|e| engine_error_to_render_envelope(&e))?;
+) -> Result<String, error::EngineError> {
+    let (sampled_value, timeline_plan) = sample_svg_animation(prepared_ir, options)?;
+    #[cfg(all(test, feature = "resvg-backend"))]
+    let sampled_ir = animation_frame_tests::track_allocation(sampled_value, 0);
+    #[cfg(not(all(test, feature = "resvg-backend")))]
+    let sampled_ir = sampled_value;
+    let mut paint_options = to_paint_scene_options(options)?;
     paint_options.timeline_plan = timeline_plan;
-    let paint_scene = scene::resolve_paint_scene(&sampled_ir, &paint_options)
-        .map_err(|e| engine_error_to_render_envelope(&e))?;
+    let paint_value = scene::resolve_paint_scene(&sampled_ir, &paint_options)?;
+    #[cfg(all(test, feature = "resvg-backend"))]
+    let paint_scene = animation_frame_tests::track_allocation(paint_value, 1);
+    #[cfg(not(all(test, feature = "resvg-backend")))]
+    let paint_scene = paint_value;
     svg_emit::emitter::emit_svg_scene(&paint_scene, to_svg_emit_options(options))
-        .map_err(|e| engine_error_to_render_envelope(&e))
 }
 
 fn sample_svg_animation(
@@ -1159,7 +1353,7 @@ fn sample_svg_animation(
         ir::types::Ir,
         Option<ir::animation_timeline::DocumentAnimationPlan>,
     ),
-    JsValue,
+    error::EngineError,
 > {
     let time_ms = options.time_ms.unwrap_or(0.0);
     let (sample_time_ms, timeline_plan) = if let Some(playback) = options.timeline_playback {
@@ -1172,14 +1366,12 @@ fn sample_svg_animation(
                 options.reduced_motion.unwrap_or_default(),
                 ReducedMotionInput::Pause
             ),
-        )
-        .map_err(|error| engine_error_to_render_envelope(&error))?;
+        )?;
         (playback.authored_sample_time_ms(time_ms), Some(plan))
     } else {
         (time_ms, None)
     };
-    let sampled_ir = ir::animation::sample_animation(source_ir, sample_time_ms)
-        .map_err(|error| engine_error_to_render_envelope(&error))?;
+    let sampled_ir = ir::animation::sample_animation(source_ir, sample_time_ms)?;
     Ok((sampled_ir, timeline_plan))
 }
 
@@ -1215,7 +1407,8 @@ fn render_layout_to_svg(
     if require_static_time {
         assert_static_animation_time(&built_ir, options)?;
     }
-    let (mut sampled_ir, timeline_plan) = sample_svg_animation(&built_ir, options)?;
+    let (mut sampled_ir, timeline_plan) = sample_svg_animation(&built_ir, options)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
 
     let mut outline_options = to_outline_resolve_options(options);
     outline_options.preserve_resolved_unit_outlines = true;
@@ -1813,6 +2006,61 @@ impl Default for BoundSvgEngine {
 
 // Native Rust API (not wasm_bindgen — usable in native tests and as a library)
 impl BoundSvgEngine {
+    /// Borrow one owned scene synchronously and move its emitted SVG into the shared session.
+    ///
+    /// # Errors
+    ///
+    /// Return owner, resolved-state, pending/count, emitter or common codec diagnostics.
+    #[cfg(feature = "resvg-backend")]
+    fn push_animation_frame(
+        &self,
+        session: &mut AnimatedRasterSession,
+        scene: &BoundSvgRasterScene,
+        time_ms: f64,
+        duration_ms: u32,
+    ) -> Result<(), error::EngineError> {
+        if !Arc::ptr_eq(&self.owner, &session.owner) {
+            return Err(raster_anim::animation_failure(
+                session.format,
+                "push",
+                raster_anim::AnimationFailureReason::WrongEngine,
+                None,
+                None,
+            ));
+        }
+        if !Arc::ptr_eq(&self.owner, &scene.owner) {
+            return Err(error::EngineError::Structured {
+                code: "RASTER_SCENE_WRONG_ENGINE".into(),
+                message: "Raster scene belongs to a different engine instance".into(),
+                stage: Some(diagnostics::PipelineStage::Engine),
+                node_id: None,
+            });
+        }
+        if !scene.resolved {
+            return Err(error::EngineError::Structured {
+                code: "RASTER_SCENE_NOT_RESOLVED".into(),
+                message: "Raster scene must be resolved before frame emission".into(),
+                stage: Some(diagnostics::PipelineStage::Engine),
+                node_id: None,
+            });
+        }
+        session.session.assert_push_slot()?;
+        let options = session.render_options.as_mut().ok_or_else(|| {
+            raster_anim::animation_failure(
+                session.format,
+                "push",
+                raster_anim::AnimationFailureReason::Aborted,
+                None,
+                None,
+            )
+        })?;
+        options.time_ms = Some(time_ms);
+        let svg = emit_prepared_ir(&scene.ir, options).map_err(canonical_emitter_error)?;
+        session
+            .session
+            .push_validated(raster_anim::AnimationFrameInput { svg, duration_ms })
+    }
+
     /// Create a new engine instance with an empty font registry (native).
     #[must_use]
     pub fn create() -> Self {
@@ -1850,7 +2098,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 32;
+pub const WASM_SCHEMA_VERSION: u32 = 33;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -2281,6 +2529,7 @@ impl BoundSvgEngine {
             let options = RenderSvgOptions::from(parse_static_svg_options(options_json)?);
             assert_static_animation_time(&parsed_ir, &options)?;
             emit_prepared_ir(&parsed_ir, &options)
+                .map_err(|error| engine_error_to_render_envelope(&error))
         }))
     }
 
@@ -2299,6 +2548,7 @@ impl BoundSvgEngine {
             let parsed_ir = parse_emit_ir(ir_json)?;
             let options = RenderSvgOptions::from(parse_animated_svg_options(options_json)?);
             emit_prepared_ir(&parsed_ir, &options)
+                .map_err(|error| engine_error_to_render_envelope(&error))
         }))
     }
 
@@ -2385,6 +2635,7 @@ impl BoundSvgEngine {
             assert_raster_scene_owner(scene, &self.owner)?;
             resolve_raster_scene_outlines(scene, &self.registry)?;
             emit_prepared_ir(&scene.ir, &scene.options)
+                .map_err(|error| engine_error_to_render_envelope(&error))
         }))
     }
 
@@ -2450,6 +2701,7 @@ impl BoundSvgEngine {
             }
             let options = parse_render_svg_options(options_json)?;
             emit_prepared_ir(&scene.ir, &options)
+                .map_err(|error| engine_error_to_render_envelope(&error))
         }))
     }
 
@@ -2469,6 +2721,7 @@ impl BoundSvgEngine {
             let parsed_ir = resolve_emit_ir_with_options(ir_json, &options, &self.registry)?;
             assert_static_animation_time(&parsed_ir, &options)?;
             emit_prepared_ir(&parsed_ir, &options)
+                .map_err(|error| engine_error_to_render_envelope(&error))
         }))
     }
 
@@ -2487,6 +2740,7 @@ impl BoundSvgEngine {
             let options = RenderSvgOptions::from(parse_animated_svg_options(options_json)?);
             let parsed_ir = resolve_emit_ir_with_options(ir_json, &options, &self.registry)?;
             emit_prepared_ir(&parsed_ir, &options)
+                .map_err(|error| engine_error_to_render_envelope(&error))
         }))
     }
 
@@ -2555,6 +2809,7 @@ impl BoundSvgEngine {
             }
             let options = parse_render_svg_options(options_json)?;
             emit_prepared_ir(&prepared.ir, &options)
+                .map_err(|error| engine_error_to_render_envelope(&error))
         }))
     }
 
@@ -2896,37 +3151,125 @@ impl BoundSvgEngine {
         }))
     }
 
-    /// Encode pre-sampled SVG frames into an animated lossless WebP.
+    /// Open a single-frame animated encoder using this Engine's current font snapshot.
     ///
     /// # Errors
     ///
-    /// Returns `JsValue` if the input JSON is invalid, or if rasterization or
-    /// container assembly fails.
-    pub fn svgs_to_animated_webp(&self, input_json: &str) -> Result<Vec<u8>, JsValue> {
+    /// Return a structured input failure or a container/raster-options failure.
+    pub fn open_animated_raster(
+        &self,
+        open_input: JsValue,
+    ) -> Result<AnimatedRasterSession, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let input: raster_anim::AnimationEncodeInput = serde_json::from_str(input_json)
-                .map_err(|e| {
-                    JsValue::from_str(&format!("Invalid animated WebP input JSON: {e}"))
-                })?;
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
-            webp_anim::encode_animated_webp(&input, &alias_map, &font_arcs)
-                .map_err(raster_error_to_js_value)
+            let raw = animation_primitive_json(
+                &open_input,
+                raster_anim::AnimatedRasterFormat::Webp,
+                "open",
+            );
+            drop(open_input);
+            let raw = raw.map_err(raster_error_to_js_value)?;
+            let (format, options, render_options) =
+                wire::animation::parse_open(&raw).map_err(raster_error_to_js_value)?;
+            let (aliases, fonts) = self.registry.rasterize_font_data();
+            let session = raster_anim::AnimationSession::open(
+                format,
+                options,
+                aliases,
+                fonts,
+                animation_writer::StagedWriter::default(),
+            )
+            .map_err(raster_error_to_js_value)?;
+            Ok(AnimatedRasterSession {
+                format,
+                owner: Arc::clone(&self.owner),
+                render_options: Some(RenderSvgOptions::from(render_options)),
+                session,
+            })
         }))
     }
 
-    /// Encode pre-sampled SVG frames into an animated GIF.
+    /// Emit and encode one sample using genuine scene and session capabilities from this engine.
+    ///
+    /// The borrows and frame-local SVG end before returning to a caller's output callback.
     ///
     /// # Errors
     ///
-    /// Returns `JsValue` if the input JSON is invalid, or if rasterization or
-    /// GIF encoding fails.
-    pub fn svgs_to_animated_gif(&self, input_json: &str) -> Result<Vec<u8>, JsValue> {
+    /// Return the stored primary failure, input/domain error, wrong owner or unresolved
+    /// scene, pending/count failure, or the existing emitter/raster/codec diagnostic.
+    pub fn push_animated_raster_frame(
+        &self,
+        session: &mut AnimatedRasterSession,
+        scene: &BoundSvgRasterScene,
+        time_input: JsValue,
+        duration_input: JsValue,
+    ) -> Result<(), JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let input: raster_anim::AnimationEncodeInput = serde_json::from_str(input_json)
-                .map_err(|e| JsValue::from_str(&format!("Invalid animated GIF input JSON: {e}")))?;
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
-            gif_anim::encode_animated_gif(&input, &alias_map, &font_arcs)
-                .map_err(raster_error_to_js_value)
+            session
+                .session
+                .assert_active("push")
+                .map_err(raster_error_to_js_value)?;
+            let outcome = (|| {
+                let authenticate_number = |input: &JsValue, field| {
+                    let reason = if input.is_undefined() {
+                        Some(raster_anim::AnimationFailureReason::MissingField)
+                    } else if input.is_null() {
+                        Some(raster_anim::AnimationFailureReason::NullField)
+                    } else {
+                        None
+                    };
+                    if let Some(reason) = reason {
+                        return Err(raster_anim::animation_failure(
+                            session.format,
+                            "push",
+                            reason,
+                            Some(field),
+                            None,
+                        ));
+                    }
+                    input.as_f64().ok_or_else(|| {
+                        raster_anim::animation_failure(
+                            session.format,
+                            "push",
+                            raster_anim::AnimationFailureReason::WrongType,
+                            Some(field),
+                            None,
+                        )
+                    })
+                };
+                let duration_ms = authenticate_number(&duration_input, "durationMs")?;
+                let time_ms = authenticate_number(&time_input, "timeMs")?;
+                for (field, is_valid) in [
+                    (
+                        "durationMs",
+                        duration_ms.is_finite()
+                            && duration_ms.fract() == 0.0
+                            && (1.0..=60_000.0).contains(&duration_ms),
+                    ),
+                    ("timeMs", time_ms.is_finite() && time_ms >= 0.0),
+                ] {
+                    if !is_valid {
+                        return Err(raster_anim::animation_failure(
+                            session.format,
+                            "push",
+                            raster_anim::AnimationFailureReason::OutOfDomain,
+                            Some(field),
+                            None,
+                        ));
+                    }
+                }
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "duration is a finite exact integer in 1..=60000 after boundary validation"
+                )]
+                self.push_animation_frame(session, scene, time_ms, duration_ms as u32)
+            })();
+            drop(time_input);
+            drop(duration_input);
+            outcome.map_err(|error| {
+                session.render_options = None;
+                raster_error_to_js_value(session.session.fail(error))
+            })
         }))
     }
 

@@ -1,17 +1,21 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { RenderAnimatedWebpOptions } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
-import { MAX_ANIMATION_SVG_PAYLOAD_CHARS } from "../../src/render-capabilities.js";
 import { createElement } from "../../src/vnode/create-element.js";
-import type { AnimationEncodeInput, WasmEngineHandle } from "../../src/wasm/index.js";
+import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import {
   createPortableLayoutTransitionInput,
   PORTABLE_LAYOUT_TRANSITION_CHECKPOINTS,
 } from "../animation/fixtures/layout-transition.js";
+import {
+  type CapturedRasterSession,
+  captureRasterSession,
+  collectAnimatedRaster,
+  createMockRasterSession,
+} from "../helpers/animation-collector.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
+/** Text decoder for RIFF chunk identifiers. */
 const decoder = new TextDecoder();
 
 function readChunkId(bytes: Uint8Array, offset: number): string {
@@ -80,12 +84,14 @@ function createFadingScene(): ReturnType<typeof createElement> {
 
 describe("renderToAnimatedWebp", () => {
   let handle: WasmEngineHandle;
-  let encodeAnimatedWebp: NonNullable<ReturnType<WasmEngineHandle["createSvgsToAnimatedWebpFn"]>>;
+  let encodeAnimatedWebp: NonNullable<
+    ReturnType<WasmEngineHandle["createOpenAnimatedRasterSessionFn"]>
+  >;
 
   beforeAll(async () => {
     handle = await createFontedWasmHandle();
-    const created = handle.createSvgsToAnimatedWebpFn();
-    expect(created, "WASM build must expose svgs_to_animated_webp").toBeDefined();
+    const created = handle.createOpenAnimatedRasterSessionFn();
+    expect(created, "WASM build must expose open_animated_raster").toBeDefined();
     if (!created) {
       throw new Error("unreachable");
     }
@@ -94,17 +100,23 @@ describe("renderToAnimatedWebp", () => {
 
   function createEngine(overrides = {}) {
     return createEngineFromHandle(handle, {
-      svgsToAnimatedWebpFn: encodeAnimatedWebp,
+      openAnimatedRasterSessionFn: encodeAnimatedWebp,
       ...overrides,
     });
   }
 
-  it("emits an animated extended-format WebP", () => {
-    const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 500,
-      fps: 10,
-    });
+  it("emits an animated extended-format WebP", async () => {
+    const webp = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 500,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
 
     expect(readChunkId(webp, 0)).toBe("RIFF");
     expect(readChunkId(webp, 8)).toBe("WEBP");
@@ -114,7 +126,7 @@ describe("renderToAnimatedWebp", () => {
     expect(readChunkId(webp, 30)).toBe("ANIM");
   });
 
-  it("encodes a compiled scene without re-entering the compile transport", () => {
+  it("encodes a compiled scene without re-entering the compile transport", async () => {
     let compileCount = 0;
     let rasterPreflightCount = 0;
     const engine = createEngine({
@@ -137,31 +149,38 @@ describe("renderToAnimatedWebp", () => {
       frameDurationsMs: [250, 650, 100],
       iterations: 3,
     } as const;
-    const compiledWebp = engine.renderCompiledToAnimatedWebp(compiled, options);
+    const compiledWebp = await collectAnimatedRaster((sink) =>
+      engine.renderCompiledToAnimatedWebp(compiled, options, sink),
+    );
     expect(compileCount).toBe(0);
     expect(rasterPreflightCount).toBe(1);
 
-    const sourceWebp = engine.renderToAnimatedWebp(scene, options);
+    const sourceWebp = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(scene, options, sink),
+    );
     expect(compileCount).toBe(1);
     expect(rasterPreflightCount).toBe(2);
     expect(compiledWebp).toEqual(sourceWebp);
   });
 
-  it("accepts a layout transition CompiledScene directly", () => {
-    const captured: AnimationEncodeInput[] = [];
+  it("accepts a layout transition CompiledScene directly", async () => {
+    const captured: CapturedRasterSession[] = [];
     const engine = createEngine({
-      svgsToAnimatedWebpFn: (input: AnimationEncodeInput) => {
-        captured.push(input);
-        return encodeAnimatedWebp(input);
-      },
+      openAnimatedRasterSessionFn: captureRasterSession(encodeAnimatedWebp, captured),
     });
     const compiled = engine.compileLayoutTransition(createPortableLayoutTransitionInput());
     const timesMs = PORTABLE_LAYOUT_TRANSITION_CHECKPOINTS.map((checkpoint) => checkpoint.timeMs);
-    const webp = engine.renderCompiledToAnimatedWebp(compiled, {
-      timesMs,
-      frameDurationsMs: [300, 400, 300, 100],
-      iterations: 2,
-    });
+    const webp = await collectAnimatedRaster((sink) =>
+      engine.renderCompiledToAnimatedWebp(
+        compiled,
+        {
+          timesMs,
+          frameDurationsMs: [300, 400, 300, 100],
+          iterations: 2,
+        },
+        sink,
+      ),
+    );
 
     expect(readChunkId(webp, 0)).toBe("RIFF");
     expect(readChunkId(webp, 8)).toBe("WEBP");
@@ -178,30 +197,42 @@ describe("renderToAnimatedWebp", () => {
     }
   });
 
-  it("derives frame count and duration from fps and durationMs", () => {
-    const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 500,
-      fps: 10,
-    });
+  it("derives frame count and duration from fps and durationMs", async () => {
+    const webp = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 500,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
 
     // ceil(500 * 10 / 1000) = 5 frames, each round(1000 / 10) = 100 ms.
     expect(readFrameDurations(webp)).toEqual([100, 100, 100, 100, 100]);
   });
 
-  it("samples at least two frames even for a very short duration", () => {
-    const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 1,
-      fps: 10,
-    });
+  it("samples at least two frames even for a very short duration", async () => {
+    const webp = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 1,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
 
     // Two frames cannot be shorter than 1 ms each, so the floor stretches the
     // request from 1 ms to 2 ms rather than to a whole 100 ms frame period.
     expect(readFrameDurations(webp)).toEqual([1, 1]);
   });
 
-  it("plays for exactly durationMs when the frame grid does not divide it", () => {
+  it("plays for exactly durationMs when the frame grid does not divide it", async () => {
     const engine = createEngine();
     const scene = createFadingScene();
     const cases: Array<{ durationMs: number; fps: number }> = [
@@ -213,7 +244,9 @@ describe("renderToAnimatedWebp", () => {
 
     for (const { durationMs, fps } of cases) {
       const durations = readFrameDurations(
-        engine.renderToAnimatedWebp(scene, { iterations: "infinite", durationMs, fps }),
+        await collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedWebp(scene, { iterations: "infinite", durationMs, fps }, sink),
+        ),
       );
       expect(
         durations.reduce((sum, frameDurationMs) => sum + frameDurationMs, 0),
@@ -222,17 +255,23 @@ describe("renderToAnimatedWebp", () => {
     }
   });
 
-  it("honors an explicit timesMs / frameDurationsMs schedule", () => {
-    const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      timesMs: [0, 250, 900],
-      frameDurationsMs: [250, 650, 100],
-    });
+  it("honors an explicit timesMs / frameDurationsMs schedule", async () => {
+    const webp = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          timesMs: [0, 250, 900],
+          frameDurationsMs: [250, 650, 100],
+        },
+        sink,
+      ),
+    );
 
     expect(readFrameDurations(webp)).toEqual([250, 650, 100]);
   });
 
-  it("stores total plays directly in the ANIM field", () => {
+  it("stores total plays directly in the ANIM field", async () => {
     const engine = createEngine();
     const scene = createFadingScene();
 
@@ -242,17 +281,27 @@ describe("renderToAnimatedWebp", () => {
       [65_535, 65_535],
     ] as const) {
       expect(
-        readLoopCount(engine.renderToAnimatedWebp(scene, { durationMs: 200, fps: 10, iterations })),
+        readLoopCount(
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(scene, { durationMs: 200, fps: 10, iterations }, sink),
+          ),
+        ),
       ).toBe(expectedField);
     }
   });
 
-  it("samples distinct frames from an animated scene", () => {
-    const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 1000,
-      fps: 4,
-    });
+  it("samples distinct frames from an animated scene", async () => {
+    const webp = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 1000,
+          fps: 4,
+        },
+        sink,
+      ),
+    );
 
     // Each ANMF carries its own VP8L payload; a static render would repeat the
     // same chunk bytes for every frame.
@@ -261,101 +310,146 @@ describe("renderToAnimatedWebp", () => {
     expect(new Set(anmfPayloads.map((payload) => payload.join(","))).size).toBeGreaterThan(1);
   });
 
-  it("produces identical bytes for identical input", () => {
+  it("produces identical bytes for identical input", async () => {
     const engine = createEngine();
-    const first = engine.renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 400,
-      fps: 10,
-    });
-    const second = engine.renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 400,
-      fps: 10,
-    });
+    const first = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 400,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
+    const second = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 400,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
 
     expect(Array.from(second)).toEqual(Array.from(first));
   });
 
-  it("works for a scene with no animation", () => {
+  it("works for a scene with no animation", async () => {
     const still = createElement("Canvas", { width: 20, height: 10, background: "#0f172a" });
 
-    const webp = createEngine().renderToAnimatedWebp(still, {
-      iterations: "infinite",
-      durationMs: 300,
-      fps: 10,
-    });
+    const webp = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedWebp(
+        still,
+        {
+          iterations: "infinite",
+          durationMs: 300,
+          fps: 10,
+        },
+        sink,
+      ),
+    );
 
     expect(readChunkId(webp, 12)).toBe("VP8X");
     expect(readFrameDurations(webp)).toEqual([100, 100, 100]);
   });
 
-  it("applies scale once through the shared emitted-root dimensions", () => {
-    const captured: AnimationEncodeInput[] = [];
+  it("applies scale once through the shared emitted-root dimensions", async () => {
+    const captured: CapturedRasterSession[] = [];
     const engine = createEngine({
-      svgsToAnimatedWebpFn: (input: AnimationEncodeInput) => {
-        captured.push(input);
-        return encodeAnimatedWebp(input);
-      },
+      openAnimatedRasterSessionFn: captureRasterSession(encodeAnimatedWebp, captured),
     });
 
-    engine.renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 200,
-      fps: 10,
-      scale: 2,
-    });
+    await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 200,
+          fps: 10,
+          scale: 2,
+        },
+        sink,
+      ),
+    );
 
     const input = captured[0];
     expect(input?.options.scale).toBeUndefined();
     expect(input?.frames[0]?.svg).toContain('width="120"');
   });
 
-  it("rejects malformed schedules", () => {
+  it("rejects malformed schedules", async () => {
     const engine = createEngine();
     const scene = createFadingScene();
     const cases: Array<[string, () => unknown]> = [
       [
         "mismatched frameDurationsMs length",
-        () =>
-          engine.renderToAnimatedWebp(scene, {
-            iterations: "infinite",
-            timesMs: [0, 100],
-            frameDurationsMs: [50],
-          }),
+        async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(
+              scene,
+              {
+                iterations: "infinite",
+                timesMs: [0, 100],
+                frameDurationsMs: [50],
+              },
+              sink,
+            ),
+          ),
       ],
       [
         "missing frameDurationsMs",
-        () => engine.renderToAnimatedWebp(scene, { iterations: "infinite", timesMs: [0, 100] }),
+        async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(scene, { iterations: "infinite", timesMs: [0, 100] }, sink),
+          ),
       ],
       [
         "non-integer frame duration",
-        () =>
-          engine.renderToAnimatedWebp(scene, {
-            iterations: "infinite",
-            timesMs: [0],
-            frameDurationsMs: [16.5],
-          }),
+        async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(
+              scene,
+              {
+                iterations: "infinite",
+                timesMs: [0],
+                frameDurationsMs: [16.5],
+              },
+              sink,
+            ),
+          ),
       ],
       [
         "missing durationMs",
-        () => engine.renderToAnimatedWebp(scene, { iterations: "infinite", fps: 10 }),
+        async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(scene, { iterations: "infinite", fps: 10 }, sink),
+          ),
       ],
       [
         "timesMs combined with fps",
-        () =>
-          engine.renderToAnimatedWebp(scene, {
-            iterations: "infinite",
-            timesMs: [0],
-            frameDurationsMs: [100],
-            fps: 10,
-          }),
+        async () =>
+          await collectAnimatedRaster((sink) =>
+            engine.renderToAnimatedWebp(
+              scene,
+              {
+                iterations: "infinite",
+                timesMs: [0],
+                frameDurationsMs: [100],
+                fps: 10,
+              },
+              sink,
+            ),
+          ),
       ],
     ];
 
     for (const [label, run] of cases) {
       try {
-        run();
+        await run();
         expect.unreachable(`${label} must be rejected`);
       } catch (error) {
         expect(error, label).toBeInstanceOf(FatalError);
@@ -364,30 +458,20 @@ describe("renderToAnimatedWebp", () => {
     }
   });
 
-  it("rejects a schedule longer than the frame cap", () => {
-    const engine = createEngine();
-
-    try {
-      engine.renderToAnimatedWebp(createFadingScene(), {
-        iterations: "infinite",
-        durationMs: 20_000,
-        fps: 60,
-      });
-      expect.unreachable("301+ frames must be rejected");
-    } catch (error) {
-      expect(error).toBeInstanceOf(FatalError);
-      expect((error as FatalError).code).toBe("ANIMATED_WEBP_TOO_MANY_FRAMES");
-    }
-  });
-
-  it("keeps the displayed timeline equal to the sampled one", () => {
+  it("keeps the displayed timeline equal to the sampled one", async () => {
     // 60 fps: a rounded 1000/fps would emit 17 ms per frame and run ahead of
     // the 16.667 ms sample grid. Telescoped boundaries must total the span.
-    const webp = createEngine().renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 1000,
-      fps: 60,
-    });
+    const webp = await collectAnimatedRaster((sink) =>
+      createEngine().renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 1000,
+          fps: 60,
+        },
+        sink,
+      ),
+    );
 
     const durations = readFrameDurations(webp);
     expect(durations).toHaveLength(60);
@@ -395,40 +479,34 @@ describe("renderToAnimatedWebp", () => {
     expect(new Set(durations)).toEqual(new Set([16, 17]));
   });
 
-  it("rejects a too-long explicit schedule and out-of-range values", () => {
+  it("rejects an explicit duration outside the container input domain", async () => {
     const engine = createEngine();
     const scene = createFadingScene();
-    const overCap = Array.from({ length: 301 }, (_unused, index) => index * 10);
 
     try {
-      engine.renderToAnimatedWebp(scene, {
-        iterations: "infinite",
-        timesMs: overCap,
-        frameDurationsMs: overCap.map(() => 10),
-      });
-      expect.unreachable("an explicit 301-frame schedule must be rejected");
-    } catch (error) {
-      expect((error as FatalError).code).toBe("ANIMATED_WEBP_TOO_MANY_FRAMES");
-    }
-
-    try {
-      engine.renderToAnimatedWebp(scene, {
-        iterations: "infinite",
-        timesMs: [0],
-        frameDurationsMs: [60_001],
-      });
+      await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedWebp(
+          scene,
+          {
+            iterations: "infinite",
+            timesMs: [0],
+            frameDurationsMs: [60_001],
+          },
+          sink,
+        ),
+      );
       expect.unreachable("a duration past 60000 ms must be rejected");
     } catch (error) {
       expect((error as FatalError).code).toBe("ANIMATED_WEBP_INVALID_SCHEDULE");
     }
   });
 
-  it("requires a valid total play count before sampling or encoding", () => {
+  it("requires a valid total play count before sampling or encoding", async () => {
     let encodeCount = 0;
     const engine = createEngine({
-      svgsToAnimatedWebpFn: () => {
+      openAnimatedRasterSessionFn: () => {
         encodeCount += 1;
-        return new Uint8Array([1]);
+        throw new Error("invalid input must fail before session.open");
       },
     });
     const invalidIterations: unknown[] = [
@@ -445,10 +523,16 @@ describe("renderToAnimatedWebp", () => {
 
     for (const iterations of invalidIterations) {
       try {
-        engine.renderToAnimatedWebp(createFadingScene(), {
-          durationMs: 200,
-          iterations,
-        } as RenderAnimatedWebpOptions);
+        await collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedWebp(
+            createFadingScene(),
+            {
+              durationMs: 200,
+              iterations,
+            } as RenderAnimatedWebpOptions,
+            sink,
+          ),
+        );
         expect.unreachable(`iterations ${String(iterations)} must be rejected`);
       } catch (error) {
         expect(error, String(iterations)).toBeInstanceOf(FatalError);
@@ -460,16 +544,22 @@ describe("renderToAnimatedWebp", () => {
     expect(encodeCount).toBe(0);
   });
 
-  it("rejects an invalid scale the way renderToWebp does", () => {
+  it("rejects an invalid scale the way renderToWebp does", async () => {
     const engine = createEngine();
 
     for (const scale of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
       try {
-        engine.renderToAnimatedWebp(createFadingScene(), {
-          iterations: "infinite",
-          durationMs: 200,
-          scale,
-        });
+        await collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedWebp(
+            createFadingScene(),
+            {
+              iterations: "infinite",
+              durationMs: 200,
+              scale,
+            },
+            sink,
+          ),
+        );
         expect.unreachable(`scale ${String(scale)} must be rejected`);
       } catch (error) {
         expect((error as FatalError).code, String(scale)).toBe("PNG_INVALID_SCALE");
@@ -477,52 +567,61 @@ describe("renderToAnimatedWebp", () => {
     }
   });
 
-  it("applies the raster resolution cap like the still path", () => {
+  it("applies the raster resolution cap like the still path", async () => {
     const engine = createEngine();
     const oversized = createElement("Canvas", { width: 3000, height: 2000 });
 
     try {
-      engine.renderToAnimatedWebp(oversized, {
-        iterations: "infinite",
-        durationMs: 200,
-        fps: 10,
-        scale: 2,
-        rasterOversizeBehavior: "error",
-      });
+      await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedWebp(
+          oversized,
+          {
+            iterations: "infinite",
+            durationMs: 200,
+            fps: 10,
+            scale: 2,
+            rasterOversizeBehavior: "error",
+          },
+          sink,
+        ),
+      );
       expect.unreachable("an oversized animated render must fail");
     } catch (error) {
       expect((error as FatalError).code).toBe("PNG_PIXEL_LIMIT");
     }
   });
 
-  it("reports a resolution adjustment through onPngResolutionAdjusted", () => {
+  it("reports a resolution adjustment through onPngResolutionAdjusted", async () => {
     const adjustments: Array<{ requestedScale: number; appliedScale: number }> = [];
     const engine = createEngine();
 
-    engine.renderToAnimatedWebp(createElement("Canvas", { width: 2000, height: 500 }), {
-      iterations: "infinite",
-      durationMs: 200,
-      fps: 10,
-      scale: 4,
-      onPngResolutionAdjusted: (warning) => adjustments.push(warning),
-    });
+    await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        createElement("Canvas", { width: 2000, height: 500 }),
+        {
+          iterations: "infinite",
+          durationMs: 200,
+          fps: 10,
+          scale: 4,
+          onPngResolutionAdjusted: (warning) => adjustments.push(warning),
+        },
+        sink,
+      ),
+    );
 
     expect(adjustments).toHaveLength(1);
     expect(adjustments[0]?.requestedScale).toBe(4);
     expect(adjustments[0]?.appliedScale).toBeLessThan(4);
   });
 
-  it("keeps scale auto-adjustment and warning delivery identical for compiled input", () => {
+  it("keeps scale auto-adjustment and warning delivery identical for compiled input", async () => {
     const scene = createElement("Canvas", { width: 2000, height: 500 });
-    const run = (compiledInput: boolean) => {
-      const captured: AnimationEncodeInput[] = [];
+    const run = async (compiledInput: boolean) => {
+      const captured: CapturedRasterSession[] = [];
       const adjustments: Array<{ requestedScale: number; appliedScale: number }> = [];
       const warningCodes: string[] = [];
       const engine = createEngine({
-        svgsToAnimatedWebpFn: (input: AnimationEncodeInput) => {
-          captured.push(input);
-          return new Uint8Array([1]);
-        },
+        openAnimatedRasterSessionFn: captureRasterSession(createMockRasterSession, captured),
       });
       const options = {
         timesMs: [0],
@@ -534,84 +633,42 @@ describe("renderToAnimatedWebp", () => {
         onWarning: (warning: { code: string }) => warningCodes.push(warning.code),
       } as const;
       if (compiledInput) {
-        engine.renderCompiledToAnimatedWebp(engine.compile(scene), options);
+        await collectAnimatedRaster((sink) =>
+          engine.renderCompiledToAnimatedWebp(engine.compile(scene), options, sink),
+        );
       } else {
-        engine.renderToAnimatedWebp(scene, options);
+        await collectAnimatedRaster((sink) => engine.renderToAnimatedWebp(scene, options, sink));
       }
       return { adjustments, warningCodes, svg: captured[0]?.frames[0]?.svg };
     };
 
-    const source = run(false);
-    const compiled = run(true);
+    const source = await run(false);
+    const compiled = await run(true);
     expect(compiled).toEqual(source);
     expect(compiled.adjustments).toHaveLength(1);
     expect(compiled.warningCodes).toEqual(["PNG_RESOLUTION_ADJUSTED"]);
     expect(compiled.svg).toContain('width="3840"');
   });
 
-  it("enforces the WebP SVG payload cap and releases compiled frame state", () => {
-    let encodeCount = 0;
-    let disposeCount = 0;
-    const oversizedSvg = {
-      length: Math.floor(MAX_ANIMATION_SVG_PAYLOAD_CHARS / 2) + 1,
-    } as unknown as string;
-    const engine = createEngine({
-      preflightRasterSceneFn: () => ({
-        renderToSvg: () => oversizedSvg,
-        resolveAndEmitToSvg: () => oversizedSvg,
-        resolveToIr: () => "{}",
-        resolve: () => {},
-        dispose: () => {
-          disposeCount += 1;
-        },
-      }),
-      svgsToAnimatedWebpFn: () => {
-        encodeCount += 1;
-        return new Uint8Array([1]);
-      },
-    });
-    const compiled = engine.compile(createFadingScene());
-
-    expect(() =>
-      engine.renderCompiledToAnimatedWebp(compiled, {
-        timesMs: [0, 1],
-        frameDurationsMs: [1, 1],
-        iterations: "infinite",
-      }),
-    ).toThrowError(expect.objectContaining({ code: "ANIMATED_WEBP_PAYLOAD_LIMIT" }));
-    expect(encodeCount).toBe(0);
-    expect(disposeCount).toBe(1);
-  });
-
-  it("keeps every shared limit in step with the Rust validator", () => {
-    // Duplicated constants: TS rejects early for a good message, Rust rejects
-    // as the trust boundary. Drift would let one accept what the other refuses.
-    const rustSource = fs.readFileSync(
-      path.resolve(__dirname, "../../../../crates/boundsvg/src/raster_anim.rs"),
-      "utf8",
-    );
-    expect(rustSource).toContain("const MIN_FRAME_DURATION_MS: u32 = 1;");
-    expect(rustSource).toContain("const MAX_FRAME_DURATION_MS: u32 = 60_000;");
-    const webpSource = fs.readFileSync(
-      path.resolve(__dirname, "../../../../crates/boundsvg/src/webp_anim.rs"),
-      "utf8",
-    );
-    expect(webpSource).toContain("const MAX_WEBP_ITERATIONS: u32 = 65_535;");
-  });
-
-  it("encodes a single frame exactly as renderToWebp does", () => {
+  it("encodes a single frame exactly as renderToWebp does", async () => {
     const engine = createEngineFromHandle(handle, {
-      svgsToAnimatedWebpFn: encodeAnimatedWebp,
+      openAnimatedRasterSessionFn: encodeAnimatedWebp,
       svgToWebpFn: handle.createSvgToWebpFn(),
     });
     const still = createElement("Canvas", { width: 40, height: 24, background: "#0f172a" });
 
-    const animated = engine.renderToAnimatedWebp(still, {
-      iterations: "infinite",
-      timesMs: [0],
-      frameDurationsMs: [100],
-      scale: 2,
-    });
+    const animated = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        still,
+        {
+          iterations: "infinite",
+          timesMs: [0],
+          frameDurationsMs: [100],
+          scale: 2,
+        },
+        sink,
+      ),
+    );
     const singleWebp = engine.renderToWebp(still, { scale: 2 });
 
     // The animated frame embeds the still encoder's own VP8L chunk, so the two
@@ -621,7 +678,7 @@ describe("renderToAnimatedWebp", () => {
     expect(frameChunk).toEqual(singleWebp.subarray(12));
   });
 
-  it("rejects every malformed schedule shape", () => {
+  it("rejects every malformed schedule shape", async () => {
     const engine = createEngine();
     const scene = createFadingScene();
     const cases: Array<[string, RenderAnimatedWebpOptions]> = [
@@ -646,7 +703,7 @@ describe("renderToAnimatedWebp", () => {
 
     for (const [label, options] of cases) {
       try {
-        engine.renderToAnimatedWebp(scene, options);
+        await collectAnimatedRaster((sink) => engine.renderToAnimatedWebp(scene, options, sink));
         expect.unreachable(`${label} must be rejected`);
       } catch (error) {
         expect(error, label).toBeInstanceOf(FatalError);
@@ -655,22 +712,25 @@ describe("renderToAnimatedWebp", () => {
     }
   });
 
-  it("keeps sample times inside the requested window", () => {
-    const captured: AnimationEncodeInput[] = [];
+  it("keeps sample times inside the requested window", async () => {
+    const captured: CapturedRasterSession[] = [];
     const engine = createEngine({
-      svgsToAnimatedWebpFn: (input: AnimationEncodeInput) => {
-        captured.push(input);
-        return encodeAnimatedWebp(input);
-      },
+      openAnimatedRasterSessionFn: captureRasterSession(encodeAnimatedWebp, captured),
     });
 
     // Below one frame period the two-frame floor would otherwise sample the
     // second frame at 1000/fps — far past the animation the caller asked for.
-    engine.renderToAnimatedWebp(createFadingScene(), {
-      iterations: "infinite",
-      durationMs: 100,
-      fps: 1,
-    });
+    await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        createFadingScene(),
+        {
+          iterations: "infinite",
+          durationMs: 100,
+          fps: 1,
+        },
+        sink,
+      ),
+    );
 
     const svgs = captured[0]?.frames.map((frame) => frame.svg) ?? [];
     expect(svgs).toHaveLength(2);
@@ -679,11 +739,35 @@ describe("renderToAnimatedWebp", () => {
     expect(svgs[1]).not.toBe(engine.renderToSvg(createFadingScene(), { timeMs: 1000 }));
   });
 
-  it("reports WEBP_NO_ENCODER when no animated encoder is wired", () => {
-    const engine = createEngineFromHandle(handle);
+  it.each([
+    326, 1001,
+  ])("encodes a complete lazy sampled schedule with %i frames", async (frameCount) => {
+    const engine = createEngine();
+    const bytes = await collectAnimatedRaster((sink) =>
+      engine.renderToAnimatedWebp(
+        createElement("Canvas", { width: 2, height: 2, background: "#369" }),
+        { durationMs: frameCount * 100, fps: 10, iterations: 1 },
+        sink,
+      ),
+    );
+    expect(readFrameDurations(bytes)).toEqual(Array.from({ length: frameCount }, () => 100));
+    expect(new DataView(bytes.buffer, bytes.byteOffset + 4, 4).getUint32(0, true)).toBe(
+      bytes.length - 8,
+    );
+    engine.dispose();
+  }, 120000);
+
+  it("reports WEBP_NO_ENCODER when no animated encoder is wired", async () => {
+    const engine = createEngineFromHandle(handle, { openAnimatedRasterSessionFn: undefined });
 
     try {
-      engine.renderToAnimatedWebp(createFadingScene(), { iterations: "infinite", durationMs: 200 });
+      await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedWebp(
+          createFadingScene(),
+          { iterations: "infinite", durationMs: 200 },
+          sink,
+        ),
+      );
       expect.unreachable("renderToAnimatedWebp must fail without an encoder");
     } catch (error) {
       expect(error).toBeInstanceOf(FatalError);

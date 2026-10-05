@@ -295,10 +295,13 @@ ignored.
 A WorkerEngine owns one physical request slot and a FIFO of at most 32 unsent
 requests. Full admission rejects with `WORKER_QUEUE_FULL`; a new request never
 replaces another consumer’s request. Payloads are detached snapshots. The queue
-limit counts requests and does not cap total heap bytes.
+limit counts requests and does not cap total heap bytes. Raster streaming has
+separate one-pull and one-close reservations; font and still-image requests
+continue through the generic FIFO between animation steps.
 
-All twelve render methods accept `WorkerRequestOptions = { signal?: AbortSignal }`
-as their third argument. The six text measurement methods accept it as their
+The four animated WebP/GIF methods require a sink as their third argument and
+accept `WorkerRequestOptions = { signal?: AbortSignal }` as their fourth. Other
+render methods accept request options as their third argument. The six text measurement methods accept it as their
 second argument. This transport control is separate from render/measurement data
 and is never sent to Core or WASM.
 
@@ -323,6 +326,30 @@ admission and includes queue wait. Abort or timeout rejects a Promise once; an
 already posted request keeps the physical slot until its response, a crash, or
 disposal. A timeout never posts the next job while the old computation is running.
 Abort does not promise to cancel synchronous WASM.
+
+Animated WebP/GIF writes use the same sink types, entrance snapshots, and
+result metadata as Core. Normal and layout-transition methods require the
+sink; they do not return a collected byte array. The sink remains on the caller
+thread, while the Worker transports one preparation step or bounded output
+chunk at a time. Warning callbacks run before raster session opening.
+
+For these writes, the absolute deadline continues through a pending sink
+finish. Finish continuation checks the current clock even if timer delivery
+was delayed. Once timeout or cancellation rejects the Promise, a later
+successful rename or close cannot change it to success. An
+`ANIMATED_RASTER_ABORTED` diagnostic records the reason and actual operation;
+`operation: "finish"` means commitment may be uncertain. Preserve any output
+that committed later: do not infer that it is safe to delete or retry.
+
+After an early logical rejection, the Engine keeps its animation token through
+pending callbacks and abort cleanup, so another animation gets
+`ANIMATED_RASTER_JOB_BUSY`. Physical stream capacity remains occupied until the
+remote close acknowledgement, whose timeout starts when close is created.
+Normal success waits for local cleanup but does not wait for remote close ack;
+a later close failure prevents future admission without rewriting the completed
+output's success. Caller-owned Workers are not terminated or automatically
+recreated on timeout. Cancellation does not immediately interrupt synchronous
+WASM or a spool's pending finish transfer.
 
 `workerEngine.drain(): Promise<void>` permanently closes new admission and waits
 for existing physical work and stream-close acknowledgements. Repeated calls

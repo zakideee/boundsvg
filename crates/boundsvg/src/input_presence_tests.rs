@@ -7,19 +7,26 @@ use super::{
     CompileShapeSvgInput, HitTestShapePartsInput, LayoutTransitionCompileOptionsInput,
     PositionedGlyphPathRequest, RenderShapeRegionSvgInput, ValidateLayeredSvgCompositionInput,
 };
-use crate::raster_anim::AnimationEncodeInput;
 use crate::rasterize::{FontFamilyConfig, RasterizeOptions};
 use crate::wire::test_support::assert_optional_field;
 
 #[test]
-fn animation_encode_input_preserves_optional_presence() {
-    let fixture = json!({"frames": [{"svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/>", "durationMs": 100}], "iterations": 1, "options": {}});
-    assert_optional_field::<AnimationEncodeInput>(&fixture, "options", |input| {
-        input.options.is_none()
-    });
-    let mut unknown = fixture;
-    unknown["unknownOption"] = json!(true);
-    assert!(serde_json::from_value::<AnimationEncodeInput>(unknown).is_err());
+fn animation_session_preserves_optional_presence() {
+    let parse = crate::wire::animation::parse_open;
+    assert!(parse(r#"{"format":"gif","frameCount":1,"iterations":1,"renderOptions":{"animation":"static"}}"#).is_ok());
+    assert!(parse(r#"{"format":"gif","frameCount":1,"iterations":1,"renderOptions":{"animation":"static"},"options":{}}"#).is_ok());
+    for options in ["null", "false", "0", "[]", "\"value\""] {
+        let raw = format!(
+            r#"{{"format":"gif","frameCount":1,"iterations":1,"renderOptions":{{"animation":"static"}},"options":{options}}}"#
+        );
+        assert!(
+            parse(&raw).is_err(),
+            "options must be absent or an object: {options}"
+        );
+    }
+    assert!(
+        parse(r#"{"format":"gif","frameCount":1,"iterations":1,"renderOptions":{"animation":"static"},"unknownOption":true}"#).is_err()
+    );
 }
 
 #[test]

@@ -1,6 +1,18 @@
 // @boundsvg/core/wasm — Low-level WASM API
 
+export { decodeAnimatedRasterFatal } from "./animation-errors.js";
+export type {
+  AnimatedRasterJob,
+  AnimatedRasterJobInput,
+  AnimatedRasterJobStep,
+} from "./animation-job.js";
+export { createAnimatedRasterJob } from "./animation-job.js";
 export { validateStructuralIR } from "./ir/output-validator.js";
+export type {
+  AnimatedRasterSessionHandle,
+  AnimationSessionFinishOutput,
+  AnimationSessionOpenInput,
+} from "./wasm/animation-session.js";
 export type {
   FlowExclusionShape,
   FlowOverflowReason,
@@ -65,6 +77,7 @@ export {
   isWasmTextFlowWithExclusionsResult,
 } from "./wasm/protocol-decoders.js";
 export type {
+  WasmAnimatedRasterSessionInstance,
   WasmEngineInstance,
   WasmModule,
   WasmPreparedSceneInstance,

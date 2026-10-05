@@ -49,6 +49,7 @@ type InteractiveBehaviorOptions = {
   onTextContextMenu?: (hit: TextContextMenuHit) => void;
 };
 
+/** Interactive behavior and input revision with either static sampling or declarative SVG playback. */
 export type UseInteractiveSvgOptions = InteractiveBehaviorOptions &
   RenderInputOptions &
   (
@@ -64,6 +65,7 @@ export type UseInteractiveSvgOptions = InteractiveBehaviorOptions &
       }
   );
 
+/** Rendered SVG and inspection data with hover state and a container attachment callback. */
 export type UseInteractiveSvgResult = {
   /** Rendered SVG string (null while engine is not ready or on error) */
   svg: string | null;
@@ -96,6 +98,7 @@ type RenderArtifacts = {
   isReady: boolean;
 };
 
+/** Empty interactive render state shared before a successful main-thread render. */
 const EMPTY_ARTIFACTS: RenderArtifacts = {
   svg: null,
   ir: null,
@@ -116,6 +119,7 @@ type InteractiveRenderComputation = {
 // Hook
 // ---------------------------------------------------------------------------
 
+/** Render through the Provider's main-thread Engine and attach hit-tested pointer handlers to the returned container ref. */
 export function useInteractiveSvg(
   vnode: VNode | null,
   handlers: Map<string, EventCallback>,
@@ -569,12 +573,14 @@ export function useInteractiveSvg(
       }
     }
 
+    /** Pointer, mouse, and touch handler names dispatched when hover ownership ends. */
     const LEAVE_EVENTS: ReadonlyArray<keyof HandlersRef> = [
       "onPointerLeave",
       "onPointerOut",
       "onMouseLeave",
       "onMouseOut",
     ];
+    /** Pointer, mouse, and touch handler names dispatched when hover ownership begins. */
     const ENTER_EVENTS: ReadonlyArray<keyof HandlersRef> = [
       "onPointerEnter",
       "onPointerOver",

@@ -2,12 +2,14 @@ import { FatalError, fromSceneDocument } from "@boundsvg/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkerRequest, WorkerResponse } from "../src/protocol.js";
 
+/** Hoisted engine spies used to check protocol dispatch and cleanup. */
 const workerEngineMethods = vi.hoisted(() => ({
   dispose: vi.fn(),
+  rasterAdvance: vi.fn(),
+  rasterDispose: vi.fn(),
+  createRasterJob: vi.fn(),
   frameIteratorReturn: vi.fn(),
   compileLayoutTransition: vi.fn(() => ({ marker: "compiled-transition" })),
-  renderCompiledToAnimatedWebp: vi.fn(() => new Uint8Array([0x52, 0x49, 0x46, 0x46])),
-  renderCompiledToAnimatedGif: vi.fn(() => new Uint8Array([0x47, 0x49, 0x46])),
   renderToSvg: vi.fn(() => '<svg data-mode="static"/>'),
   renderToAnimatedSvg: vi.fn(() => '<svg data-mode="animated"/>'),
   renderToSvgAndIR: vi.fn(() => ({
@@ -95,6 +97,7 @@ vi.mock("@boundsvg/core", async (importOriginal) => {
 
 vi.mock("@boundsvg/core/wasm", () => ({
   initWasm: vi.fn(async () => undefined),
+  createAnimatedRasterJob: workerEngineMethods.createRasterJob,
 }));
 
 vi.mock("@boundsvg/browser/wasm", () => ({
@@ -122,6 +125,11 @@ describe("worker script measurement dispatch", () => {
   let scope: TestWorkerScope;
 
   beforeEach(async () => {
+    workerEngineMethods.createRasterJob.mockImplementation(() => ({
+      advance: workerEngineMethods.rasterAdvance,
+      dispose: workerEngineMethods.rasterDispose,
+      abort: vi.fn(),
+    }));
     scope = new TestWorkerScope();
     vi.stubGlobal("self", scope);
     await import("../src/worker-script.js");
@@ -540,7 +548,7 @@ describe("worker script measurement dispatch", () => {
     expect(workerEngineMethods.dispose).toHaveBeenCalled();
   });
 
-  it("compiles transition raster requests inside the Worker before encoding", async () => {
+  it("pulls transition raster output and retains its owner until close", async () => {
     scope.send({ id: 1, type: "init", fonts: [] });
     await vi.waitFor(() => expect(scope.responses).toHaveLength(1));
     const transition = {
@@ -555,48 +563,55 @@ describe("worker script measurement dispatch", () => {
         { timeMs: 300, state: "A" },
       ],
     } as const;
-
     scope.send({
       id: 2,
-      type: "render-layout-transition-animated-webp",
+      type: "open-layout-transition-raster-stream",
       transition,
-      options: { durationMs: 300, textPathMode: "glyphs" },
+      format: "gif",
+      options: { durationMs: 300, iterations: 1, textPathMode: "glyphs" },
     });
-    scope.send({
-      id: 3,
-      type: "render-layout-transition-animated-gif",
-      transition,
-      options: { durationMs: 300 },
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(2));
+    expect(workerEngineMethods.rasterAdvance).not.toHaveBeenCalled();
+    expect(workerEngineMethods.createRasterJob).toHaveBeenCalledWith(workerEngineMethods, {
+      format: "gif",
+      source: {
+        kind: "transition",
+        input: {
+          ...transition,
+          states: {
+            A: fromSceneDocument(transition.states.A),
+            B: fromSceneDocument(transition.states.B),
+          },
+        },
+        compileOptions: { skipValidation: undefined, textPathMode: "glyphs" },
+      },
+      options: { durationMs: 300, iterations: 1 },
     });
-
-    await vi.waitFor(() => expect(scope.responses).toHaveLength(3));
-    const decodedTransition = {
-      ...transition,
-      states: {
-        A: fromSceneDocument(transition.states.A),
-        B: fromSceneDocument(transition.states.B),
-      },
-    };
-    expect(scope.responses.slice(1).map((response) => response.type)).toEqual([
-      "render-animated-webp-ok",
-      "render-animated-gif-ok",
-    ]);
-    expect(workerEngineMethods.compileLayoutTransition).toHaveBeenNthCalledWith(
-      1,
-      decodedTransition,
-      {
-        skipValidation: undefined,
-        textPathMode: "glyphs",
-      },
-    );
-    expect(workerEngineMethods.renderCompiledToAnimatedWebp).toHaveBeenCalledWith(
-      { marker: "compiled-transition" },
-      expect.objectContaining({ durationMs: 300, onWarning: expect.any(Function) }),
-    );
-    expect(workerEngineMethods.renderCompiledToAnimatedGif).toHaveBeenCalledWith(
-      { marker: "compiled-transition" },
-      expect.objectContaining({ durationMs: 300, onWarning: expect.any(Function) }),
-    );
+    const storage = new Uint8Array([9, 0x47, 0x49, 0x46, 9]);
+    workerEngineMethods.rasterAdvance
+      .mockReturnValueOnce({ kind: "ready", warnings: [] })
+      .mockReturnValueOnce({ kind: "chunk", chunk: storage.subarray(1, 4) })
+      .mockReturnValueOnce({
+        kind: "finished",
+        result: { format: "gif", frameCount: 6, bytesWritten: 3 },
+      });
+    for (const id of [3, 4, 5]) {
+      scope.send({ id, type: "next-raster-stream", streamId: 2 });
+      await vi.waitFor(() => expect(scope.responses).toHaveLength(id));
+    }
+    const chunkResponse = scope.responses[3];
+    expect(chunkResponse).toMatchObject({ type: "next-raster-stream-ok", kind: "chunk" });
+    if (chunkResponse?.type !== "next-raster-stream-ok" || chunkResponse.kind !== "chunk") {
+      throw new Error("Expected a transferred raster chunk");
+    }
+    expect([...new Uint8Array(chunkResponse.chunk)]).toEqual([0x47, 0x49, 0x46]);
+    expect(workerEngineMethods.rasterDispose).not.toHaveBeenCalled();
+    scope.send({ id: 6, type: "close-raster-stream", streamId: 2 });
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(6));
+    expect(workerEngineMethods.rasterDispose).toHaveBeenCalledTimes(1);
+    scope.send({ id: 7, type: "close-raster-stream", streamId: 2 });
+    await vi.waitFor(() => expect(scope.responses).toHaveLength(7));
+    expect(workerEngineMethods.rasterDispose).toHaveBeenCalledTimes(1);
   });
 
   it("keeps compiled transition frame iterators Worker-local", async () => {

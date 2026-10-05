@@ -6,9 +6,58 @@ import {
   type SceneNode,
 } from "@boundsvg/core";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { collectAnimatedRaster } from "../../core/tests/helpers/animation-collector.js";
 import type { WorkerLayoutTransitionInput } from "../src/layout-transition-transport.js";
 import type { WorkerRequest, WorkerResponse } from "../src/protocol.js";
 import { getWorkerPoolEndpoint, WorkerEngine } from "../src/worker-engine.js";
+
+function installRasterResponses(
+  worker: MockWorker,
+  format: "webp" | "gif",
+  bytes: Uint8Array,
+  warnings: import("@boundsvg/core").SerializedRecoverableError[] = [],
+  requests: WorkerRequest[] = [],
+): WorkerRequest[] {
+  const pulls = new Map<number, number>();
+  worker.postMessage.mockImplementation((request: WorkerRequest) => {
+    requests.push(request);
+    if (
+      request.type === "open-raster-stream" ||
+      request.type === "open-layout-transition-raster-stream"
+    ) {
+      worker.respond({ id: request.id, type: "open-raster-stream-ok", streamId: request.id });
+    } else if (request.type === "next-raster-stream") {
+      const pull = pulls.get(request.streamId) ?? 0;
+      pulls.set(request.streamId, pull + 1);
+      const base = {
+        id: request.id,
+        type: "next-raster-stream-ok" as const,
+        streamId: request.streamId,
+      };
+      if (pull === 0) {
+        worker.respond({ ...base, kind: "ready", warnings });
+      } else if (pull === 1) {
+        worker.respond({ ...base, kind: "chunk", chunk: bytes.slice().buffer });
+      } else {
+        worker.respond({
+          ...base,
+          kind: "finished",
+          result: { format, frameCount: 4, bytesWritten: bytes.length },
+          ...(format === "webp"
+            ? { patch: { offset: 4 as const, bytes: Uint8Array.of(4, 0, 0, 0) } }
+            : {}),
+        });
+      }
+    } else if (request.type === "close-raster-stream") {
+      worker.respond({
+        id: request.id,
+        type: "close-raster-stream-ok",
+        streamId: request.streamId,
+      });
+    }
+  });
+  return requests;
+}
 
 // ---------------------------------------------------------------------------
 // Mock Worker
@@ -82,7 +131,9 @@ class MockWorker {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Minimal serializable input isolating request and sink lifetime behavior. */
 const SCENE: SceneNode = { type: "Canvas", width: 100, height: 100, children: [] };
+/** Matching valid Worker IR response used by transport integration fixtures. */
 const WORKER_IR: Omit<IR, "warnings"> = {
   root: {
     type: "group",
@@ -94,6 +145,7 @@ const WORKER_IR: Omit<IR, "warnings"> = {
   width: 100,
   height: 100,
 };
+/** Valid round-trip transition for Worker-owned compilation and streaming. */
 const TRANSITION: WorkerLayoutTransitionInput = {
   states: {
     A: SCENE,
@@ -1052,7 +1104,7 @@ describe("WorkerEngine", () => {
   describe("renderToWebp", () => {
     it("sends render-webp request and returns Uint8Array", async () => {
       const engine = await createEngine(mockWorker);
-      const webpBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+      const webpBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46, 4, 0, 0, 0, 87, 69, 66, 80]);
 
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
         if (request.type === "render-webp") {
@@ -1094,31 +1146,27 @@ describe("WorkerEngine", () => {
   // -----------------------------------------------------------------------
 
   describe("renderToAnimatedGif", () => {
-    it("sends the schedule with the request and returns Uint8Array", async () => {
+    it("sends the schedule once and writes to the explicit collector", async () => {
       const engine = await createEngine(mockWorker);
       const gifBytes = new Uint8Array([0x47, 0x49, 0x46, 0x38]);
       const requests: WorkerRequest[] = [];
 
-      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
-        requests.push(request);
-        if (request.type === "render-animated-gif") {
-          mockWorker.respond({
-            id: request.id,
-            type: "render-animated-gif-ok",
-            gif: gifBytes,
-            warnings: [],
-          });
-        }
-      });
+      installRasterResponses(mockWorker, "gif", gifBytes, [], requests);
 
-      const gif = await engine.renderToAnimatedGif(SCENE, {
-        durationMs: 400,
-        fps: 10,
-        iterations: "infinite",
-      });
+      const gif = await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedGif(
+          SCENE,
+          {
+            durationMs: 400,
+            fps: 10,
+            iterations: "infinite",
+          },
+          sink,
+        ),
+      );
       expect(gif).toEqual(gifBytes);
-      const gifRequest = requests.find((req) => req.type === "render-animated-gif");
-      expect(gifRequest?.type === "render-animated-gif" && gifRequest.options).toEqual({
+      const gifRequest = requests.find((req) => req.type === "open-raster-stream");
+      expect(gifRequest?.type === "open-raster-stream" && gifRequest.options).toEqual({
         durationMs: 400,
         fps: 10,
         iterations: "infinite",
@@ -1130,7 +1178,7 @@ describe("WorkerEngine", () => {
       const engine = await createEngine(mockWorker);
 
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
-        if (request.type === "render-animated-gif") {
+        if (request.type === "open-raster-stream") {
           mockWorker.respond({
             id: request.id,
             type: "error",
@@ -1140,7 +1188,9 @@ describe("WorkerEngine", () => {
       });
 
       await expect(
-        engine.renderToAnimatedGif(SCENE, { iterations: "infinite", durationMs: 400 }),
+        collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedGif(SCENE, { iterations: "infinite", durationMs: 400 }, sink),
+        ),
       ).rejects.toThrow(FatalError);
       engine.dispose();
     });
@@ -1151,31 +1201,27 @@ describe("WorkerEngine", () => {
   // -----------------------------------------------------------------------
 
   describe("renderToAnimatedWebp", () => {
-    it("sends the schedule with the request and returns Uint8Array", async () => {
+    it("sends the schedule once and writes to the explicit collector", async () => {
       const engine = await createEngine(mockWorker);
-      const animatedBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+      const animatedBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46, 4, 0, 0, 0, 87, 69, 66, 80]);
       const requests: WorkerRequest[] = [];
 
-      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
-        requests.push(request);
-        if (request.type === "render-animated-webp") {
-          mockWorker.respond({
-            id: request.id,
-            type: "render-animated-webp-ok",
-            webp: animatedBytes,
-            warnings: [],
-          });
-        }
-      });
+      installRasterResponses(mockWorker, "webp", animatedBytes, [], requests);
 
-      const webp = await engine.renderToAnimatedWebp(SCENE, {
-        durationMs: 500,
-        fps: 10,
-        iterations: 2,
-      });
+      const webp = await collectAnimatedRaster((sink) =>
+        engine.renderToAnimatedWebp(
+          SCENE,
+          {
+            durationMs: 500,
+            fps: 10,
+            iterations: 2,
+          },
+          sink,
+        ),
+      );
       expect(webp).toEqual(animatedBytes);
-      const animatedRequest = requests.find((req) => req.type === "render-animated-webp");
-      expect(animatedRequest?.type === "render-animated-webp" && animatedRequest.options).toEqual({
+      const animatedRequest = requests.find((req) => req.type === "open-raster-stream");
+      expect(animatedRequest?.type === "open-raster-stream" && animatedRequest.options).toEqual({
         durationMs: 500,
         fps: 10,
         iterations: 2,
@@ -1187,7 +1233,7 @@ describe("WorkerEngine", () => {
       const engine = await createEngine(mockWorker);
 
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
-        if (request.type === "render-animated-webp") {
+        if (request.type === "open-raster-stream") {
           mockWorker.respond({
             id: request.id,
             type: "error",
@@ -1201,42 +1247,69 @@ describe("WorkerEngine", () => {
       });
 
       await expect(
-        engine.renderToAnimatedWebp(SCENE, { iterations: "infinite", durationMs: 500 }),
+        collectAnimatedRaster((sink) =>
+          engine.renderToAnimatedWebp(SCENE, { iterations: "infinite", durationMs: 500 }, sink),
+        ),
       ).rejects.toThrow(FatalError);
       engine.dispose();
     });
   });
 
   describe("layout transition animated raster", () => {
-    it("snapshots the transition and uses the dedicated WebP request", async () => {
+    it("rejects timeMs for ordinary and transition raster options before remote admission", async () => {
       const engine = await createEngine(mockWorker);
-      const bytes = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
-      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
-        if (request.type === "render-layout-transition-animated-webp") {
-          mockWorker.respond({
-            id: request.id,
-            type: "render-animated-webp-ok",
-            webp: bytes,
-            warnings: [],
+      const sink = { write: vi.fn(), patch: vi.fn(), finish: vi.fn(), abort: vi.fn() };
+      const options = { durationMs: 20, fps: 20, iterations: 1, timeMs: 0 };
+      mockWorker.postMessage.mockClear();
+      try {
+        for (const write of [
+          () => engine.renderToAnimatedWebp(SCENE, options, sink),
+          () => engine.renderToAnimatedGif(SCENE, options, sink),
+          () => engine.renderLayoutTransitionToAnimatedWebp(TRANSITION, options, sink),
+          () => engine.renderLayoutTransitionToAnimatedGif(TRANSITION, options, sink),
+        ]) {
+          await expect(write()).rejects.toMatchObject({
+            code: "ANIMATED_RASTER_SESSION_INVALID_INPUT",
+            context: { reason: "unknownField", field: "options" },
           });
         }
-      });
+        expect(mockWorker.postMessage).not.toHaveBeenCalled();
+        expect(sink.abort).not.toHaveBeenCalled();
+      } finally {
+        engine.dispose();
+      }
+    });
+    it("snapshots the transition and uses the dedicated WebP request", async () => {
+      const engine = await createEngine(mockWorker);
+      const bytes = new Uint8Array([0x52, 0x49, 0x46, 0x46, 4, 0, 0, 0, 87, 69, 66, 80]);
+      const requests = installRasterResponses(mockWorker, "webp", bytes);
       const input = structuredClone(TRANSITION);
-      const pending = engine.renderLayoutTransitionToAnimatedWebp(input, {
-        durationMs: 300,
-        fps: 10,
-        iterations: 2,
-        textPathMode: "glyphs",
-      });
+      const pending = collectAnimatedRaster((sink) =>
+        engine.renderLayoutTransitionToAnimatedWebp(
+          input,
+          {
+            durationMs: 300,
+            fps: 10,
+            iterations: 2,
+            textPathMode: "glyphs",
+          },
+          sink,
+        ),
+      );
       const firstState = input.states.A;
       if (firstState?.type === "Canvas") {
         firstState.width = 200;
       }
 
       await expect(pending).resolves.toEqual(bytes);
-      const request = mockWorker.lastRequest();
-      expect(request.type).toBe("render-layout-transition-animated-webp");
-      if (request.type === "render-layout-transition-animated-webp") {
+      const request = requests.find(
+        (request) => request.type === "open-layout-transition-raster-stream",
+      );
+      if (!request) {
+        throw new TypeError("Missing raster open request");
+      }
+      expect(request.type).toBe("open-layout-transition-raster-stream");
+      if (request.type === "open-layout-transition-raster-stream") {
         expect(request.transition.states.A).toMatchObject({ width: 100 });
         expect(request.options).toMatchObject({
           durationMs: 300,
@@ -1252,33 +1325,32 @@ describe("WorkerEngine", () => {
       const engine = await createEngine(mockWorker);
       const bytes = new Uint8Array([0x47, 0x49, 0x46]);
       const warningCodes: string[] = [];
-      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
-        if (request.type === "render-layout-transition-animated-gif") {
-          mockWorker.respond({
-            id: request.id,
-            type: "render-animated-gif-ok",
-            gif: bytes,
-            warnings: [
-              {
-                severity: "recoverable",
-                code: "ANIMATED_GIF_TIMING_ADJUSTED",
-                message: "adjusted",
-                fallback: "adjusted timing",
-                stage: "emit",
-              },
-            ],
-          });
-        }
-      });
+      const requests = installRasterResponses(mockWorker, "gif", bytes, [
+        {
+          severity: "recoverable",
+          code: "ANIMATED_GIF_TIMING_ADJUSTED",
+          message: "adjusted",
+          fallback: "adjusted timing",
+          stage: "emit",
+        },
+      ]);
 
       await expect(
-        engine.renderLayoutTransitionToAnimatedGif(TRANSITION, {
-          durationMs: 300,
-          iterations: "infinite",
-          onWarning: (warning) => warningCodes.push(warning.code),
-        }),
+        collectAnimatedRaster((sink) =>
+          engine.renderLayoutTransitionToAnimatedGif(
+            TRANSITION,
+            {
+              durationMs: 300,
+              iterations: "infinite",
+              onWarning: (warning) => warningCodes.push(warning.code),
+            },
+            sink,
+          ),
+        ),
       ).resolves.toEqual(bytes);
-      expect(mockWorker.lastRequest().type).toBe("render-layout-transition-animated-gif");
+      expect(
+        requests.find((request) => request.type === "open-layout-transition-raster-stream")?.type,
+      ).toBe("open-layout-transition-raster-stream");
       expect(warningCodes).toEqual(["ANIMATED_GIF_TIMING_ADJUSTED"]);
       engine.dispose();
     });
@@ -1286,7 +1358,7 @@ describe("WorkerEngine", () => {
     it("rehydrates Worker fatal errors for transition encoding", async () => {
       const engine = await createEngine(mockWorker);
       mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
-        if (request.type === "render-layout-transition-animated-webp") {
+        if (request.type === "open-layout-transition-raster-stream") {
           mockWorker.respond({
             id: request.id,
             type: "error",
@@ -1296,10 +1368,16 @@ describe("WorkerEngine", () => {
       });
 
       await expect(
-        engine.renderLayoutTransitionToAnimatedWebp(TRANSITION, {
-          durationMs: 300,
-          iterations: "infinite",
-        }),
+        collectAnimatedRaster((sink) =>
+          engine.renderLayoutTransitionToAnimatedWebp(
+            TRANSITION,
+            {
+              durationMs: 300,
+              iterations: "infinite",
+            },
+            sink,
+          ),
+        ),
       ).rejects.toMatchObject({ code: "LAYOUT_TRANSITION_INCOMPATIBLE" });
       engine.dispose();
     });
@@ -1310,16 +1388,19 @@ describe("WorkerEngine", () => {
       mockWorker.postMessage.mockImplementation(() => {});
 
       await expect(
-        engine.renderLayoutTransitionToAnimatedGif(TRANSITION, {
-          durationMs: 300,
-          iterations: "infinite",
-        }),
+        collectAnimatedRaster((sink) =>
+          engine.renderLayoutTransitionToAnimatedGif(
+            TRANSITION,
+            {
+              durationMs: 300,
+              iterations: "infinite",
+            },
+            sink,
+          ),
+        ),
       ).rejects.toMatchObject({
-        code: "WORKER_REQUEST_TIMEOUT",
-        context: expect.objectContaining({
-          requestType: "render-layout-transition-animated-gif",
-          timeoutMs: 20,
-        }),
+        code: "ANIMATED_RASTER_ABORTED",
+        context: expect.objectContaining({ operation: "open", reason: "deadline" }),
       });
       engine.dispose();
     });

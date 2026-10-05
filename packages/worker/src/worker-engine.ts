@@ -20,6 +20,9 @@
  */
 
 import type {
+  AnimatedRasterSink,
+  AnimatedRasterWriteResult,
+  AnimatedWebpSink,
   Frame,
   GeometryDoc,
   IntrinsicInlineSizeInput,
@@ -53,6 +56,13 @@ import type {
   TextFlowWithExclusionsResult,
 } from "@boundsvg/core";
 import { decodeSceneDocument, FatalError, RecoverableError } from "@boundsvg/core";
+import {
+  type AnimatedRasterFormat,
+  animatedRasterFailure,
+  assertAnimatedRasterSink,
+  assertAnimationSignal,
+} from "./animation-errors.js";
+import { authenticateWorkerAnimationOptions, WorkerAnimationStream } from "./animation-stream.js";
 import { formatUnknownWorkerFailure } from "./diagnostic-format.js";
 import {
   snapshotWorkerLayoutTransitionInput,
@@ -87,6 +97,7 @@ import { resolveWorkerTimeout } from "./worker-timeout.js";
 // Options
 // ---------------------------------------------------------------------------
 
+/** Worker endpoint, initial assets, and timeout used to create a render proxy. */
 export type WorkerEngineOptions = {
   /** Worker-like instance or URL. When a URL is given a new Worker is created. */
   worker: WorkerLike | URL;
@@ -100,6 +111,7 @@ export type WorkerEngineOptions = {
   timeout?: number;
 };
 
+/** Worker messaging and lifecycle capabilities required by the render proxy. */
 export type WorkerLike = Pick<
   Worker,
   "postMessage" | "terminate" | "addEventListener" | "removeEventListener"
@@ -108,30 +120,36 @@ export type WorkerLike = Pick<
 /** Optional cancellation owned by the caller, never sent over the wire. */
 export type WorkerRequestOptions = { signal?: AbortSignal };
 
+/** Physical workers already assigned to an engine owner. */
 const attachedWorkers = new WeakSet<WorkerLike>();
 
 // ---------------------------------------------------------------------------
 // Render result
 // ---------------------------------------------------------------------------
 
+/** SVG payload and serialized warnings returned over the Worker protocol. */
 export type WorkerRenderSvgResult = {
   svg: string;
   warnings: SerializedRecoverableError[];
 };
 
+/** PNG payload and serialized warnings returned over the Worker protocol. */
 export type WorkerRenderPngResult = {
   png: Uint8Array;
   warnings: SerializedRecoverableError[];
 };
 
+/** Layered SVG payload with serialized Worker warnings. */
 export type WorkerRenderLayeredSvgResult = LayeredSvgResult & {
   warnings: SerializedRecoverableError[];
 };
 
+/** Layered PNG payload with serialized Worker warnings. */
 export type WorkerRenderLayeredPngResult = LayeredPngResult & {
   warnings: SerializedRecoverableError[];
 };
 
+/** SVG payload and outline-resolved IR returned together by the Worker. */
 export type WorkerRenderSvgAndIrResult = {
   svg: string;
   ir: IR;
@@ -144,11 +162,14 @@ export type WorkerRenderSvgAndIrResult = {
 type WarningCallback = NonNullable<OutputCommonOptions["onWarning"]>;
 type PngResolutionAdjustedCallback = NonNullable<RasterEmissionOptions["onPngResolutionAdjusted"]>;
 
+/** SVG or PNG frame payload with serialized warnings for materialized scene rendering. */
 export type WorkerRenderedFrame =
   | { format: "svg"; data: string; warnings: SerializedRecoverableError[] }
   | { format: "png"; data: Uint8Array; warnings: SerializedRecoverableError[] };
 
+/** Brand for scene snapshots already validated at the main-thread boundary. */
 const preparedSceneDocumentBrand: unique symbol = Symbol("prepared-scene-document");
+/** Brand for transition snapshots already validated at the main-thread boundary. */
 const preparedLayoutTransitionBrand: unique symbol = Symbol("prepared-layout-transition");
 
 /** Package-internal proof that one Scene snapshot already crossed the main boundary. */
@@ -163,6 +184,7 @@ export type PreparedWorkerLayoutTransition = {
   readonly [preparedLayoutTransitionBrand]: true;
 };
 
+/** Validate and snapshot an unknown scene into a branded transport document. */
 export function prepareSceneForTransport(input: unknown): PreparedSceneDocument {
   return {
     scene: decodeSceneDocument(input),
@@ -170,6 +192,7 @@ export function prepareSceneForTransport(input: unknown): PreparedSceneDocument 
   };
 }
 
+/** Validate and snapshot both layout-transition states for Worker transport. */
 export function prepareWorkerLayoutTransitionForTransport(
   input: WorkerLayoutTransitionInput,
 ): PreparedWorkerLayoutTransition {
@@ -179,6 +202,7 @@ export function prepareWorkerLayoutTransitionForTransport(
   };
 }
 
+/** Package-internal stream and materialized-render operations reserved for a WorkerPool. */
 export type WorkerPoolEndpoint = {
   open(
     scene: PreparedSceneDocument,
@@ -200,8 +224,10 @@ export type WorkerPoolEndpoint = {
   ): Promise<WorkerRenderedFrame>;
 };
 
+/** Registered pool integration endpoints associated with worker engines. */
 const workerPoolEndpoints = new WeakMap<WorkerEngine, WorkerPoolEndpoint>();
 
+/** Retrieve the registered pool endpoint or throw when the engine has none. */
 export function getWorkerPoolEndpoint(engine: WorkerEngine): WorkerPoolEndpoint {
   const endpoint = workerPoolEndpoints.get(engine);
   if (!endpoint) {
@@ -217,18 +243,27 @@ export function getWorkerPoolEndpoint(engine: WorkerEngine): WorkerPoolEndpoint 
 // WorkerEngine
 // ---------------------------------------------------------------------------
 
+/** Serialize render requests to one Worker and manage deadlines, cancellation, and owned Worker disposal. */
 export class WorkerEngine {
   private readonly worker: WorkerLike;
   private readonly ownsWorker: boolean;
   private nextId = 1;
   private disposed = false;
   private readonly scheduler: WorkerRequestScheduler;
+  /** Main lease remains occupied until pending callbacks and owned cleanup settle. */
+  private animation: WorkerAnimationStream | undefined;
+  /** Drain callers share one admission close and one absolute wait deadline. */
+  private drainPromise: Promise<void> | undefined;
 
   /** Bound handlers for addEventListener / removeEventListener. */
   private readonly handleMessage: (event: MessageEvent) => void;
   private readonly handleError: (event: ErrorEvent) => void;
 
-  private constructor(worker: WorkerLike, ownsWorker: boolean, timeoutMs: number) {
+  private constructor(
+    worker: WorkerLike,
+    ownsWorker: boolean,
+    private readonly timeoutMs: number,
+  ) {
     this.worker = worker;
     this.ownsWorker = ownsWorker;
     this.scheduler = new WorkerRequestScheduler(timeoutMs, {
@@ -258,11 +293,11 @@ export class WorkerEngine {
         return;
       }
       this.disposed = true;
-
       const workerMessage = describeWorkerErrorEvent(event);
       const error = workerLifecycleError("WORKER_CRASHED", `Worker error: ${workerMessage}`, {
         workerMessage,
       });
+      this.animation?.fail(error);
       this.scheduler.dispose(error);
 
       this.worker.removeEventListener("message", this.handleMessage);
@@ -671,136 +706,166 @@ export class WorkerEngine {
     return response.webp;
   }
 
-  /**
-   * Render a declarative animation to an animated lossless WebP inside the
-   * Worker. The bytes are transferred (zero-copy) from the Worker.
-   */
-  async renderToAnimatedWebp(
+  /** Stream animated lossless WebP into a required main-thread patchable sink. */
+  // biome-ignore lint/complexity/useMaxParams: Input, render options, destination and optional cancellation are separate public contracts.
+  renderToAnimatedWebp(
     scene: SceneNode,
     options: RenderAnimatedWebpOptions,
+    sink: AnimatedWebpSink,
     requestOptions?: WorkerRequestOptions,
-  ): Promise<Uint8Array> {
-    this.scheduler.assertAccepting();
-    this.assertNotDisposed();
-    const preparedScene = prepareSceneForTransport(scene);
-
-    const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
-
-    const request: WorkerRequest = {
-      id: this.nextRequestId(),
-      type: "render-animated-webp",
-      scene: preparedScene.scene,
-      options: { ...workerOptions, iterations: options.iterations },
-    };
-
-    const response = await this.send(request, requestOptions);
-
-    if (response.type === "error") {
-      throw FatalError.fromSerialized(response.error);
-    }
-    if (response.type !== "render-animated-webp-ok") {
-      throw unexpectedWorkerResponseError(response.type, "render-animated-webp-ok");
-    }
-
-    forwardWorkerWarnings(response.warnings, onWarning, onPngResolutionAdjusted);
-    return response.webp;
+  ): Promise<AnimatedRasterWriteResult> {
+    return this.writeAnimation({
+      format: "webp",
+      source: { scene },
+      options: options,
+      sink: sink,
+      requestOptions: requestOptions,
+    });
   }
 
-  /**
-   * Compile two flattened layout states in the Worker and render the result to
-   * animated lossless WebP. `CompiledScene` is intentionally not transported.
-   */
-  async renderLayoutTransitionToAnimatedWebp(
+  /** Compile transition states remotely and stream WebP through the same sink contract. */
+  // biome-ignore lint/complexity/useMaxParams: Input, render options, destination and optional cancellation are separate public contracts.
+  renderLayoutTransitionToAnimatedWebp(
     input: WorkerLayoutTransitionInput,
     options: RenderAnimatedWebpOptions,
+    sink: AnimatedWebpSink,
     requestOptions?: WorkerRequestOptions,
-  ): Promise<Uint8Array> {
-    this.scheduler.assertAccepting();
-    this.assertNotDisposed();
-    const preparedTransition = prepareWorkerLayoutTransitionForTransport(input);
-    const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
-    const request: WorkerRequest = {
-      id: this.nextRequestId(),
-      type: "render-layout-transition-animated-webp",
-      transition: preparedTransition.transition,
-      options: { ...workerOptions, iterations: options.iterations },
-    };
-    const response = await this.send(request, requestOptions);
-    if (response.type === "error") {
-      throw FatalError.fromSerialized(response.error);
-    }
-    if (response.type !== "render-animated-webp-ok") {
-      throw unexpectedWorkerResponseError(response.type, "render-animated-webp-ok");
-    }
-    forwardWorkerWarnings(response.warnings, onWarning, onPngResolutionAdjusted);
-    return response.webp;
+  ): Promise<AnimatedRasterWriteResult> {
+    return this.writeAnimation({
+      format: "webp",
+      source: { transition: input },
+      options: options,
+      sink: sink,
+      requestOptions: requestOptions,
+    });
   }
 
-  /**
-   * Render a declarative animation to an animated GIF inside the Worker. The
-   * bytes are transferred (zero-copy) from the Worker.
-   */
-  async renderToAnimatedGif(
+  /** Stream palette GIF to a sequential sink under the enqueue-time deadline. */
+  // biome-ignore lint/complexity/useMaxParams: Input, render options, destination and optional cancellation are separate public contracts.
+  renderToAnimatedGif(
     scene: SceneNode,
     options: RenderAnimatedGifOptions,
+    sink: AnimatedRasterSink,
     requestOptions?: WorkerRequestOptions,
-  ): Promise<Uint8Array> {
-    this.scheduler.assertAccepting();
-    this.assertNotDisposed();
-    const preparedScene = prepareSceneForTransport(scene);
-
-    const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
-
-    const request: WorkerRequest = {
-      id: this.nextRequestId(),
-      type: "render-animated-gif",
-      scene: preparedScene.scene,
-      options: { ...workerOptions, iterations: options.iterations },
-    };
-
-    const response = await this.send(request, requestOptions);
-
-    if (response.type === "error") {
-      throw FatalError.fromSerialized(response.error);
-    }
-    if (response.type !== "render-animated-gif-ok") {
-      throw unexpectedWorkerResponseError(response.type, "render-animated-gif-ok");
-    }
-
-    forwardWorkerWarnings(response.warnings, onWarning, onPngResolutionAdjusted);
-    return response.gif;
+  ): Promise<AnimatedRasterWriteResult> {
+    return this.writeAnimation({
+      format: "gif",
+      source: { scene },
+      options: options,
+      sink: sink,
+      requestOptions: requestOptions,
+    });
   }
 
-  /**
-   * Compile two flattened layout states in the Worker and render the result to
-   * animated GIF. `CompiledScene` is intentionally not transported.
-   */
-  async renderLayoutTransitionToAnimatedGif(
+  /** Compile transition states remotely and stream GIF without collecting complete output. */
+  // biome-ignore lint/complexity/useMaxParams: Input, render options, destination and optional cancellation are separate public contracts.
+  renderLayoutTransitionToAnimatedGif(
     input: WorkerLayoutTransitionInput,
     options: RenderAnimatedGifOptions,
+    sink: AnimatedRasterSink,
     requestOptions?: WorkerRequestOptions,
-  ): Promise<Uint8Array> {
-    this.scheduler.assertAccepting();
-    this.assertNotDisposed();
-    const preparedTransition = prepareWorkerLayoutTransitionForTransport(input);
-    const { workerOptions, onWarning, onPngResolutionAdjusted } = splitOptions(options);
-    const request: WorkerRequest = {
-      id: this.nextRequestId(),
-      type: "render-layout-transition-animated-gif",
-      transition: preparedTransition.transition,
-      options: { ...workerOptions, iterations: options.iterations },
-    };
-    const response = await this.send(request, requestOptions);
-    if (response.type === "error") {
-      throw FatalError.fromSerialized(response.error);
-    }
-    if (response.type !== "render-animated-gif-ok") {
-      throw unexpectedWorkerResponseError(response.type, "render-animated-gif-ok");
-    }
-    forwardWorkerWarnings(response.warnings, onWarning, onPngResolutionAdjusted);
-    return response.gif;
+  ): Promise<AnimatedRasterWriteResult> {
+    return this.writeAnimation({
+      format: "gif",
+      source: { transition: input },
+      options: options,
+      sink: sink,
+      requestOptions: requestOptions,
+    });
   }
 
+  /** Authenticate before adoption, then own input snapshots and pending callback cleanup. */
+  private async writeAnimation(configuration: {
+    format: AnimatedRasterFormat;
+    source: { scene: SceneNode } | { transition: WorkerLayoutTransitionInput };
+    options: RenderAnimatedGifOptions | RenderAnimatedWebpOptions;
+    sink: AnimatedRasterSink;
+    requestOptions?: WorkerRequestOptions;
+  }): Promise<AnimatedRasterWriteResult> {
+    const { format, source, options, sink, requestOptions } = configuration;
+    this.scheduler.assertAccepting();
+    this.assertNotDisposed();
+    assertAnimatedRasterSink(sink, { format, shouldRequirePatch: format === "webp" });
+    const sourceInput = "scene" in source ? source.scene : source.transition;
+    if (typeof sourceInput !== "object" || sourceInput === null || Array.isArray(sourceInput)) {
+      throw animatedRasterFailure(format, "open", {
+        family: "SESSION_INVALID_INPUT",
+        reason: "wrongType",
+        field: "options",
+      });
+    }
+    const signal = authenticateWorkerAnimationOptions(options, requestOptions, format);
+    assertAnimationSignal(signal, format);
+    if (this.animation) {
+      throw animatedRasterFailure(format, "open", {
+        family: "JOB_BUSY",
+        reason: "activeAnimation",
+      });
+    }
+    const callbacks = {
+      onWarning: options.onWarning,
+      onPngResolutionAdjusted: options.onPngResolutionAdjusted,
+    };
+    const owner = new WorkerAnimationStream(format, sink, {
+      signal: signal,
+      timeoutMs: this.timeoutMs,
+      transport: {
+        open: (request, deadline, error) =>
+          this.scheduler.sendRasterOpen(request, { deadline, error }),
+        next: (streamId, deadline, error) =>
+          this.scheduler.sendRasterPull(
+            { id: this.nextRequestId(), type: "next-raster-stream", streamId },
+            { deadline, error },
+          ),
+        close: (streamId) => {
+          void this.scheduler.closeStream(streamId).catch(() => {
+            // Later close failure affects future admission through the scheduler.
+          });
+        },
+      },
+      release: () => {
+        if (this.animation === owner) {
+          this.animation = undefined;
+        }
+      },
+      deliverWarnings: (warnings, check) => {
+        forwardRehydratedWorkerWarnings({
+          warnings: rehydrateWorkerWarnings(warnings),
+          onWarning: callbacks.onWarning,
+          onPngResolutionAdjusted: callbacks.onPngResolutionAdjusted,
+          detachForRetainedIr: false,
+          check,
+        });
+      },
+    });
+    this.animation = owner;
+    return owner.start(() => {
+      const {
+        onWarning: _onWarning,
+        onPngResolutionAdjusted: _onPngResolutionAdjusted,
+        ...transportOptions
+      } = options;
+      const stableOptions = structuredClone(transportOptions);
+      const id = this.nextRequestId();
+      return "scene" in source
+        ? {
+            id,
+            type: "open-raster-stream",
+            format,
+            options: stableOptions,
+            scene: prepareSceneForTransport(source.scene).scene,
+          }
+        : {
+            id,
+            type: "open-layout-transition-raster-stream",
+            format,
+            options: stableOptions,
+            transition: prepareWorkerLayoutTransitionForTransport(source.transition).transition,
+          };
+    });
+  }
+
+  /** Render ordered SVG layers in the Worker and deliver warnings after successful completion. */
   async renderToLayeredSvg(
     scene: SceneNode,
     options?: LayeredSvgOptions,
@@ -832,6 +897,7 @@ export class WorkerEngine {
     return response.result;
   }
 
+  /** Render ordered PNG layers in the Worker and deliver warnings and scale adjustments after success. */
   async renderToLayeredPng(
     scene: SceneNode,
     options?: LayeredPngOptions,
@@ -863,6 +929,7 @@ export class WorkerEngine {
     return response.result;
   }
 
+  /** Request WASM text flow layout from the Worker with optional logical cancellation. */
   async layoutTextFlow(
     input: TextFlowInput,
     requestOptions?: WorkerRequestOptions,
@@ -881,6 +948,7 @@ export class WorkerEngine {
     return response.result;
   }
 
+  /** Request WASM flow layout around exclusions from the Worker with optional logical cancellation. */
   async layoutTextFlowWithExclusions(
     input: TextFlowWithExclusionsInput,
     requestOptions?: WorkerRequestOptions,
@@ -903,6 +971,7 @@ export class WorkerEngine {
     return response.result;
   }
 
+  /** Request WASM text block measurements from the Worker with optional logical cancellation. */
   async measureTextBlock(
     input: MeasureTextBlockInput,
     requestOptions?: WorkerRequestOptions,
@@ -925,6 +994,7 @@ export class WorkerEngine {
     return response.result;
   }
 
+  /** Request a WASM fitted text size from the Worker with optional logical cancellation. */
   async shrinkwrapText(
     input: ShrinkwrapTextInput,
     requestOptions?: WorkerRequestOptions,
@@ -943,6 +1013,7 @@ export class WorkerEngine {
     return response.result;
   }
 
+  /** Request a WASM fitted flow size from the Worker with optional logical cancellation. */
   async shrinkwrapFlow(
     input: ShrinkwrapFlowInput,
     requestOptions?: WorkerRequestOptions,
@@ -961,6 +1032,7 @@ export class WorkerEngine {
     return response.result;
   }
 
+  /** Request WASM intrinsic text inline sizes from the Worker with optional logical cancellation. */
   async measureIntrinsicInlineSize(
     input: IntrinsicInlineSizeInput,
     requestOptions?: WorkerRequestOptions,
@@ -985,7 +1057,35 @@ export class WorkerEngine {
 
   /** Permanently close admission and wait for physical requests and stream cleanup. */
   drain(): Promise<void> {
-    return this.scheduler.drain();
+    if (this.drainPromise) {
+      return this.drainPromise;
+    }
+    this.scheduler.closeAdmission();
+    this.drainPromise = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(
+            workerLifecycleError("WORKER_DRAIN_TIMEOUT", "Worker drain timed out", {
+              timeoutMs: this.timeoutMs,
+            }),
+          ),
+        this.timeoutMs,
+      );
+      const work = this.animation
+        ? this.animation.cleanup.then(() => this.scheduler.drain())
+        : this.scheduler.drain();
+      void work.then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+    return this.drainPromise;
   }
 
   /**
@@ -1005,6 +1105,8 @@ export class WorkerEngine {
       // ID exhaustion must not prevent local cleanup.
     }
     this.disposed = true;
+    const error = workerEngineDisposedError();
+    this.animation?.cancel("workerDisposed", error);
 
     // Best-effort dispose message — must not prevent cleanup
     try {
@@ -1018,7 +1120,6 @@ export class WorkerEngine {
     }
 
     // Reject all pending
-    const error = workerEngineDisposedError();
     this.scheduler.dispose(error);
 
     // Remove listeners so externally-provided Workers are left clean
@@ -1046,6 +1147,12 @@ export class WorkerEngine {
       return;
     }
     this.disposed = true;
+    this.animation?.fail(
+      workerLifecycleError(
+        "WORKER_PROTOCOL_INVALID_RESPONSE",
+        "Worker returned an uncorrelatable invalid response",
+      ),
+    );
     this.scheduler.dispose(invalidWorkerResponseError);
     this.worker.removeEventListener("message", this.handleMessage);
     this.worker.removeEventListener("error", this.handleError as EventListener);
@@ -1272,6 +1379,7 @@ function forwardRehydratedWorkerWarnings(options: {
   onWarning: WarningCallback | undefined;
   onPngResolutionAdjusted: PngResolutionAdjustedCallback | undefined;
   detachForRetainedIr: boolean;
+  check?: () => void;
 }): void {
   const { warnings, onWarning, onPngResolutionAdjusted, detachForRetainedIr } = options;
   for (const warning of warnings) {
@@ -1279,11 +1387,13 @@ function forwardRehydratedWorkerWarnings(options: {
       const pngWarning = extractPngResolutionWarning(warning);
       if (pngWarning) {
         onPngResolutionAdjusted(pngWarning);
+        options.check?.();
       }
     }
     if (onWarning) {
       if (!detachForRetainedIr) {
         onWarning(warning);
+        options.check?.();
         continue;
       }
       const serialized = warning.toJSON();
@@ -1295,6 +1405,7 @@ function forwardRehydratedWorkerWarnings(options: {
           ...(serialized.context !== undefined && { context: serialized.context }),
         }),
       );
+      options.check?.();
     }
   }
 }

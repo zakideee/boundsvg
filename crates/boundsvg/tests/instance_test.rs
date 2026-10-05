@@ -3,11 +3,15 @@
 #![cfg(test)]
 
 use boundsvg::BoundSvgEngine;
+use boundsvg::animation_writer::StagedWriter;
 use boundsvg::font::FontStyle;
 use boundsvg::font::outline;
 use boundsvg::font::shaping;
-use boundsvg::gif_anim;
 use boundsvg::layout;
+use boundsvg::raster_anim::{
+    AnimatedRasterFormat, AnimatedRasterInfinite, AnimatedRasterIterations, AnimationFrameInput,
+    AnimationSession, AnimationSessionOptions,
+};
 use boundsvg::rasterize;
 use boundsvg::webp_encode;
 use serde_json::Value;
@@ -270,7 +274,7 @@ fn svg_to_webp_uses_instance_registry() {
 }
 
 #[test]
-fn svgs_to_animated_gif_uses_instance_registry() {
+fn animated_gif_session_uses_instance_registry() {
     let mut engine = BoundSvgEngine::create();
     let font_data = test_font_data();
     register(&mut engine, &font_data, "GifFont", 400, FontStyle::Normal);
@@ -281,24 +285,34 @@ fn svgs_to_animated_gif_uses_instance_registry() {
     </svg>"#;
 
     let (alias_map, font_arcs) = engine.registry().rasterize_font_data();
-    let input = boundsvg::raster_anim::AnimationEncodeInput {
-        frames: vec![
-            boundsvg::raster_anim::AnimationFrameInput {
+    let mut session = AnimationSession::open(
+        AnimatedRasterFormat::Gif,
+        AnimationSessionOptions {
+            frame_count: 2,
+            iterations: AnimatedRasterIterations::Infinite(AnimatedRasterInfinite::Infinite),
+            raster_options: rasterize::RasterizeOptions::default(),
+        },
+        alias_map,
+        font_arcs,
+        StagedWriter::default(),
+    )
+    .expect("session should open");
+    let mut gif_bytes = Vec::new();
+    for _ in 0..2 {
+        session
+            .push(AnimationFrameInput {
                 svg: svg.to_string(),
                 duration_ms: 100,
-            },
-            boundsvg::raster_anim::AnimationFrameInput {
-                svg: svg.to_string(),
-                duration_ms: 100,
-            },
-        ],
-        iterations: boundsvg::raster_anim::AnimatedRasterIterations::Infinite(
-            boundsvg::raster_anim::AnimatedRasterInfinite::Infinite,
-        ),
-        options: None,
-    };
-    let gif_bytes = gif_anim::encode_animated_gif(&input, &alias_map, &font_arcs)
-        .expect("encode_animated_gif should succeed");
+            })
+            .expect("frame should encode");
+        while let Some(chunk) = session.read_chunk().expect("frame output should drain") {
+            gif_bytes.extend_from_slice(&chunk);
+        }
+    }
+    session.finish().expect("session should finish");
+    while let Some(chunk) = session.read_chunk().expect("trailer should drain") {
+        gif_bytes.extend_from_slice(&chunk);
+    }
     assert_eq!(&gif_bytes[0..6], b"GIF89a");
 
     // The glyphs must actually be painted: a registry miss would leave the

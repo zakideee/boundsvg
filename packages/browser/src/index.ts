@@ -10,6 +10,7 @@
  *   initWasm(wasmModule);
  */
 
+export { createAnimatedRasterFileSink, createAnimatedRasterSpool } from "./animation-storage.js";
 export type { PngDimensions } from "./assets.js";
 export { downloadPng, readPngDimensions } from "./assets.js";
 export type {

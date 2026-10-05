@@ -1,14 +1,32 @@
+import { animatedRasterFailure } from "./animation-errors.js";
+import type {
+  AnimatedRasterFrameProducer,
+  AnimatedRasterJob,
+  AnimatedRasterJobInput,
+} from "./animation-job.js";
 import {
-  type AnimationScheduleErrorCodes,
+  assertAnimationSignal,
+  isAnimationSignalAborted,
+  OwnedAnimatedRasterJob,
+  registerAnimatedRasterJobFactory,
+  snapshotAnimationInput,
+  writeAnimatedRasterJob,
+} from "./animation-job.js";
+import type {
+  AnimatedRasterSink,
+  AnimatedRasterWriteOptions,
+  AnimatedRasterWriteResult,
+  AnimatedWebpSink,
+} from "./animation-output.js";
+import { assertAnimatedRasterSink } from "./animation-output.js";
+import {
+  type AnimationScheduleCursor,
   type AnimationScheduleOptions,
   assertAnimationIterations,
-  GIF_DELAY_UNIT_MS,
-  GIF_MIN_FRAME_MS,
+  createAnimationScheduleCursor,
   MAX_ANIMATED_GIF_ITERATIONS,
   MAX_ANIMATED_WEBP_ITERATIONS,
-  type ResolvedAnimationSchedule,
-  resolveAnimationFrameSchedule,
-  resolveGifDelaysCs,
+  resolveAnimationScheduleDescriptor,
 } from "./animation-schedule.js";
 import {
   authenticateCompiledScene,
@@ -30,6 +48,7 @@ import {
   formatUnknownDiagnosticValue,
   RecoverableError,
   type SerializedRecoverableError,
+  wrapWasmRenderError,
 } from "./errors.js";
 import { DEFAULT_FONT_WEIGHT } from "./font/types.js";
 import { cloneRecoverableError } from "./ir/clone.js";
@@ -51,7 +70,6 @@ import type { LayoutResult } from "./layout/types.js";
 import { type LayoutTransitionInput, resolveLayoutTransitionInput } from "./layout-transition.js";
 import { assertLayoutTransitionSemanticIds } from "./layout-transition-semantic-ids.js";
 import {
-  MAX_ANIMATION_SVG_PAYLOAD_CHARS,
   RASTER_MAX_LONG_EDGE,
   RASTER_MAX_PIXELS,
   type ResolvedRasterScale,
@@ -71,7 +89,11 @@ import type { TextOutlineNode, TextPathMode } from "./text/types.js";
 import { validate, validateAnimatedSvgTimeline } from "./validate/index.js";
 import type { AnimationSpec, VNode } from "./vnode/types.js";
 import type {
-  AnimationEncodeInput,
+  AnimatedRasterSessionHandle,
+  AnimationRenderOptions,
+  AnimationSessionOpenInput,
+} from "./wasm/animation-session.js";
+import type {
   IntrinsicInlineSizeInput,
   IntrinsicInlineSizeResult,
   MeasureTextBlockInput,
@@ -86,6 +108,7 @@ import type {
   TextFlowWithExclusionsInput,
   TextFlowWithExclusionsResult,
 } from "./wasm/index.js";
+import { WasmRasterSceneHandle } from "./wasm/index.js";
 import {
   decodeAnimationStateSamples,
   decodeRenderToIrEnvelope,
@@ -98,13 +121,7 @@ export type { CompiledScene } from "./compiled-scene.js";
 /** Engine input: either a VNode tree or a typed SceneNode tree */
 export type EngineInput = VNode | SceneNode;
 
-/**
- * How much longer than requested an animated GIF may play before it is worth
- * reporting. GIF's 10 ms quantum makes a small overshoot unavoidable for most
- * durations; 5% is past what the quantum alone can cause at a rate GIF can
- * represent.
- */
-const GIF_TIMING_TOLERANCE = 0.05;
+/** Default grouping mode for resolved glyph outline paths. */
 const DEFAULT_TEXT_PATH_MODE: TextPathMode = "merged";
 
 /**
@@ -319,7 +336,9 @@ function assertValidAnimationRenderOptions(
   }
 }
 
+/** Own option keys accepted when creating a compiled scene. */
 const COMPILE_OPTION_KEYS = ["skipValidation", "textPathMode"] as const;
+/** Own output keys shared by render families. */
 const OUTPUT_COMMON_OPTION_KEYS = [
   "scale",
   "debug",
@@ -327,54 +346,71 @@ const OUTPUT_COMMON_OPTION_KEYS = [
   "showMissingGlyphs",
   "generator",
 ] as const;
+/** Own keys controlling SVG identifier isolation and node metadata. */
 const SVG_EMISSION_OPTION_KEYS = ["resourceIdPrefix", "nodeIdMetadata"] as const;
+/** Own keys controlling raster background and dimension adjustment. */
 const RASTER_EMISSION_OPTION_KEYS = [
   "rasterBackground",
   "rasterOversizeBehavior",
   "onPngResolutionAdjusted",
 ] as const;
+/** Complete own-key domain for direct static SVG rendering. */
 const STATIC_SVG_OPTION_KEYS = new Set<string>([
   ...COMPILE_OPTION_KEYS,
   ...OUTPUT_COMMON_OPTION_KEYS,
   ...SVG_EMISSION_OPTION_KEYS,
   "timeMs",
 ]);
+/** Complete own-key domain for direct declarative animated SVG rendering. */
 const ANIMATED_SVG_OPTION_KEYS = new Set<string>([
   ...STATIC_SVG_OPTION_KEYS,
   "playback",
   "reducedMotion",
 ]);
+/** Static SVG own-key domain after compile-time choices are fixed. */
 const EMIT_STATIC_SVG_OPTION_KEYS = new Set<string>(
   [...STATIC_SVG_OPTION_KEYS].filter((key) => !COMPILE_OPTION_KEYS.includes(key as never)),
 );
+/** Animated SVG own-key domain after compile-time choices are fixed. */
 const EMIT_ANIMATED_SVG_OPTION_KEYS = new Set<string>([
   ...EMIT_STATIC_SVG_OPTION_KEYS,
   "playback",
   "reducedMotion",
 ]);
+/** Complete own-key domain for direct still-image raster rendering. */
 const RASTER_OPTION_KEYS = new Set<string>([
   ...COMPILE_OPTION_KEYS,
   ...OUTPUT_COMMON_OPTION_KEYS,
   ...RASTER_EMISSION_OPTION_KEYS,
   "timeMs",
 ]);
+/** Still-image raster own-key domain after compile-time choices are fixed. */
 const EMIT_RASTER_OPTION_KEYS = new Set<string>(
   [...RASTER_OPTION_KEYS].filter((key) => !COMPILE_OPTION_KEYS.includes(key as never)),
 );
+/** Own keys selecting explicit or uniformly sampled animation timing. */
 const ANIMATION_SCHEDULE_OPTION_KEYS = [
   "timesMs",
   "frameDurationsMs",
   "fps",
   "durationMs",
 ] as const;
+/** Complete own-key domain for direct animated raster rendering. */
 const ANIMATED_RASTER_OPTION_KEYS = new Set<string>([
-  ...RASTER_OPTION_KEYS,
+  ...[...RASTER_OPTION_KEYS].filter((key) => key !== "timeMs"),
   ...ANIMATION_SCHEDULE_OPTION_KEYS,
   "iterations",
 ]);
+/** Animated raster own-key domain after compile-time choices are fixed. */
 const COMPILED_ANIMATED_RASTER_OPTION_KEYS = new Set<string>(
   [...ANIMATED_RASTER_OPTION_KEYS].filter((key) => !COMPILE_OPTION_KEYS.includes(key as never)),
 );
+/** Restrict animation envelopes to records before their closed-key authentication. */
+function isAnimationRecord(candidate: unknown): candidate is Record<string, unknown> {
+  return typeof candidate === "object" && candidate !== null && !Array.isArray(candidate);
+}
+
+/** Migration diagnostics for rejected render option spellings. */
 const LEGACY_RENDER_OPTION_MIGRATIONS: Readonly<Record<string, string>> = {
   animation:
     'Use renderToAnimatedSvg with playback: { mode: "independent" }, or use static SVG with an explicit timeMs.',
@@ -430,9 +466,13 @@ function assertSvgEmissionOptionValues(options: SvgEmissionOptions | undefined):
   }
 }
 
+/** Largest document-cycle duration accepted by animated SVG timeline validation. */
 const MAX_TIMELINE_DURATION_MS = 2 ** 32;
+/** Largest finite total-play count accepted by animated SVG timeline validation. */
 const MAX_TIMELINE_ITERATIONS = 2 ** 20;
+/** Largest elapsed sample time accepted by animated SVG timeline validation. */
 const MAX_TIMELINE_TIME_MS = 2 ** 52;
+/** Largest elapsed-time to cycle-duration ratio accepted by timeline validation. */
 const MAX_TIMELINE_TIME_RATIO = 2 ** 31;
 
 function timelineReceived(container: object, field: string): string {
@@ -652,33 +692,10 @@ export function serializeIrForWasm(ir: Pick<IR, "root" | "width" | "height" | "d
   });
 }
 
-/**
- * Rebuild a FatalError from a WASM render export failure. The exports throw
- * a structured JSON envelope (code / message / stage / nodeId); anything
- * else becomes a generic engine-stage failure.
- */
-function wrapWasmRenderError(error: unknown): FatalError {
-  try {
-    if (error instanceof FatalError) {
-      return error;
-    }
-  } catch {
-    // A hostile proxy may make instanceof itself throw.
-  }
-  const text = formatUnknownDiagnosticValue(error, "Unknown WASM render failure");
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (FatalError.isSerialized(parsed)) {
-      return FatalError.fromSerialized(parsed);
-    }
-  } catch {
-    // Non-JSON and malformed structured diagnostics use the stable boundary error.
-  }
-  return new FatalError("WASM_RENDER_FAILED", text, { stage: "engine" });
-}
-
+/** Choose automatic scale reduction or an error when raster dimensions exceed the supported limits. */
 export type RasterOversizeBehavior = "auto-adjust" | "error";
 
+/** Requested and effective raster dimensions reported when automatic scale reduction occurs. */
 export type PngResolutionAdjustedWarning = {
   requestedScale: number;
   appliedScale: number;
@@ -692,6 +709,7 @@ export type PngResolutionAdjustedWarning = {
   maxPixels: number;
 };
 
+/** Injected WASM transports and initial resources used by an Engine instance. */
 export type EngineOptions = {
   /** WASM compute_layout function */
   computeLayoutFn: ComputeLayoutTransportFn;
@@ -699,10 +717,8 @@ export type EngineOptions = {
   svgToPngFn?: (svg: string, options?: PngRenderOptions) => Uint8Array;
   /** WASM svg_to_webp function (optional; absent on runtimes without the export) */
   svgToWebpFn?: (svg: string, options?: PngRenderOptions) => Uint8Array;
-  /** WASM svgs_to_animated_webp function (optional; absent on runtimes without the export) */
-  svgsToAnimatedWebpFn?: (input: AnimationEncodeInput) => Uint8Array;
-  /** WASM svgs_to_animated_gif function (optional; absent on runtimes without the export) */
-  svgsToAnimatedGifFn?: (input: AnimationEncodeInput) => Uint8Array;
+  /** Open the common single-frame animation encoder on this engine's font registry. */
+  openAnimatedRasterSessionFn?: (input: AnimationSessionOpenInput) => AnimatedRasterSessionHandle;
   /** Optional layered-SVG composition validator backed by the rasterizer */
   validateLayeredSvgCompositionFn?: (
     input: ValidateLayeredSvgCompositionInput,
@@ -848,6 +864,7 @@ export type OutputGenerator = {
   version: string;
 };
 
+/** Output scale, diagnostics, and generator identity shared by render families. */
 export type OutputCommonOptions = {
   scale?: number;
   debug?: boolean | DebugOverlayConfig;
@@ -858,6 +875,7 @@ export type OutputCommonOptions = {
   generator?: OutputGenerator;
 };
 
+/** Document identifier isolation and node metadata controls for SVG output. */
 export type SvgEmissionOptions = {
   /**
    * Literal prefix applied to every boundsvg-generated, document-global SVG
@@ -869,12 +887,14 @@ export type SvgEmissionOptions = {
   nodeIdMetadata?: "include" | "omit";
 };
 
+/** Raster background, dimension-limit behavior, and resolution adjustment notification. */
 export type RasterEmissionOptions = {
   rasterBackground?: string;
   rasterOversizeBehavior?: RasterOversizeBehavior;
   onPngResolutionAdjusted?: (warning: PngResolutionAdjustedWarning) => void;
 };
 
+/** Validation and text outline grouping choices fixed when compiling a scene. */
 export type CompileOptions = {
   skipValidation?: boolean;
   /** Text outline grouping mode carried with the compiled scene. */
@@ -895,14 +915,17 @@ export type AnimationTimeline = {
   iterations: AnimationIterationCount;
 };
 
+/** Select independent authored tracks or a shared document timeline. */
 export type AnimatedSvgPlayback =
   | { mode: "independent" }
   | ({ mode: "timeline" } & AnimationTimeline);
 
+/** Compile and emit a static SVG, optionally sampling animation at an explicit time. */
 export type RenderSvgOptions = CompileOptions &
   OutputCommonOptions &
   SvgEmissionOptions & { timeMs?: number };
 
+/** Compile and emit declarative animated SVG with an explicit playback mode. */
 export type RenderAnimatedSvgOptions = CompileOptions &
   OutputCommonOptions &
   SvgEmissionOptions & {
@@ -911,8 +934,10 @@ export type RenderAnimatedSvgOptions = CompileOptions &
     reducedMotion?: ReducedMotionMode;
   };
 
+/** Emit static SVG from a compiled scene without changing compile-time choices. */
 export type EmitSvgOptions = OutputCommonOptions & SvgEmissionOptions & { timeMs?: number };
 
+/** Emit declarative animated SVG from a compiled scene with an explicit playback mode. */
 export type EmitAnimatedSvgOptions = OutputCommonOptions &
   SvgEmissionOptions & {
     playback: AnimatedSvgPlayback;
@@ -920,31 +945,39 @@ export type EmitAnimatedSvgOptions = OutputCommonOptions &
     reducedMotion?: ReducedMotionMode;
   };
 
+/** Compile a scene to sampled IR with recoverable warning delivery. */
 export type RenderIrOptions = CompileOptions & {
   onWarning?: (warning: RecoverableError) => void;
   showMissingGlyphs?: boolean;
   timeMs?: number;
 };
 
+/** Compile and resolve text outlines, optionally including missing-glyph rectangles. */
 export type RenderTextOutlinesOptions = CompileOptions & {
   onWarning?: (warning: RecoverableError) => void;
   showMissingGlyphs?: boolean;
 };
 
+/** Resolve text outlines from a compiled scene without changing compile-time choices. */
 export type EmitTextOutlinesOptions = Omit<RenderTextOutlinesOptions, keyof CompileOptions>;
 
+/** Compile and rasterize a static or explicitly sampled scene as PNG. */
 export type RenderPngOptions = CompileOptions &
   OutputCommonOptions &
   RasterEmissionOptions & { timeMs?: number };
 
+/** Compile and rasterize a static or explicitly sampled scene as lossless WebP. */
 export type RenderWebpOptions = CompileOptions &
   OutputCommonOptions &
   RasterEmissionOptions & { timeMs?: number };
 
+/** Rasterize a compiled scene as PNG with output-time controls. */
 export type EmitPngOptions = OutputCommonOptions & RasterEmissionOptions & { timeMs?: number };
 
+/** Rasterize a compiled scene as lossless WebP with output-time controls. */
 export type EmitWebpOptions = OutputCommonOptions & RasterEmissionOptions & { timeMs?: number };
 
+/** Render paint-ordered SVG layers with optional composition validation. */
 export type LayeredSvgOptions = CompileOptions &
   OutputCommonOptions &
   SvgEmissionOptions & {
@@ -952,6 +985,7 @@ export type LayeredSvgOptions = CompileOptions &
     validateComposition?: LayeredCompositionValidationOptions;
   };
 
+/** Rasterize paint-ordered layers with optional composition validation. */
 export type LayeredPngOptions = CompileOptions &
   OutputCommonOptions &
   RasterEmissionOptions & {
@@ -959,12 +993,14 @@ export type LayeredPngOptions = CompileOptions &
     validateComposition?: LayeredCompositionValidationOptions;
   };
 
+/** Single-document reference and ordered SVG layers supplied to the raster comparison transport. */
 export type ValidateLayeredSvgCompositionInput = {
   singleSvg: string;
   layers: Array<{ svg: string; paintOrder: number }>;
   options?: Pick<PngRenderOptions, "fontFamilies">;
 };
 
+/** Pixel difference counts and canvas dimensions returned by composition comparison. */
 export type ValidateLayeredSvgCompositionMetrics = Pick<
   LayeredCompositionValidationResult,
   "differentPixels" | "differenceRatio" | "width" | "height"
@@ -972,6 +1008,7 @@ export type ValidateLayeredSvgCompositionMetrics = Pick<
 
 type CompiledSceneSource = Pick<CompiledSceneRecord, "ir" | "textPathMode">;
 
+/** One ordered static SVG sample from a frame schedule. */
 export type SvgFrame = {
   /** Zero-based position in the requested frame schedule. */
   index: number;
@@ -982,6 +1019,7 @@ export type SvgFrame = {
   data: string;
 };
 
+/** One ordered PNG sample from a frame schedule. */
 export type PngFrame = {
   /** Zero-based position in the requested frame schedule. */
   index: number;
@@ -995,23 +1033,17 @@ export type PngFrame = {
 /** One ordered result from `renderFrames` or a WorkerPool frame stream. */
 export type Frame = SvgFrame | PngFrame;
 
-/**
- * Error codes an animated raster format reports under. Extends the schedule
- * codes with the transport-size limit, which is not a schedule problem.
- */
-type AnimationErrorCodes = AnimationScheduleErrorCodes & {
-  payloadLimit: string;
-};
-
 /** Total number of animated-raster plays, or an unbounded animation. */
 export type AnimatedRasterIterations = NonNullable<AnimationSpec["iterations"]>;
 
+/** Sample schedule and required total play count for animated WebP encoding. */
 export type RenderAnimatedWebpOptions = Omit<RenderWebpOptions, "timeMs"> &
   AnimationScheduleOptions & {
     /** Total play count, 1..=65535, or `"infinite"`. */
     iterations: AnimatedRasterIterations;
   };
 
+/** Sample schedule and required total play count for animated GIF encoding. */
 export type RenderAnimatedGifOptions = Omit<RenderPngOptions, "timeMs"> &
   AnimationScheduleOptions & {
     /** Total play count, 1..=65536, or `"infinite"`. */
@@ -1030,6 +1062,7 @@ export type RenderCompiledAnimatedGifOptions = Omit<
   "skipValidation" | "textPathMode"
 >;
 
+/** Compile once and lazily emit static SVG at each requested sample time. */
 export type RenderSvgFramesOptions = CompileOptions &
   OutputCommonOptions &
   SvgEmissionOptions & {
@@ -1038,6 +1071,7 @@ export type RenderSvgFramesOptions = CompileOptions &
     format: "svg";
   };
 
+/** Compile once and lazily rasterize PNG at each requested sample time. */
 export type RenderPngFramesOptions = CompileOptions &
   OutputCommonOptions &
   RasterEmissionOptions & {
@@ -1046,12 +1080,16 @@ export type RenderPngFramesOptions = CompileOptions &
     format: "png";
   };
 
+/** Select SVG or PNG payloads for an ordered frame iterator. */
 export type RenderFramesOptions = RenderSvgFramesOptions | RenderPngFramesOptions;
 
+/** Sample a compiled scene as SVG without changing compile-time choices. */
 export type RenderCompiledSvgFramesOptions = Omit<RenderSvgFramesOptions, keyof CompileOptions>;
 
+/** Sample a compiled scene as PNG without changing compile-time choices. */
 export type RenderCompiledPngFramesOptions = Omit<RenderPngFramesOptions, keyof CompileOptions>;
 
+/** Select SVG or PNG samples from an existing compiled scene. */
 export type RenderCompiledFramesOptions =
   | RenderCompiledSvgFramesOptions
   | RenderCompiledPngFramesOptions;
@@ -1092,6 +1130,15 @@ type LegacyRenderFramesOptions = InternalRenderOptions & {
   format: "svg" | "png";
 };
 
+/** Copy an authenticated schedule array by index without its iterable or species hooks. */
+function snapshotScheduleArray(values: readonly unknown[]): unknown[] {
+  const snapshot = new Array<unknown>(values.length);
+  for (let index = 0; index < snapshot.length; index += 1) {
+    snapshot[index] = values[index];
+  }
+  return snapshot;
+}
+
 function snapshotRenderOptions<
   Options extends
     | RenderPngOptions
@@ -1103,20 +1150,27 @@ function snapshotRenderOptions<
     | LegacyRenderFramesOptions
     | RenderAnimatedWebpOptions
     | RenderAnimatedGifOptions,
->(options: Options): Options {
-  const debug = options.debug;
+>(options: Options, shouldUseIndexedScheduleCopy = false): Options {
+  const source = shouldUseIndexedScheduleCopy ? { ...options } : options;
+  const debug = source.debug;
   return {
-    ...options,
+    ...source,
     ...(typeof debug === "object" && debug !== null
       ? { debug: { ...(debug.parts !== undefined && { parts: [...debug.parts] }) } }
       : {}),
-    ...(options.generator !== undefined ? { generator: { ...options.generator } } : {}),
-    ...(Array.isArray(Reflect.get(options, "timesMs"))
-      ? { timesMs: [...(Reflect.get(options, "timesMs") as readonly number[])] }
-      : {}),
-    ...(Array.isArray(Reflect.get(options, "frameDurationsMs"))
+    ...(source.generator !== undefined ? { generator: { ...source.generator } } : {}),
+    ...(Array.isArray(Reflect.get(source, "timesMs"))
       ? {
-          frameDurationsMs: [...(Reflect.get(options, "frameDurationsMs") as readonly number[])],
+          timesMs: shouldUseIndexedScheduleCopy
+            ? snapshotScheduleArray(Reflect.get(source, "timesMs") as readonly number[])
+            : [...(Reflect.get(source, "timesMs") as readonly number[])],
+        }
+      : {}),
+    ...(Array.isArray(Reflect.get(source, "frameDurationsMs"))
+      ? {
+          frameDurationsMs: shouldUseIndexedScheduleCopy
+            ? snapshotScheduleArray(Reflect.get(source, "frameDurationsMs") as readonly number[])
+            : [...(Reflect.get(source, "frameDurationsMs") as readonly number[])],
         }
       : {}),
     ...(Reflect.has(options, "validateComposition") &&
@@ -1141,11 +1195,6 @@ type AnimationRasterPlan = {
   deferredWarnings: readonly RecoverableError[];
 };
 
-type AnimationFrameProducer = (
-  options: LegacyRenderFramesOptions,
-  rasterPlan: AnimationRasterPlan,
-) => Iterable<Frame>;
-
 type FrameEncoder =
   | { format: "svg" }
   | { format: "png"; rasterize: NonNullable<EngineOptions["svgToPngFn"]> };
@@ -1161,12 +1210,15 @@ type PreparedFrameScene = {
   rasterScene?: RasterSceneRenderHandle;
 };
 
-type FrameRenderPlan = {
-  stableOptions: LegacyRenderFramesOptions;
-  timesMs: number[];
-  format: LegacyRenderFramesOptions["format"];
-  frameEncoder: FrameEncoder;
+type PreparedFrameEmissionPlan = {
+  stableOptions: InternalRenderOptions;
+  format: "svg" | "png";
   rasterPlan: AnimationRasterPlan | undefined;
+};
+
+type FrameRenderPlan = PreparedFrameEmissionPlan & {
+  timesMs: number[];
+  frameEncoder: FrameEncoder;
   pngOptions: PngRenderOptions;
 };
 
@@ -1231,6 +1283,54 @@ class PreparedFrameIterator implements IterableIterator<Frame> {
   }
 }
 
+/** Own a lazy schedule and the shared prepared renderer until its last sample or return. */
+class PreparedAnimationProducer implements AnimatedRasterFrameProducer {
+  /** Detach the renderer and cursor on close to release scene and explicit input references. */
+  constructor(
+    private cursor: AnimationScheduleCursor | undefined,
+    private renderer:
+      | {
+          pushFrame(session: AnimatedRasterSessionHandle, timeMs: number, durationMs: number): void;
+          release(): void;
+        }
+      | undefined,
+    private remaining: number,
+  ) {}
+
+  /** Push one sample and release the scene after its last synchronous native operation. */
+  pushNext(session: AnimatedRasterSessionHandle): boolean {
+    if (!this.cursor || !this.renderer) {
+      return false;
+    }
+    try {
+      const entry = this.cursor.next();
+      if (entry.done) {
+        this.return();
+        return false;
+      }
+      this.renderer.pushFrame(session, entry.value.timeMs, entry.value.durationMs);
+      this.remaining -= 1;
+      if (this.remaining === 0) {
+        this.return();
+      }
+      return true;
+    } catch (error) {
+      this.return();
+      throw error;
+    }
+  }
+
+  /** Release the prepared scene even when no first sample was requested. */
+  return(): void {
+    this.cursor?.return();
+    this.cursor = undefined;
+    const renderer = this.renderer;
+    this.renderer = undefined;
+    renderer?.release();
+  }
+}
+
+/** Own rendering resources and coordinate WASM layout, compilation, emission, and rasterization. */
 export class Engine {
   private readonly options: EngineOptions;
   private readonly compiledSceneOwnerToken: CompiledSceneOwnerToken =
@@ -1241,9 +1341,15 @@ export class Engine {
   private readonly geometryRegistry = new Map<string, GeometryDoc>();
   private readonly symbolRegistry = new Map<string, SymbolDefinition>();
   private readonly preparedFrameScenes = new Set<WeakRef<PreparedSceneRenderHandle>>();
+  /** Retain the animation token until the external owner has settled cleanup. */
+  private activeAnimation: { job?: AnimatedRasterJob } | undefined;
 
+  /** Initialize local resource registries from the supplied transports and definitions. */
   constructor(options: EngineOptions) {
     this.options = options;
+    registerAnimatedRasterJobFactory(this, (input, signal) =>
+      this.createAnimatedRasterJobWithBackend(input, signal),
+    );
     for (const geometry of options.geometries ?? []) {
       this.geometryRegistry.set(geometry.id, geometry.doc);
     }
@@ -1317,6 +1423,7 @@ export class Engine {
     }
   }
 
+  /** Register or replace a geometry definition and invalidate resource observers. */
   registerGeometry(id: string, doc: GeometryDoc): void {
     this.ensureNotDisposed();
     this.ensureResourceVersionAvailable();
@@ -1324,6 +1431,7 @@ export class Engine {
     this.invalidateResources();
   }
 
+  /** Register or replace a symbol definition and invalidate resource observers. */
   registerSymbol(id: string, def: SymbolDefinition): void {
     this.ensureNotDisposed();
     this.ensureResourceVersionAvailable();
@@ -1331,6 +1439,7 @@ export class Engine {
     this.invalidateResources();
   }
 
+  /** Remove a registered geometry and invalidate observers only when it existed. */
   unregisterGeometry(id: string): void {
     this.ensureNotDisposed();
     if (this.geometryRegistry.has(id)) {
@@ -1340,6 +1449,7 @@ export class Engine {
     }
   }
 
+  /** Remove a registered symbol and invalidate observers only when it existed. */
   unregisterSymbol(id: string): void {
     this.ensureNotDisposed();
     if (this.symbolRegistry.has(id)) {
@@ -1383,6 +1493,7 @@ export class Engine {
     });
   }
 
+  /** Render declarative SVG animation using the required independent or timeline playback mode. */
   renderToAnimatedSvg(input: EngineInput, renderOpts: RenderAnimatedSvgOptions): string {
     assertOwnOptionKeys(renderOpts, ANIMATED_SVG_OPTION_KEYS, "renderToAnimatedSvg");
     assertSvgEmissionOptionValues(renderOpts);
@@ -1395,6 +1506,7 @@ export class Engine {
     }).svg;
   }
 
+  /** Render declarative animated SVG and return the outline-resolved IR used to emit it. */
   renderToAnimatedSvgAndIR(
     input: EngineInput,
     renderOpts: RenderAnimatedSvgOptions,
@@ -1410,6 +1522,7 @@ export class Engine {
     });
   }
 
+  /** Render paint-ordered SVG layers and optionally compare their composition with a single SVG. */
   renderToLayeredSvg(input: EngineInput, renderOpts?: LayeredSvgOptions): LayeredSvgResult {
     assertOwnOptionKeys(
       renderOpts,
@@ -1443,6 +1556,7 @@ export class Engine {
     return layeredResult;
   }
 
+  /** Rasterize paint-ordered layers with shared scale resolution and optional composition validation. */
   renderToLayeredPng(input: EngineInput, renderOpts?: LayeredPngOptions): LayeredPngResult {
     assertOwnOptionKeys(
       renderOpts,
@@ -1586,6 +1700,7 @@ export class Engine {
     }
   }
 
+  /** Compile a scene and return resolved text outline nodes for inspection or export. */
   renderToTextOutlines(
     input: EngineInput,
     renderOpts?: RenderTextOutlinesOptions,
@@ -1602,6 +1717,7 @@ export class Engine {
     });
   }
 
+  /** Compile a scene and return PNG bytes through the injected WASM rasterizer. */
   renderToPng(input: EngineInput, renderOpts?: RenderPngOptions): Uint8Array {
     assertOwnOptionKeys(renderOpts, RASTER_OPTION_KEYS, "renderToPng");
     return this.renderToPngWithWasmBackend(input, renderOpts);
@@ -1616,280 +1732,411 @@ export class Engine {
     return this.renderToWebpWithWasmBackend(input, renderOpts);
   }
 
-  /**
-   * Render a declarative animation to an animated lossless WebP.
-   *
-   * Frames are sampled through the same scale resolver and root-dimension
-   * rounding as still/frame PNG, then encoded at raster scale 1.
-   */
-  renderToAnimatedWebp(input: EngineInput, renderOpts: RenderAnimatedWebpOptions): Uint8Array {
-    assertOwnOptionKeys(renderOpts, ANIMATED_RASTER_OPTION_KEYS, "renderToAnimatedWebp");
-    return this.renderAnimatedWebpWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
-      this.renderFramesFromInput(input, frameOptions, rasterPlan),
+  /** Stream sampled lossless WebP to a required patchable sink; await its commit. */
+  // biome-ignore lint/complexity/useMaxParams: Public writes keep source, render options, sink and transport cancellation separate.
+  async renderToAnimatedWebp(
+    input: EngineInput,
+    renderOpts: RenderAnimatedWebpOptions,
+    sink: AnimatedWebpSink,
+    writeOptions?: AnimatedRasterWriteOptions,
+  ): Promise<AnimatedRasterWriteResult> {
+    return this.writeAnimation(
+      { format: "webp", source: { kind: "scene", input }, options: renderOpts },
+      sink,
+      writeOptions,
     );
   }
 
-  /**
-   * Render an already compiled immutable animation to animated lossless WebP.
-   * Compilation choices are fixed by `compiled`; scheduling,
-   * rasterization, warnings, and encoding are shared with
-   * `renderToAnimatedWebp`.
-   */
-  renderCompiledToAnimatedWebp(
+  /** Stream an authentic compiled scene without changing its compile-time choices. */
+  // biome-ignore lint/complexity/useMaxParams: Public writes keep source, render options, sink and transport cancellation separate.
+  async renderCompiledToAnimatedWebp(
     compiled: CompiledScene,
     renderOpts: RenderCompiledAnimatedWebpOptions,
-  ): Uint8Array {
-    this.ensureNotDisposed();
-    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
-    assertOwnOptionKeys(
-      renderOpts,
-      COMPILED_ANIMATED_RASTER_OPTION_KEYS,
-      "renderCompiledToAnimatedWebp",
-    );
-    return this.renderAnimatedWebpWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
-      this.renderFramesWithCompiledRecord(compiledRecord, frameOptions, rasterPlan),
+    sink: AnimatedWebpSink,
+    writeOptions?: AnimatedRasterWriteOptions,
+  ): Promise<AnimatedRasterWriteResult> {
+    return this.writeAnimation(
+      { format: "webp", source: { kind: "compiled", compiled }, options: renderOpts },
+      sink,
+      writeOptions,
     );
   }
 
-  private renderAnimatedWebpWithFrameProducer(
-    renderOpts: RenderAnimatedWebpOptions,
-    frameProducer: AnimationFrameProducer,
-  ): Uint8Array {
-    this.ensureNotDisposed();
-    const stableRenderOpts = snapshotRenderOptions(renderOpts);
-    // Reported ahead of WEBP_NO_ENCODER, matching renderToWebp's ordering.
-    this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
-    const encodeAnimatedWebp = this.options.svgsToAnimatedWebpFn;
-    if (!encodeAnimatedWebp) {
-      throw new FatalError(
-        "WEBP_NO_ENCODER",
-        "svgsToAnimatedWebpFn is required for animated WebP rendering",
-        { stage: "emit" },
-      );
-    }
-    const requestedScale = stableRenderOpts.scale ?? 1;
-    assertPngScale(requestedScale);
-    const codes: AnimationErrorCodes = {
-      invalidSchedule: "ANIMATED_WEBP_INVALID_SCHEDULE",
-      tooManyFrames: "ANIMATED_WEBP_TOO_MANY_FRAMES",
-      payloadLimit: "ANIMATED_WEBP_PAYLOAD_LIMIT",
-    };
-    assertAnimationIterations(stableRenderOpts.iterations, {
-      maxIterations: MAX_ANIMATED_WEBP_ITERATIONS,
-      code: codes.invalidSchedule,
-      formatName: "Animated WebP",
-    });
-    const schedule = resolveAnimationFrameSchedule(stableRenderOpts, codes);
-
-    const frames = frameProducer(
-      {
-        ...toAnimationFrameRenderOptions(stableRenderOpts),
-        timesMs: schedule.timesMs,
-        format: "svg",
-      },
-      {
-        requestedScale,
-        behavior: stableRenderOpts.rasterOversizeBehavior ?? "auto-adjust",
-        emitOpts: stableRenderOpts,
-        deferredWarnings: [],
-      },
-    );
-    const encodeInput = this.buildAnimationEncodeInput(frames, stableRenderOpts, {
-      schedule,
-      codes,
-    });
-    try {
-      return encodeAnimatedWebp(encodeInput);
-    } catch (error) {
-      throw wrapWasmRenderError(error);
-    }
-  }
-
-  /**
-   * Render a declarative animation to an animated GIF.
-   *
-   * Same frame sampling as `renderToAnimatedWebp`; GIF quantizes each frame to
-   * its own 256-color palette with 1-bit alpha, and rounds frame timing to its
-   * 10 ms quantum.
-   */
-  renderToAnimatedGif(input: EngineInput, renderOpts: RenderAnimatedGifOptions): Uint8Array {
-    assertOwnOptionKeys(renderOpts, ANIMATED_RASTER_OPTION_KEYS, "renderToAnimatedGif");
-    return this.renderAnimatedGifWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
-      this.renderFramesFromInput(input, frameOptions, rasterPlan),
+  /** Stream palette GIF with cumulative centisecond timing to a required sink. */
+  // biome-ignore lint/complexity/useMaxParams: Public writes keep source, render options, sink and transport cancellation separate.
+  async renderToAnimatedGif(
+    input: EngineInput,
+    renderOpts: RenderAnimatedGifOptions,
+    sink: AnimatedRasterSink,
+    writeOptions?: AnimatedRasterWriteOptions,
+  ): Promise<AnimatedRasterWriteResult> {
+    return this.writeAnimation(
+      { format: "gif", source: { kind: "scene", input }, options: renderOpts },
+      sink,
+      writeOptions,
     );
   }
 
-  /**
-   * Render an already compiled immutable animation to animated GIF.
-   * Compilation choices are fixed by `compiled`; scheduling,
-   * rasterization, warnings, and encoding are shared with
-   * `renderToAnimatedGif`.
-   */
-  renderCompiledToAnimatedGif(
+  /** Stream an authentic compiled scene as GIF, then await sink completion. */
+  // biome-ignore lint/complexity/useMaxParams: Public writes keep source, render options, sink and transport cancellation separate.
+  async renderCompiledToAnimatedGif(
     compiled: CompiledScene,
     renderOpts: RenderCompiledAnimatedGifOptions,
-  ): Uint8Array {
-    this.ensureNotDisposed();
-    const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
-    assertOwnOptionKeys(
-      renderOpts,
-      COMPILED_ANIMATED_RASTER_OPTION_KEYS,
-      "renderCompiledToAnimatedGif",
-    );
-    return this.renderAnimatedGifWithFrameProducer(renderOpts, (frameOptions, rasterPlan) =>
-      this.renderFramesWithCompiledRecord(compiledRecord, frameOptions, rasterPlan),
+    sink: AnimatedRasterSink,
+    writeOptions?: AnimatedRasterWriteOptions,
+  ): Promise<AnimatedRasterWriteResult> {
+    return this.writeAnimation(
+      { format: "gif", source: { kind: "compiled", compiled }, options: renderOpts },
+      sink,
+      writeOptions,
     );
   }
 
-  private renderAnimatedGifWithFrameProducer(
-    renderOpts: RenderAnimatedGifOptions,
-    frameProducer: AnimationFrameProducer,
-  ): Uint8Array {
-    this.ensureNotDisposed();
-    const stableRenderOpts = snapshotRenderOptions(renderOpts);
-    // Reported ahead of GIF_NO_ENCODER, matching the other raster entry points.
-    this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
-    const encodeAnimatedGif = this.options.svgsToAnimatedGifFn;
-    if (!encodeAnimatedGif) {
-      throw new FatalError(
-        "GIF_NO_ENCODER",
-        "svgsToAnimatedGifFn is required for animated GIF rendering",
-        { stage: "emit" },
-      );
+  /** Authenticate source identity without compiling or adopting caller output. */
+  private authenticateAnimationSource(
+    source: AnimatedRasterJobInput["source"],
+    invalid: (reason: string, field?: "format" | "options") => never,
+  ): void {
+    const sourceKeys =
+      source.kind === "scene"
+        ? ["kind", "input"]
+        : source.kind === "compiled"
+          ? ["kind", "compiled"]
+          : ["kind", "input", "compileOptions"];
+    if (
+      Reflect.ownKeys(source).some((key) => typeof key !== "string" || !sourceKeys.includes(key))
+    ) {
+      invalid("unknownField");
     }
-    const requestedScale = stableRenderOpts.scale ?? 1;
-    assertPngScale(requestedScale);
-    const codes: AnimationErrorCodes = {
-      invalidSchedule: "ANIMATED_GIF_INVALID_SCHEDULE",
-      tooManyFrames: "ANIMATED_GIF_TOO_MANY_FRAMES",
-      payloadLimit: "ANIMATED_GIF_PAYLOAD_LIMIT",
-    };
-    assertAnimationIterations(stableRenderOpts.iterations, {
-      maxIterations: MAX_ANIMATED_GIF_ITERATIONS,
-      code: codes.invalidSchedule,
-      formatName: "Animated GIF",
-    });
-    const schedule = resolveAnimationFrameSchedule(stableRenderOpts, codes);
-    const timingWarning = this.createGifTimingAdjustmentWarning(schedule.frameDurationsMs, {
-      sampled: stableRenderOpts.timesMs === undefined,
-    });
+    if (source.kind === "compiled") {
+      authenticateCompiledScene(source.compiled, this.compiledSceneOwnerToken);
+    } else if (source.kind === "scene" || source.kind === "transition") {
+      if (!isAnimationRecord(source.input)) {
+        invalid("wrongType");
+      }
+      if (source.kind === "transition" && source.compileOptions !== undefined) {
+        if (!isAnimationRecord(source.compileOptions)) {
+          invalid(source.compileOptions === null ? "nullField" : "wrongType");
+        }
+        assertOwnOptionKeys(
+          source.compileOptions,
+          new Set(COMPILE_OPTION_KEYS),
+          "createAnimatedRasterJob",
+        );
+      }
+    } else {
+      invalid("outOfDomain");
+    }
+  }
 
-    const frames = frameProducer(
-      {
-        ...toAnimationFrameRenderOptions(stableRenderOpts),
-        timesMs: schedule.timesMs,
-        format: "svg",
-      },
-      {
-        requestedScale,
-        behavior: stableRenderOpts.rasterOversizeBehavior ?? "auto-adjust",
-        emitOpts: stableRenderOpts,
-        deferredWarnings: timingWarning === undefined ? [] : [timingWarning],
-      },
-    );
-    const encodeInput = this.buildAnimationEncodeInput(frames, stableRenderOpts, {
-      schedule,
-      codes,
-    });
+  /** Reject coercion of optional scalars while leaving their domain checks to their owner. */
+  private authenticateAnimationOptionValues(
+    options: AnimatedRasterJobInput["options"],
+    invalid: (reason: string, field?: "format" | "options") => never,
+  ): void {
+    const primitiveTypes = [
+      ["onWarning", "function"],
+      ["onPngResolutionAdjusted", "function"],
+      ["skipValidation", "boolean"],
+      ["showMissingGlyphs", "boolean"],
+      ["rasterBackground", "string"],
+      ["textPathMode", "string"],
+    ] as const;
+    for (const [key, expectedType] of primitiveTypes) {
+      const optional: unknown = Reflect.get(options, key);
+      if (optional !== undefined && typeof optional !== expectedType) {
+        invalid(optional === null ? "nullField" : "wrongType");
+      }
+    }
+    const behavior = options.rasterOversizeBehavior;
+    if (behavior !== undefined && behavior !== "auto-adjust" && behavior !== "error") {
+      invalid("outOfDomain");
+    }
+    const debug = options.debug;
+    if (debug !== undefined && typeof debug !== "boolean" && !isAnimationRecord(debug)) {
+      invalid(debug === null ? "nullField" : "wrongType");
+    }
+    if (options.generator !== undefined && !isAnimationRecord(options.generator)) {
+      invalid(options.generator === null ? "nullField" : "wrongType");
+    }
+  }
+
+  /** Authenticate without adopting caller output; busy entries never abort an outer sink. */
+  private authenticateAnimationInput(
+    input: AnimatedRasterJobInput,
+    publicCallbacks: boolean,
+  ): void {
+    const format = input?.format === "gif" ? "gif" : "webp";
+    const invalid = (reason: string, field: "format" | "options" = "options"): never => {
+      throw animatedRasterFailure(format, "open", {
+        family: "SESSION_INVALID_INPUT",
+        reason,
+        field,
+      });
+    };
+    if (!isAnimationRecord(input)) {
+      invalid(input === null ? "nullField" : "wrongType");
+    }
+    if (
+      Reflect.ownKeys(input).some(
+        (key) => typeof key !== "string" || !["format", "source", "options"].includes(key),
+      )
+    ) {
+      invalid("unknownField");
+    }
+    if (input.format !== "webp" && input.format !== "gif") {
+      invalid("outOfDomain", "format");
+    }
+    if (!isAnimationRecord(input.source) || !isAnimationRecord(input.options)) {
+      invalid("wrongType");
+    }
+    this.authenticateAnimationSource(input.source, invalid);
+    const allowed =
+      input.source.kind === "scene"
+        ? ANIMATED_RASTER_OPTION_KEYS
+        : COMPILED_ANIMATED_RASTER_OPTION_KEYS;
+    assertOwnOptionKeys(input.options, allowed, "createAnimatedRasterJob");
+    if (
+      Reflect.ownKeys(input.options).some(
+        (key) =>
+          typeof key !== "string" || !allowed.has(key) || (!publicCallbacks && key === "onWarning"),
+      )
+    ) {
+      invalid("unknownField");
+    }
+    this.authenticateAnimationOptionValues(input.options, invalid);
+  }
+
+  /** Acquire one animation token, snapshot once, then construct the shared pull owner. */
+  private createAnimatedRasterJobWithBackend(
+    input: AnimatedRasterJobInput,
+    signal?: AbortSignal,
+    onAdopt?: (release: () => void) => void,
+  ): AnimatedRasterJob {
+    this.ensureNotDisposed();
+    const format = input?.format === "gif" ? "gif" : "webp";
+    this.authenticateAnimationInput(input, onAdopt !== undefined);
+    assertAnimationSignal(signal, format);
+    if (this.activeAnimation !== undefined) {
+      throw animatedRasterFailure(format, "open", {
+        family: "JOB_BUSY",
+        reason: "activeAnimation",
+      });
+    }
+    const token: { job?: AnimatedRasterJob } = {};
+    this.activeAnimation = token;
+    const release = (): void => {
+      if (this.activeAnimation === token) {
+        this.activeAnimation = undefined;
+      }
+    };
+    onAdopt?.(release);
     try {
-      return encodeAnimatedGif(encodeInput);
+      const stableOptions: RenderAnimatedGifOptions | RenderAnimatedWebpOptions =
+        snapshotRenderOptions(input.options, true);
+      let stableSource: AnimatedRasterJobInput["source"] | undefined =
+        input.source.kind === "compiled"
+          ? { kind: "compiled", compiled: input.source.compiled }
+          : input.source.kind === "scene"
+            ? {
+                kind: "scene",
+                // Scene documents keep their getter-free boundary before the owned VNode copy.
+                input: snapshotAnimationInput(resolveSceneOrVNodeInput(input.source.input), format),
+              }
+            : snapshotAnimationInput(input.source, format);
+      this.ensureNotDisposed();
+      if (isAnimationSignalAborted(signal)) {
+        throw animatedRasterFailure(format, "open", { family: "ABORTED", reason: "signal" });
+      }
+      this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
+      const open = this.options.openAnimatedRasterSessionFn;
+      if (!open) {
+        throw new FatalError(
+          format === "webp" ? "WEBP_NO_ENCODER" : "GIF_NO_ENCODER",
+          "openAnimatedRasterSessionFn is required for animated raster rendering",
+          { stage: "emit" },
+        );
+      }
+      const scale = stableOptions.scale === undefined ? 1 : stableOptions.scale;
+      if (typeof scale !== "number") {
+        throw new FatalError("PNG_INVALID_SCALE", "PNG scale must be a positive finite number", {
+          stage: "emit",
+        });
+      }
+      assertPngScale(scale);
+      const invalidSchedule =
+        format === "webp" ? "ANIMATED_WEBP_INVALID_SCHEDULE" : "ANIMATED_GIF_INVALID_SCHEDULE";
+      assertAnimationIterations(stableOptions.iterations, {
+        maxIterations:
+          format === "webp" ? MAX_ANIMATED_WEBP_ITERATIONS : MAX_ANIMATED_GIF_ITERATIONS,
+        code: invalidSchedule,
+        formatName: format === "webp" ? "Animated WebP" : "Animated GIF",
+      });
+      const descriptor = resolveAnimationScheduleDescriptor(stableOptions, {
+        format: format,
+        invalidSchedule,
+      });
+      const job = new OwnedAnimatedRasterJob({
+        format: format,
+        descriptor,
+        signal,
+        isDisposed: () => this.disposed,
+        release,
+        prepare: (timingWarning) => {
+          const source = stableSource;
+          if (!source) {
+            throw animatedRasterFailure(format, "open", {
+              family: "SESSION_INVALID_STATE",
+              reason: "aborted",
+            });
+          }
+          let compiled: CompiledScene;
+          if (source.kind === "compiled") {
+            compiled = source.compiled;
+          } else if (source.kind === "transition") {
+            compiled = this.compileLayoutTransition(source.input, source.compileOptions);
+          } else {
+            const vnode = this.resolveInput(source.input, assertRasterCanvasInput);
+            compiled = this.compile(vnode, {
+              skipValidation: stableOptions.skipValidation,
+              textPathMode: stableOptions.textPathMode,
+            });
+          }
+          const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
+          stableSource = undefined;
+          const warnings: SerializedRecoverableError[] = [];
+          const collect = (warning: RecoverableError): void => {
+            warnings.push(warning.toJSON());
+          };
+          const frameOptions: InternalRenderOptions = {
+            ...toAnimationFrameRenderOptions(stableOptions),
+            onWarning: collect,
+            onPngResolutionAdjusted: undefined,
+          };
+          try {
+            const renderer = this.createPreparedAnimationRenderer(
+              compiledRecord,
+              {
+                stableOptions: frameOptions,
+                format: "svg",
+                rasterPlan: {
+                  requestedScale: scale,
+                  behavior: stableOptions.rasterOversizeBehavior ?? "auto-adjust",
+                  emitOpts: { scale, onWarning: collect },
+                  deferredWarnings: timingWarning ? [timingWarning] : [],
+                },
+              },
+              { detachCompiledWarnings: source.kind !== "scene" },
+            );
+            const producer = new PreparedAnimationProducer(
+              createAnimationScheduleCursor(descriptor, { format: format, invalidSchedule }),
+              renderer,
+              descriptor.frameCount,
+            );
+            return { kind: "ready", producer, warnings, renderOptions: renderer.renderOptions };
+          } catch (error) {
+            return { kind: "failed", error, warnings };
+          }
+        },
+        open: (renderOptions) => {
+          const rasterOptions: PngRenderOptions = {
+            oversizeBehavior:
+              stableOptions.rasterOversizeBehavior === "error" ? "error" : "autoAdjust",
+            ...(stableOptions.rasterBackground === undefined
+              ? {}
+              : { background: stableOptions.rasterBackground }),
+            ...(this.options.fontFamilies === undefined
+              ? {}
+              : { fontFamilies: { ...this.options.fontFamilies } }),
+            ...(stableOptions.generator === undefined
+              ? {}
+              : { generator: { ...stableOptions.generator } }),
+          };
+          try {
+            return open({
+              format: format,
+              frameCount: descriptor.frameCount,
+              iterations: stableOptions.iterations,
+              options: rasterOptions,
+              renderOptions,
+            });
+          } catch (error) {
+            throw wrapWasmRenderError(error);
+          }
+        },
+      });
+      token.job = job;
+      return job;
     } catch (error) {
-      throw wrapWasmRenderError(error);
+      if (onAdopt === undefined) {
+        release();
+      }
+      throw error;
     }
   }
 
-  /**
-   * GIF cannot express a frame shorter than 2 centiseconds, so a schedule with
-   * short frames plays back longer than requested. Report it rather than
-   * letting the animation quietly stretch.
-   *
-   * The trigger is the stretch itself. Keying on which frames were clamped
-   * does not track distortion — anchoring a sampled schedule's last boundary
-   * to `durationMs` leaves a sub-quantum tail frame for most durations — so a
-   * relative threshold is both monotone in what the caller notices and short
-   * to document.
-   */
-  private createGifTimingAdjustmentWarning(
-    frameDurationsMs: readonly number[],
-    { sampled }: { sampled: boolean },
-  ): RecoverableError | undefined {
-    const requestedMs = frameDurationsMs.reduce((sum, durationMs) => sum + durationMs, 0);
-    const emittedMs = resolveGifDelaysCs(frameDurationsMs).reduce(
-      (sum, delayCs) => sum + delayCs * GIF_DELAY_UNIT_MS,
-      0,
-    );
-    if (emittedMs <= requestedMs * (1 + GIF_TIMING_TOLERANCE)) {
-      return undefined;
-    }
-    return createInternalRecoverableError(
-      "ANIMATED_GIF_TIMING_ADJUSTED",
-      `GIF frame delays are limited to whole centiseconds of at least ${GIF_MIN_FRAME_MS / GIF_DELAY_UNIT_MS}; the animation plays for ${emittedMs} ms instead of ${requestedMs} ms. ${
-        sampled
-          ? `Raise durationMs, or lower fps, so no sampled frame falls under ${GIF_MIN_FRAME_MS} ms.`
-          : `Keep every frameDurationsMs entry at ${GIF_MIN_FRAME_MS} ms or longer.`
-      }`,
-      { fallback: "clamped frame delays", stage: "emit" },
-    );
-  }
-
-  /**
-   * Sample the frames and pack them with the per-frame raster options.
-   */
-  private buildAnimationEncodeInput(
-    sampledFrames: Iterable<Frame>,
-    renderOpts: RenderAnimatedWebpOptions | RenderAnimatedGifOptions,
-    plan: {
-      schedule: ResolvedAnimationSchedule;
-      codes: AnimationErrorCodes;
+  /** Keep adopted sink cleanup and the main token pending until callback settlement. */
+  private async writeAnimation(
+    input: AnimatedRasterJobInput & {
+      options: RenderAnimatedGifOptions | RenderAnimatedWebpOptions;
     },
-  ): AnimationEncodeInput {
-    const { schedule, codes } = plan;
-    const rasterOptions: PngRenderOptions = {
-      oversizeBehavior: renderOpts.rasterOversizeBehavior === "error" ? "error" : "autoAdjust",
+    sink: AnimatedRasterSink,
+    writeOptions?: AnimatedRasterWriteOptions,
+  ): Promise<AnimatedRasterWriteResult> {
+    const format = input.format;
+    const callbacks = {
+      onWarning: input.options?.onWarning,
+      onPngResolutionAdjusted: input.options?.onPngResolutionAdjusted,
     };
-    if (renderOpts.rasterBackground) {
-      rasterOptions.background = renderOpts.rasterBackground;
+    assertAnimatedRasterSink(sink, { format, shouldRequirePatch: format === "webp" });
+    if (
+      writeOptions !== undefined &&
+      (typeof writeOptions !== "object" ||
+        writeOptions === null ||
+        Array.isArray(writeOptions) ||
+        Reflect.ownKeys(writeOptions).some((key) => key !== "signal"))
+    ) {
+      throw animatedRasterFailure(format, "open", {
+        family: "SESSION_INVALID_INPUT",
+        reason: writeOptions === null ? "nullField" : "wrongType",
+        field: "options",
+      });
     }
-    if (this.options.fontFamilies) {
-      rasterOptions.fontFamilies = { ...this.options.fontFamilies };
-    }
-    if (renderOpts.generator) {
-      rasterOptions.generator = { ...renderOpts.generator };
-    }
-    const frames: Array<{ svg: string; durationMs: number }> = [];
-    let frameIndex = 0;
-    let svgPayloadChars = 0;
-    for (const frame of sampledFrames) {
-      const durationMs = schedule.frameDurationsMs[frameIndex];
-      if (durationMs === undefined) {
-        throw new FatalError(
-          codes.invalidSchedule,
-          `Frame ${frameIndex} has no duration in the resolved schedule`,
-          { stage: "emit" },
-        );
+    const signal = writeOptions?.signal;
+    assertAnimationSignal(signal, format);
+    let release: (() => void) | undefined;
+    let job: AnimatedRasterJob;
+    try {
+      job = this.createAnimatedRasterJobWithBackend(input, signal, (callback) => {
+        release = callback;
+      });
+    } catch (error) {
+      if (release !== undefined) {
+        try {
+          await sink.abort(error);
+        } catch {
+          // Preserve initialization failure.
+        } finally {
+          release();
+        }
       }
-      if (frame.format !== "svg") {
-        throw new FatalError(
-          codes.invalidSchedule,
-          `Animated raster frames must be sampled as SVG, got ${frame.format}`,
-          { stage: "emit" },
-        );
-      }
-      svgPayloadChars += frame.data.length;
-      if (svgPayloadChars > MAX_ANIMATION_SVG_PAYLOAD_CHARS) {
-        throw new FatalError(
-          codes.payloadLimit,
-          `Sampled animation frames exceed the ${MAX_ANIMATION_SVG_PAYLOAD_CHARS} character transport limit; reduce the frame count or the scene size`,
-          { stage: "emit" },
-        );
-      }
-      frames.push({ svg: frame.data, durationMs });
-      frameIndex += 1;
+      throw error;
     }
-
-    return { frames, iterations: renderOpts.iterations, options: rasterOptions };
+    const check = (operation: import("./animation-errors.js").AnimatedRasterOperation): void => {
+      if (this.disposed) {
+        throw animatedRasterFailure(format, operation, {
+          family: "ABORTED",
+          reason: "engineDisposed",
+        });
+      }
+      if (isAnimationSignalAborted(signal)) {
+        throw animatedRasterFailure(format, operation, { family: "ABORTED", reason: "signal" });
+      }
+    };
+    return writeAnimatedRasterJob(job, sink, { format, callbacks, check });
   }
 
+  /** Lay out text in flow regions through the injected WASM measurement transport. */
   layoutTextFlow(input: TextFlowInput): TextFlowResult {
     this.ensureNotDisposed();
     if (!this.options.layoutTextFlowFn) {
@@ -1902,6 +2149,7 @@ export class Engine {
     return invokeMeasurementTransport("layoutTextFlow", this.options.layoutTextFlowFn, input);
   }
 
+  /** Lay out text around exclusions through WASM after checking rich-text depth. */
   layoutTextFlowWithExclusions(input: TextFlowWithExclusionsInput): TextFlowWithExclusionsResult {
     this.ensureNotDisposed();
     if (!this.options.layoutTextFlowWithExclusionsFn) {
@@ -1919,6 +2167,7 @@ export class Engine {
     );
   }
 
+  /** Measure a text block through the injected WASM measurement transport. */
   measureTextBlock(input: MeasureTextBlockInput): MeasureTextBlockResult {
     this.ensureNotDisposed();
     if (!this.options.measureTextBlockFn) {
@@ -1929,6 +2178,7 @@ export class Engine {
     return invokeMeasurementTransport("measureTextBlock", this.options.measureTextBlockFn, input);
   }
 
+  /** Find a fitted text size through WASM after checking rich-text depth. */
   shrinkwrapText(input: ShrinkwrapTextInput): ShrinkwrapTextResult {
     this.ensureNotDisposed();
     if (!this.options.shrinkwrapTextFn) {
@@ -1940,6 +2190,7 @@ export class Engine {
     return invokeMeasurementTransport("shrinkwrapText", this.options.shrinkwrapTextFn, input);
   }
 
+  /** Find a fitted flow size through WASM after checking rich-text depth. */
   shrinkwrapFlow(input: ShrinkwrapFlowInput): ShrinkwrapFlowResult {
     this.ensureNotDisposed();
     if (!this.options.shrinkwrapFlowFn) {
@@ -1951,6 +2202,7 @@ export class Engine {
     return invokeMeasurementTransport("shrinkwrapFlow", this.options.shrinkwrapFlowFn, input);
   }
 
+  /** Measure intrinsic text inline sizes through WASM after checking rich-text depth. */
   measureIntrinsicInlineSize(input: IntrinsicInlineSizeInput): IntrinsicInlineSizeResult {
     this.ensureNotDisposed();
     if (!this.options.measureIntrinsicInlineSizeFn) {
@@ -1968,6 +2220,7 @@ export class Engine {
     );
   }
 
+  /** Validate the input and return its WASM-computed layout tree without emitting an artifact. */
   renderToLayoutTree(input: EngineInput, renderOpts?: LayoutRenderOptions): LayoutResult {
     assertOwnOptionKeys(renderOpts, new Set(["skipValidation"]), "renderToLayoutTree");
     this.ensureNotDisposed();
@@ -1983,6 +2236,7 @@ export class Engine {
     });
   }
 
+  /** Return detached sampled IR and deliver its recoverable warnings. */
   renderToIR(input: EngineInput, renderOpts?: RenderIrOptions): IR {
     assertOwnOptionKeys(
       renderOpts,
@@ -2041,6 +2295,7 @@ export class Engine {
     }));
   }
 
+  /** Create an immutable, unsampled scene artifact owned by this Engine for repeated emission. */
   compile(input: EngineInput, compileOpts?: CompileOptions): CompiledScene {
     assertOwnOptionKeys(compileOpts, new Set(COMPILE_OPTION_KEYS), "compile");
     this.ensureNotDisposed();
@@ -2156,14 +2411,13 @@ export class Engine {
     );
   }
 
-  /** Compiled-scene frame entry plus the raster plan used by animated containers. */
+  /** Prepare standalone frames from an authenticated compiled scene. */
   private renderFramesWithCompiledRecord(
     compiledRecord: CompiledSceneRecord,
     options: LegacyRenderFramesOptions,
-    animationRasterPlan?: AnimationRasterPlan,
   ): Iterable<Frame> {
     this.prunePreparedFrameScenes();
-    const plan = this.createFrameRenderPlan(options, animationRasterPlan);
+    const plan = this.createFrameRenderPlan(options);
     if (plan.rasterPlan !== undefined) {
       this.requireWasmBackendFn(this.options.preflightRasterSceneFn, "preflightRasterSceneFn");
     }
@@ -2172,15 +2426,14 @@ export class Engine {
     });
   }
 
-  /** `renderFrames` plus the raster plan used by animated containers. */
+  /** Compile and prepare standalone SVG or PNG frames. */
   private renderFramesFromInput(
     input: EngineInput,
     options: LegacyRenderFramesOptions,
-    animationRasterPlan?: AnimationRasterPlan,
   ): Iterable<Frame> {
     this.ensureNotDisposed();
     this.prunePreparedFrameScenes();
-    const plan = this.createFrameRenderPlan(options, animationRasterPlan);
+    const plan = this.createFrameRenderPlan(options);
     const vnode = this.resolveInput(
       input,
       plan.rasterPlan === undefined ? undefined : assertRasterCanvasInput,
@@ -2198,16 +2451,13 @@ export class Engine {
     });
   }
 
-  private createFrameRenderPlan(
-    options: LegacyRenderFramesOptions,
-    animationRasterPlan?: AnimationRasterPlan,
-  ): FrameRenderPlan {
+  private createFrameRenderPlan(options: LegacyRenderFramesOptions): FrameRenderPlan {
     const stableOptions = snapshotRenderOptions(options);
     const timesMs = validateFrameSchedule(stableOptions);
     const format = stableOptions.format;
     const frameEncoder = this.createFrameEncoder(format);
-    const requestedScale = animationRasterPlan?.requestedScale ?? stableOptions.scale ?? 1;
-    const rasterOutput = format === "png" || animationRasterPlan !== undefined;
+    const requestedScale = stableOptions.scale ?? 1;
+    const rasterOutput = format === "png";
     if (!Number.isFinite(requestedScale) || requestedScale <= 0) {
       const code = rasterOutput ? "PNG_INVALID_SCALE" : "SVG_INVALID_SCALE";
       throw new FatalError(
@@ -2225,7 +2475,7 @@ export class Engine {
             emitOpts: stableOptions,
             deferredWarnings: [] as readonly RecoverableError[],
           }
-        : animationRasterPlan;
+        : undefined;
     const pngOptions: PngRenderOptions = {
       oversizeBehavior: stableOptions.rasterOversizeBehavior === "error" ? "error" : "autoAdjust",
       ...(stableOptions.rasterBackground && { background: stableOptions.rasterBackground }),
@@ -2245,7 +2495,28 @@ export class Engine {
     plan: FrameRenderPlan,
     warningOptions: { detachCompiledWarnings: boolean },
   ): Iterable<Frame> {
-    const { stableOptions, timesMs, format, frameEncoder, rasterPlan, pngOptions } = plan;
+    const { renderFrame, release } = this.createPreparedFrameRenderer(
+      compiledRecord,
+      plan,
+      warningOptions,
+    );
+    const iterator = new PreparedFrameIterator(plan.timesMs, renderFrame, release);
+    if (plan.timesMs.length === 0) {
+      release();
+    }
+    return iterator;
+  }
+
+  /** Retain and finalize one scene with the shared warning, outline and raster-scale ordering. */
+  private prepareFrameEmission(
+    compiledRecord: CompiledSceneRecord,
+    plan: PreparedFrameEmissionPlan,
+    warningOptions: { detachCompiledWarnings: boolean },
+  ): PreparedFrameScene & {
+    renderOptions: Omit<AnimationRenderOptions, "animation">;
+    release(): void;
+  } {
+    const { stableOptions, format, rasterPlan } = plan;
     const irMetadataSnapshot: IR = {
       ...compiledRecord.ir,
       warnings: warningOptions.detachCompiledWarnings
@@ -2294,48 +2565,101 @@ export class Engine {
         : toCssSafeResourceId(stableOptions.resourceIdPrefix);
     const debug = stableOptions.debug ?? irMetadataSnapshot.debug;
 
+    return {
+      prepared,
+      rasterScene,
+      release,
+      renderOptions: {
+        scale: appliedScale,
+        debug,
+        resourceIdPrefix: sanitizedResourceIdPrefix,
+        nodeIdMetadata: format === "svg" ? stableOptions.nodeIdMetadata : undefined,
+        rasterizerCompat: format === "png" ? true : undefined,
+        generator: format === "svg" ? stableOptions.generator : undefined,
+      },
+    };
+  }
+
+  /** Connect one genuine raster scene to the native encoder without returning frame SVGs. */
+  private createPreparedAnimationRenderer(
+    compiledRecord: CompiledSceneRecord,
+    plan: PreparedFrameEmissionPlan,
+    warningOptions: { detachCompiledWarnings: boolean },
+  ): {
+    pushFrame(session: AnimatedRasterSessionHandle, timeMs: number, durationMs: number): void;
+    release(): void;
+    renderOptions: AnimationRenderOptions;
+  } {
+    const emission = this.prepareFrameEmission(compiledRecord, plan, warningOptions);
+    const scene = emission.rasterScene;
+    if (!(scene instanceof WasmRasterSceneHandle)) {
+      emission.release();
+      throw new FatalError(
+        "RASTER_SCENE_UNAVAILABLE",
+        "Animated raster rendering requires a managed raster scene",
+        { stage: "engine" },
+      );
+    }
+    const renderOptions: AnimationRenderOptions = { animation: "static" };
+    // Optional undefined values are absent on the wire; omit them before the once-per-session snapshot.
+    if (emission.renderOptions.scale !== undefined) {
+      renderOptions.scale = emission.renderOptions.scale;
+    }
+    if (emission.renderOptions.debug !== undefined) {
+      renderOptions.debug = emission.renderOptions.debug;
+    }
+    if (emission.renderOptions.resourceIdPrefix !== undefined) {
+      renderOptions.resourceIdPrefix = emission.renderOptions.resourceIdPrefix;
+    }
+    if (emission.renderOptions.nodeIdMetadata !== undefined) {
+      renderOptions.nodeIdMetadata = emission.renderOptions.nodeIdMetadata;
+    }
+    if (emission.renderOptions.rasterizerCompat !== undefined) {
+      renderOptions.rasterizerCompat = emission.renderOptions.rasterizerCompat;
+    }
+    if (emission.renderOptions.generator !== undefined) {
+      renderOptions.generator = emission.renderOptions.generator;
+    }
+    return {
+      release: emission.release,
+      renderOptions,
+      pushFrame: (session, timeMs, durationMs) => {
+        this.ensureNotDisposed();
+        session.push(scene, timeMs, durationMs);
+      },
+    };
+  }
+
+  /** Prepare the standalone SVG/PNG frame renderer without materializing sample times. */
+  private createPreparedFrameRenderer(
+    compiledRecord: CompiledSceneRecord,
+    plan: Omit<FrameRenderPlan, "timesMs">,
+    warningOptions: { detachCompiledWarnings: boolean },
+  ): { renderFrame(index: number, timeMs: number): Frame; release(): void } {
+    const { frameEncoder, pngOptions } = plan;
+    const emission = this.prepareFrameEmission(compiledRecord, plan, warningOptions);
     const renderFrame = (index: number, timeMs: number): Frame => {
       this.ensureNotDisposed();
       let svg: string;
       try {
-        svg = prepared.renderToSvg(
-          JSON.stringify({
-            scale: appliedScale,
-            debug,
-            resourceIdPrefix: sanitizedResourceIdPrefix,
-            nodeIdMetadata: format === "svg" ? stableOptions.nodeIdMetadata : undefined,
-            rasterizerCompat: format === "png" ? true : undefined,
-            animation: "static",
-            timeMs,
-            generator: format === "svg" ? stableOptions.generator : undefined,
-          }),
+        svg = emission.prepared.renderToSvg(
+          JSON.stringify({ ...emission.renderOptions, animation: "static", timeMs }),
         );
       } catch (error) {
         throw wrapWasmRenderError(error);
       }
-
       if (frameEncoder.format === "svg") {
         return { index, timeMs, format: "svg", data: svg };
       }
-      return {
-        index,
-        timeMs,
-        format: "png",
-        data: frameEncoder.rasterize(svg, pngOptions),
-      };
+      return { index, timeMs, format: "png", data: frameEncoder.rasterize(svg, pngOptions) };
     };
-
-    const iterator = new PreparedFrameIterator(timesMs, renderFrame, release);
-    if (timesMs.length === 0) {
-      release();
-    }
-    return iterator;
+    return { renderFrame, release: emission.release };
   }
 
   private prepareFrameScene(args: {
     irSnapshotJson: string;
     textPathMode: TextPathMode;
-    options: RenderFramesOptions;
+    options: Pick<InternalRenderOptions, "showMissingGlyphs">;
     raster: boolean;
   }): PreparedFrameScene {
     const { irSnapshotJson, textPathMode, options, raster } = args;
@@ -2359,7 +2683,7 @@ export class Engine {
 
   private finalizePreparedFrameScene(args: {
     ir: IR;
-    options: RenderFramesOptions;
+    options: Pick<InternalRenderOptions, "onWarning" | "scale">;
     rasterPlan: AnimationRasterPlan | undefined;
     rasterScene: RasterSceneRenderHandle | undefined;
   }): number | undefined {
@@ -2913,6 +3237,7 @@ export class Engine {
     }
   }
 
+  /** Authenticate this Engine's compiled scene and emit static SVG with detached warning delivery. */
   renderCompiledToSvg(compiled: CompiledScene, emitOpts?: EmitSvgOptions): string {
     this.ensureNotDisposed();
     const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
@@ -2944,6 +3269,7 @@ export class Engine {
     });
   }
 
+  /** Authenticate this Engine's compiled scene and emit declarative SVG using the requested playback mode. */
   renderCompiledToAnimatedSvg(compiled: CompiledScene, emitOpts: EmitAnimatedSvgOptions): string {
     this.ensureNotDisposed();
     const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
@@ -2981,6 +3307,7 @@ export class Engine {
     });
   }
 
+  /** Authenticate a compiled scene and return resolved text outlines without changing the artifact. */
   renderCompiledToTextOutlines(
     compiled: CompiledScene,
     options?: EmitTextOutlinesOptions,
@@ -3000,6 +3327,7 @@ export class Engine {
     return projectResolvedTextOutlines(resolvedIr.root);
   }
 
+  /** Authenticate a compiled scene and rasterize PNG with a callback-safe resource snapshot. */
   renderCompiledToPng(compiled: CompiledScene, emitOpts?: EmitPngOptions): Uint8Array {
     this.ensureNotDisposed();
     const compiledRecord = authenticateCompiledScene(compiled, this.compiledSceneOwnerToken);
@@ -3214,16 +3542,19 @@ export class Engine {
     return pngOptions;
   }
 
+  /** Return the hit node identifier at canvas coordinates, or null when no node is hit. */
   hitTest(ir: IR, x: number, y: number): string | null {
     return hitTest(ir, x, y);
   }
 
+  /** Release prepared frame scenes and the WASM handle, then notify resource observers once. */
   dispose(): void {
     if (this.disposed) {
       return;
     }
     this.disposed = true;
     try {
+      this.activeAnimation?.job?.abort();
       for (const preparedReference of this.preparedFrameScenes) {
         preparedReference.deref()?.dispose();
       }
@@ -3433,6 +3764,10 @@ export class Engine {
   }
 }
 
+/**
+ * Create an isolated WASM-backed Engine, loading bundled WASM in Node when needed.
+ * Browser callers must initialize WASM first; failed setup releases the new handle.
+ */
 export async function createEngineAsync(options: {
   fonts?: Array<{
     alias: string;
@@ -3509,8 +3844,7 @@ async function createEngineFromInstance(
         }),
       svgToPngFn: handle.createSvgToPngFn(),
       svgToWebpFn: handle.createSvgToWebpFn(),
-      svgsToAnimatedWebpFn: handle.createSvgsToAnimatedWebpFn(),
-      svgsToAnimatedGifFn: handle.createSvgsToAnimatedGifFn(),
+      openAnimatedRasterSessionFn: handle.createOpenAnimatedRasterSessionFn(),
       validateLayeredSvgCompositionFn: handle.createValidateLayeredSvgCompositionFn(),
       layoutTextFlowFn: (input) => handle.layoutTextFlow(input),
       layoutTextFlowWithExclusionsFn: (input) => handle.layoutTextFlowWithExclusions(input),
@@ -3532,6 +3866,7 @@ async function createEngineFromInstance(
   }
 }
 
+/** Create an Engine from caller-supplied transports and resources without initializing WASM. */
 export function createEngine(options: EngineOptions): Engine {
   return new Engine(options);
 }

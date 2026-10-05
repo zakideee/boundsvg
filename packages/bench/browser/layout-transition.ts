@@ -1,4 +1,9 @@
-import type { Frame, LayoutTransitionInput, SceneNode } from "@boundsvg/core";
+import {
+  createAnimatedRasterCollector,
+  type Frame,
+  type LayoutTransitionInput,
+  type SceneNode,
+} from "@boundsvg/core";
 import { encodePngFramesToMp4 } from "@boundsvg/video";
 import {
   MAX_WORKER_LAYOUT_TRANSITION_PAYLOAD_BYTES,
@@ -8,9 +13,13 @@ import {
 } from "@boundsvg/worker";
 import { createPortableLayoutTransitionInput } from "../src/layout-transition-fixture.js";
 
+/** Injected fixture font used by the browser transition benchmark. */
 const FONT_URL = new URL("../../../fixtures/fonts/NotoSansJP-Regular.subset.ttf", import.meta.url);
+/** Explicit poses shared by the browser animated container scenarios. */
 const CHECKPOINT_TIMES_MS = [0, 300, 700, 1_000] as const;
+/** Display durations paired with the explicit browser benchmark poses. */
 const CHECKPOINT_DURATIONS_MS = [300, 400, 300, 100] as const;
+/** Sample poses for the existing MP4 benchmark scenario. */
 const MP4_TIMES_MS = Array.from({ length: 11 }, (_, index) => index * 100);
 
 type BrowserScenario =
@@ -150,12 +159,18 @@ async function runScenario(scenario: BrowserScenario): Promise<BrowserScenarioRe
         frameDurationsMs: [...CHECKPOINT_DURATIONS_MS],
         iterations: 2,
       };
-      const bytes =
-        scenario.kind === "animated-webp"
-          ? await engine.renderLayoutTransitionToAnimatedWebp(transition, options)
-          : await engine.renderLayoutTransitionToAnimatedGif(transition, options);
-      outputChunks = [bytes];
-      frameCount = CHECKPOINT_TIMES_MS.length;
+      const sink = createAnimatedRasterCollector();
+      try {
+        await (scenario.kind === "animated-webp"
+          ? engine.renderLayoutTransitionToAnimatedWebp(transition, options, sink)
+          : engine.renderLayoutTransitionToAnimatedGif(transition, options, sink));
+        const bytes = sink.takeBytes();
+        outputChunks = [bytes];
+        frameCount = CHECKPOINT_TIMES_MS.length;
+      } catch (error) {
+        sink.abort(error);
+        throw error;
+      }
     } finally {
       engine.dispose();
       worker.terminate();
@@ -228,6 +243,7 @@ async function runScenario(scenario: BrowserScenario): Promise<BrowserScenarioRe
 
 globalThis.runBoundsvgLayoutTransitionBenchmarkScenario = runScenario;
 globalThis.boundsvgLayoutTransitionBenchmarkReady = true;
+/** Optional page indicator updated when the browser benchmark is ready. */
 const status = document.querySelector("#status");
 if (status) {
   status.textContent = "ready";

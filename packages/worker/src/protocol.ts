@@ -7,6 +7,7 @@
  */
 
 import {
+  type AnimatedRasterWriteResult,
   FatalError,
   type Frame,
   fromSceneDocument,
@@ -70,27 +71,35 @@ import {
  * boundary. Warnings are returned in the response payload instead.
  */
 export type WorkerRenderSvgOptions = Omit<RenderSvgOptions, "onWarning">;
+/** Serializable animated SVG options; warning callbacks remain in the caller realm. */
 export type WorkerRenderAnimatedSvgOptions = Omit<RenderAnimatedSvgOptions, "onWarning">;
+/** Serializable static PNG options with caller callbacks removed. */
 export type WorkerRenderPngOptions = Omit<
   RenderPngOptions,
   "onWarning" | "onPngResolutionAdjusted"
 >;
+/** Serializable static WebP options with caller callbacks removed. */
 export type WorkerRenderWebpOptions = Omit<
   RenderWebpOptions,
   "onWarning" | "onPngResolutionAdjusted"
 >;
+/** Serializable frame sampling options with warning callbacks removed. */
 export type WorkerFrameRenderOptions =
   | Omit<RenderSvgFramesOptions, "timesMs" | "onWarning">
   | Omit<RenderPngFramesOptions, "timesMs" | "onWarning" | "onPngResolutionAdjusted">;
+/** Serializable WebP schedule and raster options sent once when opening a stream. */
 export type WorkerAnimatedWebpRenderOptions = Omit<
   RenderAnimatedWebpOptions,
   "onWarning" | "onPngResolutionAdjusted"
 >;
+/** Serializable GIF schedule and raster options sent once when opening a stream. */
 export type WorkerAnimatedGifRenderOptions = Omit<
   RenderAnimatedGifOptions,
   "onWarning" | "onPngResolutionAdjusted"
 >;
+/** Serializable layered SVG options with caller callbacks removed. */
 export type WorkerLayeredSvgRenderOptions = Omit<LayeredSvgOptions, "onWarning">;
+/** Serializable layered PNG options with caller callbacks removed. */
 export type WorkerLayeredPngRenderOptions = Omit<
   LayeredPngOptions,
   "onWarning" | "onPngResolutionAdjusted"
@@ -113,6 +122,7 @@ export type FontTransfer = {
 // Worker requests (main thread → Worker)
 // ---------------------------------------------------------------------------
 
+/** Request: Initialize the Worker with explicitly transferred font and asset data. */
 export type InitRequest = {
   id: number;
   type: "init";
@@ -121,6 +131,7 @@ export type InitRequest = {
   symbols?: Array<{ id: string; def: SymbolDefinition }>;
 };
 
+/** Request: Render one static SVG scene. */
 export type RenderSvgRequest = {
   id: number;
   type: "render-svg";
@@ -128,6 +139,7 @@ export type RenderSvgRequest = {
   options?: WorkerRenderSvgOptions;
 };
 
+/** Request: Render one independently played animated SVG scene. */
 export type RenderAnimatedSvgRequest = {
   id: number;
   type: "render-animated-svg";
@@ -135,6 +147,7 @@ export type RenderAnimatedSvgRequest = {
   options: WorkerRenderAnimatedSvgOptions;
 };
 
+/** Request: Render one static PNG scene. */
 export type RenderPngRequest = {
   id: number;
   type: "render-png";
@@ -142,6 +155,7 @@ export type RenderPngRequest = {
   options?: WorkerRenderPngOptions;
 };
 
+/** Request: Render one static WebP scene. */
 export type RenderWebpRequest = {
   id: number;
   type: "render-webp";
@@ -149,34 +163,34 @@ export type RenderWebpRequest = {
   options?: WorkerRenderWebpOptions;
 };
 
-export type RenderAnimatedWebpRequest = {
+/** Begin one streaming raster job; no raster work occurs before next. */
+export type OpenRasterStreamRequest = {
   id: number;
-  type: "render-animated-webp";
+  type: "open-raster-stream";
   scene: SceneNode;
-  options: WorkerAnimatedWebpRenderOptions;
+  format: "webp" | "gif";
+  options: WorkerAnimatedWebpRenderOptions | WorkerAnimatedGifRenderOptions;
 };
 
-export type RenderAnimatedGifRequest = {
+/** Begin one streaming raster job from two layout-transition states. */
+export type OpenLayoutTransitionRasterStreamRequest = {
   id: number;
-  type: "render-animated-gif";
-  scene: SceneNode;
-  options: WorkerAnimatedGifRenderOptions;
-};
-
-export type RenderLayoutTransitionAnimatedWebpRequest = {
-  id: number;
-  type: "render-layout-transition-animated-webp";
+  type: "open-layout-transition-raster-stream";
   transition: WorkerLayoutTransitionInput;
-  options: WorkerAnimatedWebpRenderOptions;
+  format: "webp" | "gif";
+  options: WorkerAnimatedWebpRenderOptions | WorkerAnimatedGifRenderOptions;
 };
 
-export type RenderLayoutTransitionAnimatedGifRequest = {
+/** Request exactly one preparation, warning or output step. */
+export type NextRasterStreamRequest = { id: number; type: "next-raster-stream"; streamId: number };
+/** Close the remote owner after any in-flight operation has physically completed. */
+export type CloseRasterStreamRequest = {
   id: number;
-  type: "render-layout-transition-animated-gif";
-  transition: WorkerLayoutTransitionInput;
-  options: WorkerAnimatedGifRenderOptions;
+  type: "close-raster-stream";
+  streamId: number;
 };
 
+/** Request: Render one scene as layered SVG output. */
 export type RenderLayeredSvgRequest = {
   id: number;
   type: "render-layered-svg";
@@ -184,6 +198,7 @@ export type RenderLayeredSvgRequest = {
   options?: WorkerLayeredSvgRenderOptions;
 };
 
+/** Request: Render one scene as layered PNG output. */
 export type RenderLayeredPngRequest = {
   id: number;
   type: "render-layered-png";
@@ -191,6 +206,7 @@ export type RenderLayeredPngRequest = {
   options?: WorkerLayeredPngRenderOptions;
 };
 
+/** Request: Render one scene as SVG with its corresponding IR. */
 export type RenderSvgAndIrRequest = {
   id: number;
   type: "render-svg-and-ir";
@@ -198,6 +214,7 @@ export type RenderSvgAndIrRequest = {
   options?: WorkerRenderSvgOptions;
 };
 
+/** Request: Render one scene as animated SVG with its corresponding IR. */
 export type RenderAnimatedSvgAndIrRequest = {
   id: number;
   type: "render-animated-svg-and-ir";
@@ -205,11 +222,13 @@ export type RenderAnimatedSvgAndIrRequest = {
   options: WorkerRenderAnimatedSvgOptions;
 };
 
+/** One validated nonnegative sample time and its explicit frame-stream index. */
 export type IndexedFrameTime = {
   index: number;
   timeMs: number;
 };
 
+/** Request: Open a pull-driven scene frame stream with its detached explicit schedule. */
 export type OpenFrameStreamRequest = {
   id: number;
   type: "open-frame-stream";
@@ -218,6 +237,7 @@ export type OpenFrameStreamRequest = {
   options: WorkerFrameRenderOptions;
 };
 
+/** Request: Compile a transition once and open its pull-driven explicit frame stream. */
 export type OpenLayoutTransitionFrameStreamRequest = {
   id: number;
   type: "open-layout-transition-frame-stream";
@@ -226,69 +246,79 @@ export type OpenLayoutTransitionFrameStreamRequest = {
   options: WorkerFrameRenderOptions;
 };
 
+/** Request: Pull the next frame from an existing frame-stream capability. */
 export type NextFrameStreamRequest = {
   id: number;
   type: "next-frame-stream";
   streamId: number;
 };
 
+/** Request: Release an existing frame stream and its retained producer. */
 export type CloseFrameStreamRequest = {
   id: number;
   type: "close-frame-stream";
   streamId: number;
 };
 
+/** Request: Lay out a supplied text-flow DTO. */
 export type LayoutTextFlowRequest = {
   id: number;
   type: "layout-text-flow";
   input: TextFlowInput;
 };
 
+/** Request: Lay out a supplied text flow around its exclusion shapes. */
 export type LayoutTextFlowWithExclusionsRequest = {
   id: number;
   type: "layout-text-flow-with-exclusions";
   input: TextFlowWithExclusionsInput;
 };
 
+/** Request: Measure the supplied text block. */
 export type MeasureTextBlockRequest = {
   id: number;
   type: "measure-text-block";
   input: MeasureTextBlockInput;
 };
 
+/** Request: Measure the supplied shrinkwrapped text. */
 export type ShrinkwrapTextRequest = {
   id: number;
   type: "shrinkwrap-text";
   input: ShrinkwrapTextInput;
 };
 
+/** Request: Measure the supplied shrinkwrapped text flow. */
 export type ShrinkwrapFlowRequest = {
   id: number;
   type: "shrinkwrap-flow";
   input: ShrinkwrapFlowInput;
 };
 
+/** Request: Measure intrinsic inline dimensions of the supplied text. */
 export type MeasureIntrinsicInlineSizeRequest = {
   id: number;
   type: "measure-intrinsic-inline-size";
   input: IntrinsicInlineSizeInput;
 };
 
+/** Request: Release the Worker engine and its owned resources. */
 export type DisposeRequest = {
   id: number;
   type: "dispose";
 };
 
+/** Closed request families accepted by the dedicated Worker dispatcher. */
 export type WorkerRequest =
   | InitRequest
   | RenderSvgRequest
   | RenderAnimatedSvgRequest
   | RenderPngRequest
   | RenderWebpRequest
-  | RenderAnimatedWebpRequest
-  | RenderAnimatedGifRequest
-  | RenderLayoutTransitionAnimatedWebpRequest
-  | RenderLayoutTransitionAnimatedGifRequest
+  | OpenRasterStreamRequest
+  | OpenLayoutTransitionRasterStreamRequest
+  | NextRasterStreamRequest
+  | CloseRasterStreamRequest
   | RenderLayeredSvgRequest
   | RenderLayeredPngRequest
   | RenderSvgAndIrRequest
@@ -320,11 +350,13 @@ export type DecodedWorkerRequest = DecodeWorkerRequest<WorkerRequest>;
 // Worker responses (Worker → main thread)
 // ---------------------------------------------------------------------------
 
+/** Acknowledge initialization. */
 export type InitOkResponse = {
   id: number;
   type: "init-ok";
 };
 
+/** Return SVG and ordered recoverable warnings. */
 export type RenderSvgOkResponse = {
   id: number;
   type: "render-svg-ok";
@@ -332,6 +364,7 @@ export type RenderSvgOkResponse = {
   warnings: SerializedRecoverableError[];
 };
 
+/** Return animated SVG and ordered recoverable warnings. */
 export type RenderAnimatedSvgOkResponse = {
   id: number;
   type: "render-animated-svg-ok";
@@ -339,6 +372,7 @@ export type RenderAnimatedSvgOkResponse = {
   warnings: SerializedRecoverableError[];
 };
 
+/** Return static PNG bytes and ordered recoverable warnings. */
 export type RenderPngOkResponse = {
   id: number;
   type: "render-png-ok";
@@ -347,22 +381,35 @@ export type RenderPngOkResponse = {
   warnings: SerializedRecoverableError[];
 };
 
-export type RenderAnimatedWebpOkResponse = {
+/** Correlate the logical job with its initial open request. */
+export type OpenRasterStreamOkResponse = {
   id: number;
-  type: "render-animated-webp-ok";
-  /** Animated WebP bytes. Transferred (not copied) back to the main thread. */
-  webp: Uint8Array;
-  warnings: SerializedRecoverableError[];
+  type: "open-raster-stream-ok";
+  streamId: number;
+};
+/** Transfer one step without prefetching another frame or chunk. */
+export type NextRasterStreamOkResponse = {
+  id: number;
+  type: "next-raster-stream-ok";
+  streamId: number;
+} & (
+  | { kind: "preparing" }
+  | { kind: "ready"; warnings: SerializedRecoverableError[] }
+  | { kind: "chunk"; chunk: ArrayBuffer }
+  | {
+      kind: "finished";
+      result: AnimatedRasterWriteResult;
+      patch?: { offset: 4; bytes: Uint8Array };
+    }
+);
+/** Acknowledge synchronous remote resource and token release. */
+export type CloseRasterStreamOkResponse = {
+  id: number;
+  type: "close-raster-stream-ok";
+  streamId: number;
 };
 
-export type RenderAnimatedGifOkResponse = {
-  id: number;
-  type: "render-animated-gif-ok";
-  /** Animated GIF bytes. Transferred (not copied) back to the main thread. */
-  gif: Uint8Array;
-  warnings: SerializedRecoverableError[];
-};
-
+/** Return static WebP bytes and ordered recoverable warnings. */
 export type RenderWebpOkResponse = {
   id: number;
   type: "render-webp-ok";
@@ -373,10 +420,12 @@ export type RenderWebpOkResponse = {
 
 type WorkerLayerSvgEntry = LayeredSvgResult["layers"][number];
 
+/** Layered SVG transport result with warnings serialized across the Worker boundary. */
 export type WorkerLayeredSvgResult = Omit<LayeredSvgResult, "layers"> & {
   layers: WorkerLayerSvgEntry[];
 };
 
+/** Return layered SVG metadata, layers and ordered recoverable warnings. */
 export type RenderLayeredSvgOkResponse = {
   id: number;
   type: "render-layered-svg-ok";
@@ -386,10 +435,12 @@ export type RenderLayeredSvgOkResponse = {
 
 type WorkerLayerPngEntry = LayeredPngResult["layers"][number];
 
+/** Layered PNG transport result with warnings serialized across the Worker boundary. */
 export type WorkerLayeredPngResult = Omit<LayeredPngResult, "layers"> & {
   layers: WorkerLayerPngEntry[];
 };
 
+/** Return layered PNG metadata, bytes and ordered recoverable warnings. */
 export type RenderLayeredPngOkResponse = {
   id: number;
   type: "render-layered-png-ok";
@@ -406,6 +457,7 @@ export type RenderLayeredPngOkResponse = {
  */
 export type WorkerIR = Omit<IR, "warnings">;
 
+/** Return SVG, IR and ordered recoverable warnings. */
 export type RenderSvgAndIrOkResponse = {
   id: number;
   type: "render-svg-and-ir-ok";
@@ -415,6 +467,7 @@ export type RenderSvgAndIrOkResponse = {
   warnings: SerializedRecoverableError[];
 };
 
+/** Return animated SVG, IR and ordered recoverable warnings. */
 export type RenderAnimatedSvgAndIrOkResponse = {
   id: number;
   type: "render-animated-svg-and-ir-ok";
@@ -424,6 +477,7 @@ export type RenderAnimatedSvgAndIrOkResponse = {
   warnings: SerializedRecoverableError[];
 };
 
+/** Return an opened frame-stream capability and its preparation warnings. */
 export type OpenFrameStreamOkResponse = {
   id: number;
   type: "open-frame-stream-ok";
@@ -431,6 +485,7 @@ export type OpenFrameStreamOkResponse = {
   warnings: SerializedRecoverableError[];
 };
 
+/** Return one sampled frame or explicit completion without prefetching. */
 export type NextFrameStreamOkResponse =
   | {
       id: number;
@@ -446,67 +501,78 @@ export type NextFrameStreamOkResponse =
       frame: Frame;
     };
 
+/** Acknowledge release of a frame-stream capability. */
 export type CloseFrameStreamOkResponse = {
   id: number;
   type: "close-frame-stream-ok";
   streamId: number;
 };
 
+/** Return the decoded text-flow result. */
 export type LayoutTextFlowOkResponse = {
   id: number;
   type: "layout-text-flow-ok";
   result: TextFlowResult;
 };
 
+/** Return the decoded text-flow result with exclusions. */
 export type LayoutTextFlowWithExclusionsOkResponse = {
   id: number;
   type: "layout-text-flow-with-exclusions-ok";
   result: TextFlowWithExclusionsResult;
 };
 
+/** Return decoded text-block measurements. */
 export type MeasureTextBlockOkResponse = {
   id: number;
   type: "measure-text-block-ok";
   result: MeasureTextBlockResult;
 };
 
+/** Return decoded shrinkwrapped text measurements. */
 export type ShrinkwrapTextOkResponse = {
   id: number;
   type: "shrinkwrap-text-ok";
   result: ShrinkwrapTextResult;
 };
 
+/** Return decoded shrinkwrapped flow measurements. */
 export type ShrinkwrapFlowOkResponse = {
   id: number;
   type: "shrinkwrap-flow-ok";
   result: ShrinkwrapFlowResult;
 };
 
+/** Return decoded intrinsic inline dimensions. */
 export type MeasureIntrinsicInlineSizeOkResponse = {
   id: number;
   type: "measure-intrinsic-inline-size-ok";
   result: IntrinsicInlineSizeResult;
 };
 
+/** Return a serialized fatal error for the correlated request. */
 export type ErrorResponse = {
   id: number;
   type: "error";
   error: SerializedFatalError;
 };
 
+/** Acknowledge release of the Worker engine. */
 export type DisposeOkResponse = {
   id: number;
   type: "dispose-ok";
 };
 
+/** Closed success and structured-error families returned by the Worker dispatcher. */
 export type WorkerResponse =
   | InitOkResponse
   | RenderSvgOkResponse
   | RenderAnimatedSvgOkResponse
   | RenderPngOkResponse
   | RenderWebpOkResponse
-  | RenderAnimatedWebpOkResponse
-  | RenderAnimatedGifOkResponse
+  | OpenRasterStreamOkResponse
+  | NextRasterStreamOkResponse
+  | CloseRasterStreamOkResponse
   | RenderLayeredSvgOkResponse
   | RenderLayeredPngOkResponse
   | RenderSvgAndIrOkResponse
@@ -531,6 +597,7 @@ function isObjectLike(value: unknown): value is object {
   return typeof value === "object" && value !== null;
 }
 
+/** Closed own-key sets used to authenticate each request family without reading accessors. */
 const WORKER_REQUEST_KEYS = [
   "id",
   "type",
@@ -541,25 +608,27 @@ const WORKER_REQUEST_KEYS = [
   "options",
   "transition",
   "schedule",
+  "format",
   "streamId",
   "input",
 ] as const;
 
+/** Known request discriminants recognized before family-specific validation. */
 const WORKER_REQUEST_TYPES = new Set<string>([
   "init",
   "render-svg",
   "render-animated-svg",
   "render-png",
   "render-webp",
-  "render-animated-webp",
-  "render-animated-gif",
-  "render-layout-transition-animated-webp",
-  "render-layout-transition-animated-gif",
   "render-layered-svg",
   "render-layered-png",
   "render-svg-and-ir",
   "render-animated-svg-and-ir",
   "open-frame-stream",
+  "open-raster-stream",
+  "open-layout-transition-raster-stream",
+  "next-raster-stream",
+  "close-raster-stream",
   "open-layout-transition-frame-stream",
   "next-frame-stream",
   "close-frame-stream",
@@ -572,6 +641,7 @@ const WORKER_REQUEST_TYPES = new Set<string>([
   "dispose",
 ]);
 
+/** Closed own-key sets used to authenticate each response family. */
 const WORKER_RESPONSE_KEYS = [
   "id",
   "type",
@@ -579,13 +649,15 @@ const WORKER_RESPONSE_KEYS = [
   "svg",
   "png",
   "webp",
-  "gif",
   "result",
   "ir",
   "warnings",
   "streamId",
   "done",
   "frame",
+  "kind",
+  "chunk",
+  "patch",
 ] as const;
 
 function getProperty(value: object, key: string): unknown {
@@ -806,6 +878,7 @@ function snapshotRecoverableWarnings(value: unknown): SerializedRecoverableError
 // Keep future fields forward-compatible while ensuring known fields receive
 // only complete, plain, getter-free values. Invalid unknown values become a
 // sentinel and cannot make a later supported alias reuse a partial snapshot.
+/** Private marker for a property whose descriptor cannot be safely snapshotted. */
 const INVALID_SNAPSHOT_VALUE = Symbol("worker-protocol-invalid-snapshot");
 
 type GetterFreeSnapshotResult =
@@ -1065,8 +1138,6 @@ function responseArrayKeys(type: string): readonly string[] {
     case "render-animated-svg-ok":
     case "render-png-ok":
     case "render-webp-ok":
-    case "render-animated-webp-ok":
-    case "render-animated-gif-ok":
     case "render-layered-svg-ok":
     case "render-layered-png-ok":
     case "render-svg-and-ir-ok":
@@ -1079,6 +1150,13 @@ function responseArrayKeys(type: string): readonly string[] {
 }
 
 function snapshotResponseDiagnostics(value: Record<string, unknown>, type: string): boolean {
+  if (type === "next-raster-stream-ok" && value.kind === "ready") {
+    const warnings = snapshotRecoverableWarnings(value.warnings);
+    if (warnings === undefined) {
+      return false;
+    }
+    value.warnings = warnings;
+  }
   for (const key of responseArrayKeys(type)) {
     const propertyValue = value[key];
     if (propertyValue === undefined) {
@@ -1116,6 +1194,7 @@ export function isWorkerMessageId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+/** Read a safe positive message ID without invoking an untrusted property accessor. */
 export function getWorkerMessageId(value: unknown): number | undefined {
   if (!isObjectLike(value)) {
     return undefined;
@@ -1184,6 +1263,105 @@ function isFrameStreamId(value: object): boolean {
   return isWorkerMessageId(streamId);
 }
 
+/** Require exactly the declared own data keys at the new raster transport boundary. */
+function hasRasterMessageKeys(value: unknown, type: string): boolean {
+  if (!isObjectLike(value) || Array.isArray(value)) {
+    return false;
+  }
+  const common = ["id", "type", "streamId"];
+  let keys: string[];
+  if (type === "open-raster-stream") {
+    keys = ["id", "type", "scene", "format", "options"];
+  } else if (type === "open-layout-transition-raster-stream") {
+    keys = ["id", "type", "transition", "format", "options"];
+  } else if (type === "next-raster-stream-ok") {
+    const kind = getStringProperty(value, "kind");
+    keys = [
+      ...common,
+      "kind",
+      ...(kind === "ready"
+        ? ["warnings"]
+        : kind === "chunk"
+          ? ["chunk"]
+          : kind === "finished"
+            ? ["result", "patch"]
+            : []),
+    ];
+  } else {
+    keys = common;
+  }
+  try {
+    return Reflect.ownKeys(value).every(
+      (key) =>
+        typeof key === "string" &&
+        keys.includes(key) &&
+        Reflect.getOwnPropertyDescriptor(value, key)?.enumerable === true &&
+        "value" in (Reflect.getOwnPropertyDescriptor(value, key) ?? {}),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Authenticate completion metadata without accepting unsafe counters or undeclared fields. */
+function isRasterWriteResult(value: unknown): value is AnimatedRasterWriteResult {
+  if (!isObjectLike(value) || Array.isArray(value)) {
+    return false;
+  }
+  const format = getStringProperty(value, "format");
+  const count = getNumberProperty(value, "frameCount");
+  const length = getNumberProperty(value, "bytesWritten");
+  return (
+    Reflect.ownKeys(value).length === 3 &&
+    (format === "webp" || format === "gif") &&
+    typeof count === "number" &&
+    Number.isSafeInteger(count) &&
+    count > 0 &&
+    typeof length === "number" &&
+    Number.isSafeInteger(length) &&
+    length > 0
+  );
+}
+
+/** Authenticate one closed step, retaining null/missing distinctions for required fields. */
+function isRasterStreamStep(value: object): boolean {
+  if (!isFrameStreamId(value)) {
+    return false;
+  }
+  const kind = getStringProperty(value, "kind");
+  if (kind === "preparing") {
+    return true;
+  }
+  if (kind === "ready") {
+    return isDenseArrayOf(getProperty(value, "warnings"), isSerializedRecoverableError);
+  }
+  if (kind === "chunk") {
+    const chunk = getProperty(value, "chunk");
+    return chunk instanceof ArrayBuffer && chunk.byteLength > 0 && chunk.byteLength <= 65536;
+  }
+  if (kind !== "finished") {
+    return false;
+  }
+  const result = getProperty(value, "result");
+  if (!isRasterWriteResult(result)) {
+    return false;
+  }
+  if (result.format === "gif") {
+    return !Object.hasOwn(value, "patch");
+  }
+  const patch = getProperty(value, "patch");
+  if (
+    !isObjectLike(patch) ||
+    Array.isArray(patch) ||
+    Reflect.ownKeys(patch).length !== 2 ||
+    getNumberProperty(patch, "offset") !== 4
+  ) {
+    return false;
+  }
+  const bytes = getProperty(patch, "bytes");
+  return bytes instanceof Uint8Array && bytes.length === 4;
+}
+
 function isWorkerRequestOuterSnapshot(value: object, type: string): boolean {
   switch (type) {
     case "init": {
@@ -1211,12 +1389,15 @@ function isWorkerRequestOuterSnapshot(value: object, type: string): boolean {
       return true;
     case "render-animated-svg":
     case "render-animated-svg-and-ir":
-    case "render-animated-webp":
-    case "render-animated-gif":
       return isObjectLike(getProperty(value, "options"));
-    case "render-layout-transition-animated-webp":
-    case "render-layout-transition-animated-gif":
-      return isObjectLike(getProperty(value, "options"));
+    case "open-raster-stream":
+    case "open-layout-transition-raster-stream":
+      return (
+        (getStringProperty(value, "format") === "webp" ||
+          getStringProperty(value, "format") === "gif") &&
+        isObjectLike(getProperty(value, "options")) &&
+        !Array.isArray(getProperty(value, "options"))
+      );
     case "open-frame-stream": {
       const schedule = getProperty(value, "schedule");
       return (
@@ -1231,6 +1412,8 @@ function isWorkerRequestOuterSnapshot(value: object, type: string): boolean {
         isWorkerFrameRenderOptions(getProperty(value, "options"))
       );
     }
+    case "next-raster-stream":
+    case "close-raster-stream":
     case "next-frame-stream":
     case "close-frame-stream":
       return isFrameStreamId(value);
@@ -1258,12 +1441,11 @@ function decodeNestedWorkerRequest(
     case "render-animated-svg":
     case "render-png":
     case "render-webp":
-    case "render-animated-webp":
-    case "render-animated-gif":
     case "render-layered-svg":
     case "render-layered-png":
     case "render-svg-and-ir":
     case "render-animated-svg-and-ir":
+    case "open-raster-stream":
     case "open-frame-stream": {
       const scene = fromSceneDocument(getProperty(snapshot, "scene"));
       Object.defineProperty(snapshot, "scene", {
@@ -1274,8 +1456,7 @@ function decodeNestedWorkerRequest(
       });
       return { id, message: snapshot as unknown as DecodedWorkerRequest };
     }
-    case "render-layout-transition-animated-webp":
-    case "render-layout-transition-animated-gif":
+    case "open-layout-transition-raster-stream":
     case "open-layout-transition-frame-stream": {
       const transition = decodeWorkerLayoutTransitionInput(getProperty(snapshot, "transition"));
       Object.defineProperty(snapshot, "transition", {
@@ -1308,6 +1489,9 @@ export function decodeWorkerRequestMessage(
     if (type === undefined || !WORKER_REQUEST_TYPES.has(type)) {
       return { id, message: undefined };
     }
+    if (type.includes("raster-stream") && !hasRasterMessageKeys(value, type)) {
+      return { id, message: undefined };
+    }
     if (!snapshotArrayProperties(snapshot, requestArrayKeys(type))) {
       return { id, message: undefined };
     }
@@ -1328,6 +1512,7 @@ function decodeWorkerRequest(value: unknown): DecodedWorkerRequest | undefined {
   return decodeWorkerRequestMessage(value).message;
 }
 
+/** Authenticate and decode an unknown message as one closed Worker request family. */
 export function isWorkerRequest(value: unknown): value is WorkerRequest {
   return decodeWorkerRequest(value) !== undefined;
 }
@@ -1354,12 +1539,6 @@ function isWorkerResponseSnapshot(value: object): value is WorkerResponse {
       const warnings = getProperty(value, "warnings");
       return png instanceof Uint8Array && isDenseArrayOf(warnings, isSerializedRecoverableError);
     }
-    case "render-animated-gif-ok": {
-      const gif = getProperty(value, "gif");
-      const warnings = getProperty(value, "warnings");
-      return gif instanceof Uint8Array && isDenseArrayOf(warnings, isSerializedRecoverableError);
-    }
-    case "render-animated-webp-ok":
     case "render-webp-ok": {
       const webp = getProperty(value, "webp");
       const warnings = getProperty(value, "warnings");
@@ -1404,6 +1583,11 @@ function isWorkerResponseSnapshot(value: object): value is WorkerResponse {
       }
       return done === false && isFrame(getProperty(value, "frame"));
     }
+    case "open-raster-stream-ok":
+    case "close-raster-stream-ok":
+      return isFrameStreamId(value);
+    case "next-raster-stream-ok":
+      return isRasterStreamStep(value);
     case "close-frame-stream-ok":
       return isFrameStreamId(value);
     case "layout-text-flow-ok":
@@ -1436,6 +1620,9 @@ export function decodeWorkerResponseMessage(
   const id = getWorkerMessageId(snapshot);
   try {
     const type = getStringProperty(snapshot, "type");
+    if (type?.includes("raster-stream") && !hasRasterMessageKeys(value, type)) {
+      return { id, message: undefined };
+    }
     if (type !== undefined && !snapshotResponseDiagnostics(snapshot, type)) {
       return { id, message: undefined };
     }
@@ -1453,6 +1640,7 @@ export function decodeWorkerResponse(value: unknown): WorkerResponse | undefined
   return decodeWorkerResponseMessage(value).message;
 }
 
+/** Authenticate an unknown message as one closed Worker response family. */
 export function isWorkerResponse(value: unknown): value is WorkerResponse {
   return decodeWorkerResponse(value) !== undefined;
 }
@@ -1474,11 +1662,16 @@ export function collectResponseTransferables(response: WorkerResponse): ArrayBuf
   if (response.type === "render-png-ok") {
     return response.png.buffer instanceof ArrayBuffer ? [response.png.buffer] : [];
   }
-  if (response.type === "render-webp-ok" || response.type === "render-animated-webp-ok") {
+  if (response.type === "render-webp-ok") {
     return response.webp.buffer instanceof ArrayBuffer ? [response.webp.buffer] : [];
   }
-  if (response.type === "render-animated-gif-ok") {
-    return response.gif.buffer instanceof ArrayBuffer ? [response.gif.buffer] : [];
+  if (response.type === "next-raster-stream-ok") {
+    if (response.kind === "chunk") {
+      return [response.chunk];
+    }
+    if (response.kind === "finished" && response.patch?.bytes.buffer instanceof ArrayBuffer) {
+      return [response.patch.bytes.buffer];
+    }
   }
   if (response.type === "render-layered-png-ok") {
     const buffers: ArrayBuffer[] = [];

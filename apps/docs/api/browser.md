@@ -67,6 +67,49 @@ const { data, mediaType } = await imageLoader.load("/assets/logo.png");
 
 Concurrent loads of the same URL share one request, successful results are cached until `clear()`, and failed loads are retried on the next call. Pass `fetchOptions` to forward `RequestInit` values (headers, credentials) to every fetch. Note that `fetchOptions` applies to every request the loader makes — an `AbortSignal` passed here aborts all current and future loads, so scope a signal-bound loader to the signal's lifetime.
 
+## Animated raster storage
+
+The root entry exports `createAnimatedRasterFileSink(fileHandle)` and
+`createAnimatedRasterSpool(directoryHandle)`. Callers supply handles and obtain
+permissions; these helpers do not open a picker. Supported file handles expose
+`createWritable`. Missing capabilities or denied permissions produce structured
+`ANIMATED_RASTER_SINK_UNAVAILABLE`; storage failures use
+`ANIMATED_RASTER_SINK_FAILED`.
+
+```ts
+import { createAnimatedRasterFileSink } from "@boundsvg/browser";
+
+const sink = await createAnimatedRasterFileSink(fileHandle);
+try {
+  await engine.renderToAnimatedWebp(
+    scene,
+    {
+      durationMs: 2000,
+      fps: 20,
+      iterations: 1,
+    },
+    sink,
+  );
+} catch (error) {
+  await sink.abort(error);
+  throw error;
+}
+```
+
+The writable starts with empty replacement content and applies the WebP patch
+before close. Finish commits through close; abort waits for pending IO and
+cancels only uncommitted writes. It never deletes the caller's file or removes
+output after successful close. A fresh sink rejected before Engine adoption is
+still the caller's cleanup responsibility.
+
+For a sequential destination, obtain a directory handle, such as an OPFS root,
+and pass `await createAnimatedRasterSpool(directory)` together with the
+sequential sink to `createAnimatedWebpSpoolSink` from Core. The spool owns one
+temporary file, reads at most 64 KiB per transfer, and removes only that file
+on disposal. Browser storage support and quota depend on the host; a spool is
+not a complete-file memory collector. Await an already invoked finish transfer
+rather than assuming immediate cancellation.
+
 ## Related entry points
 
 | Entry point                | Use case                                                                                 |

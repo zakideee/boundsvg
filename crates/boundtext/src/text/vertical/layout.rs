@@ -10,6 +10,11 @@ use crate::text::types::{
 // ---------------------------------------------------------------------------
 
 // column building requires break data, char arrays, placements, glyph mappings, and text
+/// Build vertical columns from character ranges and their source-mapped glyph placements.
+///
+/// # Panics
+///
+/// Panics when parallel advance or glyph-range arrays do not cover the selected character ranges.
 #[expect(
     clippy::too_many_arguments,
     reason = "vertical text layout requires font context and orientation parameters"
@@ -87,6 +92,7 @@ pub(super) fn build_columns_from_breaks(
     columns
 }
 
+/// Convert column break offsets into character ranges, excluding trailing newline characters.
 pub(super) fn build_column_ranges(chars: &[&str], column_breaks: &[usize]) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut start = 0usize;
@@ -104,6 +110,7 @@ pub(super) fn build_column_ranges(chars: &[&str], column_breaks: &[usize]) -> Ve
 }
 
 // positioned glyph resolution requires glyph data, span info, placements, text, and column bounds
+/// Resolve vertical glyph origins and source ranges for the selected column.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "byte offsets within text strings; text length is well within u32::MAX"
@@ -208,6 +215,7 @@ pub(super) fn build_column_positioned_glyphs(
 // Result building
 // ---------------------------------------------------------------------------
 
+/// Build a vertical result with warnings and no explicit width or height constraints.
 #[cfg(test)]
 pub(super) fn build_vertical_result(
     truncated_columns: Vec<Line>,
@@ -229,6 +237,7 @@ pub(super) fn build_vertical_result(
     )
 }
 
+/// Build vertical geometry and report truncation, constraint overflow, or unresolved kinsoku in priority order.
 #[expect(
     clippy::too_many_arguments,
     reason = "vertical result construction combines layout metrics, constraints, and warnings"

@@ -87,6 +87,10 @@ function areStructurallyEqual(
   return true;
 }
 
+/**
+ * Reuse the last committed reference for structurally equal arrays and plain objects.
+ * Other object instances compare by identity; updates become the baseline after commit.
+ */
 export function useStructurallyStableValue<T>(value: T): T {
   const stableValueRef = useRef(value);
   const stableValue = areStructurallyEqual(stableValueRef.current, value)
@@ -121,6 +125,7 @@ function replaceOwnRenderCallbacks<O extends object>(
   return normalizedOptions;
 }
 
+/** Stabilize render options independently of callback identity while dispatching through the latest committed callbacks. */
 export function useStructurallyStableRenderOptions<O extends object>(
   options: O | undefined,
 ): O | undefined {

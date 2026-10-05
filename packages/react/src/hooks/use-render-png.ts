@@ -13,6 +13,7 @@ import {
 import { useRenderInput } from "./use-render-input.js";
 import { useStructurallyStableRenderOptions } from "./use-structurally-stable-value.js";
 
+/** Synchronous PNG bytes and data URL with readiness or failure state. */
 export type UseRenderToPngResult = {
   /** Rendered PNG as Uint8Array (null while not ready or on error) */
   png: Uint8Array | null;

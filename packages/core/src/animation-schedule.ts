@@ -2,11 +2,11 @@
 // Frame schedule derivation for animated raster output
 // ---------------------------------------------------------------------------
 
-import { FatalError } from "./errors.js";
-import { MAX_ANIMATION_FRAMES } from "./render-capabilities.js";
+import { FatalError, formatUnknownDiagnosticValue } from "./errors.js";
 
 /** Inclusive bounds on a single frame's display duration, in whole milliseconds. */
 const MIN_FRAME_DURATION_MS = 1;
+/** Largest whole-millisecond duration accepted for one frame. */
 const MAX_FRAME_DURATION_MS = 60_000;
 
 /** Largest total play count representable by animated WebP's ANIM field. */
@@ -15,8 +15,11 @@ export const MAX_ANIMATED_WEBP_ITERATIONS = 65_535;
 /** Largest total play count representable by GIF's repeat field plus one. */
 export const MAX_ANIMATED_GIF_ITERATIONS = 65_536;
 
+/** Sample rate used when the caller omits fps in sampled mode. */
 const DEFAULT_FPS = 20;
+/** Smallest accepted primitive finite sample rate, inclusive. */
 const MIN_FPS = 1;
+/** Largest accepted primitive finite sample rate, inclusive. */
 const MAX_FPS = 60;
 
 /** Caller-facing schedule inputs for an animated raster render. */
@@ -31,31 +34,12 @@ export type AnimationScheduleOptions = {
   durationMs?: number;
 };
 
-/** Error codes a caller of {@link resolveAnimationFrameSchedule} reports under. */
-export type AnimationScheduleErrorCodes = {
-  invalidSchedule: string;
-  tooManyFrames: string;
-};
-
-/** A resolved, validated schedule: one sample time and duration per frame. */
-export type ResolvedAnimationSchedule = {
-  timesMs: number[];
-  frameDurationsMs: number[];
-};
-
+/** Construct the format-specific schedule diagnostic before scene preparation. */
 function scheduleError(code: string, message: string): FatalError {
   return new FatalError(code, message, { stage: "emit" });
 }
 
-function assertFrameCount(frameCount: number, code: string): void {
-  if (frameCount > MAX_ANIMATION_FRAMES) {
-    throw scheduleError(
-      code,
-      `Animated output is limited to ${MAX_ANIMATION_FRAMES} frames, got ${frameCount}`,
-    );
-  }
-}
-
+/** Validate one display duration in the existing whole-millisecond domain. */
 function assertFrameDuration(durationMs: number, index: number, code: string): void {
   if (
     !Number.isInteger(durationMs) ||
@@ -64,159 +48,277 @@ function assertFrameDuration(durationMs: number, index: number, code: string): v
   ) {
     throw scheduleError(
       code,
-      `Frame ${index} duration must be a whole number of milliseconds in ${MIN_FRAME_DURATION_MS}..${MAX_FRAME_DURATION_MS}, got ${String(durationMs)}`,
+      `Frame ${index} duration must be a whole number of milliseconds in ${MIN_FRAME_DURATION_MS}..${MAX_FRAME_DURATION_MS}, got ${formatUnknownDiagnosticValue(durationMs, "unprintable value")}`,
     );
   }
+}
+
+/** GIF stores frame delays in centiseconds. */
+export const GIF_DELAY_UNIT_MS = 10;
+
+/** Browser-compatible minimum frame delay in centiseconds. */
+const GIF_DELAY_CS_MIN = 2;
+
+/** Largest value representable by the GIF delay field. */
+const GIF_DELAY_CS_MAX = 65_535;
+
+/** Shortest display duration represented without the GIF browser floor. */
+export const GIF_MIN_FRAME_MS = GIF_DELAY_CS_MIN * GIF_DELAY_UNIT_MS;
+
+/** Schedule cursors for streaming animated containers, with no sampled arrays. */
+export type AnimationScheduleDescriptor =
+  | {
+      kind: "sampled";
+      fps: number;
+      durationMs: number;
+      frameCount: number;
+      totalMs: number;
+    }
+  | {
+      kind: "explicit";
+      timesMs: readonly number[];
+      frameDurationsMs: readonly number[];
+      frameCount: number;
+    };
+
+/** A sample pose and its whole-millisecond display duration. */
+export type AnimationScheduleEntry = {
+  index: number;
+  timeMs: number;
+  durationMs: number;
+};
+
+/** A single-use cursor; returning it makes subsequent reads complete. */
+export type AnimationScheduleCursor = {
+  /** Validate and read one entry without retaining previously read entries. */
+  next(): IteratorResult<AnimationScheduleEntry, undefined>;
+  /** Release this cursor's descriptor reference; repeated calls are harmless. */
+  return(): IteratorResult<AnimationScheduleEntry, undefined>;
+};
+
+/** Container identity and the existing schedule diagnostic to preserve. */
+type AnimationScheduleContext = {
+  format: "webp" | "gif";
+  invalidSchedule: string;
+};
+
+/** Report a derived index or boundary that cannot be represented exactly. */
+function unrepresentableSchedule(
+  context: AnimationScheduleContext,
+  reason: "unsafeFrameCount" | "unsafeTotalMs",
+): FatalError {
+  return new FatalError(
+    "ANIMATED_RASTER_NUMERIC_UNREPRESENTABLE",
+    "Animation schedule cannot be represented with exact integer indices and boundaries",
+    {
+      stage: "emit",
+      context: {
+        format: context.format,
+        operation: "open",
+        reason,
+        field: reason === "unsafeFrameCount" ? "frameCount" : "options",
+      },
+    },
+  );
 }
 
 /**
- * Derive the frame schedule for an animated raster render.
+ * Resolve a descriptor from the caller's already detached option snapshot.
+ * Explicit arrays are adopted; the animation entry makes their sole copy.
+ * Entry validation is performed by the pre-render scan through a cursor.
  *
- * Two mutually exclusive forms:
- * - explicit `timesMs` plus a matching `frameDurationsMs`;
- * - `durationMs` with an optional `fps` (default 20), which samples at a fixed
- *   interval and gives every frame the same duration.
- *
- * @throws FatalError with `codes.invalidSchedule` for a malformed schedule, or
- *   `codes.tooManyFrames` when the frame count exceeds `MAX_ANIMATION_FRAMES`.
+ * @throws FatalError for conflicting fields, invalid scalar domains, or unsafe
+ * integer frame counts and total millisecond boundaries, before compilation.
  */
-export function resolveAnimationFrameSchedule(
+export function resolveAnimationScheduleDescriptor(
   options: AnimationScheduleOptions,
-  codes: AnimationScheduleErrorCodes,
-): ResolvedAnimationSchedule {
-  return options.timesMs
-    ? resolveExplicitSchedule(options, codes)
-    : resolveSampledSchedule(options, codes);
-}
-
-function resolveExplicitSchedule(
-  options: AnimationScheduleOptions,
-  codes: AnimationScheduleErrorCodes,
-): ResolvedAnimationSchedule {
-  const code = codes.invalidSchedule;
-  const timesMs = [...(options.timesMs ?? [])];
-  if (timesMs.length === 0) {
-    throw scheduleError(code, "timesMs must contain at least one sample time");
-  }
-  if (options.fps !== undefined || options.durationMs !== undefined) {
-    throw scheduleError(code, "timesMs cannot be combined with fps or durationMs");
-  }
-  for (const timeMs of timesMs) {
-    if (!Number.isFinite(timeMs) || timeMs < 0) {
+  context: AnimationScheduleContext,
+): AnimationScheduleDescriptor {
+  const code = context.invalidSchedule;
+  if (options.timesMs !== undefined) {
+    if (!Array.isArray(options.timesMs)) {
+      throw scheduleError(code, "timesMs must be an array of sample times");
+    }
+    if (options.timesMs.length === 0) {
+      throw scheduleError(code, "timesMs must contain at least one sample time");
+    }
+    if (options.fps !== undefined || options.durationMs !== undefined) {
+      throw scheduleError(code, "timesMs cannot be combined with fps or durationMs");
+    }
+    if (options.frameDurationsMs === undefined) {
+      throw scheduleError(code, "frameDurationsMs is required when timesMs is given");
+    }
+    if (!Array.isArray(options.frameDurationsMs)) {
+      throw scheduleError(code, "frameDurationsMs must be an array of display durations");
+    }
+    if (options.frameDurationsMs.length !== options.timesMs.length) {
       throw scheduleError(
         code,
-        `Animation timeMs must be a non-negative finite number, got ${String(timeMs)}`,
+        `frameDurationsMs must have one entry per frame: got ${options.frameDurationsMs.length} for ${options.timesMs.length} times`,
       );
     }
+    return {
+      kind: "explicit",
+      timesMs: options.timesMs,
+      frameDurationsMs: options.frameDurationsMs,
+      frameCount: options.timesMs.length,
+    };
   }
-  if (!options.frameDurationsMs) {
-    throw scheduleError(code, "frameDurationsMs is required when timesMs is given");
-  }
-  const frameDurationsMs = [...options.frameDurationsMs];
-  if (frameDurationsMs.length !== timesMs.length) {
-    throw scheduleError(
-      code,
-      `frameDurationsMs must have one entry per frame: got ${frameDurationsMs.length} for ${timesMs.length} times`,
-    );
-  }
-  frameDurationsMs.forEach((durationMs, index) => {
-    assertFrameDuration(durationMs, index, code);
-  });
-  assertFrameCount(timesMs.length, codes.tooManyFrames);
-  return { timesMs, frameDurationsMs };
-}
-
-function resolveSampledSchedule(
-  options: AnimationScheduleOptions,
-  codes: AnimationScheduleErrorCodes,
-): ResolvedAnimationSchedule {
-  const code = codes.invalidSchedule;
-  if (options.frameDurationsMs) {
+  if (options.frameDurationsMs !== undefined) {
     throw scheduleError(code, "frameDurationsMs requires an explicit timesMs schedule");
   }
-  const fps = options.fps ?? DEFAULT_FPS;
-  if (!Number.isFinite(fps) || fps < MIN_FPS || fps > MAX_FPS) {
+  const fps = options.fps === undefined ? DEFAULT_FPS : options.fps;
+  if (typeof fps !== "number" || !Number.isFinite(fps) || fps < MIN_FPS || fps > MAX_FPS) {
     throw scheduleError(
       code,
-      `fps must be a finite number in ${MIN_FPS}..${MAX_FPS}, got ${String(fps)}`,
+      `fps must be a finite number in ${MIN_FPS}..${MAX_FPS}, got ${formatUnknownDiagnosticValue(fps, "unprintable value")}`,
     );
   }
   const durationMs = options.durationMs;
   if (durationMs === undefined) {
     throw scheduleError(code, "durationMs is required unless timesMs is given");
   }
-  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) {
     throw scheduleError(
       code,
-      `durationMs must be a positive finite number, got ${String(durationMs)}`,
+      `durationMs must be a positive finite number, got ${formatUnknownDiagnosticValue(durationMs, "unprintable value")}`,
     );
   }
-
-  // Checked before materializing the arrays: a long duration at a high fps can
-  // ask for orders of magnitude more frames than the cap allows.
+  // Multiplication, division, and rounding must keep the original binary64
+  // evaluation order; algebraic reassociation changes boundary neighbors.
   const frameCount = Math.max(2, Math.ceil((durationMs * fps) / 1000));
-  assertFrameCount(frameCount, codes.tooManyFrames);
-
-  // Durations are the differences between rounded frame boundaries, not a
-  // rounded 1000/fps repeated. At 60 fps the latter would emit 17 ms per frame
-  // and drift ~100 ms ahead of the sample times over 300 frames; telescoping
-  // keeps the displayed timeline equal to the sampled one.
-  //
-  // The final boundary is `durationMs`, not the fps grid, so playback lasts
-  // exactly as long as asked. `ceil` can put the last grid point past the end,
-  // and the two-frame floor can put it well past; clamping each boundary to
-  // leave one millisecond per remaining frame keeps them strictly increasing.
-  // Sample times take the same ceiling: below one frame period the floor would
-  // otherwise sample a pose from well past the requested window.
-  const totalMs = Math.max(frameCount * MIN_FRAME_DURATION_MS, Math.round(durationMs));
-  const boundaryMs = (index: number): number =>
-    index >= frameCount
-      ? totalMs
-      : Math.min(Math.round((index * 1000) / fps), totalMs - (frameCount - index));
-
-  const timesMs: number[] = [];
-  const frameDurationsMs: number[] = [];
-  for (let index = 0; index < frameCount; index++) {
-    timesMs.push(Math.min((index * 1000) / fps, durationMs));
-    const frameDurationMs = boundaryMs(index + 1) - boundaryMs(index);
-    assertFrameDuration(frameDurationMs, index, code);
-    frameDurationsMs.push(frameDurationMs);
+  if (!Number.isSafeInteger(frameCount)) {
+    throw unrepresentableSchedule(context, "unsafeFrameCount");
   }
-  return { timesMs, frameDurationsMs };
+  const totalMs = Math.max(frameCount, Math.round(durationMs));
+  if (!Number.isSafeInteger(totalMs)) {
+    throw unrepresentableSchedule(context, "unsafeTotalMs");
+  }
+  return { kind: "sampled", fps, durationMs, frameCount, totalMs };
 }
 
-/** GIF stores frame delays in centiseconds. */
-export const GIF_DELAY_UNIT_MS = 10;
+/** Compute one boundary with the original binary64 evaluation order. */
+function sampledBoundaryMs(
+  descriptor: Extract<AnimationScheduleDescriptor, { kind: "sampled" }>,
+  index: number,
+): number {
+  return index >= descriptor.frameCount
+    ? descriptor.totalMs
+    : Math.min(
+        Math.round((index * 1000) / descriptor.fps),
+        descriptor.totalMs - (descriptor.frameCount - index),
+      );
+}
 
 /**
- * Browsers substitute their own default for a delay below 2 centiseconds, so
- * the encoder clamps to it and the emitted timeline can run longer than asked.
- */
-const GIF_MIN_DELAY_CS = 2;
-
-/**
- * Per-frame GIF delays in centiseconds: differences between rounded cumulative
- * timestamps, so the 10 ms quantum cannot accumulate into drift, then clamped
- * to the browser floor.
+ * Read one indexed entry with the original sampled arithmetic.
  *
- * Mirrors `resolve_frame_delays_cs` in `gif_anim.rs`; a test pins the two
- * against the bytes the encoder actually emits.
+ * @throws FatalError when the index is invalid or an explicit snapshot entry
+ * is outside the existing time or duration domain.
  */
-export function resolveGifDelaysCs(frameDurationsMs: readonly number[]): number[] {
-  const delays: number[] = [];
-  let elapsedMs = 0;
-  let previousCs = 0;
-  for (const durationMs of frameDurationsMs) {
-    elapsedMs += durationMs;
-    const boundaryCs = Math.floor((elapsedMs + GIF_DELAY_UNIT_MS / 2) / GIF_DELAY_UNIT_MS);
-    delays.push(Math.max(GIF_MIN_DELAY_CS, boundaryCs - previousCs));
-    previousCs = boundaryCs;
+export function getAnimationScheduleEntry(
+  descriptor: AnimationScheduleDescriptor,
+  index: number,
+  context: AnimationScheduleContext,
+): AnimationScheduleEntry {
+  const code = context.invalidSchedule;
+  if (!Number.isSafeInteger(index) || index < 0 || index >= descriptor.frameCount) {
+    throw scheduleError(code, "Animation schedule index is outside the frame range");
   }
-  return delays;
+  const timeMs =
+    descriptor.kind === "sampled"
+      ? Math.min((index * 1000) / descriptor.fps, descriptor.durationMs)
+      : descriptor.timesMs[index];
+  if (typeof timeMs !== "number" || !Number.isFinite(timeMs) || timeMs < 0) {
+    throw scheduleError(
+      code,
+      `Animation timeMs must be a non-negative finite number, got ${formatUnknownDiagnosticValue(timeMs, "unprintable value")}`,
+    );
+  }
+  const durationMs =
+    descriptor.kind === "sampled"
+      ? sampledBoundaryMs(descriptor, index + 1) - sampledBoundaryMs(descriptor, index)
+      : descriptor.frameDurationsMs[index];
+  if (typeof durationMs !== "number") {
+    throw scheduleError(
+      code,
+      `Frame ${index} duration must be a whole number of milliseconds in ${MIN_FRAME_DURATION_MS}..${MAX_FRAME_DURATION_MS}, got ${formatUnknownDiagnosticValue(durationMs, "unprintable value")}`,
+    );
+  }
+  assertFrameDuration(durationMs, index, code);
+  return { index, timeMs, durationMs };
 }
 
-/** Shortest frame GIF can represent, in milliseconds. */
-export const GIF_MIN_FRAME_MS = GIF_MIN_DELAY_CS * GIF_DELAY_UNIT_MS;
+/** An owned cursor releases its sole descriptor reference on completion or return. */
+class OwnedAnimationScheduleCursor implements AnimationScheduleCursor {
+  private nextIndex = 0;
+
+  constructor(
+    private descriptor: AnimationScheduleDescriptor | undefined,
+    private readonly context: AnimationScheduleContext,
+  ) {}
+
+  /** Read one validated entry and release retained input on completion or failure. */
+  next(): IteratorResult<AnimationScheduleEntry, undefined> {
+    const descriptor = this.descriptor;
+    if (descriptor === undefined || this.nextIndex === descriptor.frameCount) {
+      this.descriptor = undefined;
+      return { done: true, value: undefined };
+    }
+    try {
+      const entry = getAnimationScheduleEntry(descriptor, this.nextIndex, this.context);
+      this.nextIndex += 1;
+      if (this.nextIndex === descriptor.frameCount) {
+        this.descriptor = undefined;
+      }
+      return { done: false, value: entry };
+    } catch (error) {
+      this.descriptor = undefined;
+      throw error;
+    }
+  }
+
+  /** Close this pass without affecting another cursor over the same descriptor. */
+  return(): IteratorResult<AnimationScheduleEntry, undefined> {
+    this.descriptor = undefined;
+    return { done: true, value: undefined };
+  }
+}
+
+/** Create an independent constant-space pass over one detached descriptor. */
+export function createAnimationScheduleCursor(
+  descriptor: AnimationScheduleDescriptor,
+  context: AnimationScheduleContext,
+): AnimationScheduleCursor {
+  return new OwnedAnimationScheduleCursor(descriptor, context);
+}
+
+/** GIF delay cursor retaining only elapsed milliseconds modulo ten. */
+type GifDelayCursor = {
+  /** Consume one previously validated integer-millisecond frame duration. */
+  next(durationMs: number): number;
+};
+
+/**
+ * Create a GIF delay cursor with cumulative round-half-up semantics.
+ * The whole elapsed duration is intentionally absent, so long animations
+ * cannot overflow a cumulative counter or retain a delay array.
+ */
+export function createGifDelayCursor(): GifDelayCursor {
+  let residueMs = 0;
+  return {
+    next(durationMs) {
+      const residueAndDuration = residueMs + durationMs;
+      const nextResidueMs = residueAndDuration % GIF_DELAY_UNIT_MS;
+      const rawDelayCs =
+        Math.floor(residueAndDuration / GIF_DELAY_UNIT_MS) +
+        Number(nextResidueMs >= GIF_DELAY_UNIT_MS / 2) -
+        Number(residueMs >= GIF_DELAY_UNIT_MS / 2);
+      residueMs = nextResidueMs;
+      return Math.max(GIF_DELAY_CS_MIN, Math.min(GIF_DELAY_CS_MAX, rawDelayCs));
+    },
+  };
+}
 
 /**
  * Validate a total play count against one animated container's bounds.
@@ -240,7 +342,7 @@ export function assertAnimationIterations(
   ) {
     throw scheduleError(
       code,
-      `${formatName} iterations must be "infinite" or a whole number in 1..${maxIterations}, got ${String(iterations)}`,
+      `${formatName} iterations must be "infinite" or a whole number in 1..${maxIterations}, got ${formatUnknownDiagnosticValue(iterations, "unprintable value")}`,
     );
   }
 }

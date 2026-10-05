@@ -10,13 +10,13 @@ import {
   type Engine,
   FatalError,
   formatLayerFileName,
-  MAX_ANIMATION_FRAMES,
   type RecoverableError,
   type VNode,
 } from "@boundsvg/core";
 import { generatePlainSvgComponent } from "@boundsvg/core/codegen";
 import { initNodeWasm } from "@boundsvg/core/node";
 import { type AnalyzeSvgOptions, analyzeSvg, buildHybridVNode } from "@boundsvg/core/svg";
+import { writeExportAnimatedRaster } from "./animation-export.js";
 import {
   deriveBatchOutputPath,
   deriveComponentName,
@@ -44,6 +44,7 @@ import { parseSceneInput } from "./scene-input.js";
 import type { CliIo } from "./types.js";
 import { watchAndRun } from "./watch.js";
 
+/** Format a CLI diagnostic while preserving a structured fatal code when present. */
 export function formatError(err: unknown): string {
   if (err instanceof FatalError) {
     return `[${err.code}] ${err.message}`;
@@ -55,6 +56,7 @@ export function formatError(err: unknown): string {
 // Single-file export — I/O helpers
 // ---------------------------------------------------------------------------
 
+/** Read the selected scene source and report an input failure as a CLI exit code. */
 export function readExportInput(
   io: CliIo,
   options: ExportOptions,
@@ -77,6 +79,7 @@ export function readExportInput(
   }
 }
 
+/** Parse the selected scene document and build its render input, reporting invalid source. */
 export function buildExportVNode(
   io: CliIo,
   options: ExportOptions,
@@ -185,18 +188,6 @@ function renderExportRaster(
     textPathMode: options.textPathMode,
     onWarning,
   };
-  const animated = {
-    ...shared,
-    durationMs: options.durationMs ?? 0,
-    iterations: options.iterations ?? "infinite",
-    ...(options.fps !== undefined && { fps: options.fps }),
-  };
-  if (options.format === "animated-webp") {
-    return engine.renderToAnimatedWebp(input, animated);
-  }
-  if (options.format === "gif") {
-    return engine.renderToAnimatedGif(input, animated);
-  }
   return engine.renderToWebp(input, shared);
 }
 
@@ -510,7 +501,20 @@ async function exportSingleFile(
     return await writeExportMp4(io, options, { outputPath, engine, input: vnodeResult.vnode });
   }
 
-  if (options.format === "webp" || options.format === "animated-webp" || options.format === "gif") {
+  if (options.format === "animated-webp" || options.format === "gif") {
+    const reportExitCode = writeInspectionReport(io, options, { engine, input: vnodeResult.vnode });
+    if (reportExitCode !== 0) {
+      return reportExitCode;
+    }
+    return await writeExportAnimatedRaster(io, options, {
+      outputPath,
+      engine,
+      input: vnodeResult.vnode,
+      onWarning: createRenderWarningReporter(io),
+    });
+  }
+
+  if (options.format === "webp") {
     const reportExitCode = writeInspectionReport(io, options, { engine, input: vnodeResult.vnode });
     if (reportExitCode !== 0) {
       return reportExitCode;
@@ -586,6 +590,7 @@ async function runExportBatch(
 // Engine initialization helper
 // ---------------------------------------------------------------------------
 
+/** Load explicitly supplied font files and initialize the Node engine; return null after a reported failure. */
 export async function initEngine(io: CliIo, options: ExportOptions): Promise<Engine | null> {
   const fonts: Array<{
     alias: string;
@@ -639,8 +644,11 @@ function hasInputInArgs(args: string[]): boolean {
 
 /** Inclusive ranges the core animation schedule accepts. */
 const MIN_ANIMATION_FPS = 1;
+/** Largest finite CLI sample rate accepted by the Core animated schedule. */
 const MAX_ANIMATION_FPS = 60;
+/** Largest total play count representable by WebP's ANIM field. */
 const MAX_ANIMATED_WEBP_ITERATIONS = 65_535;
+/** Largest GIF total play count after converting to the stored repeat count. */
 const MAX_GIF_ITERATIONS = 65_536;
 
 /** Frame rate used for MP4 when the caller does not ask for one. */
@@ -663,8 +671,8 @@ function validateMp4Flags(options: ExportOptions): string | null {
   if (options.durationMs === undefined) {
     return "Error: --duration-ms is required for mp4 export\n";
   }
-  if (options.durationMs <= 0) {
-    return "Error: --duration-ms must be greater than zero\n";
+  if (!Number.isFinite(options.durationMs) || options.durationMs <= 0) {
+    return "Error: --duration-ms must be a positive finite number\n";
   }
   if (options.fpsArg !== undefined && parseCliFrameRate(options.fpsArg) === null) {
     return `Error: --fps for mp4 must be ${CLI_FRAME_RATE_HELP}\n`;
@@ -815,7 +823,9 @@ function validateAnimationFlags(options: ExportOptions): string | null {
   }
   if (
     options.fps !== undefined &&
-    (options.fps < MIN_ANIMATION_FPS || options.fps > MAX_ANIMATION_FPS)
+    (!Number.isFinite(options.fps) ||
+      options.fps < MIN_ANIMATION_FPS ||
+      options.fps > MAX_ANIMATION_FPS)
   ) {
     return `Error: --fps must be between ${MIN_ANIMATION_FPS} and ${MAX_ANIMATION_FPS}\n`;
   }
@@ -836,8 +846,9 @@ function validateAnimationFlags(options: ExportOptions): string | null {
     return `Error: --iterations for ${options.format} must be "infinite" or a whole number between 1 and ${maxIterations}\n`;
   }
   const frameCount = Math.max(2, Math.ceil((options.durationMs * (options.fps ?? 20)) / 1000));
-  if (frameCount > MAX_ANIMATION_FRAMES) {
-    return `Error: --duration-ms and --fps ask for ${frameCount} frames; the limit is ${MAX_ANIMATION_FRAMES}\n`;
+  const totalMs = Math.max(frameCount, Math.round(options.durationMs));
+  if (!Number.isSafeInteger(frameCount) || !Number.isSafeInteger(totalMs)) {
+    return "Error: --duration-ms and --fps cannot be represented with exact integer frame indices and millisecond boundaries\n";
   }
   return null;
 }
@@ -884,6 +895,59 @@ function validateExportFlags(options: ExportOptions, expandedInputs: string[]): 
   return null;
 }
 
+/** Serialize exports on one Engine while retaining one latest dirty mark per watched path. */
+export async function runExportWatch(
+  io: CliIo,
+  paths: string[],
+  exportPath: (path: string) => Promise<number>,
+): Promise<number> {
+  const changedPaths = new Set<string>();
+  let isStopped = false;
+  let running: Promise<void> | undefined;
+  const pump = (): void => {
+    if (running || isStopped) {
+      return;
+    }
+    const pending = (async () => {
+      while (!isStopped && changedPaths.size > 0) {
+        const changedPath = changedPaths.values().next().value;
+        if (changedPath === undefined) {
+          break;
+        }
+        changedPaths.delete(changedPath);
+        try {
+          await exportPath(changedPath);
+        } catch (error) {
+          io.writeStderr(`Error processing ${changedPath}: ${formatError(error)}\n`);
+        }
+      }
+    })().finally(() => {
+      if (running === pending) {
+        running = undefined;
+      }
+    });
+    running = pending;
+  };
+  const handleStop = (): void => {
+    isStopped = true;
+    changedPaths.clear();
+  };
+  process.on("SIGINT", handleStop);
+  try {
+    return await watchAndRun(io, paths, {
+      runOnce: (changedPath) => {
+        changedPaths.add(changedPath);
+        pump();
+      },
+      debounceMs: 150,
+    });
+  } finally {
+    handleStop();
+    await running;
+    process.removeListener("SIGINT", handleStop);
+  }
+}
+
 async function runExportSingle(
   io: CliIo,
   options: ExportOptions,
@@ -898,14 +962,9 @@ async function runExportSingle(
 
   if (options.watch) {
     const inputPath = resolve(options.input);
-    return await watchAndRun(io, [inputPath], {
-      runOnce: (changedPath) => {
-        // exportSingleFile is async but watchAndRun callback is sync.
-        // We fire-and-forget; errors are reported inside exportSingleFile.
-        void exportSingleFile(io, { ...options, input: changedPath }, engine);
-      },
-      debounceMs: 150,
-    });
+    return await runExportWatch(io, [inputPath], (changedPath) =>
+      exportSingleFile(io, { ...options, input: changedPath }, engine),
+    );
   }
 
   return await exportSingleFile(io, options, engine);
@@ -922,24 +981,21 @@ async function runExportBatchWatch(
 ): Promise<number> {
   const resolvedPaths = expandedInputs.map((inputPath) => resolve(inputPath));
   const extension = deriveExportExtension(options.format);
-  return await watchAndRun(io, resolvedPaths, {
-    runOnce: (changedPath) => {
-      void exportSingleFile(
-        io,
-        {
-          ...options,
-          input: changedPath,
-          output: deriveBatchOutputPath(changedPath, outputDir, extension),
-          report: options.report
-            ? `${deriveBatchOutputPath(changedPath, outputDir, extension)}.report.json`
-            : "",
-          componentName: deriveComponentName(changedPath),
-        },
-        engine,
-      );
-    },
-    debounceMs: 150,
-  });
+  return await runExportWatch(io, resolvedPaths, (changedPath) =>
+    exportSingleFile(
+      io,
+      {
+        ...options,
+        input: changedPath,
+        output: deriveBatchOutputPath(changedPath, outputDir, extension),
+        report: options.report
+          ? `${deriveBatchOutputPath(changedPath, outputDir, extension)}.report.json`
+          : "",
+        componentName: deriveComponentName(changedPath),
+      },
+      engine,
+    ),
+  );
 }
 
 /**

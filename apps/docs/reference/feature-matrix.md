@@ -78,7 +78,7 @@ release), **Not supported** (documented gap).
 | Document-timeline animated SVG output             | Supported    | Explicit duration and finite/fractional or infinite document iterations; deterministic base pose and budgeted CSS.    |
 | PNG output (scale, background, caps)              | Supported    | Max 3840×2160                                                                                                         |
 | WebP output (`engine.renderToWebp`)               | Supported    | Lossless (VP8L) only; byte-deterministic; often smaller than PNG                                                      |
-| Animated WebP (`engine.renderToAnimatedWebp`)     | Experimental | Sampled from declarative animations; full-frame lossless; max 300 frames                                              |
+| Animated WebP (`engine.renderToAnimatedWebp`)     | Experimental | Required sink / Promise result; lazy sampled schedule; full-frame lossless                                            |
 | Animated GIF (`engine.renderToAnimatedGif`)       | Experimental | 256-color quantized; 10 ms timing quantum; byte-deterministic                                                         |
 | MP4 export, browser (`@boundsvg/video`)           | Experimental | H.264 via the browser's WebCodecs encoder; outside the determinism contract; no Cloudflare Workers                    |
 | MP4 export, CLI (`--format mp4`)                  | Experimental | H.264 via an external ffmpeg you install; outside the determinism contract                                            |
