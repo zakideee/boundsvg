@@ -14,9 +14,8 @@ While the major version is `0`:
 - **Minor releases (`0.x.0`) may contain breaking API changes.** Every
   breaking change is listed in the release notes with a migration note.
 - Patch releases (`0.x.y`) contain only fixes and non-breaking additions.
-- Deprecated APIs keep working for at least one minor release after the
-  deprecation is announced, with a `@deprecated` JSDoc tag pointing at the
-  replacement.
+- API replacements may remove the previous API in the same minor release.
+  Follow the migration notes when upgrading.
 
 ## Stability tiers
 
@@ -70,10 +69,24 @@ key. Decode external values with `decodeSceneDocument()` when a detached
 APIs validate the complete recursive structure, and `fromSceneDocument()`
 decodes exactly once.
 
-The current WASM schema is version 32. That internal bridge number is not
+The current WASM schema is version 33. That internal bridge number is not
 a Scene document field and must not be added to `.scene.json` files. Any future
 incompatible Scene format would require a separately documented migration;
 there is no runtime version-dispatch mode today.
+
+### WASM schema 33 migration
+
+Upgrade Core, Browser, Worker, CLI, and the node and web WASM artifacts together
+for 0.7.0. Schema-32 modules are rejected; there is no compatibility decoder.
+The independent MP4 schema remains version 1.
+
+Animated WebP/GIF methods now require an output destination and return
+`Promise<AnimatedRasterWriteResult>`. The previous byte-returning calls and
+`ToSink` aliases are removed in this release. Use a file or spool destination
+for output that should not remain in memory. Use `createAnimatedRasterCollector()`
+when a byte array is required; it retains O(output) memory with a 256 MiB limit.
+See the [animation guide](/guides/animation) for migration examples and
+cancellation and partial-output behavior.
 
 ### WASM schema 32 migration
 
