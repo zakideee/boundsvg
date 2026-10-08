@@ -604,12 +604,22 @@ console.log('[pack-e2e] worker subpath OK');
   writeFileSync(join(workDir, "worker.mjs"), source);
   run("node", ["worker.mjs"], { cwd: workDir });
 }
+/**
+ * Exercise the installed standard command and its convert help route.
+ * @throws If the removed bin remains or the standard help routes fail.
+ */
 function runCliSmoke() {
   const binDirectory = join(workDir, "node_modules", ".bin");
-  for (const bin of ["boundsvg", "boundsvg-convert"]) {
-    const result = run(join(binDirectory, bin), ["--help"], { cwd: workDir });
-    if (!`${result.stdout}\n${result.stderr}`.includes("Usage:")) {
-      fail(`${bin} did not execute its packed help route`);
+  if (existsSync(join(binDirectory, "boundsvg-convert"))) {
+    fail("the removed convert executable is still installed");
+  }
+  for (const [commandArgs, expectedUsage] of [
+    [["--help"], "Usage: boundsvg <command>"],
+    [["convert", "--help"], "Usage: boundsvg convert"],
+  ]) {
+    const result = run(join(binDirectory, "boundsvg"), commandArgs, { cwd: workDir });
+    if (!`${result.stdout}\n${result.stderr}`.includes(expectedUsage)) {
+      fail(`boundsvg ${commandArgs.join(" ")} did not execute its packed help route`);
     }
   }
 }

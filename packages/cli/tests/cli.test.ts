@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CliOptions } from "../src/cli.js";
-import { parseArgs, parseConvertArgs } from "../src/cli.js";
+import { parseConvertArgs } from "../src/cli.js";
 import { convertSvgToComponent } from "../src/convert.js";
 import { convertSceneToComponent } from "../src/index.js";
 
@@ -240,21 +240,6 @@ describe("parseConvertArgs", () => {
     const parsed = parseConvertArgs(["-i", "card.svg", "-o", "-", "--default-font", "NotoSansJP"]);
     expect(parsed).not.toBeNull();
     expect(parsed!.options.outputTarget).toBe("stdout");
-  });
-});
-
-describe("parseArgs (backward compat)", () => {
-  it("parses args with argv prefix", () => {
-    const options = parseArgs([
-      "node",
-      "boundsvg-convert",
-      "--input",
-      "card.svg",
-      "--default-font",
-      "NotoSansJP",
-    ]);
-    expect(options).not.toBeNull();
-    expect(options!.input).toBe("card.svg");
   });
 });
 

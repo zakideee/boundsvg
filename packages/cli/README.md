@@ -51,6 +51,24 @@ Use `inspect` before publishing generated assets, `export --report` in CI, and `
 
 Run `boundsvg <command> --help` for detailed options.
 
+## Migrating the convert command
+
+The `boundsvg-convert` executable has been removed. Replace it with the `convert`
+subcommand; the conversion options remain the same:
+
+```bash
+# Before
+boundsvg-convert --input card.svg --output Card.tsx --default-font Inter
+
+# After
+boundsvg convert --input card.svg --output Card.tsx --default-font Inter
+```
+
+`boundsvg-convert` is no longer installed after upgrading; use `boundsvg convert`
+with the same arguments. With npm,
+`npm exec --package=@boundsvg/cli -- boundsvg convert --help` selects this package
+and runs the standard command.
+
 ## SVG analyzer limitations
 
 The `convert` analyzer maps `<text>` onto boundsvg's layout model rather than reproducing SVG text verbatim:

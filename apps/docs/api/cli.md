@@ -6,6 +6,22 @@ title: CLI Diagnostics
 
 Use CLI diagnostics when your input starts as an SVG file or `.scene.json` and you need a report before committing generated assets.
 
+## Convert command migration
+
+Use the `boundsvg` executable with its `convert` subcommand. The old
+`boundsvg-convert` executable has been removed; conversion options are unchanged.
+
+```bash
+# Before
+boundsvg-convert --input card.svg --output Card.tsx --default-font Inter
+
+# After
+boundsvg convert --input card.svg --output Card.tsx --default-font Inter
+```
+
+After upgrading, the old command is unavailable. Run `boundsvg convert --help`
+for conversion options, or `boundsvg --help` for the command list.
+
 ## `boundsvg inspect`
 
 ```bash

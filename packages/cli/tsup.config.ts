@@ -13,7 +13,7 @@ const shared = {
 export default defineConfig([
   {
     ...shared,
-    entry: ["src/index.ts", "src/index-convert.ts", "src/animation.ts"],
+    entry: ["src/index.ts", "src/animation.ts"],
     clean: true,
   },
   {

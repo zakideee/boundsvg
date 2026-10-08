@@ -25,8 +25,7 @@
   },
   "type": "module",
   "bin": {
-    "boundsvg": "./dist/bin.js",
-    "boundsvg-convert": "./dist/index-convert.js"
+    "boundsvg": "./dist/bin.js"
   },
   "exports": {
     ".": {
