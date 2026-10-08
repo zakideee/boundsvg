@@ -32,7 +32,7 @@ const expectedOracle: Record<string, OracleResult> = {
     unitSampleCount: 0,
   },
   "text-on-path-merged": {
-    svgSha256: "189cf0dfe28ffdbb0c3c25071577b1808fa35fc74baaf740c28893bedda4c034",
+    svgSha256: "45bdb0c2c79a1da9dfa62179cd83b25189f015807c2311f2d98f3f9af7e5720a",
     rootSha256: "e0d6e060dab0e47b6ac38c1300703035fedce2a5c3507c3d9161542bf7698561",
     outlinesSha256: "2882bca37a25be5608d8f18e15d2e2220f2297f642530491a4548e4ab1ef12c4",
     glyphPathCount: 28,

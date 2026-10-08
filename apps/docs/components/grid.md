@@ -64,12 +64,15 @@ CSS Grid layout container.
 | `strokeLinejoin`   | `"miter" \| "round" \| "bevel"`              | Border stroke line join                                                                                                                         |
 | `strokeDasharray`  | `string`                                     | Border stroke dash pattern (e.g. `"5,5"`)                                                                                                       |
 | `strokeMiterlimit` | `number`                                     | Border stroke miter limit                                                                                                                       |
-| `overflow`         | `"visible" \| "clip"`                        | Overflow behavior                                                                                                                               |
+| `overflow`         | `"visible" \| "clip"`                        | Child paint: "clip" uses the layout box and resolved borderRadius; "visible" leaves children unclipped                                          |
 | `opacity`          | `number`                                     | Opacity (0–1)                                                                                                                                   |
 | `zIndex`           | `number`                                     | Sibling-local paint order (integer; higher paints later)                                                                                        |
 | `meta`             | `Record<string, string>`                     | Metadata emitted as `data-boundsvg-meta-*` attributes and into the layered manifest (max 16 keys, `[a-z][a-z0-9-]{0,31}` keys, 256-char values) |
 | `transform`        | `Transform2D`                                | Static post-layout paint transform                                                                                                              |
 | `animate`          | `AnimationSpec`                              | Declarative opacity/transform track; see [Animation](/guides/animation)                                                                         |
+
+With `overflow="clip"`, the clipping boundary also cuts the Grid's own border
+and shadow at its rounded corners.
 
 ### Event / Identity
 

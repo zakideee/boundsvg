@@ -43,6 +43,8 @@ use crate::layout::types::{
 /// Returns `EngineError::Validation` for unsafe nested SVG content, shape
 /// reference/part-id violations, and incomplete text layouts (matching the
 /// TS `FatalError` paths).
+/// Returns structured text-animation unit or fragment budget errors when
+/// the scene exceeds the supported limits.
 pub fn build_ir<S: std::hash::BuildHasher>(
     input_root: &LayoutNodeInput,
     outputs: &HashMap<String, LayoutNodeOutput, S>,
@@ -319,7 +321,12 @@ fn build_node<S: std::hash::BuildHasher>(
     } else {
         None
     };
-    let mut clip_border_radius: Option<BorderRadius> = None;
+    let mut clip_border_radius =
+        if clip_path.is_some() && matches!(input.node_type.as_str(), "box" | "flex" | "grid") {
+            border_radius
+        } else {
+            None
+        };
 
     // Image borderRadius → rounded clipPath
     if input.node_type == "image" {

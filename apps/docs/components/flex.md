@@ -20,6 +20,10 @@ Flexbox layout container.
 | `rowGap`         | `number`                                                            | —           | Row gap in px (overrides `gap`)                            |
 | `columnGap`      | `number`                                                            | —           | Column gap in px (overrides `gap`)                         |
 
+With `overflow="clip"`, child paint is clipped to the Flex layout box using the same resolved `borderRadius` as its background. With `overflow="visible"`, rounded backgrounds and borders do not clip children.
+
+The clipping boundary also cuts the Flex's own border and shadow at its rounded corners.
+
 ### Flex Item (when Flex is a child of another Flex)
 
 | Prop         | Type                                                  | Default  | Description                |

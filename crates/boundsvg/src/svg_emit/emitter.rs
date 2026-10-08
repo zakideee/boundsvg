@@ -1302,7 +1302,7 @@ fn emit_image(image: &ImageItem, options: SvgEmitOptions) -> Result<String, Engi
 }
 
 // ---------------------------------------------------------------------------
-// Path (wrapped in a nested <svg> for positioning + overflow clip)
+// Path (wrapped in a nested <svg> for positioning with visible overflow)
 // ---------------------------------------------------------------------------
 
 fn emit_path(path: &PathItem, options: SvgEmitOptions) -> Result<String, EngineError> {
@@ -1363,7 +1363,7 @@ fn emit_path(path: &PathItem, options: SvgEmitOptions) -> Result<String, EngineE
         format!("y=\"{}\"", fmt2(y)?),
         format!("width=\"{}\"", fmt2(w)?),
         format!("height=\"{}\"", fmt2(h)?),
-        "overflow=\"hidden\"".to_string(),
+        "overflow=\"visible\"".to_string(),
     ];
     if options.includes_node_ids() {
         svg_attrs.insert(
@@ -1738,6 +1738,37 @@ fn emit_filter_def(filter: &FilterDef) -> Result<String, EngineError> {
 mod tests {
     use super::*;
     use crate::ir::types::{AnimationSpec, AnimationSteps, GradientStop};
+
+    #[test]
+    fn positions_path_wrapper_without_clipping_its_paint() {
+        let path = PathItem {
+            node_id: "arrow".to_string(),
+            bbox: BBox {
+                x: 100.0,
+                y: 20.0,
+                w: 40.0,
+                h: 40.0,
+            },
+            d: "M-100 0L120 0L120 40Z".to_string(),
+            fill: Some("red".to_string()),
+            fill_rule: None,
+            stroke: Some("black".to_string()),
+            stroke_width: Some(2.0),
+            canvas_stroke_class: None,
+            stroke_linecap: None,
+            stroke_linejoin: None,
+            stroke_dasharray: None,
+            stroke_miterlimit: None,
+        };
+        let svg = emit_path(&path, SvgEmitOptions::default()).expect("Path emits");
+        assert!(svg.starts_with(
+            "<svg data-boundsvg-node-id=\"arrow\" x=\"100\" y=\"20\" width=\"40\" height=\"40\" overflow=\"visible\">"
+        ));
+        assert!(svg.contains(
+            "d=\"M-100 0L120 0L120 40Z\" fill=\"red\" stroke=\"black\" stroke-width=\"2\""
+        ));
+        assert!(svg.ends_with("</svg>"));
+    }
 
     fn default_spring() -> AnimationEasing {
         AnimationEasing::Spring(AnimationSpring {

@@ -866,7 +866,11 @@ Returns an array of `TextOutlineNode` objects containing SVG path data for each 
 
 ### `engine.hitTest(ir, x, y)`
 
-Performs hit-testing on an IR. Returns the `NodeId` of the topmost element at `(x, y)`, or `null`.
+Performs bbox-precision hit-testing on an IR. Returns the `NodeId` of the topmost
+bbox candidate at `(x, y)`, or `null`. Painted ink can differ from those bounds:
+Path paint outside its layout box is absent from candidates, and rounded clip
+corners use rectangular hit bounds. See [Choosing an API](/reference/api-selection)
+for the precision of these bounds and the interaction APIs.
 
 ### `engine.compile(input, options?)`
 

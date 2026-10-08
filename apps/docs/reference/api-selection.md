@@ -37,6 +37,11 @@ for strokes or shadows, and it does not subtract clipping or opacity. Rotated
 content is represented by its axis-aligned enclosure; use `transformBox` when
 the four transformed corners matter.
 
+Path hit-test candidates use layout-box bounds. Path paint outside its layout
+box is absent from those candidates even when visible, and rounded ancestor
+clips retain rectangular hit bounds. Path geometry verification refines existing
+candidates; it does not add outside paint or subtract rounded ancestor clips.
+
 `inspectScene` performs a layout-tree render and an IR render, then derives maps,
 boxes, validation, warnings, and stats. That complete snapshot is convenient for
 CI and editor tooling, but it costs more than requesting only IR or only layout.

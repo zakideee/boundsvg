@@ -215,6 +215,7 @@ export type FlexProps = {
   background?: string;
   /** Box shadow: "offsetX offsetY blur spread color" (e.g. "0 4 8 0 rgba(0,0,0,0.2)") */
   boxShadow?: string;
+  /** Background and border radius; also rounds child clipping when overflow is "clip". */
   borderRadius?: BorderRadius;
   borderWidth?: number;
   borderColor?: string;
@@ -228,6 +229,7 @@ export type FlexProps = {
   strokeDasharray?: string;
   /** Stroke miter limit for border */
   strokeMiterlimit?: number;
+  /** Child paint visibility. "clip" uses the layout box and its resolved borderRadius. */
   overflow?: "visible" | "clip";
   /** Opacity (0-1) */
   opacity?: number;
@@ -305,6 +307,7 @@ export type GridProps = {
   background?: string;
   /** Box shadow: "offsetX offsetY blur spread color" (e.g. "0 4 8 0 rgba(0,0,0,0.2)") */
   boxShadow?: string;
+  /** Background and border radius; also rounds child clipping when overflow is "clip". */
   borderRadius?: BorderRadius;
   borderWidth?: number;
   borderColor?: string;
@@ -318,6 +321,7 @@ export type GridProps = {
   strokeDasharray?: string;
   /** Stroke miter limit for border */
   strokeMiterlimit?: number;
+  /** Child paint visibility. "clip" uses the layout box and its resolved borderRadius. */
   overflow?: "visible" | "clip";
   /** Opacity (0-1) */
   opacity?: number;
@@ -379,6 +383,7 @@ export type BoxProps = {
   background?: string;
   /** Box shadow: "offsetX offsetY blur spread color" (e.g. "0 4 8 0 rgba(0,0,0,0.2)") */
   boxShadow?: string;
+  /** Background and border radius; also rounds child clipping when overflow is "clip". */
   borderRadius?: BorderRadius;
   borderWidth?: number;
   borderColor?: string;
@@ -392,6 +397,7 @@ export type BoxProps = {
   strokeDasharray?: string;
   /** Stroke miter limit for border */
   strokeMiterlimit?: number;
+  /** Child paint visibility. "clip" uses the layout box and its resolved borderRadius. */
   overflow?: "visible" | "clip";
   /** Opacity (0-1) */
   opacity?: number;
@@ -834,7 +840,9 @@ export type ImageProps = {
 /** Path — SVG path data */
 export type PathProps = {
   d: string;
+  /** Layout width in px; path paint can extend beyond this dimension. */
   width: number;
+  /** Layout height in px; clip overflowing paint with an ancestor container. */
   height: number;
   fill?: string;
   stroke?: string;

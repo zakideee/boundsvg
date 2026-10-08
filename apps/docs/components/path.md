@@ -11,8 +11,8 @@ SVG path rendering.
 | Prop               | Type                            | Required | Default       | Description                                                                                                                                     |
 | ------------------ | ------------------------------- | -------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `d`                | `string`                        | Yes      | —             | SVG path data                                                                                                                                   |
-| `width`            | `number`                        | Yes      | —             | Bounding box width (px)                                                                                                                         |
-| `height`           | `number`                        | Yes      | —             | Bounding box height (px)                                                                                                                        |
+| `width`            | `number`                        | Yes      | —             | Layout width (px)                                                                                                                               |
+| `height`           | `number`                        | Yes      | —             | Layout height (px)                                                                                                                              |
 | `fill`             | `string`                        |          | —             | Fill color                                                                                                                                      |
 | `stroke`           | `string`                        |          | —             | Stroke color                                                                                                                                    |
 | `strokeWidth`      | `number`                        |          | —             | Stroke width                                                                                                                                    |
@@ -29,7 +29,7 @@ SVG path rendering.
 | `animate`          | `AnimationSpec`                 |          | —             | Declarative opacity/transform track; see [Animation](/guides/animation)                                                                         |
 
 ::: warning
-Path coordinates in `d` are interpreted as **local coordinates** and translated to the bounding box origin at render time. They are **not** auto-scaled or auto-clipped to fit the bounding box — paths may visually overflow if coordinates exceed the width/height dimensions.
+Path coordinates in `d` are interpreted as **local coordinates** and translated to the layout box origin at render time. They are **not** auto-scaled or auto-clipped to fit the layout box — paths may visually overflow if coordinates exceed the width/height dimensions.
 
 To clip overflow, wrap the Path in a container with `overflow="clip"`.
 :::
@@ -47,11 +47,34 @@ formats use a deterministic fallback sampled at `timeMs`. The format-specific
 render option `scale` remains an output-resolution multiplier. Dashed strokes, non-uniform scale, and
 axis reflection fail explicitly rather than being approximated.
 
-The Path viewport clips paint at its `width` / `height` edges in both animated
-SVG and static/raster output. A canvas-stable stroke can therefore
-meet the clip under a uniform scale below `1`; inset the path geometry or
-enlarge the viewport when edge strokes need additional clearance.
+Path paint, including edge strokes, can extend beyond its `width` / `height`
+layout box. An ancestor with `overflow="clip"` clips that paint to its own
+rectangle or rounded rectangle in animated SVG and static/raster output.
 :::
+
+### Keeping paint inside a box
+
+To retain clipping at the Path's layout dimensions, wrap it in a container of
+the same size. Add `borderRadius` to the container for a rounded clip:
+
+```tsx
+<Box width={40} height={40} overflow="clip">
+  <Path width={40} height={40} d="M0 0L120 0L120 40Z" fill="red" />
+</Box>
+```
+
+Treat the wrapper as the original layout item: move positioning and offsets,
+margin, flex/grid item props (including `alignSelf`), `zIndex`, `layer`,
+`transform`, and `animate` from the Path to the wrapper. Keep the Path's local
+geometry and paint props on the Path. This keeps the clip in the same transformed
+or animated coordinate system as the paint. A clipped wrapper is atomic in
+[layered output](/guides/layered-export); assign the layer to the wrapper.
+
+Layout and inspection bounds still describe the 40×40 layout box. Pointer
+candidates use those bounds: events on paint outside the box can resolve to a
+node underneath, or to no node when none is a candidate. Rounded clip corners
+use rectangular hit bounds. See [Choosing an API](/reference/api-selection)
+for the interaction APIs' precision.
 
 ### Flex Item
 

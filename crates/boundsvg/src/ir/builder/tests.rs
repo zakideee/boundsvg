@@ -468,6 +468,66 @@ fn drops_identity_transform_and_full_opacity() {
 }
 
 #[test]
+fn container_clip_uses_background_radius_only_for_clipped_box_flex_grid() {
+    for node_type in ["box", "flex", "grid"] {
+        for radius in [
+            Value::Null,
+            json!(0),
+            json!(50),
+            json!([50, 0, 25, 0]),
+            json!(200),
+        ] {
+            for overflow in ["clip", "visible"] {
+                let mut visual = json!({"overflow": overflow, "background": "red"});
+                if !radius.is_null() {
+                    visual["borderRadius"] = radius.clone();
+                }
+                let ir = build_json(
+                    json!({
+                        "nodeId": "root", "nodeType": "canvas",
+                        "children": [{
+                            "nodeId": "card", "nodeType": node_type,
+                            "children": [], "visual": visual,
+                        }],
+                    }),
+                    vec![
+                        output("root", 0.0, 0.0, 120.0, 120.0),
+                        output("card", 10.0, 10.0, 100.0, 100.0),
+                    ],
+                );
+                let card = &ir["root"]["children"][0];
+                if overflow == "clip" {
+                    assert_eq!(
+                        card["clipPath"],
+                        json!({"x":10.0,"y":10.0,"w":100.0,"h":100.0})
+                    );
+                    assert_eq!(
+                        card["clipBorderRadius"],
+                        card["children"][0]["borderRadius"]
+                    );
+                } else {
+                    assert!(card.get("clipPath").is_none());
+                    assert!(card.get("clipBorderRadius").is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn canvas_overflow_does_not_adopt_container_radius() {
+    let ir = build_json(
+        json!({
+            "nodeId":"root", "nodeType":"canvas", "children":[],
+            "visual":{"background":"red", "overflow":"clip", "borderRadius":50},
+        }),
+        vec![output("root", 0.0, 0.0, 100.0, 100.0)],
+    );
+    assert!(ir["root"]["clipPath"].is_object());
+    assert!(ir["root"].get("clipBorderRadius").is_none());
+}
+
+#[test]
 fn clips_overflow_and_rounded_images() {
     let ir = build_json(
         json!({

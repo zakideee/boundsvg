@@ -576,7 +576,7 @@ exports[`conformance SVG snapshots > native-text-on-path renders a stable normal
     <rect fill="#102a43" height="100" rx="14" ry="14" width="632" x="24" y="72" />
   </g>
   <g data-boundsvg-node-id="ntop-cubic-guide">
-    <svg data-boundsvg-node-id="ntop-cubic-guide" height="100" overflow="hidden" width="632" x="24" y="72">
+    <svg data-boundsvg-node-id="ntop-cubic-guide" height="100" overflow="visible" width="632" x="24" y="72">
   <path d="M16 82C150 4 482 4 616 82" fill="none" stroke-dasharray="5,5" stroke-width="1" stroke="#64748b" />
 </svg>
   </g>
@@ -617,7 +617,7 @@ exports[`conformance SVG snapshots > native-text-on-path renders a stable normal
     <rect fill="#102a43" height="100" rx="14" ry="14" width="632" x="24" y="184" />
   </g>
   <g data-boundsvg-node-id="ntop-arc-guide">
-    <svg data-boundsvg-node-id="ntop-arc-guide" height="100" overflow="hidden" width="632" x="24" y="184">
+    <svg data-boundsvg-node-id="ntop-arc-guide" height="100" overflow="visible" width="632" x="24" y="184">
   <path d="M16 82A300 62 0 0 1 616 82" fill="none" stroke-dasharray="5,5" stroke-width="1" stroke="#64748b" />
 </svg>
   </g>
@@ -633,7 +633,7 @@ exports[`conformance SVG snapshots > native-text-on-path renders a stable normal
     <rect fill="#164e63" height="100" rx="14" ry="14" width="632" x="24" y="296" />
   </g>
   <g data-boundsvg-node-id="ntop-reverse-guide">
-    <svg data-boundsvg-node-id="ntop-reverse-guide" height="100" overflow="hidden" width="632" x="24" y="296">
+    <svg data-boundsvg-node-id="ntop-reverse-guide" height="100" overflow="visible" width="632" x="24" y="296">
   <path d="M32 72L600 72L600 28L32 28Z" fill="none" stroke-dasharray="5,5" stroke-width="1" stroke="#64748b" />
 </svg>
   </g>
@@ -739,7 +739,7 @@ exports[`conformance SVG snapshots > native-text-on-path renders a stable normal
     <rect fill="#102a43" height="100" rx="14" ry="14" width="632" x="24" y="408" />
   </g>
   <g data-boundsvg-node-id="ntop-ellipsis-guide">
-    <svg data-boundsvg-node-id="ntop-ellipsis-guide" height="100" overflow="hidden" width="632" x="24" y="408">
+    <svg data-boundsvg-node-id="ntop-ellipsis-guide" height="100" overflow="visible" width="632" x="24" y="408">
   <path d="M16 58L240 58" fill="none" stroke-dasharray="5,5" stroke-width="1" stroke="#64748b" />
 </svg>
   </g>
