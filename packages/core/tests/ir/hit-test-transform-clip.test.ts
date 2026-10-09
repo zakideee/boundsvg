@@ -109,6 +109,12 @@ describe("hitTest with clipping", () => {
           children: [
             {
               type: "path",
+              pathData: "M0 0H120V30H0Z",
+              pathGeometry: {
+                bounds: { minX: 0, minY: 0, maxX: 120, maxY: 30 },
+                strokeOutset: { radius: 0, multiplier: 1 },
+                isComplete: true,
+              },
               nodeId: "wide-path",
               bbox: { x: 0, y: 0, w: 120, h: 30 },
             },
@@ -135,7 +141,19 @@ describe("hitTest with clipping", () => {
           bbox: { x: 0, y: 0, w: 50, h: 30 },
           clipPath: { x: 0, y: 0, w: 50, h: 30 },
           transform: { translateX: 100 },
-          children: [{ type: "path", nodeId: "clipped", bbox: { x: 0, y: 0, w: 120, h: 30 } }],
+          children: [
+            {
+              type: "path",
+              pathData: "M0 0H120V30H0Z",
+              pathGeometry: {
+                bounds: { minX: 0, minY: 0, maxX: 120, maxY: 30 },
+                strokeOutset: { radius: 0, multiplier: 1 },
+                isComplete: true,
+              },
+              nodeId: "clipped",
+              bbox: { x: 0, y: 0, w: 120, h: 30 },
+            },
+          ],
         },
       ],
     };
@@ -164,7 +182,19 @@ describe("hitTest with clipping", () => {
           bbox: { x: 0, y: 0, w: 50, h: 30 },
           clipPath: { x: 0, y: 0, w: 50, h: 30 },
           transform: { translateX: 100 },
-          children: [{ type: "path", nodeId: "indexed-path", bbox: { x: 0, y: 0, w: 120, h: 30 } }],
+          children: [
+            {
+              type: "path",
+              pathData: "M0 0H120V30H0Z",
+              pathGeometry: {
+                bounds: { minX: 0, minY: 0, maxX: 120, maxY: 30 },
+                strokeOutset: { radius: 0, multiplier: 1 },
+                isComplete: true,
+              },
+              nodeId: "indexed-path",
+              bbox: { x: 0, y: 0, w: 120, h: 30 },
+            },
+          ],
         },
       ],
     };

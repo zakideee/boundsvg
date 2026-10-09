@@ -2,6 +2,7 @@ pub mod animation;
 pub(crate) mod animation_timeline;
 pub mod builder;
 pub mod gradient;
+pub(crate) mod path_geometry;
 mod svg_id_rewrite;
 pub mod svg_security;
 pub(crate) mod text_placement;

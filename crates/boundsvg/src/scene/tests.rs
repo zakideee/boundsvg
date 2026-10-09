@@ -76,11 +76,21 @@ fn set_group_transform(node: &mut IrNode, scale_x: f64, scale_y: f64) {
     }
 }
 
+/// Build a Path scene fixture with canonical output geometry independent of its layout box.
 fn path_node(node_id: &str) -> IrNode {
     IrNode {
         node_id: node_id.to_string(),
         bbox: bbox(0.0, 0.0, 10.0, 10.0),
         kind: IrNodeKind::Path {
+            path_geometry: crate::ir::path_geometry::derive_path_geometry(
+                "M0 0 H10 V10 Z",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
             path_data: "M0 0 H10 V10 Z".to_string(),
             fill: Some("#123".to_string()),
             stroke: None,
@@ -96,11 +106,21 @@ fn path_node(node_id: &str) -> IrNode {
     }
 }
 
+/// Build the canvas-stable stroke variant with the same canonical Path metadata contract.
 fn canvas_path_node(node_id: &str, dasharray: Option<&str>) -> IrNode {
     IrNode {
         node_id: node_id.to_string(),
         bbox: bbox(0.0, 0.0, 10.0, 10.0),
         kind: IrNodeKind::Path {
+            path_geometry: crate::ir::path_geometry::derive_path_geometry(
+                "M0 0 H10 V10 Z",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
             path_data: "M0 0 H10 V10 Z".to_string(),
             fill: None,
             stroke: Some("#fff".to_string()),

@@ -70,11 +70,14 @@ geometry and paint props on the Path. This keeps the clip in the same transforme
 or animated coordinate system as the paint. A clipped wrapper is atomic in
 [layered output](/guides/layered-export); assign the layer to the wrapper.
 
-Layout and inspection bounds still describe the 40×40 layout box. Pointer
-candidates use those bounds: events on paint outside the box can resolve to a
-node underneath, or to no node when none is a candidate. Rounded clip corners
-use rectangular hit bounds. See [Choosing an API](/reference/api-selection)
-for the interaction APIs' precision.
+Layout and inspection bounds still describe the 40×40 layout box. Hit-test
+candidates use separate conservative Path geometry bounds, including stroke,
+so visible paint outside the layout box can receive pointer events. Explicit
+rectangular and rounded ancestor clips exclude both the clipped node and its
+descendants from hits outside the clip. Browser and React interaction also
+check the Path's painted fill/stroke, so holes fall through to nodes underneath.
+Core hit testing remains conservative inside those bounds. See
+[Choosing an API](/reference/api-selection) for the interaction APIs' precision.
 
 ### Flex Item
 

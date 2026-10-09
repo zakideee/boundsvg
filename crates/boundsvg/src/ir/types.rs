@@ -163,6 +163,39 @@ pub enum IrFillRule {
     Evenodd,
 }
 
+/// Factorized conservative stroke expansion, before any world transform.
+///
+/// The radius is half the effective stroke width at output scale one. Keeping
+/// the cap/join multiplier separate avoids overflowing a finite wire value.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathStrokeOutset {
+    /// Nonnegative finite half-width, including SVG decimal rounding.
+    pub radius: f64,
+    /// At least one; encloses square caps and miter joins.
+    pub multiplier: f64,
+}
+
+/// Output-only Path candidate geometry in the coordinate system of `d`.
+///
+/// Layout placement and transforms are applied by consumers. Empty geometry
+/// emits a null bounds value. Input DTOs ignore supplied metadata and derive
+/// it again, so metadata never expands the accepted authored-input domain.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathGeometry {
+    /// Finite extrema of completed paint segments, or null for no segments.
+    pub bounds: Option<boundshape::PathBounds>,
+    /// Stroke expansion used in local space, or world space for canvas stroke.
+    pub stroke_outset: PathStrokeOutset,
+    /// Whether the authored projection consumed every command. False retains
+    /// completed authored/native paint bounds after a lexical, argument, or
+    /// numeric failure; it does not change the renderer's failure behavior.
+    pub is_complete: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Event handlers
 // ---------------------------------------------------------------------------
@@ -611,6 +644,8 @@ pub enum IrNodeKind {
     /// SVG path element.
     Path {
         path_data: String,
+        /// Canonical Rust geometry; never inferred from the layout bbox.
+        path_geometry: PathGeometry,
         fill: Option<String>,
         stroke: Option<String>,
         stroke_width: Option<f64>,

@@ -74,6 +74,9 @@ CSS Grid layout container.
 With `overflow="clip"`, the clipping boundary also cuts the Grid's own border
 and shadow at its rounded corners.
 
+The same explicit rectangular or rounded clip excludes pointer hits on the
+Grid and its descendants outside that boundary, including transformed clips.
+
 ### Event / Identity
 
 | Prop             | Type     | Description                                           |

@@ -246,8 +246,15 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
 
   it("pins the default (transform-scaled) Path IR, SVG, and raster bytes", () => {
     const scene = defaultPathStrokeScene();
-    expect(sha256(JSON.stringify(engine.renderToIR(scene)))).toBe(
-      "499348200d6ee4766536226a8faf4912ad481f92d0863674321230802e08763e",
+    const ir = engine.renderToIR(scene);
+    // The added derived metadata is the only IR change; paint hashes stay pinned.
+    expect(
+      sha256(
+        JSON.stringify(ir, (key, value: unknown) => (key === "pathGeometry" ? undefined : value)),
+      ),
+    ).toBe("499348200d6ee4766536226a8faf4912ad481f92d0863674321230802e08763e");
+    expect(sha256(JSON.stringify(ir))).toBe(
+      "50995ab151d263abdd51cd62008c360a8e68a3cc4f5c68c859e9e07154456f23",
     );
     expect(sha256(engine.renderToSvg(scene))).toBe(
       "3be4eef508dd1084fe577be3fdd9aa5b24c30771ce8ae98eff04dbc702c42a75",

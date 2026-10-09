@@ -19,6 +19,7 @@ import type { RenderToIrEnvelope, WasmEngineInstance } from "../../src/wasm/type
 
 const bbox = { x: 0, y: 0, w: 100, h: 40 };
 
+/** Build the canonical wire envelope containing every supported output field and derived Path metadata. */
 function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
   return {
     ir: {
@@ -268,6 +269,11 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
             nodeId: "path",
             bbox,
             pathData: "M0 0L1 1",
+            pathGeometry: {
+              bounds: { minX: 0, minY: 0, maxX: 1, maxY: 1 },
+              strokeOutset: { radius: 0.5, multiplier: 1 },
+              isComplete: true,
+            },
             fill: "none",
             stroke: "#000",
             strokeWidth: 1,

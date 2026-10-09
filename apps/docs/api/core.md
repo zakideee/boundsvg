@@ -866,11 +866,15 @@ Returns an array of `TextOutlineNode` objects containing SVG path data for each 
 
 ### `engine.hitTest(ir, x, y)`
 
-Performs bbox-precision hit-testing on an IR. Returns the `NodeId` of the topmost
-bbox candidate at `(x, y)`, or `null`. Painted ink can differ from those bounds:
-Path paint outside its layout box is absent from candidates, and rounded clip
-corners use rectangular hit bounds. See [Choosing an API](/reference/api-selection)
-for the precision of these bounds and the interaction APIs.
+Returns the `NodeId` of the topmost conservative candidate at canvas point
+`(x, y)`, or `null`. Path geometry/stroke bounds can extend beyond its layout
+`bbox`. Explicit rectangular and rounded clips exclude invisible portions of
+their owner and descendants in the clip's original coordinates. Candidate
+bounds still contain Path holes or curve whitespace; Browser/React interaction
+checks actual Path fill/stroke for the final target. Supply IR from the matching
+engine version: missing schema-34 `pathGeometry` raises `FatalError` with code
+`VALIDATION`. Regenerate older IR from the scene rather than substituting layout
+bounds. See [Choosing an API](/reference/api-selection) for precision and sampling.
 
 ### `engine.compile(input, options?)`
 

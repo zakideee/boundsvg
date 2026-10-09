@@ -24,6 +24,10 @@ With `overflow="clip"`, child paint is clipped to the Flex layout box using the 
 
 The clipping boundary also cuts the Flex's own border and shadow at its rounded corners.
 
+That explicit clip also excludes pointer hits on the Flex and its descendants
+outside its rectangle or resolved rounded corners. With `overflow="visible"`,
+the background radius does not clip child paint or hits.
+
 ### Flex Item (when Flex is a child of another Flex)
 
 | Prop         | Type                                                  | Default  | Description                |

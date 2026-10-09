@@ -51,6 +51,7 @@ boundsvg	crates/boundsvg/src/flow/types.rs	TextFlowWithExclusionsResult	overflow
 boundsvg	crates/boundsvg/src/ir/animation.rs	AnimationStateSample	opacity	opacity	omit-none
 boundsvg	crates/boundsvg/src/ir/animation.rs	AnimationStateSample	transform	transform	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	Gradient::Radial	geometry	geometry	omit-none
+boundsvg	crates/boundsvg/src/ir/types.rs	PathGeometry	bounds	bounds	null
 boundsvg	crates/boundsvg/src/ir/types.rs	StructuralIr	debug	debug	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationKeyframeOutput	opacity	opacity	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationKeyframeOutput	transform	transform	omit-none

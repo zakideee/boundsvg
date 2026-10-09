@@ -10,17 +10,17 @@ their bounding boxes are not interchangeable.
 
 ## Capability map
 
-| Question                                                                  | API                                                                                                                                       | Entry point                                | Animation and coordinates                                                                                                       |
-| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| What did layout allocate before animation?                                | `engine.renderToLayoutTree(input, options?)`                                                                                              | `@boundsvg/core`                           | Returns layout coordinates. `LayoutRenderOptions` accepts only `skipValidation`; there is no `timeMs`.                          |
-| What opacity and local transform does the semantic IR contain at time t?  | `engine.renderToIR(input, { timeMs })`                                                                                                    | `@boundsvg/core`                           | Samples animation into IR. A node's `bbox` remains its pre-transform layout box; read its sampled `transform` separately.       |
-| Where is each node in canvas space at time t?                             | `inspectScene(engine, input, { timeMs })`                                                                                                 | `@boundsvg/core`                           | Samples IR, composes node and ancestor transforms, and reports `transformBox` and `visualBBox`.                                 |
-| I already have sampled IR; how do I derive positioned boxes?              | `collectInspectionBBoxes(ir)`                                                                                                             | `@boundsvg/core/inspect`                   | Uses the transforms already present in the supplied IR. It does not sample a scene itself.                                      |
-| What animation channels resolve for each animated node at time t?         | `engine.sampleAnimationState(input, timeMs)`                                                                                              | `@boundsvg/core`                           | Returns resolved node-local opacity and affine transform. It does not compose ancestor transforms or return boxes.              |
-| Which painted semantic node is at a canvas point?                         | `hitTest(ir, x, y)` or `engine.hitTest(ir, x, y)`                                                                                         | `@boundsvg/core/scene` or `@boundsvg/core` | Uses transforms sampled into the supplied IR, composes ancestor transforms, and applies ancestor clip bounds at bbox precision. |
-| How do I render many explicit times without repeating layout and shaping? | `engine.renderFrames(input, { timesMs, format })`                                                                                         | `@boundsvg/core`                           | Prepares the scene once and samples the requested output frames. This is an output API, not a batch inspection API.             |
-| How do I flow, measure, or shrink-wrap text without rendering?            | `layoutTextFlow`, `layoutTextFlowWithExclusions`, `measureTextBlock`, `measureIntrinsicInlineSize`, `shrinkwrapText`, or `shrinkwrapFlow` | `Engine` from `@boundsvg/core`             | Returns text layout facts without scene geometry. All six methods use the same structured text-layout fatal contract.           |
-| How do I see diagnostic bounds over a render?                             | `debug: true`, `BoundSvgDebugOverlay`, or `NodeInspectorPanel`                                                                            | `@boundsvg/core`, `@boundsvg/react/debug`  | Human-facing diagnostic presentation. Use inspection APIs for assertions and editor state.                                      |
+| Question                                                                  | API                                                                                                                                       | Entry point                                | Animation and coordinates                                                                                                 |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| What did layout allocate before animation?                                | `engine.renderToLayoutTree(input, options?)`                                                                                              | `@boundsvg/core`                           | Returns layout coordinates. `LayoutRenderOptions` accepts only `skipValidation`; there is no `timeMs`.                    |
+| What opacity and local transform does the semantic IR contain at time t?  | `engine.renderToIR(input, { timeMs })`                                                                                                    | `@boundsvg/core`                           | Samples animation into IR. A node's `bbox` remains its pre-transform layout box; read its sampled `transform` separately. |
+| Where is each node in canvas space at time t?                             | `inspectScene(engine, input, { timeMs })`                                                                                                 | `@boundsvg/core`                           | Samples IR, composes node and ancestor transforms, and reports `transformBox` and `visualBBox`.                           |
+| I already have sampled IR; how do I derive positioned boxes?              | `collectInspectionBBoxes(ir)`                                                                                                             | `@boundsvg/core/inspect`                   | Uses the transforms already present in the supplied IR. It does not sample a scene itself.                                |
+| What animation channels resolve for each animated node at time t?         | `engine.sampleAnimationState(input, timeMs)`                                                                                              | `@boundsvg/core`                           | Returns resolved node-local opacity and affine transform. It does not compose ancestor transforms or return boxes.        |
+| Which semantic node is a hit candidate at a canvas point?                 | `hitTest(ir, x, y)` or `engine.hitTest(ir, x, y)`                                                                                         | `@boundsvg/core/scene` or `@boundsvg/core` | Uses sampled transforms, conservative Path geometry/stroke bounds, and rectangular or rounded ancestor clips.             |
+| How do I render many explicit times without repeating layout and shaping? | `engine.renderFrames(input, { timesMs, format })`                                                                                         | `@boundsvg/core`                           | Prepares the scene once and samples the requested output frames. This is an output API, not a batch inspection API.       |
+| How do I flow, measure, or shrink-wrap text without rendering?            | `layoutTextFlow`, `layoutTextFlowWithExclusions`, `measureTextBlock`, `measureIntrinsicInlineSize`, `shrinkwrapText`, or `shrinkwrapFlow` | `Engine` from `@boundsvg/core`             | Returns text layout facts without scene geometry. All six methods use the same structured text-layout fatal contract.     |
+| How do I see diagnostic bounds over a render?                             | `debug: true`, `BoundSvgDebugOverlay`, or `NodeInspectorPanel`                                                                            | `@boundsvg/core`, `@boundsvg/react/debug`  | Human-facing diagnostic presentation. Use inspection APIs for assertions and editor state.                                |
 
 ## Inspection bbox semantics
 
@@ -37,10 +37,25 @@ for strokes or shadows, and it does not subtract clipping or opacity. Rotated
 content is represented by its axis-aligned enclosure; use `transformBox` when
 the four transformed corners matter.
 
-Path hit-test candidates use layout-box bounds. Path paint outside its layout
-box is absent from those candidates even when visible, and rounded ancestor
-clips retain rectangular hit bounds. Path geometry verification refines existing
-candidates; it does not add outside paint or subtract rounded ancestor clips.
+Path hit-test candidates use Rust-derived conservative geometry/stroke bounds
+separate from the layout box. Explicit rectangular and rounded clips are tested
+in their original coordinates for their owner and descendants, including nested
+and transformed clips. `hitTest`, `hitTestWithIndex`, and candidate enumeration
+use the same rules. Generic spatial indexes and inspection selection retain
+their placement-box semantics.
+
+Core returns candidates rather than exact painted ink: a curved Path's bounds
+can contain empty space, and text/shadows are not pixel-accurate. Browser event
+helpers and React interaction check painted Path fill/stroke before selecting
+the final target. React also accounts for native canvas-stable stroke paint at
+the current pointer under SVG viewport scaling.
+
+Use IR produced by the matching engine version. Schema-34 Path output requires
+`pathGeometry`; older hand-built or saved IR must be regenerated with
+`engine.renderToIR(scene)` before hit testing. Layout `bbox` cannot substitute
+for missing derived geometry. These rules cover static rendering and explicit
+`timeMs` samples; they do not synchronize a playing SVG's live clock and hit
+index at every animation instant.
 
 `inspectScene` performs a layout-tree render and an IR render, then derives maps,
 boxes, validation, warnings, and stats. That complete snapshot is convenient for

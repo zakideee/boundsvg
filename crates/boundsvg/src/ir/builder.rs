@@ -1133,6 +1133,7 @@ fn build_image_child(
 // Path child builder
 // ---------------------------------------------------------------------------
 
+/// Preserve Path layout dimensions while deriving independent conservative paint geometry.
 fn build_path_child(
     visual: &VisualInput,
     node_id: &str,
@@ -1145,6 +1146,15 @@ fn build_path_child(
         node_id: node_id.to_string(),
         bbox,
         kind: IrNodeKind::Path {
+            path_geometry: super::path_geometry::derive_path_geometry(
+                visual.d.as_deref().unwrap_or_default(),
+                visual.stroke.as_deref(),
+                visual.stroke_width,
+                visual.stroke_scaling,
+                parse_linecap(visual.stroke_linecap.as_deref()),
+                parse_linejoin(visual.stroke_linejoin.as_deref()),
+                visual.stroke_miterlimit,
+            ),
             path_data: visual.d.clone().unwrap_or_default(),
             fill: visual.fill.clone(),
             stroke: visual.stroke.clone(),

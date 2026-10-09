@@ -236,10 +236,16 @@ function cloneIRImageForLayeredTransform(node: IRImageNode): IRImageNode {
   };
 }
 
+/** Clone Path paint metadata and preserve independent mutable bounds for layer transforms. */
 function cloneIRPathForLayeredTransform(node: IRPathNode): IRPathNode {
   return {
     ...node,
     bbox: cloneBBox(node.bbox),
+    pathGeometry: {
+      ...node.pathGeometry,
+      bounds: node.pathGeometry.bounds ? { ...node.pathGeometry.bounds } : null,
+      strokeOutset: { ...node.pathGeometry.strokeOutset },
+    },
     ...(node.on ? { on: cloneHandlers(node.on) } : {}),
   };
 }

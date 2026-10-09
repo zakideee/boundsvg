@@ -402,6 +402,10 @@
             "pathData": {
               "type": "string"
             },
+            "pathGeometry": {
+              "description": "Canonical derived output, always present even when bounds are null.",
+              "$ref": "#/$defs/PathGeometry"
+            },
             "fill": {
               "type": "string"
             },
@@ -459,7 +463,8 @@
           },
           "required": [
             "type",
-            "pathData"
+            "pathData",
+            "pathGeometry"
           ]
         },
         {
@@ -1893,6 +1898,82 @@
         "originY",
         "contourCount",
         "segmentCount"
+      ]
+    },
+    "PathGeometry": {
+      "description": "Output-only Path candidate geometry in the coordinate system of `d`.\n\nLayout placement and transforms are applied by consumers. Empty geometry\nemits a null bounds value. Input DTOs ignore supplied metadata and derive\nit again, so metadata never expands the accepted authored-input domain.",
+      "type": "object",
+      "properties": {
+        "bounds": {
+          "description": "Finite extrema of completed paint segments, or null for no segments.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathBounds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strokeOutset": {
+          "description": "Stroke expansion used in local space, or world space for canvas stroke.",
+          "$ref": "#/$defs/PathStrokeOutset"
+        },
+        "isComplete": {
+          "description": "Whether the authored projection consumed every command. False retains\ncompleted authored/native paint bounds after a lexical, argument, or\nnumeric failure; it does not change the renderer's failure behavior.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "bounds",
+        "strokeOutset",
+        "isComplete"
+      ]
+    },
+    "PathBounds": {
+      "description": "Finite geometry extrema in the authored Path coordinate system.\n\nExtrema avoid overflowing a width subtraction for widely separated finite points.",
+      "type": "object",
+      "properties": {
+        "minX": {
+          "description": "Leftmost conservative geometry coordinate.",
+          "type": "number"
+        },
+        "minY": {
+          "description": "Topmost conservative geometry coordinate.",
+          "type": "number"
+        },
+        "maxX": {
+          "description": "Rightmost conservative geometry coordinate.",
+          "type": "number"
+        },
+        "maxY": {
+          "description": "Bottommost conservative geometry coordinate.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "minX",
+        "minY",
+        "maxX",
+        "maxY"
+      ]
+    },
+    "PathStrokeOutset": {
+      "description": "Factorized conservative stroke expansion, before any world transform.\n\nThe radius is half the effective stroke width at output scale one. Keeping\nthe cap/join multiplier separate avoids overflowing a finite wire value.",
+      "type": "object",
+      "properties": {
+        "radius": {
+          "description": "Nonnegative finite half-width, including SVG decimal rounding.",
+          "type": "number"
+        },
+        "multiplier": {
+          "description": "At least one; encloses square caps and miter joins.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "radius",
+        "multiplier"
       ]
     },
     "IrFillRule": {

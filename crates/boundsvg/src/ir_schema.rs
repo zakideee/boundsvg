@@ -12,11 +12,13 @@ use crate::EmitIrInput;
 use crate::ir::types::StructuralIr;
 
 /// Version of the deterministic schema normalization applied after Schemars.
-pub const NORMALIZATION_VERSION: u32 = 1;
+pub const NORMALIZATION_VERSION: u32 = 2;
 
+/// Reviewed wire presence rows that determine omitted output Option fields.
 const OPTION_INVENTORY: &str = include_str!("../tests/fixtures/wire-option-contract.golden.txt");
 
 #[derive(Debug)]
+/// Invalid schema shape, unsupported format, or JSON conversion during generation.
 pub struct IrSchemaGenerationError(String);
 
 impl fmt::Display for IrSchemaGenerationError {
@@ -34,6 +36,7 @@ impl From<serde_json::Error> for IrSchemaGenerationError {
 }
 
 #[derive(Clone, Debug)]
+/// One omit-none field named by its Rust owner and serialized property.
 struct OmittedOptionField {
     owner: String,
     wire_field: String,
@@ -41,8 +44,11 @@ struct OmittedOptionField {
 
 /// Pair of directional IR schemas generated from the actual Rust graph.
 pub struct IrSchemas {
+    /// Deterministic normalization revision used by generated-file receipts.
     pub normalization_version: u32,
+    /// Required serialize-direction output fields and omission/null semantics.
     pub structural_ir: serde_json::Value,
+    /// Deserialize-direction input domain, including ignored derived metadata.
     pub emit_ir_input: serde_json::Value,
 }
 
@@ -73,6 +79,11 @@ pub fn generate_ir_schemas() -> Result<IrSchemas, IrSchemaGenerationError> {
     })
 }
 
+/// Read only omit-none inventory rows.
+///
+/// # Errors
+///
+/// Returns a generation error for a row with an unexpected column count.
 fn omitted_option_fields() -> Result<Vec<OmittedOptionField>, IrSchemaGenerationError> {
     OPTION_INVENTORY
         .lines()
@@ -94,6 +105,7 @@ fn omitted_option_fields() -> Result<Vec<OmittedOptionField>, IrSchemaGeneration
         .collect()
 }
 
+/// Match borrowed wire output owners to their Schemars definition names.
 fn output_schema_owner(owner: &str) -> &str {
     match owner {
         "HandlersRefOutput" => "HandlersRef",
@@ -114,6 +126,12 @@ fn output_schema_owner(owner: &str) -> &str {
     }
 }
 
+/// Preserve omitted presence while allowing only required empty Path bounds to be null.
+///
+/// # Errors
+///
+/// Returns a generation error for missing definitions/properties, invalid
+/// omit-none presence, unsupported numeric formats, or unreviewed output nulls.
 fn normalize_output_schema(schema: &mut serde_json::Value) -> Result<(), IrSchemaGenerationError> {
     let omitted_fields = omitted_option_fields()?;
     let mut owners: BTreeMap<&str, Vec<&OmittedOptionField>> = BTreeMap::new();
@@ -165,7 +183,21 @@ fn normalize_output_schema(schema: &mut serde_json::Value) -> Result<(), IrSchem
     }
 
     normalize_numeric_formats(schema)?;
-    if contains_null_schema_deep(schema) {
+    // Empty Path paint has an explicit required null, rather than an omitted
+    // layout substitute. All other output nulls remain prohibited.
+    let mut non_nullable_output = schema.clone();
+    let bounds = non_nullable_output
+        .pointer_mut("/$defs/PathGeometry/properties/bounds")
+        .ok_or_else(|| {
+            IrSchemaGenerationError("PathGeometry bounds schema is missing".to_string())
+        })?;
+    if !contains_null_schema(bounds) {
+        return Err(IrSchemaGenerationError(
+            "PathGeometry empty bounds must allow null".to_string(),
+        ));
+    }
+    *bounds = serde_json::json!({});
+    if contains_null_schema_deep(&non_nullable_output) {
         return Err(IrSchemaGenerationError(
             "serialize-direction IR schema still contains a nullable field".to_string(),
         ));
@@ -173,6 +205,12 @@ fn normalize_output_schema(schema: &mut serde_json::Value) -> Result<(), IrSchem
     Ok(())
 }
 
+/// Remove null only from inventoried optional properties without making them required.
+///
+/// # Errors
+///
+/// Returns a generation error for malformed object schemas, missing properties,
+/// a required omit-none field, or a nullable field that cannot be normalized.
 fn normalize_struct_fields<'a>(
     schema: &mut serde_json::Value,
     owner: &str,
@@ -218,6 +256,7 @@ fn normalize_struct_fields<'a>(
     Ok(())
 }
 
+/// Find a recursively nested object variant with the requested serialized type tag.
 fn find_tagged_variant_mut<'a>(
     schema: &'a mut serde_json::Value,
     variant: &str,
@@ -242,6 +281,7 @@ fn find_tagged_variant_mut<'a>(
     }
 }
 
+/// Remove direct null alternatives from one omit-none property schema.
 fn remove_null(schema: &mut serde_json::Value) {
     let Some(object) = schema.as_object_mut() else {
         return;
@@ -274,6 +314,7 @@ fn remove_null(schema: &mut serde_json::Value) {
     }
 }
 
+/// Detect null in a property's direct type/enum/union alternatives.
 fn contains_null_schema(schema: &serde_json::Value) -> bool {
     if schema
         .get("enum")
@@ -300,6 +341,7 @@ fn contains_null_schema(schema: &serde_json::Value) -> bool {
     })
 }
 
+/// Detect remaining nullable output anywhere in a normalized schema graph.
 fn contains_null_schema_deep(schema: &serde_json::Value) -> bool {
     if contains_null_schema(schema) {
         return true;
@@ -311,6 +353,11 @@ fn contains_null_schema_deep(schema: &serde_json::Value) -> bool {
     }
 }
 
+/// Strip reviewed Rust numeric format hints without weakening JSON number types.
+///
+/// # Errors
+///
+/// Returns a generation error if a newly introduced numeric format lacks review.
 fn normalize_numeric_formats(
     schema: &mut serde_json::Value,
 ) -> Result<(), IrSchemaGenerationError> {

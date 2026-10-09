@@ -48,6 +48,10 @@ Generic container element. Internally uses flex `direction=column`.
 With `overflow="clip"`, the clipping boundary also cuts the Box's own border
 and shadow at its rounded corners.
 
+The same explicit rectangular or rounded clip excludes pointer hits on the
+Box and its descendants outside that boundary. `overflow="visible"` does not
+exclude child hits merely because the background has rounded corners.
+
 ### Positioning
 
 | Prop       | Type                       | Default      | Description         |

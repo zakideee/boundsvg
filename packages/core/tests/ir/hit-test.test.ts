@@ -175,6 +175,12 @@ describe("hitTestCandidates", () => {
       {
         type: "path",
         nodeId: "top",
+        pathData: "M0 0H100V100H0Z",
+        pathGeometry: {
+          bounds: { minX: 0, minY: 0, maxX: 100, maxY: 100 },
+          strokeOutset: { radius: 0, multiplier: 1 },
+          isComplete: true,
+        },
         bbox: { x: 50, y: 50, w: 100, h: 100 },
       },
     ]);

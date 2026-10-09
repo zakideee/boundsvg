@@ -406,6 +406,15 @@ inside `result`.
 
 Render a VNode tree with interactive event handling (hitTest, hover, click).
 
+Visible Path fill/stroke outside its layout box can receive events. Explicit
+rectangular and rounded ancestor clips exclude their owner and descendants
+outside the clip; Path holes fall through to a node underneath. The native
+current-pointer hit stack also covers canvas-stable strokes under SVG viewport
+scaling, including pointer capture. Generic text/image hit testing remains
+based on positioned bounds. Use static rendering or an explicit `timeMs` for
+matching sampled paint and hit geometry; live SVG playback does not update the
+Core hit index at every animation instant.
+
 ```ts
 const { svg, ir, error, isReady, hoverNodeId, containerRef } =
   useInteractiveSvg(vnode, handlers, options?);

@@ -16,6 +16,7 @@ type OracleResult = {
   unitSampleCount: number;
 };
 
+/** Frozen paint and text-outline hashes, with schema-only IR metadata changes listed explicitly. */
 const expectedOracle: Record<string, OracleResult> = {
   "vertical-ruby-merged": {
     svgSha256: "ba7f522c7efef9c14ba9b34eefabd2e2ad371d719133bf08fe289545de0fc53d",
@@ -33,7 +34,7 @@ const expectedOracle: Record<string, OracleResult> = {
   },
   "text-on-path-merged": {
     svgSha256: "45bdb0c2c79a1da9dfa62179cd83b25189f015807c2311f2d98f3f9af7e5720a",
-    rootSha256: "e0d6e060dab0e47b6ac38c1300703035fedce2a5c3507c3d9161542bf7698561",
+    rootSha256: "71e78746c7581e4c6d988ed3b07a1f502b4477c234cd82fe18c8d56eb6eafdfc",
     outlinesSha256: "2882bca37a25be5608d8f18e15d2e2220f2297f642530491a4548e4ab1ef12c4",
     glyphPathCount: 28,
     unitSampleCount: 35,
@@ -191,6 +192,16 @@ describe("outline ownership frozen oracle", () => {
         ...countResolvedTextMetadata(rendered.ir.root),
       };
       expect(actual).toEqual(expectedOracle[oracleCase.id]);
+      if (oracleCase.id === "text-on-path-merged") {
+        const previousRoot = JSON.parse(
+          JSON.stringify(rendered.ir.root, (key, value: unknown) =>
+            key === "pathGeometry" ? undefined : value,
+          ),
+        ) as IRNode;
+        expect(sha256(previousRoot)).toBe(
+          "e0d6e060dab0e47b6ac38c1300703035fedce2a5c3507c3d9161542bf7698561",
+        );
+      }
     });
   }
 });

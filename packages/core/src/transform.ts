@@ -1,6 +1,7 @@
 import { FatalError, type PipelineStage } from "./errors.js";
 import type { Transform2D } from "./shape/types.js";
 
+/** Authored transform keys accepted at the numeric input boundary. */
 const TRANSFORM_KEYS = [
   "translateX",
   "translateY",
@@ -11,8 +12,10 @@ const TRANSFORM_KEYS = [
   "originY",
 ] as const;
 
+/** One supported key of the authored transform DTO. */
 type TransformKey = (typeof TRANSFORM_KEYS)[number];
 
+/** Owning node and pipeline stage attached to transform validation failures. */
 type TransformErrorOptions = {
   code: string;
   stage: PipelineStage;
@@ -21,16 +24,19 @@ type TransformErrorOptions = {
   ownerName?: string;
 };
 
+/** Layout origin used to resolve node-local transform origins. */
 type BBoxLike = {
   x: number;
   y: number;
 };
 
+/** A point in the coordinate system of the accompanying matrix. */
 export type Point2D = {
   x: number;
   y: number;
 };
 
+/** SVG affine coefficients mapping source points into their parent coordinates. */
 export type AffineMatrix = {
   a: number;
   b: number;
@@ -42,6 +48,7 @@ export type AffineMatrix = {
 
 export type { Transform2D };
 
+/** Immutable identity coefficients; callers receive a copy. */
 const IDENTITY_AFFINE_MATRIX: AffineMatrix = {
   a: 1,
   b: 0,
@@ -51,6 +58,10 @@ const IDENTITY_AFFINE_MATRIX: AffineMatrix = {
   f: 0,
 };
 
+/**
+ * Accept an absent transform or a supported object of finite numeric fields.
+ * @throws {FatalError} Using the supplied code/stage/node id for invalid fields or keys.
+ */
 export function assertValidTransform2D(
   transform: unknown,
   options: TransformErrorOptions,
@@ -105,6 +116,7 @@ export function assertValidTransform2D(
   }
 }
 
+/** Serialize translate, origin-relative rotation, and scale in SVG composition order. */
 export function transformToSvg(transform: Transform2D): string {
   const commands: string[] = [];
   if ((transform.translateX ?? 0) !== 0 || (transform.translateY ?? 0) !== 0) {
@@ -134,6 +146,7 @@ export function transformToSvg(transform: Transform2D): string {
   return commands.join(" ");
 }
 
+/** Offset an authored transform origin by its node's layout position. */
 function resolveNodeLocalTransform(transform: Transform2D, bbox: BBoxLike): Transform2D {
   return {
     ...transform,
@@ -142,6 +155,7 @@ function resolveNodeLocalTransform(transform: Transform2D, bbox: BBoxLike): Tran
   };
 }
 
+/** Whether serialization produces a nonempty post-layout transform. */
 export function hasTransform(transform: Transform2D | undefined): boolean {
   if (!transform) {
     return false;
@@ -149,10 +163,12 @@ export function hasTransform(transform: Transform2D | undefined): boolean {
   return transformToSvg(transform).length > 0;
 }
 
+/** Return independently mutable identity coefficients. */
 export function createIdentityAffineMatrix(): AffineMatrix {
   return { ...IDENTITY_AFFINE_MATRIX };
 }
 
+/** Compose matrices so rhs acts first and lhs maps its result. */
 export function multiplyAffineMatrices(lhs: AffineMatrix, rhs: AffineMatrix): AffineMatrix {
   return {
     a: lhs.a * rhs.a + lhs.c * rhs.b,
@@ -164,6 +180,7 @@ export function multiplyAffineMatrices(lhs: AffineMatrix, rhs: AffineMatrix): Af
   };
 }
 
+/** Map a source point into parent/world coordinates without altering the matrix. */
 export function applyAffineMatrixToPoint(matrix: AffineMatrix, point: Point2D): Point2D {
   return {
     x: matrix.a * point.x + matrix.c * point.y + matrix.e,
@@ -171,6 +188,36 @@ export function applyAffineMatrixToPoint(matrix: AffineMatrix, point: Point2D): 
   };
 }
 
+/**
+ * Map a world point into the matrix's source coordinates. A singular matrix
+ * has no painted area and returns null. Normalizing each column avoids
+ * overflowing the determinant for finite, large supported scales.
+ */
+export function applyInverseAffineMatrixToPoint(
+  matrix: AffineMatrix,
+  point: Point2D,
+): Point2D | null {
+  const xScale = Math.max(Math.abs(matrix.a), Math.abs(matrix.b));
+  const yScale = Math.max(Math.abs(matrix.c), Math.abs(matrix.d));
+  if (!Number.isFinite(xScale) || !Number.isFinite(yScale) || xScale === 0 || yScale === 0) {
+    return null;
+  }
+  const normA = matrix.a / xScale;
+  const normB = matrix.b / xScale;
+  const normC = matrix.c / yScale;
+  const normD = matrix.d / yScale;
+  const determinant = normA * normD - normB * normC;
+  if (determinant === 0 || !Number.isFinite(determinant)) {
+    return null;
+  }
+  const deltaX = point.x - matrix.e;
+  const deltaY = point.y - matrix.f;
+  const x = (normD * deltaX - normC * deltaY) / determinant / xScale;
+  const y = (normA * deltaY - normB * deltaX) / determinant / yScale;
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+/** Compose a node transform in the same order and layout-relative origin as SVG emission. */
 export function createResolvedTransformMatrix(
   transform: Transform2D | undefined,
   bbox: BBoxLike,
@@ -215,6 +262,7 @@ export function createResolvedTransformMatrix(
   return matrix;
 }
 
+/** Translate a point without changing its basis vectors. */
 function createTranslateMatrix(tx: number, ty: number): AffineMatrix {
   return {
     a: 1,
@@ -226,6 +274,7 @@ function createTranslateMatrix(tx: number, ty: number): AffineMatrix {
   };
 }
 
+/** Rotate around the supplied source-coordinate origin in degrees. */
 function createRotateMatrix(angleDeg: number, originX: number, originY: number): AffineMatrix {
   const angleRad = (angleDeg * Math.PI) / 180;
   const cos = Math.cos(angleRad);
@@ -245,6 +294,7 @@ function createRotateMatrix(angleDeg: number, originX: number, originY: number):
   );
 }
 
+/** Apply independent axis scales around the supplied source-coordinate origin. */
 function createScaleMatrix(options: {
   scaleX: number;
   scaleY: number;
@@ -271,10 +321,12 @@ function createScaleMatrix(options: {
   );
 }
 
+/** Identify the node category in a transform validation message. */
 function describeTransformOwner(ownerName: string | undefined): string {
   return ownerName ? `${ownerName} node` : "Node";
 }
 
+/** Serialize a transform scalar with negative zero normalized to zero. */
 function formatSvgNumber(value: number): string {
   const normalized = Object.is(value, -0) ? 0 : value;
   const stringValue = normalized.toString();

@@ -59,6 +59,8 @@ const textTypesFile = "packages/core/src/text/types.ts";
 
 /** Rust DTO declarations paired with their TypeScript structural mirrors. */
 const typeTargets: Record<string, TypeTarget[]> = {
+  PathGeometry: [{ file: generatedIrTypesFile, typeName: "PathGeometry" }],
+  PathStrokeOutset: [{ file: generatedIrTypesFile, typeName: "PathStrokeOutset" }],
   AnimationKeyframe: [{ file: "packages/core/src/vnode/types.ts", typeName: "AnimationKeyframe" }],
   AnimationSpec: [{ file: "packages/core/src/vnode/types.ts", typeName: "AnimationSpec" }],
   AffineMatrixDto: [{ file: "packages/core/src/engine.ts", typeName: "AnimationAffineMatrix" }],
@@ -878,14 +880,14 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       rustDtos.size,
     );
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(150);
+    expect(rustDtos.size).toBe(152);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(1036);
+    ).toBe(1042);
     expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(95);
   });
 
@@ -1012,6 +1014,7 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
         },
         `IR${variant.name[0]?.toUpperCase()}${variant.name.slice(1)}Node`,
         variantShape,
+        direction === "Input" && variant.name === "path" ? ["pathGeometry"] : [],
       );
     }
   });

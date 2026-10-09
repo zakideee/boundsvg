@@ -228,7 +228,8 @@ describe("semantic mapping ledgers", () => {
         (fieldCount, nodeLedger) => fieldCount + Object.keys(nodeLedger).length,
         0,
       ),
-    ).toBe(107);
+    ).toBe(108);
+    expect(RUST_IR_TO_PUBLIC_IR_MAPPING.path.pathGeometry).toBe("derived-output");
   });
 
   it("round-trips every VNode variant and exercises each WASM mapping category", () => {

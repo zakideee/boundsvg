@@ -13,16 +13,22 @@ type BBox = {
   h: number;
 };
 
+/** One positioned item with draw precedence and an optional entry-owned hit gate. */
 type Entry = {
   nodeId: string;
   bbox: BBox;
   /** Draw order index (higher = more to front) */
   drawIndex: number;
+  /** IR-owned clip/frame gate; ordinary inserted entries have no gate. */
+  accepts?: (x: number, y: number) => boolean;
 };
 
+/** Existing quadtree subdivision limit. */
 const MAX_DEPTH = 5;
+/** Existing item threshold before a node subdivides. */
 const MAX_ITEMS = 8;
 
+/** One subdivision retaining items that cross its child boundaries. */
 type QuadNode = {
   readonly bounds: BBox;
   readonly depth: number;
@@ -30,10 +36,12 @@ type QuadNode = {
   children: QuadNode[] | null;
 };
 
+/** Allocate an empty subdivision at the requested depth. */
 function createQuadNode(bounds: BBox, depth: number): QuadNode {
   return { bounds, depth, items: [], children: null };
 }
 
+/** Descend into a fully containing child, retaining crossing items at their current node. */
 function insertIntoNode(node: QuadNode, entry: Entry): void {
   if (node.children) {
     for (const child of node.children) {
@@ -53,13 +61,17 @@ function insertIntoNode(node: QuadNode, entry: Entry): void {
   }
 }
 
+/** Collect point-containing entries after applying each entry's own optional hit gate. */
 function queryNode(node: QuadNode, point: { x: number; y: number }, results: Entry[]): void {
   if (!pointInBBox(point.x, point.y, node.bounds)) {
     return;
   }
 
   for (const item of node.items) {
-    if (pointInBBox(point.x, point.y, item.bbox)) {
+    if (
+      pointInBBox(point.x, point.y, item.bbox) &&
+      (!item.accepts || item.accepts(point.x, point.y))
+    ) {
       results.push(item);
     }
   }
@@ -71,6 +83,7 @@ function queryNode(node: QuadNode, point: { x: number; y: number }, results: Ent
   }
 }
 
+/** Partition into four children and move only fully contained items into them. */
 function splitNode(node: QuadNode): void {
   const { x, y, w, h } = node.bounds;
   const hw = w / 2;
@@ -116,6 +129,7 @@ function contains(outer: BBox, inner: BBox): boolean {
   );
 }
 
+/** Generic positioned-box queries; returned ids follow draw precedence. */
 export type SpatialIndex = {
   insert: (nodeId: string, bbox: BBox, drawIndex: number) => void;
   queryTopmost: (x: number, y: number) => string | null;
@@ -127,7 +141,11 @@ export type SpatialIndex = {
  */
 export function createSpatialIndex(bounds: BBox): SpatialIndex {
   const root = createQuadNode(bounds, 0);
+  return wrapSpatialIndex(root);
+}
 
+/** Wrap one tree; each entry retains its own optional IR gate when ids repeat. */
+function wrapSpatialIndex(root: QuadNode): SpatialIndex {
   return {
     insert(nodeId: string, bbox: BBox, drawIndex: number): void {
       insertIntoNode(root, { nodeId, bbox, drawIndex });
@@ -168,6 +186,19 @@ export function createSpatialIndex(bounds: BBox): SpatialIndex {
         .map((entry) => entry.nodeId);
     },
   };
+}
+
+/**
+ * Build the internal IR hit index with entry-owned shape gates. Public insert
+ * remains generic: newly inserted entries never inherit an IR clip by id.
+ * This helper is not exported from the package's public entry points.
+ */
+export function buildFilteredSpatialIndex(bounds: BBox, entries: Entry[]): SpatialIndex {
+  const root = createQuadNode(bounds, 0);
+  for (const entry of entries) {
+    insertIntoNode(root, entry);
+  }
+  return wrapSpatialIndex(root);
 }
 
 /**
