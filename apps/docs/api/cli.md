@@ -56,6 +56,11 @@ Use `--report <file>` when a CI job should keep the diagnostics as an artifact. 
 
 ## Scene input validation
 
+The `boundsvg` executable dispatches each command once, including direct Node
+execution of `dist/bin.js`. Imports from `@boundsvg/cli` and
+`@boundsvg/cli/animation` do not read command arguments or execute a command.
+Library callers invoke the exported functions explicitly.
+
 For `.scene.json` input, file and option errors are handled first, followed by
 JSON syntax, recursive Scene structure, and then conversion or rendering. A
 syntax failure is reported as `Invalid JSON in input`. A structurally invalid
