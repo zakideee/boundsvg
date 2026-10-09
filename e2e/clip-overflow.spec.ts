@@ -334,6 +334,53 @@ test("mounted Path holes fall through to the back sibling", async ({ page }) => 
   expect((await clickDeliveries(page)).map((delivery) => delivery.nodeId)).toEqual(["underlay"]);
 });
 
+for (const edge of ["left", "right", "top", "bottom"] as const) {
+  test(`mounted fully clipped adjacent Box receives no callback at the ${edge} edge`, async ({
+    page,
+  }) => {
+    const scene = createElement(
+      "Canvas",
+      { width: 300, height: 160, background: "white" },
+      createElement(
+        "Box",
+        {
+          id: "clipper",
+          position: "absolute",
+          left: 10,
+          top: 10,
+          width: 100,
+          height: 100,
+          overflow: "clip",
+        },
+        createElement("Box", {
+          id: "card",
+          position: "absolute",
+          width: 100,
+          height: 100,
+          background: "red",
+          onClick: "card-click",
+        }),
+        createElement("Box", {
+          id: "underlay",
+          position: "absolute",
+          left: edge === "left" ? -100 : edge === "right" ? 100 : 0,
+          top: edge === "top" ? -100 : edge === "bottom" ? 100 : 0,
+          width: 100,
+          height: 100,
+          background: "blue",
+          onClick: "underlay-click",
+        }),
+      ),
+    );
+    await mountInteractive(page, scene);
+    await page.mouse.click(
+      edge === "left" ? 10 : edge === "right" ? 110 : 60,
+      edge === "top" ? 10 : edge === "bottom" ? 110 : 60,
+    );
+    expect((await clickDeliveries(page)).map((delivery) => delivery.nodeId)).toEqual(["card"]);
+  });
+}
+
 for (const shadow of [false, true]) {
   test(`CSS-scaled canvas stroke uses native current-pointer paint (shadow=${shadow})`, async ({
     page,

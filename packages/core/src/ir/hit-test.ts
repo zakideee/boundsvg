@@ -125,8 +125,8 @@ function collectHitEntries(ir: IR): HitEntry[] {
 }
 
 /**
- * Walk the tree with one shared clip link per owner. World AABBs narrow the
- * search; source-coordinate shape tests remove rotated and rounded cutouts.
+ * Walk the tree with one shared clip link per owner. Positive-area world AABBs
+ * narrow the search; source-coordinate tests remove rotated and rounded cutouts.
  * @throws {FatalError} When a Path's derived output metadata is invalid.
  */
 function collectNode(
@@ -154,7 +154,7 @@ function collectNode(
         ? worldHitBounds(matrix, local)
         : null;
   const bounds = visible && world ? intersectHitBounds(visible, world) : null;
-  if (bounds) {
+  if (bounds && bounds.minX < bounds.maxX && bounds.minY < bounds.maxY) {
     const ownFrame = node.type === "group" && node.on ? node.bbox : null;
     lookup.set(node.nodeId, {
       nodeId: node.nodeId,

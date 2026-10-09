@@ -22,6 +22,11 @@ boundsvg convert --input card.svg --output Card.tsx --default-font Inter
 After upgrading, the old command is unavailable. Run `boundsvg convert --help`
 for conversion options, or `boundsvg --help` for the command list.
 
+The `boundsvg` executable dispatches each command once, including direct Node
+execution of `dist/bin.js`. Imports from `@boundsvg/cli` and
+`@boundsvg/cli/animation` do not read command arguments or execute a command.
+Library callers invoke the exported functions explicitly.
+
 ## `boundsvg inspect`
 
 ```bash
@@ -55,11 +60,6 @@ boundsvg export \
 Use `--report <file>` when a CI job should keep the diagnostics as an artifact. Use `--inspect` when a local export should print the JSON report to stderr while still writing the rendered SVG or PNG.
 
 ## Scene input validation
-
-The `boundsvg` executable dispatches each command once, including direct Node
-execution of `dist/bin.js`. Imports from `@boundsvg/cli` and
-`@boundsvg/cli/animation` do not read command arguments or execute a command.
-Library callers invoke the exported functions explicitly.
 
 For `.scene.json` input, file and option errors are handled first, followed by
 JSON syntax, recursive Scene structure, and then conversion or rendering. A
