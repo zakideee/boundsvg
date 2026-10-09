@@ -606,7 +606,7 @@ console.log('[pack-e2e] worker subpath OK');
 }
 /**
  * Exercise the installed standard command and its convert help route.
- * @throws If the removed bin remains or the standard help routes fail.
+ * @throws If the removed bin remains or a standard help route fails or executes more than once.
  */
 function runCliSmoke() {
   const binDirectory = join(workDir, "node_modules", ".bin");
@@ -617,8 +617,8 @@ function runCliSmoke() {
     [["--help"], "Usage: boundsvg <command>"],
     [["convert", "--help"], "Usage: boundsvg convert"],
   ]) {
-    const result = run(join(binDirectory, "boundsvg"), commandArgs, { cwd: workDir });
-    if (!`${result.stdout}\n${result.stderr}`.includes(expectedUsage)) {
+    const commandResult = run(join(binDirectory, "boundsvg"), commandArgs, { cwd: workDir });
+    if (`${commandResult.stdout}\n${commandResult.stderr}`.split(expectedUsage).length - 1 !== 1) {
       fail(`boundsvg ${commandArgs.join(" ")} did not execute its packed help route`);
     }
   }

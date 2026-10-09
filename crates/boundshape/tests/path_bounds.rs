@@ -122,7 +122,26 @@ fn original_arcs_are_enclosed_after_radius_correction() {
             max_y: 20.0
         })
     );
-    assert_eq!(parse_path_bounds("M10 10A20 20 0 1 1 10 10").bounds, None);
+    assert_eq!(
+        parse_path_bounds("M10 10A20 20 0 1 1 10 10").bounds,
+        Some(PathBounds {
+            min_x: 10.0,
+            min_y: 10.0,
+            max_x: 10.0,
+            max_y: 10.0,
+        })
+    );
+    let subpaths = parse_path_bounds("M0 0L10 0 M100 20A5 5 0 0 0 100 20");
+    assert_eq!(subpaths.error_offset, None);
+    assert_eq!(
+        subpaths.bounds,
+        Some(PathBounds {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 100.0,
+            max_y: 20.0
+        })
+    );
 }
 
 #[test]

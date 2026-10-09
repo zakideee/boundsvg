@@ -48,7 +48,10 @@ Core returns candidates rather than exact painted ink: a curved Path's bounds
 can contain empty space, and text/shadows are not pixel-accurate. Browser event
 helpers and React interaction check painted Path fill/stroke before selecting
 the final target. React also accounts for native canvas-stable stroke paint at
-the current pointer under SVG viewport scaling.
+the current pointer under SVG viewport scaling. Core candidates assume output
+scale one for canvas-stable strokes. A Browser-only adapter using those
+candidates cannot recover additional stroke paint introduced by host CSS
+scaling; use React interaction for that native hit-stack handling.
 
 Use IR produced by the matching engine version. Schema-34 Path output requires
 `pathGeometry`; older hand-built or saved IR must be regenerated with

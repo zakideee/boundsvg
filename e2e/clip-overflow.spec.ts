@@ -381,6 +381,13 @@ for (const fixture of [
   { name: "multiple subpaths", d: "M0 0H120V40H0Z M-50 0h20v40h-20Z", fill: "red" },
   { name: "malformed arc prefix", d: "M0 20H120A20 20 0 2 1 160 20" },
   { name: "subnormal arc and following line", d: "M0 20A1e-320 10 0 0 0 120 20V60" },
+  { name: "zero arc round cap", d: "M120 20A10 10 0 0 1 120 20", cap: "round", width: 20 },
+  {
+    name: "multiple subpaths zero arc square cap",
+    d: "M0 20H10 M120 20A10 10 0 0 1 120 20",
+    cap: "square",
+    width: 20,
+  },
   { name: "zero closed round cap", d: "M120 20Z", cap: "round", width: 20 },
   { name: "tiny round cap", d: "M120 20l1e-11 0", cap: "round", width: 20 },
   { name: "square cap", d: "M0 20H120", cap: "square", width: 20 },

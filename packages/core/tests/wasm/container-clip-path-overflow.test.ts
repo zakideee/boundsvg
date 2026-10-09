@@ -1,7 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine } from "../../src/engine.js";
 import { inspectScene } from "../../src/inspect.js";
-import { hitTest } from "../../src/ir/hit-test.js";
+import {
+  buildHitTestIndex,
+  hitTest,
+  hitTestCandidates,
+  hitTestWithIndex,
+} from "../../src/ir/hit-test.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { AnimationSpec, Transform2D, VNode } from "../../src/vnode/types.js";
 import { createWasmEngineInstance, type WasmEngineHandle } from "../../src/wasm/index.js";
@@ -111,6 +116,50 @@ describe("container clip and Path paint through WASM", () => {
   afterAll(() => {
     engine.dispose();
     rasterHandle.dispose();
+  });
+
+  it("keeps zero-length arc caps outside the layout box in every hit query", () => {
+    for (const strokeLinecap of ["round", "square"] as const) {
+      for (const pathData of ["M100 20A5 5 0 0 0 100 20", "M0 0L10 0 M100 20A5 5 0 0 0 100 20"]) {
+        const scene = createElement(
+          "Canvas",
+          { width: 300, height: 100 },
+          createElement("Box", {
+            id: "underlay",
+            position: "absolute",
+            width: 300,
+            height: 100,
+            background: "blue",
+            onClick: "underlay-click",
+          }),
+          createElement("Path", {
+            id: "path",
+            position: "absolute",
+            left: 100,
+            top: 20,
+            width: 40,
+            height: 40,
+            d: pathData,
+            fill: "none",
+            stroke: "red",
+            strokeWidth: 20,
+            strokeLinecap,
+            onClick: "path-click",
+          }),
+        );
+        const ir = engine.renderToIR(scene);
+        const index = buildHitTestIndex(ir);
+        expect(engine.hitTest(ir, 200, 40)).toBe("path");
+        expect(hitTestWithIndex(index, 200, 40)).toBe("path");
+        expect(hitTestCandidates(index, 200, 40)).toContain("path");
+        expect(ir.root.children?.find((node) => node.nodeId === "path")?.bbox).toEqual({
+          x: 100,
+          y: 20,
+          w: 40,
+          h: 40,
+        });
+      }
+    }
   });
 
   it("clips a red child to the circular parent", () => {

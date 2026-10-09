@@ -393,7 +393,10 @@ impl BoundsReader<'_> {
                     self.projection.point(arc.end)
                 };
                 PathBounds::from_points(&[self.current, end])?;
-                if self.current != end {
+                if self.current == end {
+                    // Native SVG paints round/square caps for a zero-length arc segment.
+                    self.include(PathBounds::from_points(&[self.current])?);
+                } else {
                     self.include(match self.projection {
                         ScalarProjection::Authored => arc_bounds(self.current, end, &arc)?,
                         ScalarProjection::Paint => paint_arc_bounds(self.current, end, &arc)?,
