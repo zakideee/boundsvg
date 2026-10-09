@@ -1032,12 +1032,17 @@ fn every_wire_option_matches_the_reviewed_golden_inventory() -> TestResult {
     let violations: Vec<_> = inventory
         .option_fields
         .iter()
-        .filter(|field| field.policy == OptionSerialization::Null)
+        .filter(|field| {
+            field.policy == OptionSerialization::Null
+                && !(field.source == "crates/boundsvg/src/ir/types.rs"
+                    && field.owner == "PathGeometry"
+                    && field.name == "bounds")
+        })
         .map(|field| format!("{}:{}.{}", field.source, field.owner, field.name))
         .collect();
     assert!(
         violations.is_empty(),
-        "Option::None must serialize as an absent property on every engine wire DTO:\n{}",
+        "Option::None must be omitted except the explicit empty PathGeometry.bounds output:\n{}",
         violations.join("\n")
     );
 

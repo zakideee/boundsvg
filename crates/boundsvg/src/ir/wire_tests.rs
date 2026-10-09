@@ -15,6 +15,70 @@ use crate::wire::test_support::{assert_optional_field, assert_output_round_trip}
 use serde_json::json;
 
 #[test]
+fn path_geometry_is_output_only_and_recomputed_for_every_input_presence() {
+    let fixture = json!({"type":"path", "nodeId":"path", "bbox":{"x":10.0,"y":20.0,"w":1.0,"h":1.0}, "pathData":"M-50 0h200v40h-200Z", "stroke":"red", "strokeWidth":3.006, "strokeLinecap":"square", "strokeLinejoin":"miter", "strokeMiterlimit":7.006});
+    let mut expected = None;
+    for supplied in [
+        None,
+        Some(serde_json::Value::Null),
+        Some(json!(false)),
+        Some(json!({"bounds":{"minX":9999},"isComplete":false})),
+        Some(json!("invalid")),
+    ] {
+        let mut input = fixture.clone();
+        if let Some(value) = supplied {
+            input["pathGeometry"] = value;
+        }
+        let input_node: super::wire_input::IrNodeInput =
+            serde_json::from_value(input).expect("existing Path input remains accepted");
+        let node: super::types::IrNode = input_node.into();
+        let output = serde_json::to_value(node).expect("finite canonical output");
+        let geometry = output["pathGeometry"].clone();
+        assert_eq!(
+            geometry["bounds"],
+            json!({"minX":-50.0,"minY":0.0,"maxX":150.0,"maxY":40.0})
+        );
+        assert_eq!(geometry["isComplete"], true);
+        assert_eq!(
+            geometry["strokeOutset"],
+            json!({"radius":1.505,"multiplier":7.01})
+        );
+        if let Some(previous) = &expected {
+            assert_eq!(&geometry, previous);
+        }
+        expected = Some(geometry);
+        assert_eq!(output["bbox"], fixture["bbox"]);
+    }
+}
+
+#[test]
+fn empty_and_prefix_path_metadata_have_explicit_output_meanings() {
+    for (path_data, bounds, complete) in [
+        ("", serde_json::Value::Null, true),
+        ("M50 50", serde_json::Value::Null, true),
+        (
+            "M50 50Z",
+            json!({"minX":50.0,"minY":50.0,"maxX":50.0,"maxY":50.0}),
+            true,
+        ),
+        (
+            "M0 0L10 10C20 20",
+            json!({"minX":0.0,"minY":0.0,"maxX":10.0,"maxY":10.0}),
+            false,
+        ),
+    ] {
+        let input = json!({"type":"path","nodeId":"path","bbox":{"x":0.0,"y":0.0,"w":0.0,"h":0.0},"pathData":path_data});
+        let input_node: super::wire_input::IrNodeInput =
+            serde_json::from_value(input).expect("raw Path input");
+        let node: super::types::IrNode = input_node.into();
+        let output = serde_json::to_value(node).expect("canonical output");
+        assert_eq!(output["pathGeometry"]["bounds"], bounds);
+        assert_eq!(output["pathGeometry"]["isComplete"], complete);
+        assert_eq!(output["pathGeometry"]["strokeOutset"]["radius"], 0.0);
+    }
+}
+
+#[test]
 fn animation_keyframe_keeps_directional_presence_and_round_trip() {
     let fixture = json!({"at": 0.0, "opacity": 0.0, "transform": {"scaleX": 1.0}});
     assert_optional_field::<AnimationKeyframeInput>(&fixture, "opacity", |input| {

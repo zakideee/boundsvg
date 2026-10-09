@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { inflateSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createEngineAsync, type Engine } from "../../src/engine.js";
 import { initNodeWasm } from "../../src/node.js";
@@ -7,6 +6,7 @@ import { createElement } from "../../src/vnode/create-element.js";
 import type { AnimationSpec, StrokeScaling, VNode } from "../../src/vnode/types.js";
 import { createWasmEngineInstance, type WasmEngineHandle } from "../../src/wasm/index.js";
 import { collectAnimatedRaster } from "../helpers/animation-collector.js";
+import { decodeRgbaPng } from "../helpers/rgba-png.js";
 import { assertWasmPkgAvailable } from "./test-prerequisites.js";
 
 /** Canvas dimensions shared by the stable-border raster fixtures. */
@@ -172,103 +172,6 @@ function animatedCameraScene(endScale = 1): VNode {
   });
 }
 
-function readU32(bytes: Uint8Array, offset: number): number {
-  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(offset);
-}
-
-function paeth(left: number, up: number, upperLeft: number): number {
-  const estimate = left + up - upperLeft;
-  const leftDistance = Math.abs(estimate - left);
-  const upDistance = Math.abs(estimate - up);
-  const upperLeftDistance = Math.abs(estimate - upperLeft);
-  if (leftDistance <= upDistance && leftDistance <= upperLeftDistance) {
-    return left;
-  }
-  return upDistance <= upperLeftDistance ? up : upperLeft;
-}
-
-function readRgbaPngPayload(png: Uint8Array): {
-  width: number;
-  height: number;
-  filtered: Uint8Array;
-} {
-  let offset = 8;
-  let width = 0;
-  let height = 0;
-  const idatChunks: Uint8Array[] = [];
-  while (offset < png.length) {
-    const length = readU32(png, offset);
-    const type = String.fromCharCode(...png.slice(offset + 4, offset + 8));
-    const payload = png.slice(offset + 8, offset + 8 + length);
-    if (type === "IHDR") {
-      width = readU32(payload, 0);
-      height = readU32(payload, 4);
-      expect(payload[8]).toBe(8);
-      expect(payload[9]).toBe(6);
-      expect(payload[12]).toBe(0);
-    } else if (type === "IDAT") {
-      idatChunks.push(payload);
-    } else if (type === "IEND") {
-      break;
-    }
-    offset += length + 12;
-  }
-  const compressed = Buffer.concat(idatChunks.map((chunk) => Buffer.from(chunk)));
-  return { width, height, filtered: inflateSync(compressed) };
-}
-
-function reconstructFilteredByte(
-  filter: number,
-  raw: number,
-  left: number,
-  up: number,
-  upperLeft: number,
-): number {
-  if (filter === 0) {
-    return raw;
-  }
-  if (filter === 1) {
-    return raw + left;
-  }
-  if (filter === 2) {
-    return raw + up;
-  }
-  if (filter === 3) {
-    return raw + Math.floor((left + up) / 2);
-  }
-  return raw + paeth(left, up, upperLeft);
-}
-
-function unfilterRgba(filtered: Uint8Array, width: number, height: number): Uint8Array {
-  const bytesPerPixel = 4;
-  const stride = width * bytesPerPixel;
-  const rgba = new Uint8Array(width * height * bytesPerPixel);
-  let sourceOffset = 0;
-  for (let y = 0; y < height; y += 1) {
-    const filter = filtered[sourceOffset] ?? 0;
-    expect(filter).toBeLessThanOrEqual(4);
-    sourceOffset += 1;
-    for (let x = 0; x < stride; x += 1) {
-      const raw = filtered[sourceOffset + x] ?? 0;
-      const destination = y * stride + x;
-      const left = x >= bytesPerPixel ? (rgba[destination - bytesPerPixel] ?? 0) : 0;
-      const up = y > 0 ? (rgba[destination - stride] ?? 0) : 0;
-      const upperLeft = y > 0 && x >= bytesPerPixel ? (rgba[destination - stride - 4] ?? 0) : 0;
-      const reconstructed = reconstructFilteredByte(filter, raw, left, up, upperLeft);
-      rgba[destination] = reconstructed & 0xff;
-    }
-    sourceOffset += stride;
-  }
-  return rgba;
-}
-
-function decodeRgbaPng(png: Uint8Array): { width: number; height: number; rgba: Uint8Array } {
-  expect([...png.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
-  const { width, height, filtered } = readRgbaPngPayload(png);
-  const rgba = unfilterRgba(filtered, width, height);
-  return { width, height, rgba };
-}
-
 function alphaEnergyAtColumn(png: Uint8Array, x: number): number {
   const { width, height, rgba } = decodeRgbaPng(png);
   expect(x).toBeGreaterThanOrEqual(0);
@@ -343,11 +246,18 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
 
   it("pins the default (transform-scaled) Path IR, SVG, and raster bytes", () => {
     const scene = defaultPathStrokeScene();
-    expect(sha256(JSON.stringify(engine.renderToIR(scene)))).toBe(
-      "499348200d6ee4766536226a8faf4912ad481f92d0863674321230802e08763e",
+    const ir = engine.renderToIR(scene);
+    // The added derived metadata is the only IR change; paint hashes stay pinned.
+    expect(
+      sha256(
+        JSON.stringify(ir, (key, value: unknown) => (key === "pathGeometry" ? undefined : value)),
+      ),
+    ).toBe("499348200d6ee4766536226a8faf4912ad481f92d0863674321230802e08763e");
+    expect(sha256(JSON.stringify(ir))).toBe(
+      "50995ab151d263abdd51cd62008c360a8e68a3cc4f5c68c859e9e07154456f23",
     );
     expect(sha256(engine.renderToSvg(scene))).toBe(
-      "1294132c71639e75137912b10e4afb16774941dea23a75a0b1654be8855e6dc1",
+      "3be4eef508dd1084fe577be3fdd9aa5b24c30771ce8ae98eff04dbc702c42a75",
     );
     expect(sha256(engine.renderToPng(scene))).toBe(
       "e47f5e4a952eec010cb456817db464a81beca8f7c8b566776d03da6b765883fe",

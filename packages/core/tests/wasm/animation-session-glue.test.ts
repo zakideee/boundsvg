@@ -134,7 +134,7 @@ for (const target of ["node", "web"] as const) {
     }
 
     it("exports the four-argument scalar ABI and rejects coerced open inputs", () => {
-      expect(module.wasm_schema_version()).toBe(33);
+      expect(module.wasm_schema_version()).toBe(34);
       expect(engine.push_animated_raster_frame.length).toBe(4);
       const session = open();
       try {

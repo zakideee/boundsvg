@@ -5,5 +5,5 @@
   "validatorAnnotations": false,
   "validatorInlineRefs": 5,
   "validatorMessages": false,
-  "normalizationVersion": 1
+  "normalizationVersion": 2
 }

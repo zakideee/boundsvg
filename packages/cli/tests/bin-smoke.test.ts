@@ -1,21 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-/**
- * Regression: the distributed `boundsvg` bin exited 0 with no output for
- * every invocation. tsup code-splitting moved the "am I being executed
- * directly?" check into a shared chunk, so its `import.meta.url` never
- * matched `process.argv[1]` and `runCli()` was never called. These tests
- * spawn the BUILT bin — a unit test through `runCli()` cannot catch this.
- */
+/** Built executable used to check process dispatch and complete output payloads. */
 const binPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/bin.js");
+/** Fixture font supplied explicitly so rendering does not depend on host fonts. */
 const testFontPath = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../../fixtures/fonts/NotoSansJP-Regular.subset.ttf",
 );
+/** Local runs may lack a build; CI must always exercise the built executable. */
 const builtBinMissing = !existsSync(binPath);
 
 if (process.env.CI !== undefined && builtBinMissing) {
@@ -25,15 +22,110 @@ if (process.env.CI !== undefined && builtBinMissing) {
 describe.skipIf(builtBinMissing)("built bin smoke", () => {
   it("prints usage and exits 0 for --help", () => {
     // Usage goes to stderr (stdout is reserved for export payloads).
-    const result = spawnSync(process.execPath, [binPath, "--help"], {
+    const commandResult = spawnSync(process.execPath, [binPath, "--help"], {
       encoding: "utf8",
     });
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("Usage: boundsvg");
+    expect(commandResult.status).toBe(0);
+    expect(commandResult.stdout).toBe("");
+    expect(commandResult.stderr.match(/Usage: boundsvg <command>/g)).toHaveLength(1);
+  });
+
+  it("prints convert help once from the real executable path", () => {
+    const commandResult = spawnSync(process.execPath, [binPath, "convert", "--help"], {
+      encoding: "utf8",
+    });
+    expect(commandResult.status).toBe(0);
+    expect(commandResult.stdout).toBe("");
+    expect(commandResult.stderr.match(/Usage: boundsvg convert/g)).toHaveLength(1);
+  });
+
+  it("converts and exports one payload per invocation", () => {
+    const temporaryDirectory = mkdtempSync(join(tmpdir(), "boundsvg-bin-dispatch-"));
+    try {
+      const inputPath = join(temporaryDirectory, "square.svg");
+      writeFileSync(
+        inputPath,
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>',
+      );
+      const converted = spawnSync(
+        process.execPath,
+        [binPath, "convert", "-i", inputPath, "-o", "-", "--default-font", "NotoSansJP"],
+        { encoding: "utf8" },
+      );
+      expect(converted.status).toBe(0);
+      expect(converted.stderr).toBe("");
+      expect(converted.stdout.match(/export default function Square\(\)/g)).toHaveLength(1);
+      const exported = spawnSync(
+        process.execPath,
+        [
+          binPath,
+          "export",
+          "-i",
+          inputPath,
+          "-o",
+          "-",
+          "--format",
+          "svg",
+          "--default-font",
+          "NotoSansJP",
+          "--font",
+          `NotoSansJP:400:normal:${testFontPath}`,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(exported.status).toBe(0);
+      expect(exported.stderr).toBe("");
+      expect(exported.stdout.match(/<svg xmlns=/g)).toHaveLength(1);
+      expect(exported.stdout).toContain('fill="red"');
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["index", "animation"])("imports %s without dispatching CLI-like arguments", (entry) => {
+    const libraryPath = resolve(dirname(binPath), `${entry}.js`);
+    const imported = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `process.argv = [process.execPath, ${JSON.stringify(libraryPath)}, '--help']; await import(${JSON.stringify(libraryPath)});`,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(imported.status).toBe(0);
+    expect(imported.stdout).toBe("");
+    expect(imported.stderr).toBe("");
+  });
+
+  it("consumes stdin once and writes one conversion payload", () => {
+    const converted = spawnSync(
+      process.execPath,
+      [
+        binPath,
+        "convert",
+        "-i",
+        "-",
+        "-o",
+        "-",
+        "--default-font",
+        "NotoSansJP",
+        "--name",
+        "Square",
+      ],
+      {
+        encoding: "utf8",
+        input:
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>',
+      },
+    );
+    expect(converted.status).toBe(0);
+    expect(converted.stderr).toBe("");
+    expect(converted.stdout.match(/export default function Square\(\)/g)).toHaveLength(1);
   });
 
   it("fails loudly for a missing input file", () => {
-    const result = spawnSync(
+    const commandResult = spawnSync(
       process.execPath,
       [
         binPath,
@@ -48,8 +140,10 @@ describe.skipIf(builtBinMissing)("built bin smoke", () => {
       { encoding: "utf8" },
     );
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Cannot read file "/nonexistent/scene.json"');
+    expect(commandResult.status).toBe(1);
+    expect(
+      commandResult.stderr.match(/Cannot read file "\/nonexistent\/scene.json"/g),
+    ).toHaveLength(1);
   });
 });
 

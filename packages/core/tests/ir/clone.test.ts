@@ -92,6 +92,7 @@ const IMAGE_FIELDS = {
   on: true,
 } satisfies Record<keyof IRImageNode, true>;
 
+/** Canonical Path fields whose nested values must be copied without mutable aliases. */
 const PATH_FIELDS = {
   type: true,
   nodeId: true,
@@ -105,6 +106,7 @@ const PATH_FIELDS = {
   strokeDasharray: true,
   strokeMiterlimit: true,
   pathData: true,
+  pathGeometry: true,
   strokeScaling: true,
   on: true,
 } satisfies Record<keyof IRPathNode, true>;
@@ -393,6 +395,7 @@ const imageNode: IRImageNode = {
   on: handlers,
 };
 
+/** Complete schema-34 Path fixture with separate layout and paint geometry. */
 const pathNode: IRPathNode = {
   type: "path",
   nodeId: "path",
@@ -406,6 +409,11 @@ const pathNode: IRPathNode = {
   strokeDasharray: "2 1",
   strokeMiterlimit: 4,
   pathData: "M0 0H10",
+  pathGeometry: {
+    bounds: { minX: 0, minY: 0, maxX: 10, maxY: 0 },
+    strokeOutset: { radius: 1, multiplier: 1 },
+    isComplete: true,
+  },
   strokeScaling: "canvas",
   on: handlers,
 };

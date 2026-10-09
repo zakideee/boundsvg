@@ -109,9 +109,18 @@ pub fn round_number(value: f64, precision: u32) -> Result<f64, EngineError> {
             node_id: None,
         });
     }
+    Ok(round_finite_number(value, precision))
+}
+
+/// Round an already finite value using the emitter's decimal rules.
+///
+/// Callers deriving metadata use the same rounding as SVG attributes without
+/// moving non-finite emission errors into an earlier pipeline stage. An
+/// overflowing decimal intermediate retains the original finite value.
+pub(crate) fn round_finite_number(value: f64, precision: u32) -> f64 {
     let factor = 10f64.powi(i32::try_from(precision).unwrap_or(i32::MAX));
     let rounded = js_math_round(value * factor) / factor;
-    Ok(if rounded.is_finite() { rounded } else { value })
+    if rounded.is_finite() { rounded } else { value }
 }
 
 /// Mirror of TS `formatNumber(n, precision)`.

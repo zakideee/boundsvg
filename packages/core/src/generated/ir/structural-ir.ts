@@ -96,6 +96,7 @@ export type IrNode1 =
     }
   | {
       pathData: string;
+      pathGeometry: PathGeometry;
       fill?: string;
       stroke?: string;
       strokeWidth?: number;
@@ -594,6 +595,58 @@ export interface TextDecorationPaintPath {
   segmentCount: number;
   pathDistanceStartPx?: number;
   pathDistanceEndPx?: number;
+}
+/**
+ * Canonical derived output, always present even when bounds are null.
+ */
+export interface PathGeometry {
+  /**
+   * Finite extrema of completed paint segments, or null for no segments.
+   */
+  bounds: PathBounds | null;
+  strokeOutset: PathStrokeOutset;
+  /**
+   * Whether the authored projection consumed every command. False retains
+   * completed authored/native paint bounds after a lexical, argument, or
+   * numeric failure; it does not change the renderer's failure behavior.
+   */
+  isComplete: boolean;
+}
+/**
+ * Finite geometry extrema in the authored Path coordinate system.
+ *
+ * Extrema avoid overflowing a width subtraction for widely separated finite points.
+ */
+export interface PathBounds {
+  /**
+   * Leftmost conservative geometry coordinate.
+   */
+  minX: number;
+  /**
+   * Topmost conservative geometry coordinate.
+   */
+  minY: number;
+  /**
+   * Rightmost conservative geometry coordinate.
+   */
+  maxX: number;
+  /**
+   * Bottommost conservative geometry coordinate.
+   */
+  maxY: number;
+}
+/**
+ * Stroke expansion used in local space, or world space for canvas stroke.
+ */
+export interface PathStrokeOutset {
+  /**
+   * Nonnegative finite half-width, including SVG decimal rounding.
+   */
+  radius: number;
+  /**
+   * At least one; encloses square caps and miter joins.
+   */
+  multiplier: number;
 }
 /**
  * One baked part of a shape IR node. Mirrors TS `ShapePathPart`.

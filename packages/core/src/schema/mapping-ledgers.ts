@@ -935,7 +935,8 @@ export const SCENE_TO_WASM_MAPPING = {
   },
 } as const satisfies SceneWasmMappingLedger;
 
-type RustIrMappingKind = "wire" | "warning-rehydration";
+/** Distinguish Rust-derived output metadata from authored wire fields and warning objects. */
+type RustIrMappingKind = "derived-output" | "wire" | "warning-rehydration";
 
 /** Exhaustive public shape of the Rust IR output after warning rehydration. */
 export const RUST_IR_TO_PUBLIC_IR_MAPPING = {
@@ -1027,6 +1028,7 @@ export const RUST_IR_TO_PUBLIC_IR_MAPPING = {
     nodeId: "wire",
     bbox: "wire",
     pathData: "wire",
+    pathGeometry: "derived-output",
     fill: "wire",
     stroke: "wire",
     strokeWidth: "wire",

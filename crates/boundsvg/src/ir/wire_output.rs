@@ -5,8 +5,8 @@ use serde::{Serialize, Serializer};
 use super::types::{
     AnimationEasing, AnimationIterations, AnimationKeyframe, AnimationSpec, AnimationSpring,
     AnimationSteps, AnimationTransform2D, BBox, BorderRadius, BoxShadow, Gradient, HandlersRef,
-    IrFillRule, IrNode, IrNodeKind, IrTextAlign, ShapePartBounds, ShapePartPaint, ShapePathPart,
-    StrokeLinecap, StrokeLinejoin, StrokeScaling, TextOutlinePath, TextPathMetadata,
+    IrFillRule, IrNode, IrNodeKind, IrTextAlign, PathGeometry, ShapePartBounds, ShapePartPaint,
+    ShapePathPart, StrokeLinecap, StrokeLinejoin, StrokeScaling, TextOutlinePath, TextPathMetadata,
     TextShadowLayer, TextStrokeLayer, TextUnitAnimation, TextUnitAnimationOrder,
     TextUnitAnimationSample,
 };
@@ -489,6 +489,8 @@ pub(crate) enum IrNodeKindOutput<'a> {
     /// SVG path element.
     Path {
         path_data: &'a str,
+        /// Canonical derived output, always present even when bounds are null.
+        path_geometry: &'a PathGeometry,
         #[serde(skip_serializing_if = "Option::is_none")]
         fill: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -733,6 +735,7 @@ impl<'a> From<&'a AnimationEasing> for AnimationEasingOutput<'a> {
 }
 
 impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
+    /// Serialize canonical internal nodes with required derived Path geometry.
     fn from(input: &'a IrNodeKind) -> Self {
         match input {
             IrNodeKind::Group {
@@ -874,6 +877,7 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
             },
             IrNodeKind::Path {
                 path_data,
+                path_geometry,
                 fill,
                 stroke,
                 stroke_width,
@@ -886,6 +890,7 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
                 on,
             } => Self::Path {
                 path_data: path_data.as_str(),
+                path_geometry,
                 fill: fill.as_ref().map(std::string::String::as_str),
                 stroke: stroke.as_ref().map(std::string::String::as_str),
                 stroke_width: stroke_width.as_ref(),

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { hitTest } from "../../src/ir/hit-test.js";
+import {
+  buildHitTestIndex,
+  hitTest,
+  hitTestCandidates,
+  hitTestWithIndex,
+} from "../../src/ir/hit-test.js";
 import type { IR, IRNode } from "../../src/ir/types.js";
 
 /**
@@ -95,6 +100,53 @@ describe("hitTest with transforms", () => {
 });
 
 describe("hitTest with clipping", () => {
+  for (const entryCount of [15, 16, 17]) {
+    for (const edge of ["left", "right", "top", "bottom"] as const) {
+      it(`rejects a fully clipped adjacent node at the ${edge} edge with ${entryCount} entries`, () => {
+        const filler: IRNode[] = Array.from({ length: entryCount - 2 }, (_, index) => ({
+          type: "rect",
+          nodeId: `filler-${index}`,
+          bbox: { x: 200 + index, y: 80, w: 1, h: 1 },
+        }));
+        const clip = { x: 20, y: 10, w: 100, h: 80 };
+        const adjacent = {
+          ...clip,
+          x: edge === "left" ? -80 : edge === "right" ? 120 : 20,
+          y: edge === "top" ? -70 : edge === "bottom" ? 90 : 10,
+        };
+        const tree = ir(
+          {
+            type: "group",
+            nodeId: "root",
+            bbox: { x: 0, y: 0, w: 300, h: 100 },
+            children: [
+              ...filler,
+              {
+                type: "group",
+                nodeId: "clipper",
+                bbox: clip,
+                clipPath: clip,
+                children: [
+                  { type: "rect", nodeId: "visible", bbox: clip },
+                  { type: "rect", nodeId: "clipped", bbox: adjacent },
+                ],
+              },
+            ],
+          },
+          [...filler.map((node) => node.nodeId), "visible", "clipped"],
+        );
+        const point = {
+          x: edge === "left" ? 20 : edge === "right" ? 120 : 70,
+          y: edge === "top" ? 10 : edge === "bottom" ? 90 : 50,
+        };
+        const index = buildHitTestIndex(tree);
+        expect(hitTest(tree, point.x, point.y)).toBe("visible");
+        expect(hitTestWithIndex(index, point.x, point.y)).toBe("visible");
+        expect(hitTestCandidates(index, point.x, point.y)).toEqual(["visible"]);
+      });
+    }
+  }
+
   it("does not hit content outside an ancestor clip", () => {
     const root: IRNode = {
       type: "group",
@@ -109,6 +161,12 @@ describe("hitTest with clipping", () => {
           children: [
             {
               type: "path",
+              pathData: "M0 0H120V30H0Z",
+              pathGeometry: {
+                bounds: { minX: 0, minY: 0, maxX: 120, maxY: 30 },
+                strokeOutset: { radius: 0, multiplier: 1 },
+                isComplete: true,
+              },
               nodeId: "wide-path",
               bbox: { x: 0, y: 0, w: 120, h: 30 },
             },
@@ -135,7 +193,19 @@ describe("hitTest with clipping", () => {
           bbox: { x: 0, y: 0, w: 50, h: 30 },
           clipPath: { x: 0, y: 0, w: 50, h: 30 },
           transform: { translateX: 100 },
-          children: [{ type: "path", nodeId: "clipped", bbox: { x: 0, y: 0, w: 120, h: 30 } }],
+          children: [
+            {
+              type: "path",
+              pathData: "M0 0H120V30H0Z",
+              pathGeometry: {
+                bounds: { minX: 0, minY: 0, maxX: 120, maxY: 30 },
+                strokeOutset: { radius: 0, multiplier: 1 },
+                isComplete: true,
+              },
+              nodeId: "clipped",
+              bbox: { x: 0, y: 0, w: 120, h: 30 },
+            },
+          ],
         },
       ],
     };
@@ -164,7 +234,19 @@ describe("hitTest with clipping", () => {
           bbox: { x: 0, y: 0, w: 50, h: 30 },
           clipPath: { x: 0, y: 0, w: 50, h: 30 },
           transform: { translateX: 100 },
-          children: [{ type: "path", nodeId: "indexed-path", bbox: { x: 0, y: 0, w: 120, h: 30 } }],
+          children: [
+            {
+              type: "path",
+              pathData: "M0 0H120V30H0Z",
+              pathGeometry: {
+                bounds: { minX: 0, minY: 0, maxX: 120, maxY: 30 },
+                strokeOutset: { radius: 0, multiplier: 1 },
+                isComplete: true,
+              },
+              nodeId: "indexed-path",
+              bbox: { x: 0, y: 0, w: 120, h: 30 },
+            },
+          ],
         },
       ],
     };

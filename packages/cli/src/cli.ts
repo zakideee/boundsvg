@@ -4,18 +4,25 @@
 
 import type { CodegenFontDef, CodegenRendererMode, DynamicTextSpec } from "@boundsvg/core/codegen";
 
+/** Weight assigned to font sources that omit a weight. */
 export const DEFAULT_FONT_WEIGHT = 400;
+/** Raster scale used when png-hook has no explicit scale. */
 export const DEFAULT_PNG_SCALE = 2;
+/** Smallest accepted png-hook scale. */
 export const PNG_SCALE_MIN = 1;
+/** Largest accepted png-hook scale. */
 export const PNG_SCALE_MAX = 4;
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
+/** Output representation selected by the convert command. */
 export type ConvertFormat = "bound-component" | "scene";
+/** Input representation selected explicitly or inferred from the filename. */
 export type ConvertInputFormat = "svg" | "scene";
 
+/** Resolved conversion settings, including file versus stdin/stdout routing. */
 export type CliOptions = {
   input: string;
   output: string;
@@ -56,6 +63,7 @@ function parseRendererArg(value: string, fallback: CodegenRendererMode): Codegen
   return fallback;
 }
 
+/** Select a supported wrapping mode or retain the caller's fallback. */
 export function parseWrapArg(
   value: string,
   fallback: "none" | "word" | "char",
@@ -66,6 +74,7 @@ export function parseWrapArg(
   return fallback;
 }
 
+/** Select a supported fitting mode or retain the caller's fallback. */
 export function parseFitArg(
   value: string,
   fallback: "none" | "shrink" | "grow",
@@ -76,6 +85,7 @@ export function parseFitArg(
   return fallback;
 }
 
+/** Select merged text paths or per-glyph paths, retaining the fallback for other values. */
 export function parseTextPathModeArg(
   value: string,
   fallback: "merged" | "glyphs",
@@ -86,6 +96,7 @@ export function parseTextPathModeArg(
   return fallback;
 }
 
+/** Parse a base-10 integer prefix within the png-hook scale range, otherwise retaining the fallback. */
 export function parsePngScaleArg(input: string, fallback: number): number {
   const parsed = parseInt(input, 10);
   if (Number.isFinite(parsed) && parsed >= PNG_SCALE_MIN && parsed <= PNG_SCALE_MAX) {
@@ -94,6 +105,7 @@ export function parsePngScaleArg(input: string, fallback: number): number {
   return fallback;
 }
 
+/** Resolve alias:weight:style:path or a path using the supplied default font alias. */
 export function parseFontSourceArg(sourceStr: string, defaultFont: string): CodegenFontDef {
   // Parse "alias:weight:style:path" or just treat as path
   const parts = sourceStr.split(":");
@@ -114,6 +126,7 @@ export function parseFontSourceArg(sourceStr: string, defaultFont: string): Code
   };
 }
 
+/** Convert filename words to a component name, discarding non-alphanumeric separators. */
 export function toPascalCase(str: string): string {
   return str
     .replace(/[^a-zA-Z0-9]+/g, " ")
@@ -498,11 +511,13 @@ function resolveStdinConvert(
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Default diagnostic sink for argument errors and convert help. */
 const defaultWriteStderr: StderrWriter = (message) => process.stderr.write(message);
 
 /**
  * Parse convert subcommand arguments.
  * `args` should already have `node`, script path, and `convert` subcommand stripped.
+ * Help and option validation failures write to the diagnostic sink and return null.
  */
 export function parseConvertArgs(
   args: string[],
@@ -567,12 +582,6 @@ export function parseConvertArgs(
     },
     allInputs: state.inputs,
   };
-}
-
-/** @deprecated Use parseConvertArgs instead. Kept for backward compatibility. */
-export function parseArgs(argv: string[]): CliOptions | null {
-  const parsed = parseConvertArgs(argv.slice(2));
-  return parsed ? parsed.options : null;
 }
 
 function printConvertUsage(writeStderr: StderrWriter = defaultWriteStderr): void {

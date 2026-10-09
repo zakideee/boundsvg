@@ -43,6 +43,8 @@ use crate::layout::types::{
 /// Returns `EngineError::Validation` for unsafe nested SVG content, shape
 /// reference/part-id violations, and incomplete text layouts (matching the
 /// TS `FatalError` paths).
+/// Returns structured text-animation unit or fragment budget errors when
+/// the scene exceeds the supported limits.
 pub fn build_ir<S: std::hash::BuildHasher>(
     input_root: &LayoutNodeInput,
     outputs: &HashMap<String, LayoutNodeOutput, S>,
@@ -319,7 +321,12 @@ fn build_node<S: std::hash::BuildHasher>(
     } else {
         None
     };
-    let mut clip_border_radius: Option<BorderRadius> = None;
+    let mut clip_border_radius =
+        if clip_path.is_some() && matches!(input.node_type.as_str(), "box" | "flex" | "grid") {
+            border_radius
+        } else {
+            None
+        };
 
     // Image borderRadius → rounded clipPath
     if input.node_type == "image" {
@@ -1126,6 +1133,7 @@ fn build_image_child(
 // Path child builder
 // ---------------------------------------------------------------------------
 
+/// Preserve Path layout dimensions while deriving independent conservative paint geometry.
 fn build_path_child(
     visual: &VisualInput,
     node_id: &str,
@@ -1138,6 +1146,15 @@ fn build_path_child(
         node_id: node_id.to_string(),
         bbox,
         kind: IrNodeKind::Path {
+            path_geometry: super::path_geometry::derive_path_geometry(
+                visual.d.as_deref().unwrap_or_default(),
+                visual.stroke.as_deref(),
+                visual.stroke_width,
+                visual.stroke_scaling,
+                parse_linecap(visual.stroke_linecap.as_deref()),
+                parse_linejoin(visual.stroke_linejoin.as_deref()),
+                visual.stroke_miterlimit,
+            ),
             path_data: visual.d.clone().unwrap_or_default(),
             fill: visual.fill.clone(),
             stroke: visual.stroke.clone(),

@@ -8,12 +8,12 @@ const shared = {
   sourcemap: false,
 };
 
-// The shebang belongs on the executable entry only; the library entries are
-// imported and must not start with one.
+// Only bin.ts executes commands and receives a shebang. Root and animation
+// entries remain importable libraries without command execution.
 export default defineConfig([
   {
     ...shared,
-    entry: ["src/index.ts", "src/index-convert.ts", "src/animation.ts"],
+    entry: ["src/index.ts", "src/animation.ts"],
     clean: true,
   },
   {

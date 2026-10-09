@@ -284,7 +284,9 @@ describe("generated directional IR schemas", () => {
     );
     expect(schemaAllowsNull(properties(outputText, "output text").fontStyle)).toBe(false);
     expect(schemaAllowsNull(properties(inputText, "input text").fontStyle)).toBe(true);
-    expect(schemaKeywordInventory(outputSchema)).toEqual({ formats: 0, nullable: 0 });
+    expect(schemaKeywordInventory(outputSchema)).toEqual({ formats: 0, nullable: 1 });
+    const pathGeometry = (outputSchema as { $defs: Record<string, unknown> }).$defs.PathGeometry;
+    expect(schemaAllowsNull(properties(pathGeometry, "PathGeometry").bounds)).toBe(true);
     expect(schemaKeywordInventory(inputSchema).nullable).toBeGreaterThan(0);
   });
 
@@ -402,7 +404,7 @@ describe("generated directional IR schemas", () => {
     visit(sourceFile);
 
     expect(sourceFile.parseDiagnostics).toEqual([]);
-    expect(knownFieldCount).toBe(320);
+    expect(knownFieldCount).toBe(330);
     expect(forbiddenFields).toEqual([]);
   });
 

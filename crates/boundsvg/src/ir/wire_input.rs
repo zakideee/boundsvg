@@ -837,6 +837,7 @@ impl From<AnimationEasingInput> for AnimationEasing {
 }
 
 impl From<IrNodeKindInput> for IrNodeKind {
+    /// Recompute output-only Path geometry from authored fields, ignoring any supplied metadata.
     fn from(input: IrNodeKindInput) -> Self {
         match input {
             IrNodeKindInput::Group {
@@ -976,6 +977,15 @@ impl From<IrNodeKindInput> for IrNodeKind {
                 stroke_miterlimit,
                 on,
             } => Self::Path {
+                path_geometry: super::path_geometry::derive_path_geometry(
+                    &path_data,
+                    stroke.as_deref(),
+                    stroke_width,
+                    stroke_scaling,
+                    stroke_linecap,
+                    stroke_linejoin,
+                    stroke_miterlimit,
+                ),
                 path_data,
                 fill,
                 stroke,

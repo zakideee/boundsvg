@@ -13,7 +13,7 @@ npm install @boundsvg/cli
 ```bash
 # Convert an SVG file to a boundsvg React component (.tsx)
 # --default-font is required for SVG input: the analyzer needs an alias to fall back to
-boundsvg convert input.svg -o OutputComponent.tsx --default-font Inter
+boundsvg convert --input input.svg -o OutputComponent.tsx --default-font Inter
 
 # Export an SVG to PNG using the WASM engine
 # --format png is required here: only .webp, .gif and .mp4 output paths infer their format
@@ -50,6 +50,28 @@ Use `inspect` before publishing generated assets, `export --report` in CI, and `
 | `doctor`  | Check local WASM, font configuration, and ffmpeg availability for MP4                                                          |
 
 Run `boundsvg <command> --help` for detailed options.
+
+## Migrating the convert command
+
+The `boundsvg-convert` executable has been removed. Replace it with the `convert`
+subcommand; the conversion options remain the same:
+
+```bash
+# Before
+boundsvg-convert --input card.svg --output Card.tsx --default-font Inter
+
+# After
+boundsvg convert --input card.svg --output Card.tsx --default-font Inter
+```
+
+`boundsvg-convert` is no longer installed after upgrading; use `boundsvg convert`
+with the same arguments. With npm,
+`npm exec --package=@boundsvg/cli -- boundsvg convert --help` selects this package
+and runs the standard command.
+
+The executable runs each command once, including when Node is given the real
+`dist/bin.js` path. Importing `@boundsvg/cli` or `@boundsvg/cli/animation` does
+not run the CLI; library callers invoke the exported functions explicitly.
 
 ## SVG analyzer limitations
 

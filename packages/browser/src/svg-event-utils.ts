@@ -26,7 +26,9 @@ export function translateSvgCoords(
  *
  * Finds the `<path>` element inside an `<svg data-boundsvg-node-id="...">` wrapper
  * within the given container. Returns true (bbox fallback) when the element
- * or API is unavailable.
+ * or geometry API is unavailable. Fill and stroke must actually be painted.
+ * Mounted zero-sized viewports also require a native hit at the current point,
+ * preserving browsers' differing treatment of visible overflow there.
  */
 export function verifyPathGeometry(
   container: Element,
@@ -64,9 +66,32 @@ export function verifyPathGeometry(
   point.x = clientX;
   point.y = clientY;
   const localPoint = point.matrixTransform(ctm.inverse());
+  if (!Number.isFinite(localPoint.x) || !Number.isFinite(localPoint.y)) {
+    return false;
+  }
+
+  if (
+    wrapper.isConnected &&
+    (wrapper.width.baseVal.value === 0 || wrapper.height.baseVal.value === 0)
+  ) {
+    const root = container.getRootNode() as Document | ShadowRoot;
+    const hitRoot = typeof root.elementsFromPoint === "function" ? root : container.ownerDocument;
+    if (
+      typeof hitRoot.elementsFromPoint === "function" &&
+      !hitRoot.elementsFromPoint(clientX, clientY).includes(pathEl)
+    ) {
+      return false;
+    }
+  }
 
   const domPoint = new DOMPoint(localPoint.x, localPoint.y);
-  return pathEl.isPointInFill(domPoint) || pathEl.isPointInStroke(domPoint);
+  const paint = container.ownerDocument.defaultView?.getComputedStyle(pathEl);
+  return (
+    (paint?.fill !== "none" && pathEl.isPointInFill(domPoint)) ||
+    (paint?.stroke !== "none" &&
+      typeof pathEl.isPointInStroke === "function" &&
+      pathEl.isPointInStroke(domPoint))
+  );
 }
 
 /**

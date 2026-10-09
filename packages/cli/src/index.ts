@@ -1,10 +1,6 @@
-// ---------------------------------------------------------------------------
-// boundsvg CLI — main entry with subcommand dispatch
-// ---------------------------------------------------------------------------
+/** CLI command dispatch and injectable I/O; importing this module does not run a command. */
 
 import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { openAnimatedRasterSink } from "./animation-io.js";
 import { runConvert } from "./convert.js";
 import { runDoctor } from "./doctor.js";
@@ -15,6 +11,7 @@ import type { CliIo } from "./types.js";
 export { convertSceneToComponent } from "./convert.js";
 export type { AnimatedRasterCliTarget, CliIo, OpenAnimatedRasterSink } from "./types.js";
 
+/** Bind command I/O to this process without performing reads, writes, or dispatch. */
 function createDefaultIo(): CliIo {
   return {
     openAnimatedRasterSink,
@@ -69,6 +66,7 @@ function createDefaultIo(): CliIo {
   };
 }
 
+/** Write main usage to stderr, leaving stdout available for command payloads. */
 function printMainUsage(io: CliIo): void {
   io.writeStderr(`
 Usage: boundsvg <command> [options]
@@ -87,7 +85,11 @@ Run "boundsvg <command> --help" for more information on a command.
 `);
 }
 
-/** Run the selected CLI command with the supplied IO overrides and return its exit code. */
+/**
+ * Run the command in `argv` with supplied I/O overrides, returning its exit code.
+ * Async commands return a Promise; the executable owns process exit and fatal rejection handling.
+ * @throws When an I/O override or command propagates an unhandled synchronous error.
+ */
 export function runCli(overrides: Partial<CliIo> = {}): number | Promise<number> {
   const io: CliIo = { ...createDefaultIo(), ...overrides };
   const args = io.argv.slice(2);
@@ -113,31 +115,5 @@ export function runCli(overrides: Partial<CliIo> = {}): number | Promise<number>
       io.writeStderr(`Unknown command: ${subcommand}\n`);
       printMainUsage(io);
       return 1;
-  }
-}
-
-function isDirectExecution(): boolean {
-  const argvPath = process.argv[1];
-  if (!argvPath) {
-    return false;
-  }
-  return resolve(argvPath) === fileURLToPath(import.meta.url);
-}
-
-if (isDirectExecution()) {
-  const result = runCli();
-  if (result instanceof Promise) {
-    result
-      .then((exitCode) => {
-        if (exitCode !== 0) {
-          process.exit(exitCode);
-        }
-      })
-      .catch((err) => {
-        process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
-        process.exit(1);
-      });
-  } else if (result !== 0) {
-    process.exit(result);
   }
 }

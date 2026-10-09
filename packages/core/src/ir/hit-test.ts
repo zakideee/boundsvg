@@ -1,217 +1,189 @@
 import {
   type AffineMatrix,
-  applyAffineMatrixToPoint,
+  applyInverseAffineMatrixToPoint,
   createIdentityAffineMatrix,
   createResolvedTransformMatrix,
   multiplyAffineMatrices,
 } from "../transform.js";
-import { buildSpatialIndex, type SpatialIndex } from "./spatial-index.js";
-import type { IR, IRNode } from "./types.js";
+import {
+  acceptsHitClips,
+  bboxHitBounds,
+  type HitBounds,
+  type HitClip,
+  intersectHitBounds,
+  pathWorldHitBounds,
+  pointInHitBBox,
+  worldHitBounds,
+} from "./hit-geometry.js";
+import { buildFilteredSpatialIndex, type SpatialIndex } from "./spatial-index.js";
+import type { BBox, IR, IRNode } from "./types.js";
+
+/** One candidate keeps its clip ownership separate from ordinary inserted boxes. */
+type HitEntry = {
+  nodeId: string;
+  bbox: BBox;
+  drawIndex: number;
+  accepts: (x: number, y: number) => boolean;
+};
+
+/** Shared world transform and clip chain while walking the IR once. */
+type HitContext = { matrix: AffineMatrix; clip: HitClip | null; visible: HitBounds | null };
 
 /**
- * Hit test: find the topmost semantic draw-order node at coordinates (x, y).
- *
- * Uses spatial index (Quadtree) for O(log N) performance when the IR
- * has enough nodes. Falls back to O(N) drawOrder scan for small trees.
- *
- * Coordinates are canvas (world) space: node and ancestor `transform`s are
- * applied to each bbox, and regions outside an ancestor `clipPath` never
- * hit. Rotated nodes and clips are approximated by their world-space
- * axis-aligned bounds; rounded clip corners are likewise treated as their
- * enclosing rectangle. This matches the bbox-level precision of this API.
- *
- * Skips internal background and border nodes. Semantic draw-order nodes,
- * including interactive groups, remain hittable.
- * Returns the nodeId of the first hit, or null if no hit.
+ * Find the topmost semantic candidate in canvas coordinates. Path candidates
+ * use Rust paint bounds independently of their layout frames. Explicit clips,
+ * including rounded corners, apply to their owner and descendants in clip
+ * coordinates. Path fill/stroke holes still require native geometry refinement.
+ * Trees with at least 16 draw-order entries use a spatial index.
+ * @throws {FatalError} VALIDATION for Path output without schema-34 geometry.
  */
 export function hitTest(ir: IR, x: number, y: number): string | null {
-  const nodeLookup = new Map<string, WorldBBox>();
-  collectWorldBboxes(ir.root, nodeLookup, { matrix: createIdentityAffineMatrix(), clip: null });
-
-  // Use spatial index for larger trees (threshold: 16 draw order entries)
+  const entries = collectHitEntries(ir);
   if (ir.drawOrder.length >= 16) {
-    const index = buildSpatialIndex(
-      { width: ir.width, height: ir.height },
-      ir.drawOrder,
-      nodeLookup,
-    );
-    return index.queryTopmost(x, y);
+    return buildFilteredSpatialIndex(
+      { x: 0, y: 0, w: ir.width, h: ir.height },
+      entries,
+    ).queryTopmost(x, y);
   }
-
-  // O(N) fallback for small trees
-  return hitTestLinear(ir, { x, y }, nodeLookup);
+  for (let entryIndex = entries.length - 1; entryIndex >= 0; entryIndex--) {
+    const entry = entries[entryIndex];
+    if (entry && pointInHitBBox({ x, y }, entry.bbox) && entry.accepts(x, y)) {
+      return entry.nodeId;
+    }
+  }
+  return null;
 }
 
-/**
- * Hit test with a pre-built spatial index.
- * Use this when performing multiple hit tests on the same IR to avoid
- * rebuilding the index each time.
- */
+/** Query a prebuilt hit index using the same clip gates as a linear hit test. */
 export function hitTestWithIndex(index: SpatialIndex, x: number, y: number): string | null {
   return index.queryTopmost(x, y);
 }
 
-/**
- * Hit test returning all candidate nodes at (x, y), sorted front-to-back.
- * Use with path geometry verification to fall through bbox hits that miss
- * the actual path shape.
- */
+/** Return candidates front-to-back for native Path fill/stroke refinement. */
 export function hitTestCandidates(index: SpatialIndex, x: number, y: number): string[] {
   return index.queryCandidates(x, y);
 }
 
 /**
- * Build a spatial index from an IR for repeated hit testing.
+ * Build an IR hit index once; queries reuse geometry and shared clip chains.
+ * Ordinary entries added through `insert` remain generic bbox entries.
+ * @throws {FatalError} VALIDATION for absent or malformed Path output metadata.
  */
 export function buildHitTestIndex(ir: IR): SpatialIndex {
-  const nodeLookup = new Map<string, WorldBBox>();
-  collectWorldBboxes(ir.root, nodeLookup, { matrix: createIdentityAffineMatrix(), clip: null });
-  return buildSpatialIndex({ width: ir.width, height: ir.height }, ir.drawOrder, nodeLookup);
+  return buildFilteredSpatialIndex(
+    { x: 0, y: 0, w: ir.width, h: ir.height },
+    collectHitEntries(ir),
+  );
 }
 
-type WorldBBox = { x: number; y: number; w: number; h: number };
-
-/** O(N) linear hit test — walk drawOrder in reverse */
-function hitTestLinear(
-  ir: IR,
-  point: { x: number; y: number },
-  nodeLookup: Map<string, WorldBBox>,
-): string | null {
-  const { x, y } = point;
-  for (let i = ir.drawOrder.length - 1; i >= 0; i--) {
-    const nodeId = ir.drawOrder[i];
-    if (!nodeId) {
-      continue;
-    }
-    const bbox = nodeLookup.get(nodeId);
-    if (!bbox) {
-      continue;
-    }
-
-    // Skip internal sub-nodes (bg, border) — only return semantic nodes
-    if (nodeId.endsWith(":bg") || nodeId.endsWith(":border")) {
-      continue;
-    }
-
-    // Point-in-bbox check
-    if (x >= bbox.x && x <= bbox.x + bbox.w && y >= bbox.y && y <= bbox.y + bbox.h) {
-      return nodeId;
-    }
-  }
-
-  return null;
-}
-
-/** Axis-aligned world bounds of a local bbox under an affine transform. */
-function transformBBoxToWorldAabb(matrix: AffineMatrix, bbox: WorldBBox): WorldBBox {
-  const corners = [
-    applyAffineMatrixToPoint(matrix, { x: bbox.x, y: bbox.y }),
-    applyAffineMatrixToPoint(matrix, { x: bbox.x + bbox.w, y: bbox.y }),
-    applyAffineMatrixToPoint(matrix, { x: bbox.x, y: bbox.y + bbox.h }),
-    applyAffineMatrixToPoint(matrix, { x: bbox.x + bbox.w, y: bbox.y + bbox.h }),
-  ];
-  const xs = corners.map((corner) => corner.x);
-  const ys = corners.map((corner) => corner.y);
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-  return { x: minX, y: minY, w: Math.max(...xs) - minX, h: Math.max(...ys) - minY };
-}
-
-function unionWorldBBoxes(left: WorldBBox | null, right: WorldBBox): WorldBBox {
-  if (!left) {
-    return right;
-  }
-  const x = Math.min(left.x, right.x);
-  const y = Math.min(left.y, right.y);
-  const rightEdge = Math.max(left.x + left.w, right.x + right.w);
-  const bottomEdge = Math.max(left.y + left.h, right.y + right.h);
-  return { x, y, w: rightEdge - x, h: bottomEdge - y };
-}
-
-/** Local hit bounds, including sampled post-layout transforms of Text paint units. */
-function resolveLocalHitBBox(node: IRNode): WorldBBox | null {
+/** Union text-unit samples without changing their layout/inspection frames. */
+function localHitBounds(node: IRNode): HitBounds | null {
   if (node.type !== "text" || !node.unitAnimation || !node.unitAnimationSamples) {
-    return node.bbox;
+    return bboxHitBounds(node.bbox);
   }
-
-  let sampledBBox: WorldBBox | null = null;
+  let sampled: HitBounds | null = null;
   for (const sample of node.unitAnimationSamples) {
     if (!sample.bbox) {
       continue;
     }
-    const unitMatrix = createResolvedTransformMatrix(sample.transform, sample.bbox);
-    sampledBBox = unionWorldBBoxes(sampledBBox, transformBBoxToWorldAabb(unitMatrix, sample.bbox));
+    const bounds = worldHitBounds(
+      createResolvedTransformMatrix(sample.transform, sample.bbox),
+      bboxHitBounds(sample.bbox),
+    );
+    sampled = sampled
+      ? {
+          minX: Math.min(sampled.minX, bounds.minX),
+          minY: Math.min(sampled.minY, bounds.minY),
+          maxX: Math.max(sampled.maxX, bounds.maxX),
+          maxY: Math.max(sampled.maxY, bounds.maxY),
+        }
+      : bounds;
   }
-  return sampledBBox;
-}
-
-/** Intersection of two bboxes, or null when they do not overlap. */
-function intersectBBox(a: WorldBBox, b: WorldBBox): WorldBBox | null {
-  const x = Math.max(a.x, b.x);
-  const y = Math.max(a.y, b.y);
-  const right = Math.min(a.x + a.w, b.x + b.w);
-  const bottom = Math.min(a.y + a.h, b.y + b.h);
-  if (right <= x || bottom <= y) {
-    return null;
-  }
-  return { x, y, w: right - x, h: bottom - y };
+  return sampled;
 }
 
 /**
- * Collect world-space hit bounds for every node.
- *
- * - `transform` (node + ancestors) maps each bbox into canvas coordinates —
- *   a translated node used to hit at its pre-transform position and miss at
- *   its rendered one.
- * - `clipPath` restricts every descendant: content outside an ancestor clip
- *   is invisible and must not steal clicks, so its entry is dropped (or
- *   shrunk to the visible intersection).
+ * Collect geometry and entry-owned gates in semantic draw order. A paint child
+ * with the layout group's id replaces that group's frame candidate, including
+ * deletion for empty paint. The canvas is the outer clip for every query path.
+ * @throws {FatalError} When a Path lacks canonical output geometry.
  */
-type WorldContext = {
-  matrix: AffineMatrix;
-  clip: WorldBBox | null;
-};
+function collectHitEntries(ir: IR): HitEntry[] {
+  const canvas = { x: 0, y: 0, w: ir.width, h: ir.height };
+  const lookup = new Map<string, Omit<HitEntry, "drawIndex">>();
+  collectNode(ir.root, lookup, {
+    matrix: createIdentityAffineMatrix(),
+    clip: null,
+    visible: bboxHitBounds(canvas),
+  });
+  return ir.drawOrder.flatMap((nodeId, drawIndex) => {
+    const candidate = lookup.get(nodeId);
+    return candidate && !nodeId.endsWith(":bg") && !nodeId.endsWith(":border")
+      ? [{ ...candidate, drawIndex }]
+      : [];
+  });
+}
 
-function collectWorldBboxes(
+/**
+ * Walk the tree with one shared clip link per owner. Positive-area world AABBs
+ * narrow the search; source-coordinate tests remove rotated and rounded cutouts.
+ * @throws {FatalError} When a Path's derived output metadata is invalid.
+ */
+function collectNode(
   node: IRNode,
-  map: Map<string, WorldBBox>,
-  context: WorldContext,
+  lookup: Map<string, Omit<HitEntry, "drawIndex">>,
+  context: HitContext,
 ): void {
   const matrix = multiplyAffineMatrices(
     context.matrix,
     createResolvedTransformMatrix(node.type === "group" ? node.transform : undefined, node.bbox),
   );
-  const localHitBBox = resolveLocalHitBBox(node);
-  const worldBBox = localHitBBox ? transformBBoxToWorldAabb(matrix, localHitBBox) : null;
-
-  // The node's own clip applies to its content and children, so it also
-  // bounds the node's hit area.
-  let effectiveClip = context.clip;
+  let clip = context.clip;
+  let visible: HitBounds | null = context.visible;
   if (node.type === "group" && node.clipPath) {
-    const clipWorld = transformBBoxToWorldAabb(matrix, node.clipPath);
-    effectiveClip = effectiveClip ? intersectBBox(effectiveClip, clipWorld) : clipWorld;
-    if (effectiveClip === null) {
-      // Fully clipped away: nothing in this subtree can be hit.
-      return;
-    }
+    clip = { parent: clip, matrix, bbox: node.clipPath, radii: node.clipBorderRadius };
+    visible = visible
+      ? intersectHitBounds(visible, worldHitBounds(matrix, bboxHitBounds(node.clipPath)))
+      : null;
   }
-
-  const visible = worldBBox
-    ? effectiveClip
-      ? intersectBBox(worldBBox, effectiveClip)
-      : worldBBox
-    : null;
-  if (visible && visible.w > 0 && visible.h > 0) {
-    map.set(node.nodeId, visible);
+  const local = node.type === "path" ? null : localHitBounds(node);
+  const world =
+    node.type === "path"
+      ? pathWorldHitBounds(node, matrix)
+      : local
+        ? worldHitBounds(matrix, local)
+        : null;
+  const bounds = visible && world ? intersectHitBounds(visible, world) : null;
+  if (bounds && bounds.minX < bounds.maxX && bounds.minY < bounds.maxY) {
+    const ownFrame = node.type === "group" && node.on ? node.bbox : null;
+    lookup.set(node.nodeId, {
+      nodeId: node.nodeId,
+      bbox: {
+        x: bounds.minX,
+        y: bounds.minY,
+        w: bounds.maxX - bounds.minX,
+        h: bounds.maxY - bounds.minY,
+      },
+      accepts(x, y) {
+        const point = { x, y };
+        const localPoint = applyInverseAffineMatrixToPoint(matrix, point);
+        return (
+          localPoint !== null &&
+          (!ownFrame || pointInHitBBox(localPoint, ownFrame)) &&
+          acceptsHitClips(clip, point)
+        );
+      },
+    });
   } else {
-    // Semantic leaves are represented as a layout group plus a paint child
-    // with the same nodeId. A zero-ink paint child (for example an entirely
-    // hidden TextOnPath) must override, not inherit, its frame-sized group hit
-    // area.
-    map.delete(node.nodeId);
+    lookup.delete(node.nodeId);
   }
-
+  // Even a fully clipped subtree is visited so malformed output metadata
+  // cannot evade the schema-34 guard merely because this frame hides it.
   for (const child of node.type === "group" ? (node.children ?? []) : []) {
-    collectWorldBboxes(child, map, { matrix, clip: effectiveClip });
+    collectNode(child, lookup, {
+      matrix,
+      clip,
+      visible,
+    });
   }
 }

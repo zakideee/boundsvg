@@ -1,3 +1,10 @@
+//! Geometry, SVG path commands, and deterministic shape composition.
+
+mod path_bounds;
+mod path_tokens;
+
+pub use path_bounds::{PathBounds, PathBoundsParse, parse_path_bounds};
+
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
@@ -6845,50 +6852,15 @@ fn map_geometry_children(
     }
 }
 
+/// Collect the shared lexer in strict mode for topology/measurement callers.
+///
+/// # Errors
+///
+/// Returns the first lexical error, preserving strict callers' rejection contract.
 fn tokenize_path_data(path_data: &str) -> Result<Vec<String>, ShapeError> {
-    let bytes = path_data.as_bytes();
-    let mut tokens = Vec::new();
-    let mut index = 0usize;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if matches!(byte, b' ' | b'\n' | b'\r' | b'\t' | b'\x0c' | b',') {
-            index += 1;
-            continue;
-        }
-        if (byte as char).is_ascii_alphabetic() {
-            tokens.push((byte as char).to_string());
-            index += 1;
-            continue;
-        }
-
-        let start = index;
-        if matches!(bytes[index], b'+' | b'-') {
-            index += 1;
-        }
-        while index < bytes.len() && (bytes[index] as char).is_ascii_digit() {
-            index += 1;
-        }
-        if index < bytes.len() && bytes[index] == b'.' {
-            index += 1;
-            while index < bytes.len() && (bytes[index] as char).is_ascii_digit() {
-                index += 1;
-            }
-        }
-        if index < bytes.len() && matches!(bytes[index], b'e' | b'E') {
-            index += 1;
-            if index < bytes.len() && matches!(bytes[index], b'+' | b'-') {
-                index += 1;
-            }
-            while index < bytes.len() && (bytes[index] as char).is_ascii_digit() {
-                index += 1;
-            }
-        }
-        if index == start || (index == start + 1 && matches!(bytes[start], b'+' | b'-')) {
-            return Err(ShapeError::InvalidPathData);
-        }
-        tokens.push(path_data[start..index].to_string());
-    }
-    Ok(tokens)
+    path_tokens::PathTokens::new(path_data)
+        .map(|token| token.map(|token| token.text.to_owned()))
+        .collect()
 }
 
 fn is_command_token(token: &str) -> bool {
@@ -6899,8 +6871,19 @@ fn is_command_token(token: &str) -> bool {
             .is_some_and(|character| character.is_ascii_alphabetic())
 }
 
-fn read_number_token(tokens: &[String], index: usize) -> Result<(f64, usize), ShapeError> {
-    let token = tokens.get(index).ok_or(ShapeError::InvalidPathData)?;
+/// Read one finite numeric argument without consuming an incomplete group.
+///
+/// # Errors
+///
+/// Returns `InvalidPathData` for missing, command, or non-finite numeric tokens.
+fn read_number_token<T: AsRef<str>>(
+    tokens: &[T],
+    index: usize,
+) -> Result<(f64, usize), ShapeError> {
+    let token = tokens
+        .get(index)
+        .ok_or(ShapeError::InvalidPathData)?
+        .as_ref();
     if is_command_token(token) {
         return Err(ShapeError::InvalidPathData);
     }
@@ -6912,8 +6895,9 @@ fn read_number_token(tokens: &[String], index: usize) -> Result<(f64, usize), Sh
         .ok_or(ShapeError::InvalidPathData)
 }
 
-fn try_read_number_token(tokens: &[String], index: usize) -> Option<(f64, usize)> {
-    let token = tokens.get(index)?;
+/// Read one finite numeric token, preserving the next index or returning None for absent/invalid input.
+fn try_read_number_token<T: AsRef<str>>(tokens: &[T], index: usize) -> Option<(f64, usize)> {
+    let token = tokens.get(index)?.as_ref();
     if is_command_token(token) {
         return None;
     }
@@ -6924,13 +6908,22 @@ fn try_read_number_token(tokens: &[String], index: usize) -> Option<(f64, usize)
         .map(|value| (value, index + 1))
 }
 
-fn read_point_token(tokens: &[String], index: usize) -> Result<(Point2D, usize), ShapeError> {
+/// Read a complete finite x/y argument pair.
+///
+/// # Errors
+///
+/// Returns `InvalidPathData` when either coordinate is missing or invalid.
+fn read_point_token<T: AsRef<str>>(
+    tokens: &[T],
+    index: usize,
+) -> Result<(Point2D, usize), ShapeError> {
     let (x, next_index) = read_number_token(tokens, index)?;
     let (y, final_index) = read_number_token(tokens, next_index)?;
     Ok((Point2D { x, y }, final_index))
 }
 
-fn try_read_point_token(tokens: &[String], index: usize) -> Option<(Point2D, usize)> {
+/// Read a complete coordinate pair without advancing the caller past an incomplete pair.
+fn try_read_point_token<T: AsRef<str>>(tokens: &[T], index: usize) -> Option<(Point2D, usize)> {
     let (x, next_index) = try_read_number_token(tokens, index)?;
     let (y, final_index) = try_read_number_token(tokens, next_index)?;
     Some((Point2D { x, y }, final_index))
@@ -6960,10 +6953,11 @@ impl ArcArgumentCursor {
         }
     }
 
-    fn skip_consumed_tokens(mut self, tokens: &[String]) -> Self {
+    /// Advance a partially consumed compact arc token only after its arguments are exhausted.
+    fn skip_consumed_tokens<T: AsRef<str>>(mut self, tokens: &[T]) -> Self {
         while tokens
             .get(self.token_index)
-            .is_some_and(|token| self.byte_offset == token.len())
+            .is_some_and(|token| self.byte_offset == token.as_ref().len())
         {
             self.token_index += 1;
             self.byte_offset = 0;
@@ -6972,14 +6966,20 @@ impl ArcArgumentCursor {
     }
 }
 
-fn read_arc_flag(
-    tokens: &[String],
+/// Consume one binary arc flag, including compact adjacent flags.
+///
+/// # Errors
+///
+/// Returns `InvalidPathData` for a missing flag or a digit other than 0/1.
+fn read_arc_flag<T: AsRef<str>>(
+    tokens: &[T],
     cursor: ArcArgumentCursor,
 ) -> Result<(bool, ArcArgumentCursor), ShapeError> {
     let mut cursor = cursor.skip_consumed_tokens(tokens);
     let token = tokens
         .get(cursor.token_index)
-        .ok_or(ShapeError::InvalidPathData)?;
+        .ok_or(ShapeError::InvalidPathData)?
+        .as_ref();
     let value = match token.as_bytes().get(cursor.byte_offset) {
         Some(b'0') => false,
         Some(b'1') => true,
@@ -6989,14 +6989,20 @@ fn read_arc_flag(
     Ok((value, cursor))
 }
 
-fn read_arc_number(
-    tokens: &[String],
+/// Read a finite number from the remainder of a compact arc token.
+///
+/// # Errors
+///
+/// Returns `InvalidPathData` for missing, command, or invalid numeric arguments.
+fn read_arc_number<T: AsRef<str>>(
+    tokens: &[T],
     cursor: ArcArgumentCursor,
 ) -> Result<(f64, ArcArgumentCursor), ShapeError> {
     let cursor = cursor.skip_consumed_tokens(tokens);
     let token = tokens
         .get(cursor.token_index)
-        .ok_or(ShapeError::InvalidPathData)?;
+        .ok_or(ShapeError::InvalidPathData)?
+        .as_ref();
     if is_command_token(token) {
         return Err(ShapeError::InvalidPathData);
     }
@@ -7008,7 +7014,8 @@ fn read_arc_number(
     Ok((value, ArcArgumentCursor::at_token(cursor.token_index + 1)))
 }
 
-fn try_read_arc_token(tokens: &[String], index: usize) -> Option<(ArcToken, usize)> {
+/// Read the seven complete arc arguments; invalid flags or incomplete groups produce no arc.
+fn try_read_arc_token<T: AsRef<str>>(tokens: &[T], index: usize) -> Option<(ArcToken, usize)> {
     let (rx, next_index) = try_read_number_token(tokens, index)?;
     let (ry, next_index) = try_read_number_token(tokens, next_index)?;
     let (x_axis_rotation_deg, next_index) = try_read_number_token(tokens, next_index)?;
@@ -8445,80 +8452,82 @@ fn lerp_point(left: Point2D, right: Point2D, t: f64) -> Point2D {
     }
 }
 
-/// Read a `C`/`c` run: each group is `control1 control2 end`.
+/// Read a strict repeated curve run using the prefix parser's complete-group reader.
+///
+/// # Errors
+///
+/// Returns `InvalidPathData` for an empty or incomplete run; strict callers
+/// deliberately reject the whole run instead of returning a completed prefix.
+fn read_curve_run(
+    tokens: &[String],
+    mut index: usize,
+    is_relative: bool,
+    mut current: Point2D,
+    command: char,
+    previous_control: Option<Point2D>,
+) -> Result<SmoothRun, ShapeError> {
+    let mut segments = Vec::new();
+    let mut control = previous_control;
+    while try_read_point_token(tokens, index).is_some() {
+        let group =
+            path_bounds::read_curve_group(command, tokens, index, is_relative, current, control)?;
+        match &group.segment {
+            CurveSegment::Cubic { p2, p3, .. } => {
+                control = Some(*p2);
+                current = *p3;
+            }
+            CurveSegment::Quad { p1, p2, .. } => {
+                control = Some(*p1);
+                current = *p2;
+            }
+            CurveSegment::Line { p1, .. } => {
+                control = None;
+                current = *p1;
+            }
+        }
+        segments.push(group.segment);
+        index = group.next_index;
+    }
+    if segments.is_empty() {
+        return Err(ShapeError::InvalidPathData);
+    }
+    Ok(SmoothRun {
+        segments,
+        control,
+        current,
+        next_index: index,
+    })
+}
+
+/// Read a strict cubic run.
+///
+/// # Errors
+///
+/// Returns `InvalidPathData` for missing or incomplete cubic argument groups.
 fn read_cubic_run(
     tokens: &[String],
-    mut index: usize,
+    index: usize,
     is_relative: bool,
-    mut current: Point2D,
+    current: Point2D,
 ) -> Result<SmoothRun, ShapeError> {
-    let mut segments = Vec::new();
-    let mut control = None;
-    while let Some((mut control1, control1_index)) = try_read_point_token(tokens, index) {
-        let (mut control2, control2_index) = read_point_token(tokens, control1_index)?;
-        let (mut end_point, next_index) = read_point_token(tokens, control2_index)?;
-        if is_relative {
-            control1 = add_points(current, control1);
-            control2 = add_points(current, control2);
-            end_point = add_points(current, end_point);
-        }
-        segments.push(CurveSegment::Cubic {
-            p0: current,
-            p1: control1,
-            p2: control2,
-            p3: end_point,
-        });
-        control = Some(control2);
-        current = end_point;
-        index = next_index;
-    }
-    if segments.is_empty() {
-        return Err(ShapeError::InvalidPathData);
-    }
-    Ok(SmoothRun {
-        segments,
-        control,
-        current,
-        next_index: index,
-    })
+    read_curve_run(tokens, index, is_relative, current, 'C', None)
 }
 
-/// Read a `Q`/`q` run: each group is `control end`.
+/// Read a strict quadratic run.
+///
+/// # Errors
+///
+/// Returns `InvalidPathData` for missing or incomplete quadratic argument groups.
 fn read_quad_run(
     tokens: &[String],
-    mut index: usize,
+    index: usize,
     is_relative: bool,
-    mut current: Point2D,
+    current: Point2D,
 ) -> Result<SmoothRun, ShapeError> {
-    let mut segments = Vec::new();
-    let mut control = None;
-    while let Some((mut point, control_index)) = try_read_point_token(tokens, index) {
-        let (mut end_point, next_index) = read_point_token(tokens, control_index)?;
-        if is_relative {
-            point = add_points(current, point);
-            end_point = add_points(current, end_point);
-        }
-        segments.push(CurveSegment::Quad {
-            p0: current,
-            p1: point,
-            p2: end_point,
-        });
-        control = Some(point);
-        current = end_point;
-        index = next_index;
-    }
-    if segments.is_empty() {
-        return Err(ShapeError::InvalidPathData);
-    }
-    Ok(SmoothRun {
-        segments,
-        control,
-        current,
-        next_index: index,
-    })
+    read_curve_run(tokens, index, is_relative, current, 'Q', None)
 }
 
-/// One run of repeated smooth-curve argument groups.
+/// One run of repeated curve argument groups.
 struct SmoothRun {
     segments: Vec<CurveSegment>,
     /// Control point to reflect for a following smooth command of the same kind.
@@ -8527,78 +8536,34 @@ struct SmoothRun {
     next_index: usize,
 }
 
-/// Read an `S`/`s` run: each group is `control2 end`, with the first control
-/// point reflected from the previous cubic.
+/// Read a strict smooth cubic run, reflecting the previous cubic control.
+///
+/// # Errors
+///
+/// Returns `InvalidPathData` for missing or incomplete argument groups.
 fn read_smooth_cubic_run(
     tokens: &[String],
-    mut index: usize,
+    index: usize,
     is_relative: bool,
-    mut current: Point2D,
+    current: Point2D,
     previous_control: Option<Point2D>,
 ) -> Result<SmoothRun, ShapeError> {
-    let mut segments = Vec::new();
-    let mut control = previous_control;
-    while let Some((mut control2, control2_index)) = try_read_point_token(tokens, index) {
-        let (mut end_point, next_index) = read_point_token(tokens, control2_index)?;
-        if is_relative {
-            control2 = add_points(current, control2);
-            end_point = add_points(current, end_point);
-        }
-        segments.push(CurveSegment::Cubic {
-            p0: current,
-            p1: reflect_control(current, control),
-            p2: control2,
-            p3: end_point,
-        });
-        control = Some(control2);
-        current = end_point;
-        index = next_index;
-    }
-    if segments.is_empty() {
-        return Err(ShapeError::InvalidPathData);
-    }
-    Ok(SmoothRun {
-        segments,
-        control,
-        current,
-        next_index: index,
-    })
+    read_curve_run(tokens, index, is_relative, current, 'S', previous_control)
 }
 
-/// Read a `T`/`t` run: each group is just `end`, with the control point
-/// reflected from the previous quadratic.
+/// Read a strict smooth quadratic run, reflecting the previous quadratic control.
+///
+/// # Errors
+///
+/// Returns `InvalidPathData` for missing or incomplete argument groups.
 fn read_smooth_quad_run(
     tokens: &[String],
-    mut index: usize,
+    index: usize,
     is_relative: bool,
-    mut current: Point2D,
+    current: Point2D,
     previous_control: Option<Point2D>,
 ) -> Result<SmoothRun, ShapeError> {
-    let mut segments = Vec::new();
-    let mut control = previous_control;
-    while let Some((mut end_point, next_index)) = try_read_point_token(tokens, index) {
-        if is_relative {
-            end_point = add_points(current, end_point);
-        }
-        let reflected = reflect_control(current, control);
-        segments.push(CurveSegment::Quad {
-            p0: current,
-            p1: reflected,
-            p2: end_point,
-        });
-        control = Some(reflected);
-        current = end_point;
-        index = next_index;
-    }
-    if segments.is_empty() {
-        return Err(ShapeError::InvalidPathData);
-    }
-    Ok(SmoothRun {
-        segments,
-        control,
-        current,
-        next_index: index,
-    })
+    read_curve_run(tokens, index, is_relative, current, 'T', previous_control)
 }
 
 /// Reflect the previous control point through the current point.

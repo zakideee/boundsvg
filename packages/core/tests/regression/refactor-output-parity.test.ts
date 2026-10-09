@@ -121,6 +121,7 @@ function jsonBytes(value: unknown): Uint8Array {
   return utf8(JSON.stringify(value));
 }
 
+/** Normalize only the explicitly adopted schema and structural ownership changes. */
 function architectureIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
   const previousRootExports = JSON.parse(
     readFileSync(path.join(referenceRoot, "contracts/root-runtime-exports.json"), "utf8"),
@@ -138,7 +139,7 @@ function architectureIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
   ].sort();
   return new Map([
     ["contracts/root-runtime-exports.json", jsonBytes(currentRootExports)],
-    ["contracts/wasm-schema-version.txt", utf8("33")],
+    ["contracts/wasm-schema-version.txt", utf8("34")],
     [
       "fallback/missing-glyph.warnings.json",
       jsonBytes([
