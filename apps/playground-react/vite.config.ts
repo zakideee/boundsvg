@@ -16,6 +16,7 @@ const input = pagesBase
       main: resolve(__dirname, "index.html"),
       "e2e-layered-composition": resolve(__dirname, "e2e-layered-composition.html"),
       "e2e-clip-hit": resolve(__dirname, "e2e-clip-hit.html"),
+      "e2e-svg-dom-stability": resolve(__dirname, "e2e-svg-dom-stability.html"),
       "e2e-worker": resolve(__dirname, "e2e-worker.html"),
       "e2e-determinism": resolve(__dirname, "e2e-determinism.html"),
       "e2e-animated-raster": resolve(__dirname, "e2e-animated-raster.html"),

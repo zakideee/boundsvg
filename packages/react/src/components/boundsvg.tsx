@@ -8,6 +8,7 @@ import { toVNodeFromChildren } from "../utils/to-vnode.js";
 /** Font size used by the default visible render failure message. */
 const ERROR_FONT_SIZE_PX = 12;
 
+/** Shared scene input and display fallbacks for static and animated SVG components. */
 type BoundSvgBaseProps = {
   /** Revision, previous-result retention, and committed error notification. */
   executionOptions?: RenderExecutionOptions;
@@ -43,10 +44,12 @@ export type AnimatedBoundSvgProps = BoundSvgBaseProps & {
   renderOptions: RenderAnimatedSvgOptions;
 };
 
+/** Preserve caught Error identities while normalizing other thrown values for display. */
 function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
 
+/** Resolve explicit or declarative scene input and retain conversion failures for the fallback. */
 function useResolvedVNode(props: BoundSvgBaseProps): { vnode: VNode | null; error: Error | null } {
   const { vnode, width, height, background, children } = props;
   return useMemo(() => {
@@ -67,8 +70,9 @@ function useResolvedVNode(props: BoundSvgBaseProps): { vnode: VNode | null; erro
   }, [vnode, width, height, background, children]);
 }
 
+/** Display a prepared SVG injection value or the matching loading/error presentation. */
 function renderResult(
-  svg: string | null,
+  svgMarkup: { __html: string } | null,
   error: Error | null,
   props: BoundSvgBaseProps,
 ): React.JSX.Element {
@@ -88,12 +92,12 @@ function renderResult(
     );
   }
 
-  if (svg === null) {
+  if (svgMarkup === null) {
     return <>{fallback ?? null}</>;
   }
 
   // Engine-generated SVG is trusted (no user-controlled HTML injection)
-  return <div className={className} dangerouslySetInnerHTML={{ __html: svg }} />;
+  return <div className={className} dangerouslySetInnerHTML={svgMarkup} />;
 }
 
 /**
@@ -113,7 +117,9 @@ export function BoundSvg(props: BoundSvgProps) {
     props.renderOptions,
     props.executionOptions,
   );
-  return renderResult(svg, resolved.error ?? error, props);
+  // Retain the displayed document's DOM and clock while its SVG string is unchanged.
+  const svgMarkup = useMemo(() => (svg === null ? null : { __html: svg }), [svg]);
+  return renderResult(svgMarkup, resolved.error ?? error, props);
 }
 
 /** Render authored animation tracks as declarative animated SVG. */
@@ -124,5 +130,6 @@ export function AnimatedBoundSvg(props: AnimatedBoundSvgProps) {
     props.renderOptions,
     props.executionOptions,
   );
-  return renderResult(svg, resolved.error ?? error, props);
+  const svgMarkup = useMemo(() => (svg === null ? null : { __html: svg }), [svg]);
+  return renderResult(svgMarkup, resolved.error ?? error, props);
 }

@@ -10,8 +10,10 @@ import { useTextCopy } from "../hooks/use-text-copy.js";
 import type { EventCallback } from "../types.js";
 import { toInteractiveVNodeFromChildren } from "../utils/to-interactive-vnode.js";
 
+/** Font size used by the default visible render failure message. */
 const ERROR_FONT_SIZE_PX = 12;
 
+/** Scene input, event callbacks, and loading/error presentation shared across render modes. */
 type InteractiveBoundSvgBaseProps = {
   /** VNode tree to render (explicit mode) */
   vnode?: VNode | null;
@@ -52,18 +54,22 @@ type InteractiveBoundSvgBaseProps = {
   errorFallback?: ReactNode | ((error: Error) => ReactNode);
 };
 
+/** Interactive display input with either static sampling or authored SVG animation playback. */
 export type InteractiveBoundSvgProps = InteractiveBoundSvgBaseProps &
   (
     | { renderMode?: "static"; renderOptions?: RenderSvgOptions }
     | { renderMode: "animated"; renderOptions: RenderAnimatedSvgOptions }
   );
 
+/** Stable handler map for explicit scenes without registered callbacks. */
 const EMPTY_HANDLERS = new Map<string, EventCallback>();
 
+/** Preserve caught Error identities while normalizing other thrown values for display. */
 function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
 
+/** Display an SVG with hit-tested events and optional text-copy actions on the main engine. */
 export function InteractiveBoundSvg({
   vnode,
   handlers: explicitHandlers,
@@ -156,6 +162,9 @@ export function InteractiveBoundSvg({
     options,
   );
 
+  // Hover and callback updates must not reinsert an unchanged SVG document.
+  const svgMarkup = useMemo(() => ({ __html: svg ?? "" }), [svg]);
+
   const textCopy = useTextCopy(ir, textMap);
   useLayoutEffect(() => {
     textCopyRef.current = textCopy;
@@ -203,5 +212,5 @@ export function InteractiveBoundSvg({
     return <>{fallback ?? null}</>;
   }
 
-  return <div ref={containerRef} className={className} dangerouslySetInnerHTML={{ __html: svg }} />;
+  return <div ref={containerRef} className={className} dangerouslySetInnerHTML={svgMarkup} />;
 }
