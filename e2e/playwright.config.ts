@@ -19,7 +19,11 @@ export default defineConfig({
     },
     {
       name: "firefox-canvas-stroke",
-      testMatch: ["canvas-stable-border.spec.ts", "clip-overflow.spec.ts"],
+      testMatch: [
+        "canvas-stable-border.spec.ts",
+        "clip-overflow.spec.ts",
+        "svg-dom-stability.spec.ts",
+      ],
       use: { ...devices["Desktop Firefox"] },
     },
     {

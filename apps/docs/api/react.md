@@ -436,6 +436,9 @@ const { svg, ir, error, isReady, hoverNodeId, containerRef } =
 
 Renders a VNode tree inline through the shared async path, on both main and Worker. It keeps the same owner’s previous SVG during updates by default. Main rendering therefore no longer finishes during React render. Set `retainPreviousResult: false` in `executionOptions` to clear previous output; `executionOptions` also accepts `revision` and `onError`.
 
+An unrelated parent update keeps the existing SVG DOM when the generated SVG
+string is unchanged. Changing that string replaces the displayed document.
+
 ```tsx
 <BoundSvg
   vnode={vnode}
@@ -464,6 +467,10 @@ Uses the same VNode/declarative-child and fallback props as `<BoundSvg>`, but
 calls the animated SVG family on either the main thread or Worker. Its
 `renderOptions: RenderAnimatedSvgOptions` prop is required.
 
+An unrelated parent update keeps the existing SVG DOM and animation clock when
+the generated SVG string is unchanged. Changing that string replaces the displayed
+document, so its animations start with the new document.
+
 ```tsx
 <AnimatedBoundSvg
   vnode={vnode}
@@ -482,6 +489,12 @@ calls the animated SVG family on either the main thread or Worker. Its
 ### `<InteractiveBoundSvg>`
 
 Renders a VNode tree with pointer event handling (click, hover, context menu). Supports both explicit VNode mode and declarative children mode.
+
+Hover and callback updates preserve the displayed SVG DOM and animation clock
+when the generated SVG string is unchanged. Updated handlers receive subsequent
+events without replacing that document. A changed SVG updates the displayed scene
+and hit-testing data. This does not make the Core hit index follow every instant
+of live SVG animation.
 
 ```tsx
 <InteractiveBoundSvg
