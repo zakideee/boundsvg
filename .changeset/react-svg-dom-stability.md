@@ -2,4 +2,4 @@
 "@boundsvg/react": patch
 ---
 
-Preserve unchanged SVG DOM and animation clocks in `InteractiveBoundSvg`, `BoundSvg`, and `AnimatedBoundSvg` during hover and unrelated parent updates. Callback updates continue to use the latest handlers, and changed SVG content replaces the displayed document as usual.
+Preserve displayed SVG DOM across unrelated parent updates in `BoundSvg`, `AnimatedBoundSvg`, and `InteractiveBoundSvg`. `InteractiveBoundSvg` also preserves the DOM through hover while using current event handlers. In animated displays, these updates preserve animation clocks. Changed SVG content still replaces the display.

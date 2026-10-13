@@ -78,9 +78,11 @@ async function mountDisplay(page: Page, mode: "interactive" | "static" | "animat
 }
 
 for (const mode of ["interactive", "static", "animated"] as const) {
-  test(`${mode} preserves DOM and paused animation on a parent update`, async ({
-    page,
-  }, testInfo) => {
+  const testTitle =
+    mode === "static"
+      ? "static preserves SVG DOM on a parent update"
+      : `${mode} preserves SVG DOM and paused animation on a parent update`;
+  test(testTitle, async ({ page }, testInfo) => {
     await mountDisplay(page, mode);
     await page.evaluate(() => {
       for (const animation of document.getAnimations()) {
