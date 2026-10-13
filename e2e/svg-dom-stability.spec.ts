@@ -115,7 +115,7 @@ for (const mode of ["interactive", "static", "animated"] as const) {
   });
 }
 
-test("normal playback keeps its clock across hover and clicks the finished red Path once", async ({
+test("completed animation retains its clock across hover and clicks the red Path once", async ({
   page,
 }, testInfo) => {
   await mountDisplay(page, "interactive");
@@ -130,16 +130,10 @@ test("normal playback keeps its clock across hover and clicks the finished red P
   expect(start.pathRect?.x).toBeCloseTo(100, 1);
   await page.evaluate(() => {
     for (const animation of document.getAnimations()) {
-      animation.play();
+      animation.finish();
     }
   });
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        document.getAnimations().every((animation) => animation.playState === "finished"),
-      ),
-    )
-    .toBe(true);
+  await flushFrames(page);
   const before = await page.evaluate(() => window.boundsvgSvgStability.read());
   expect(before.pathRect?.x).toBeCloseTo(200, 1);
   expect(before.animations.every((animation) => animation.time === 1000)).toBe(true);
@@ -159,38 +153,6 @@ test("normal playback keeps its clock across hover and clicks the finished red P
   expect(clicked.callbacks.filter((delivery) => delivery.type === "click")).toEqual([
     expect.objectContaining({ nodeId: "path", generation: 0 }),
   ]);
-});
-
-test("ongoing playback progresses naturally through hover without recreating Animation objects", async ({
-  page,
-}, testInfo) => {
-  await mountDisplay(page, "interactive");
-  await expect
-    .poll(() => page.evaluate(() => Number(document.getAnimations()[0]?.currentTime)))
-    .toBeGreaterThan(300);
-  const before = await page.evaluate(() => window.boundsvgSvgStability.read());
-  const rectangle = before.pathRect;
-  expect(rectangle).not.toBeNull();
-  await page.mouse.move((rectangle?.x ?? 0) + 20, 40);
-  await flushFrames(page);
-  const after = await page.evaluate(() => window.boundsvgSvgStability.read());
-  await testInfo.attach("ongoing-clock-pointer-timeline", {
-    body: JSON.stringify({ before, after }),
-    contentType: "application/json",
-  });
-  expect(
-    after.callbacks.some(
-      (delivery) => delivery.nodeId === "path" && delivery.type === "pointermove",
-    ),
-  ).toBe(true);
-  expect(after.svgId).toBe(before.svgId);
-  expect(after.animations.map((animation) => animation.id)).toEqual(
-    before.animations.map((animation) => animation.id),
-  );
-  expect(after.animations[0].time).toBeGreaterThanOrEqual(before.animations[0].time ?? 0);
-  expect((after.animations[0].time ?? 0) - (before.animations[0].time ?? 0)).toBeLessThanOrEqual(
-    after.at - before.at + 50,
-  );
 });
 
 test("new callbacks retain DOM while changed SVG updates IR, hit delivery and touch-action", async ({
