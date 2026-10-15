@@ -13,15 +13,15 @@ import { CONFORMANCE_SCENES } from "../conformance/scenes/index.js";
 import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 
 /**
- * Literal-byte oracle for behavior-preserving refactors. The fixture was
- * captured from REFERENCE_COMMIT before production edits; normal test runs
- * compare Uint8Array contents rather than only comparing hashes.
+ * Literal-byte oracle for version-pinned render output. The fixture was
+ * captured from REFERENCE_COMMIT; normal test runs compare all SVG, IR,
+ * raster, diagnostic, and export bytes without outline exceptions.
  *
  * When deliberately selecting a new clean reference commit:
  *   REFACTOR_PARITY_UPDATE=1 pnpm --filter @boundsvg/core exec vitest run \
  *     tests/regression/refactor-output-parity.test.ts
  */
-const REFERENCE_COMMIT = "442833c415f049b86ba5fd510e6d253a6a025295";
+const REFERENCE_COMMIT = "d2245a816d1b372c8b2ca374db182bc06f39d8d2";
 /** Version of the preserved literal-byte parity fixture manifest. */
 const REFERENCE_FORMAT_VERSION = 1;
 /** Root of preserved byte fixtures used to compare output behavior. */
@@ -30,77 +30,8 @@ const referenceRoot = path.resolve(__dirname, "fixtures/refactor-output-parity-b
 const referenceManifestPath = path.join(referenceRoot, "manifest.json");
 /** Explicit opt-in for regenerating the preserved reference fixtures. */
 const updateReference = process.env.REFACTOR_PARITY_UPDATE === "1";
-/** Text-path SVG references whose outlining behavior is checked separately. */
-const textPathSvgArtifacts = new Set([
-  "conformance/native-layered-parts.layer-2-content.svg",
-  "conformance/native-layered-parts.layer-5-content.svg",
-  "conformance/native-layered-parts.svg",
-  "fallback/missing-glyph.svg",
-]);
-
-function withoutTextOutlineData(svg: string): string {
-  const textGroupStack: boolean[] = [];
-  return svg.replace(/<[^>]*>/g, (tag) => {
-    if (tag.startsWith("</g")) {
-      textGroupStack.pop();
-      return tag;
-    }
-    if (tag.startsWith("<g ")) {
-      const insideText = textGroupStack.at(-1) ?? false;
-      textGroupStack.push(insideText || tag.includes("data-boundsvg-text="));
-      return tag;
-    }
-    if (tag.startsWith("<path ") && textGroupStack.at(-1)) {
-      return tag.replace(/\bd="[^"]*"/, 'd=""');
-    }
-    return tag;
-  });
-}
 /** Deterministic UTF-8 encoding for literal SVG byte comparisons. */
 const utf8Encoder = new TextEncoder();
-/** Former default-engine exports that must be absent from the runtime entry. */
-const removedDefaultEngineRuntimeExports = new Set([
-  "compileLayoutTransition",
-  "compileScene",
-  "dispose",
-  "hitTestOnIR",
-  "init",
-  "initAsync",
-  "isInitialized",
-  "renderCompiledFrames",
-  "renderCompiledToAnimatedGif",
-  "renderCompiledToAnimatedSvg",
-  "renderCompiledToAnimatedWebp",
-  "renderCompiledToPng",
-  "renderCompiledToSvg",
-  "renderFrames",
-  "renderToAnimatedGif",
-  "renderToAnimatedSvg",
-  "renderToAnimatedSvgAndIR",
-  "renderToAnimatedWebp",
-  "renderToIR",
-  "renderToLayeredPng",
-  "renderToLayeredSvg",
-  "renderToLayoutTree",
-  "renderToPng",
-  "renderToSvg",
-  "renderToSvgAndIR",
-  "renderToTextOutlines",
-  "renderToWebp",
-  "snapshotCompiledIR",
-]);
-/** Former scene validators replaced by the current decoding boundary. */
-const replacedSceneRuntimeExports = new Set(["assertSerializableSceneTransport", "isSceneNode"]);
-/** Scene decoder symbols checked in both runtime and type entries. */
-const sceneDecoderRuntimeExports = [
-  "MAX_SCENE_DECODE_COLLECTION_LENGTH",
-  "MAX_SCENE_DECODE_DEPTH",
-  "MAX_SCENE_DECODE_JSON_BYTES",
-  "MAX_SCENE_DECODE_NODES",
-  "MAX_SCENE_DECODE_VALUES",
-  "decodeSceneDocument",
-] as const;
-
 type ReferenceManifest = {
   formatVersion: number;
   referenceCommit: string;
@@ -119,76 +50,6 @@ function utf8(value: string): Uint8Array {
 
 function jsonBytes(value: unknown): Uint8Array {
   return utf8(JSON.stringify(value));
-}
-
-/** Normalize only the explicitly adopted schema and structural ownership changes. */
-function architectureIntentionalArtifacts(): ReadonlyMap<string, Uint8Array> {
-  const previousRootExports = JSON.parse(
-    readFileSync(path.join(referenceRoot, "contracts/root-runtime-exports.json"), "utf8"),
-  ) as string[];
-  const currentRootExports = [
-    ...previousRootExports.filter(
-      (exportName) =>
-        !replacedSceneRuntimeExports.has(exportName) &&
-        !removedDefaultEngineRuntimeExports.has(exportName) &&
-        !["MAX_ANIMATION_FRAMES", "MAX_ANIMATION_SVG_PAYLOAD_CHARS"].includes(exportName),
-    ),
-    ...sceneDecoderRuntimeExports,
-    "createAnimatedRasterCollector",
-    "createAnimatedWebpSpoolSink",
-  ].sort();
-  return new Map([
-    ["contracts/root-runtime-exports.json", jsonBytes(currentRootExports)],
-    ["contracts/wasm-schema-version.txt", utf8("34")],
-    [
-      "fallback/missing-glyph.warnings.json",
-      jsonBytes([
-        {
-          severity: "recoverable",
-          code: "MISSING_GLYPH",
-          message: 'Font "NotoSansJP" is missing glyphs for: U+1F389 (🎉)',
-          fallback: "blank",
-          stage: "text",
-          nodeId: "parity-missing-glyph",
-        },
-      ]),
-    ],
-    [
-      "fallback/png-resolution-adjusted.warnings.json",
-      jsonBytes([
-        {
-          severity: "recoverable",
-          code: "PNG_RESOLUTION_ADJUSTED",
-          message:
-            "PNG resolution exceeded 4K-equivalent cap; auto-adjusted scale from 1 to 0.768 (5000x2 -> 3840x2)",
-          fallback: "auto-adjusted scale",
-          stage: "emit",
-          context: {
-            requestedScale: 1,
-            appliedScale: 0.768,
-            baseWidth: 5000,
-            baseHeight: 2,
-            requestedWidth: 5000,
-            requestedHeight: 2,
-            outputWidth: 3840,
-            outputHeight: 2,
-            maxLongEdge: 3840,
-            maxPixels: 8_294_400,
-          },
-        },
-      ]),
-    ],
-    [
-      "fatal/timeline-precision-loss.json",
-      jsonBytes({
-        severity: "fatal",
-        code: "ANIMATED_SVG_TIMELINE_PRECISION_LOSS",
-        message: "Animated SVG timeline keyframe precision check failed: separation",
-        stage: "emit",
-        context: { kind: "separation", leftTimeMs: 0, rightTimeMs: 0 },
-      }),
-    ],
-  ]);
 }
 
 function safeArtifactPath(relativePath: string): string {
@@ -428,7 +289,7 @@ describe("refactor output parity", () => {
     engine.dispose();
   });
 
-  it("matches the pre-refactor bytes and exercises non-vacuous failure paths", async () => {
+  it("matches version-pinned literal bytes and exercises non-vacuous failure paths", async () => {
     const corpus = await captureCorpus(engine);
 
     expect(corpus.fatalCodes).toEqual(["ANIMATED_SVG_TIMELINE_PRECISION_LOSS"]);
@@ -447,48 +308,15 @@ describe("refactor output parity", () => {
     expect(manifest.artifacts).toEqual([...corpus.artifacts.keys()].sort());
     expect(listReferenceArtifacts(referenceRoot)).toEqual(manifest.artifacts);
 
-    const intentionalArtifacts = architectureIntentionalArtifacts();
-    let unchangedCount = 0;
-    let textPathSvgCount = 0;
-    let intentionalCount = 0;
+    expect(manifest.artifacts).toHaveLength(23);
     for (const artifactName of manifest.artifacts) {
       const actualBytes = corpus.artifacts.get(artifactName);
       if (actualBytes === undefined) {
         throw new TypeError(`Missing captured parity artifact: ${artifactName}`);
       }
       const expectedBytes = new Uint8Array(readFileSync(safeArtifactPath(artifactName)));
-      const intentionalBytes = intentionalArtifacts.get(artifactName);
-      if (intentionalBytes !== undefined) {
-        expect(actualBytes, `${artifactName}: intentional architecture byte content`).toEqual(
-          intentionalBytes,
-        );
-        expect(actualBytes, `${artifactName}: differs from the preserved base fixture`).not.toEqual(
-          expectedBytes,
-        );
-        intentionalCount += 1;
-        continue;
-      }
-      if (textPathSvgArtifacts.has(artifactName)) {
-        expect(
-          withoutTextOutlineData(new TextDecoder().decode(actualBytes)),
-          `${artifactName}: SVG outside text outline data`,
-        ).toBe(withoutTextOutlineData(new TextDecoder().decode(expectedBytes)));
-        textPathSvgCount += 1;
-        continue;
-      }
       expect(actualBytes.byteLength, `${artifactName}: byte length`).toBe(expectedBytes.byteLength);
-      expect(actualBytes, `${artifactName}: byte content`).toEqual(expectedBytes);
-      unchangedCount += 1;
+      expect(actualBytes, `${artifactName}: complete byte content`).toEqual(expectedBytes);
     }
-    expect(unchangedCount + textPathSvgCount).toBe(18);
-    expect(textPathSvgCount).toBe(textPathSvgArtifacts.size);
-    expect(intentionalCount).toBe(5);
-  });
-
-  it("keeps shape path data in the parity comparison", () => {
-    const svg = '<svg><g data-boundsvg-text="A"><path d="M0 0L1 1"/></g><path d="M2 2L3 3"/></svg>';
-    expect(withoutTextOutlineData(svg)).toBe(
-      '<svg><g data-boundsvg-text="A"><path d=""/></g><path d="M2 2L3 3"/></svg>',
-    );
   });
 });

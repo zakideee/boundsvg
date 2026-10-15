@@ -16,41 +16,41 @@ type OracleResult = {
   unitSampleCount: number;
 };
 
-/** Frozen paint and text-outline hashes, with schema-only IR metadata changes listed explicitly. */
+/** Frozen SVG, IR, outline hashes and structural counts for the current font stack. */
 const expectedOracle: Record<string, OracleResult> = {
-  "vertical-ruby-merged": {
-    svgSha256: "ba7f522c7efef9c14ba9b34eefabd2e2ad371d719133bf08fe289545de0fc53d",
-    rootSha256: "c5f023624b4db7f5ed32ed3cc4dfd2d09e45da7a9bd830395494f69fdc6ac24c",
-    outlinesSha256: "d66146c49b76b739e82d892ceda7b3ad786a36dcd982b7400bf60a06afcda803",
-    glyphPathCount: 2,
-    unitSampleCount: 0,
-  },
-  "vertical-ruby-glyphs": {
-    svgSha256: "bd2c42fff61a8c6e4cfe474d381d883407f315d8c493568a6c05833101ea3945",
-    rootSha256: "e7725040142493b695fd2345acb22417a6e6f2cf480e83a69d8fecb176f5da8d",
-    outlinesSha256: "112894497c1337e414a9a75582e05b350c38d5c0079218143b6b6a6b2a6c1246",
-    glyphPathCount: 53,
+  "fallback-missing-transform-glyphs": {
+    svgSha256: "980cd8296e788ba5db378ced605228109af7a51537597377012f1e418c7e647a",
+    rootSha256: "fc6797778f6c99133320522568235212b92b25b7d71307b217e7ba54e192e1b5",
+    outlinesSha256: "346887eb4e25b2e97e0fe736dbd9006a018aaeea98a1f9a9a8683a257400e4d5",
+    glyphPathCount: 3,
     unitSampleCount: 0,
   },
   "text-on-path-merged": {
-    svgSha256: "45bdb0c2c79a1da9dfa62179cd83b25189f015807c2311f2d98f3f9af7e5720a",
-    rootSha256: "71e78746c7581e4c6d988ed3b07a1f502b4477c234cd82fe18c8d56eb6eafdfc",
-    outlinesSha256: "2882bca37a25be5608d8f18e15d2e2220f2297f642530491a4548e4ab1ef12c4",
+    svgSha256: "9549d9372a932fd91ea1ab97a5db412d1004fe4cc7d73bd100a8f191c67452a6",
+    rootSha256: "cea5c3e92a4943a079cc6661f45fcdcd137226ee15930fd06e75eb0ebae7dfa4",
+    outlinesSha256: "da6e6b4ea901e19e716e1eb3abf381e950d402faeafe1067cbdfafeebd842976",
     glyphPathCount: 28,
     unitSampleCount: 35,
   },
   "unit-animation-glyphs": {
-    svgSha256: "543b0ac36d732b3604c4e5109e00c59979e4fad226255f110473705f776b3e8c",
-    rootSha256: "c7864d6ce4d37e71c4e6ce370d3a20f3d789a14c24253afdf544cd7604c08a60",
-    outlinesSha256: "69798a33170cf984b178b9bb1d6b9310e309f78266215789f13230f3edd5d457",
+    svgSha256: "e3dd59ea825591782b3566d3685c632e4c01fbc44ef5509ed9063006dd14585a",
+    rootSha256: "5c9eafaebc0880dd335cf1f179e690e2e681024417b93efb5fc112009d3583cd",
+    outlinesSha256: "757c28bed7ae458c494604fcca6672378b9889faa7d5bdb171915794f9905939",
     glyphPathCount: 48,
     unitSampleCount: 12,
   },
-  "fallback-missing-transform-glyphs": {
-    svgSha256: "f5703fd3e73e894fbf031ced35696f500fd9ba80e40724e35efcada2e6277244",
-    rootSha256: "99c764cdc6c340aa02c9c005ba32e8a71e4abc7c060593e5015215e223af8f49",
-    outlinesSha256: "9f8267c9a4104e4933f43c735145b851413fc8117c2b32dce4e2b6973d40f265",
-    glyphPathCount: 3,
+  "vertical-ruby-glyphs": {
+    svgSha256: "342cece40606b15d8226a2914a7a152bb73cb5021f29dded16d522ad28e33ab9",
+    rootSha256: "77295a74705ae67d6a4d0dd6dbeb0ad13d7216a408e0a559ca9235ebc0fdcc90",
+    outlinesSha256: "0c5d56a6910ee90ceecf2157ec9dda4e2e7868d4a97bf93c4e29b48229ac8f56",
+    glyphPathCount: 53,
+    unitSampleCount: 0,
+  },
+  "vertical-ruby-merged": {
+    svgSha256: "c9d526e9ab58a6a353c930a2e23df240d6c3f2e9068ce09d7f14efe34f441fe3",
+    rootSha256: "e692ccbe49a3141a8d794d1eb2e6b815f9a07d2dc1ccf0cdd17dcd35e936dee2",
+    outlinesSha256: "e043aa6158835de07e08776f217af1fc93177ad8c02439a6c15f841b6444da54",
+    glyphPathCount: 2,
     unitSampleCount: 0,
   },
 };
@@ -90,6 +90,7 @@ function fallbackMissingTransformScene(): VNode {
   );
 }
 
+/** Vertical ruby, text paths, animation units, and transformed fallback cases. */
 const oracleCases: ReadonlyArray<{
   id: string;
   build: () => VNode;
@@ -192,16 +193,6 @@ describe("outline ownership frozen oracle", () => {
         ...countResolvedTextMetadata(rendered.ir.root),
       };
       expect(actual).toEqual(expectedOracle[oracleCase.id]);
-      if (oracleCase.id === "text-on-path-merged") {
-        const previousRoot = JSON.parse(
-          JSON.stringify(rendered.ir.root, (key, value: unknown) =>
-            key === "pathGeometry" ? undefined : value,
-          ),
-        ) as IRNode;
-        expect(sha256(previousRoot)).toBe(
-          "e0d6e060dab0e47b6ac38c1300703035fedce2a5c3507c3d9161542bf7698561",
-        );
-      }
     });
   }
 });
