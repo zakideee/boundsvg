@@ -44,9 +44,39 @@ absence remains valid. Unknown unused tables are ignored.
 | `TEXT_SHAPING_LIMIT_EXCEEDED` | The shaper reported buffer failure during processing, including possible allocation or operation limits. |
 | `TEXT_SHAPING_INVALID_OUTPUT` | Returned glyph arrays, glyph IDs or UTF-8 clusters violate the font contract.                            |
 | `TEXT_FONT_UNAVAILABLE`       | No requested alias resolves to a registered font, including an empty fallback chain.                     |
+| `FONT_DUPLICATE`              | Native font registration reported an existing entry.                                                     |
 
-Errors carry a typed reason and operation, plus table/face/glyph context where
-applicable. Rendering preserves node identity when available. Dependency-internal
+### Fixed messages and typed context
+
+The WASM/TypeScript transport preserves these exact message, stage and reason
+combinations. Different messages under the same code describe different failures;
+callers must not replace one with another.
+
+| Diagnostic                    | Fixed message                                   | Stage  | `context.reason`                                                                                                                                                           |
+| ----------------------------- | ----------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FONT_PARSE_FAILED`           | Font parsing or admission failed.               | `font` | `invalidData`, `missingTable`, `invalidTable`, `noOutlines`, `invalidUnitsPerEm`, `invalidGlyphCount`, `nonFiniteMetric`, `invalidVariationAxis`, `allocationFailed`       |
+| `FONT_OUTLINE_FAILED`         | Font outline extraction failed.                 | `font` | `invalidGlyphId`, `nonFiniteMetric`, `allocationFailed`, `drawingFailed`                                                                                                   |
+| `FONT_OUTLINE_FAILED`         | Baseline glyph rotation must be finite.         | `font` | `invalidBaselineRotation`                                                                                                                                                  |
+| `FONT_OUTLINE_FAILED`         | Glyph inline scale must be positive and finite. | `font` | `invalidInlineScale`                                                                                                                                                       |
+| `TEXT_SHAPING_FAILED`         | Text shaping failed.                            | `text` | `nonFiniteVariation`, `nonFiniteMetric`, `allocationFailed`, `bufferPreparationFailed`, `inputTooLong`, `alreadyShaped`, `directionUnset`, `planMismatch`, `shapingFailed` |
+| `TEXT_SHAPING_LIMIT_EXCEEDED` | The shaping buffer failed during processing.    | `text` | `bufferFailedDuringShaping`                                                                                                                                                |
+| `TEXT_SHAPING_INVALID_OUTPUT` | The shaper returned invalid glyph data.         | `text` | `invalidGlyphId`, `invalidCluster`, `parallelArrayLengthMismatch`                                                                                                          |
+| `TEXT_FONT_UNAVAILABLE`       | No requested font is available.                 | `font` | `unregisteredFont`                                                                                                                                                         |
+| `TEXT_FONT_UNAVAILABLE`       | No requested font is available for text layout. | `text` | Layout preparation uses run/alias context without a `reason` field.                                                                                                        |
+| `FONT_DUPLICATE`              | The font is already registered.                 | `font` | `duplicateRegistration`                                                                                                                                                    |
+
+The native font-classification forms include `context.operation` and the typed
+`context.reason`. Parse errors also include the zero-based `faceIndex` and, when
+applicable, a four-character OpenType `table` tag; an absent tag is omitted rather
+than `null`. Ordinary outline failures include the requested `glyphId`; the two
+positioned-glyph argument failures do not. Invalid shaped output includes
+`glyphIndex`, the zero-based output-record index rather than a glyph ID or UTF-8
+cluster. The font-stage unavailable form includes the requested `weight`.
+The text-stage layout-preparation form instead carries the bounded effective-run
+and requested-alias context documented in the
+[text layout diagnostic guide](../guides/debugging-diagnostics.md).
+
+Rendering preserves node identity when available. Dependency-internal
 infallible allocations and process-wide memory exhaustion are not guaranteed to
 be recoverable. Raw SVG text uses usvg’s own shaping path and error visibility.
 

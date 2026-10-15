@@ -136,7 +136,7 @@ and context.
 
 Font parsing, outline extraction and shaping errors can also propagate through
 these layout operations. Their codes, fixed messages, stages and typed reason
-contexts are shared with the [font backend diagnostic catalog](../reference/font-backend-migration.md#api-and-failure-changes):
+contexts are shared with the [font backend diagnostic catalog](../reference/font-backend-migration.md#fixed-messages-and-typed-context):
 `FONT_PARSE_FAILED`, `FONT_OUTLINE_FAILED`, `TEXT_SHAPING_FAILED`,
 `TEXT_SHAPING_LIMIT_EXCEEDED` and `TEXT_SHAPING_INVALID_OUTPUT`.
 

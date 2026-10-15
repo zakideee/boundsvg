@@ -338,6 +338,11 @@ The workspace MSRV is Rust 1.88.0. These are breaking changes to the pre-1.0
 native API. See the [migration reference](../../apps/docs/reference/font-backend-migration.md)
 for the WASM schema and diagnostic catalog.
 
+`FontRegistry::rasterize_font_data()` returns a fallible `RasterizeFontData` snapshot
+with `aliases`, `fonts`, and aligned optional `admissions`. Consumers must check
+each proof against its exact immutable `Arc` before skipping common table admission;
+absent or mismatched proof requires validation. Font bytes are shared, not copied.
+
 ## Known Limitations
 
 ### CLI Limitations (boundtext-cli)
@@ -354,8 +359,3 @@ Licensed under either of
 - [MIT License](../../LICENSE-MIT)
 
 at your option.
-
-`FontRegistry::rasterize_font_data()` returns a fallible `RasterizeFontData` snapshot
-with `aliases`, `fonts`, and aligned optional `admissions`. Consumers must check
-each proof against its exact immutable `Arc` before skipping common table admission;
-absent or mismatched proof requires validation. Font bytes are shared, not copied.
