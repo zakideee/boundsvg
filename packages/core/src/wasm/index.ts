@@ -364,7 +364,9 @@ export function createWasmShapeFn(fontData: Uint8Array): ShapeFn {
     text: string,
     params: { fontSizePx: number; letterSpacingPx: number; shapeOptions?: ShapingOptions },
   ): GlyphInfo[] => {
-    const json = wasm.shape_text(fontData, text, params.fontSizePx, params.letterSpacingPx);
+    const json = invokeWasmFont("shapeText", () =>
+      wasm.shape_text(fontData, text, params.fontSizePx, params.letterSpacingPx),
+    );
     // WASM output is already camelCase (serde rename_all = "camelCase")
     return parseWasmJson(
       json,

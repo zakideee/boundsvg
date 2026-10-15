@@ -2382,7 +2382,7 @@ impl BoundSvgEngine {
     ///
     /// # Errors
     ///
-    /// Returns `JsValue` if WOFF2 decoding or font registration fails.
+    /// Returns `JsValue` if font-buffer allocation, WOFF2 decoding, or registration fails.
     pub fn register_font(
         &mut self,
         data: &[u8],
@@ -2392,18 +2392,7 @@ impl BoundSvgEngine {
     ) -> Result<(), JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let font_style = parse_font_style(style);
-            let mut font_bytes = Vec::new();
-            font_bytes.try_reserve_exact(data.len()).map_err(|_| {
-                font_error_to_js(
-                    &boundtext::BoundtextError::FontParse {
-                        reason: boundtext::error::FontFailureReason::AllocationFailed,
-                        table: None,
-                        face_index: 0,
-                    },
-                    "registerFont",
-                )
-            })?;
-            font_bytes.extend_from_slice(data);
+            let font_bytes = copy_font_data(data, "registerFont")?;
             let decoded = font::decode::decode_font(font_bytes)
                 .map_err(|_| font_decode_error_to_js("registerFont"))?;
             self.registry
@@ -3844,6 +3833,23 @@ where
         .unwrap_or_else(|panic_info| Err(JsValue::from_str(&panic_payload_message(&*panic_info))))
 }
 
+/// Copy a borrowed font buffer and preserve the calling export's allocation error.
+fn copy_font_data(font_data: &[u8], operation: &str) -> Result<Vec<u8>, JsValue> {
+    let mut font_bytes = Vec::new();
+    font_bytes.try_reserve_exact(font_data.len()).map_err(|_| {
+        font_error_to_js(
+            &boundtext::BoundtextError::FontParse {
+                reason: boundtext::error::FontFailureReason::AllocationFailed,
+                table: None,
+                face_index: 0,
+            },
+            operation,
+        )
+    })?;
+    font_bytes.extend_from_slice(font_data);
+    Ok(font_bytes)
+}
+
 fn parse_font_style(style_str: &str) -> FontStyle {
     match style_str {
         "italic" => FontStyle::Italic,
@@ -3891,12 +3897,12 @@ fn to_glyph_positions(
 ///
 /// # Errors
 ///
-/// Returns `JsValue` if WOFF2 decoding or font parsing fails.
+/// Returns `JsValue` if font-buffer allocation, WOFF2 decoding, or parsing fails.
 #[wasm_bindgen]
 pub fn get_font_metrics(font_data: &[u8]) -> Result<String, JsValue> {
-    let font_data = font_data.to_vec();
-    catch_unwind_to_js(AssertUnwindSafe(move || {
-        let decoded = font::decode::decode_font(font_data)
+    catch_unwind_to_js(AssertUnwindSafe(|| {
+        let font_bytes = copy_font_data(font_data, "getFontMetrics")?;
+        let decoded = font::decode::decode_font(font_bytes)
             .map_err(|_| font_decode_error_to_js("getFontMetrics"))?;
         let entry = font::FontEntry::new(decoded, "tmp".into(), 400, FontStyle::Normal)
             .map_err(|error| font_error_to_js(&error, "getFontMetrics"))?;
@@ -3913,7 +3919,8 @@ pub fn get_font_metrics(font_data: &[u8]) -> Result<String, JsValue> {
 ///
 /// # Errors
 ///
-/// Returns `JsValue` if WOFF2 decoding, font parsing, or serialization fails.
+/// Returns `JsValue` if font-buffer allocation, WOFF2 decoding, parsing, shaping,
+/// or serialization fails.
 #[wasm_bindgen]
 pub fn shape_text(
     font_data: &[u8],
@@ -3921,16 +3928,15 @@ pub fn shape_text(
     font_size_px: f64,
     letter_spacing_px: f64,
 ) -> Result<String, JsValue> {
-    let font_data = font_data.to_vec();
-    let text = text.to_string();
-    catch_unwind_to_js(AssertUnwindSafe(move || {
-        let decoded = font::decode::decode_font(font_data)
+    catch_unwind_to_js(AssertUnwindSafe(|| {
+        let font_bytes = copy_font_data(font_data, "shapeText")?;
+        let decoded = font::decode::decode_font(font_bytes)
             .map_err(|_| font_decode_error_to_js("shapeText"))?;
         let entry = font::FontEntry::new(decoded, "tmp".into(), 400, FontStyle::Normal)
             .map_err(|error| font_error_to_js(&error, "shapeText"))?;
         let registry = font::FontRegistry::new();
         let glyphs =
-            font::shaping::shape_text(&registry, &entry, &text, font_size_px, letter_spacing_px)
+            font::shaping::shape_text(&registry, &entry, text, font_size_px, letter_spacing_px)
                 .map_err(|error| font_error_to_js(&error, "shapeText"))?;
         serde_json::to_string(&glyphs)
             .map_err(|e| JsValue::from_str(&format!("Failed to serialize: {e}")))

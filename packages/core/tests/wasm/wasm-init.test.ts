@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { FatalError } from "../../src/errors.js";
 import { initNodeWasm } from "../../src/node.js";
 import {
   createWasmEngineInstance,
@@ -98,6 +99,43 @@ describe("WASM integration", () => {
       for (const g of glyphs) {
         expect(g.xAdvance).toBeGreaterThan(0);
       }
+    });
+
+    it("preserves raw-font shaping failures and keeps later calls usable", () => {
+      let thrownError: unknown;
+      try {
+        createWasmShapeFn(new Uint8Array([0, 1, 2, 3]))("A", {
+          fontSizePx: 16,
+          letterSpacingPx: 0,
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+      expect(thrownError).toBeInstanceOf(FatalError);
+      expect(thrownError).toMatchObject({
+        code: "FONT_PARSE_FAILED",
+        stage: "font",
+        context: { operation: "shapeText", reason: "invalidData", faceIndex: 0 },
+      });
+      const shapeFn = createWasmShapeFn(fontData);
+      expect(shapeFn("A", { fontSizePx: 16, letterSpacingPx: 0 })[0]!.glyphId).toBeGreaterThan(0);
+      expect(shapeFn("", { fontSizePx: 16, letterSpacingPx: 0 })).toEqual([]);
+    });
+
+    it("preserves raw-font metric failures and keeps later calls usable", () => {
+      let thrownError: unknown;
+      try {
+        getWasmFontMetrics(new Uint8Array([0, 1, 2, 3]));
+      } catch (error) {
+        thrownError = error;
+      }
+      expect(thrownError).toBeInstanceOf(FatalError);
+      expect(thrownError).toMatchObject({
+        code: "FONT_PARSE_FAILED",
+        stage: "font",
+        context: { operation: "getFontMetrics", reason: "invalidData", faceIndex: 0 },
+      });
+      expect(getWasmFontMetrics(fontData).unitsPerEm).toBeGreaterThan(0);
     });
 
     it("applies letter spacing", () => {
