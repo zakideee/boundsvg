@@ -1077,7 +1077,7 @@ engine.registerSymbol("arrow", arrow);
                     color: "#86efac",
                     wrap: "none",
                   },
-                  "WASM + rustybuzz + Taffy",
+                  "WASM + HarfRust + Taffy",
                 ),
                 core.Text(
                   {

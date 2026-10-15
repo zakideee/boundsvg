@@ -264,9 +264,9 @@ fn shape_text(
     font_size_px: f64,
     letter_spacing_px: f64,
     options: &ShapeOptions,
-) -> Option<Vec<GlyphInfo>> {
+) -> Result<Option<Vec<GlyphInfo>>, crate::TextLayoutError> {
     if text.is_empty() {
-        return Some(Vec::new());
+        return Ok(Some(Vec::new()));
     }
     if font_ctx.families.len() > 1 {
         let result = shaping::shape_with_fallback_and_options(
@@ -275,9 +275,9 @@ fn shape_text(
             font_size_px,
             letter_spacing_px,
             options,
-        );
+        )?;
         if !result.glyphs.is_empty() {
-            return Some(result.glyphs);
+            return Ok(Some(result.glyphs));
         }
         if let Some(fallback) = font_ctx.fallback_registry {
             let fallback_ctx = FontContext {
@@ -293,43 +293,56 @@ fn shape_text(
                 font_size_px,
                 letter_spacing_px,
                 options,
-            );
+            )?;
             if !result.glyphs.is_empty() {
-                return Some(result.glyphs);
+                return Ok(Some(result.glyphs));
             }
         }
     }
-    let font_entry = resolve_font(
+    let Some(font_entry) = resolve_font(
         font_ctx.registry,
         font_ctx.fallback_registry,
         font_ctx.families,
         font_ctx.weight,
         font_ctx.style,
-    )?;
-    Some(shaping::shape_text_with_options(
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(shaping::shape_text_with_options(
         font_ctx.registry,
         font_entry,
         text,
         font_size_px,
         letter_spacing_px,
         options,
-    ))
+    )?))
 }
 
 /// Shape a retained prefix as end-of-text and append a separately shaped
 /// synthetic marker. Tracking is restored once at the run boundary so the
 /// display advance matches ordinary adjacent clusters without allowing the
 /// marker to participate in the prefix's shaping context.
+///
+/// # Errors
+///
+/// Propagates font, shaping, resource-limit, and invalid-output failures from either prefix or marker.
 pub(crate) fn shape_horizontal_candidate(
     font_ctx: &FontContext<'_>,
     prefix: &str,
     font_size_px: f64,
     letter_spacing_px: f64,
     options: &ShapeOptions,
-) -> Option<Vec<GlyphInfo>> {
-    let mut prefix_glyphs = shape_text(font_ctx, prefix, font_size_px, letter_spacing_px, options)?;
-    let mut marker_glyphs =
-        shape_text(font_ctx, ELLIPSIS, font_size_px, letter_spacing_px, options)?;
+) -> Result<Option<Vec<GlyphInfo>>, crate::TextLayoutError> {
+    let Some(mut prefix_glyphs) =
+        shape_text(font_ctx, prefix, font_size_px, letter_spacing_px, options)?
+    else {
+        return Ok(None);
+    };
+    let Some(mut marker_glyphs) =
+        shape_text(font_ctx, ELLIPSIS, font_size_px, letter_spacing_px, options)?
+    else {
+        return Ok(None);
+    };
     if !prefix_glyphs.is_empty()
         && !marker_glyphs.is_empty()
         && letter_spacing_px != 0.0
@@ -338,12 +351,20 @@ pub(crate) fn shape_horizontal_candidate(
         last_prefix_glyph.x_advance =
             shaping::add_inline_tracking(last_prefix_glyph.x_advance, letter_spacing_px);
     }
-    let marker_cluster_offset = u32::try_from(prefix.len()).unwrap_or(u32::MAX);
+    let marker_cluster_offset =
+        u32::try_from(prefix.len()).map_err(|_| crate::BoundtextError::TextShaping {
+            reason: crate::error::FontFailureReason::InputTooLong,
+        })?;
     for marker_glyph in &mut marker_glyphs {
-        marker_glyph.cluster = marker_glyph.cluster.saturating_add(marker_cluster_offset);
+        marker_glyph.cluster = marker_glyph
+            .cluster
+            .checked_add(marker_cluster_offset)
+            .ok_or(crate::BoundtextError::TextShaping {
+                reason: crate::error::FontFailureReason::InputTooLong,
+            })?;
     }
     prefix_glyphs.extend(marker_glyphs);
-    Some(prefix_glyphs)
+    Ok(Some(prefix_glyphs))
 }
 
 fn total_vertical_advance(glyphs: &[GlyphInfo]) -> f64 {
@@ -362,7 +383,11 @@ fn total_vertical_advance(glyphs: &[GlyphInfo]) -> f64 {
 /// `prefix + "…"` candidate.
 /// When `vertical` is true, sums vertical advances (`y_advance` with `x_advance`
 /// fallback) instead of horizontal `x_advance`.
-#[must_use]
+///
+/// # Errors
+///
+/// Propagates font resolution, shaping, processing-limit, allocation, and
+/// invalid-glyph-output failures while measuring the truncation candidates.
 pub fn measure_text_advance(
     font_ctx: &FontContext<'_>,
     text: &str,
@@ -370,32 +395,41 @@ pub fn measure_text_advance(
     letter_spacing_px: f64,
     options: &ShapeOptions,
     vertical: bool,
-) -> Option<f64> {
-    let glyphs = shape_text(font_ctx, text, font_size_px, letter_spacing_px, options)?;
-    Some(if vertical {
+) -> Result<Option<f64>, crate::TextLayoutError> {
+    let Some(glyphs) = shape_text(font_ctx, text, font_size_px, letter_spacing_px, options)? else {
+        return Ok(None);
+    };
+    Ok(Some(if vertical {
         total_vertical_advance(&glyphs)
     } else {
         total_advance(&glyphs)
-    })
+    }))
 }
 
 /// Shape the "…" character and return its advance in pixels.
 ///
 /// When `vertical` is true, returns the vertical advance.
-#[must_use]
+///
+/// # Errors
+///
+/// Propagates font resolution, shaping, processing-limit, allocation, and
+/// invalid-glyph-output failures while measuring the truncation candidates.
 pub fn shape_ellipsis_advance_with_options(
     font_ctx: &FontContext<'_>,
     font_size_px: f64,
     letter_spacing_px: f64,
     options: &ShapeOptions,
     vertical: bool,
-) -> Option<f64> {
-    let glyphs = shape_text(font_ctx, ELLIPSIS, font_size_px, letter_spacing_px, options)?;
-    Some(if vertical {
+) -> Result<Option<f64>, crate::TextLayoutError> {
+    let Some(glyphs) = shape_text(font_ctx, ELLIPSIS, font_size_px, letter_spacing_px, options)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(if vertical {
         total_vertical_advance(&glyphs)
     } else {
         total_advance(&glyphs)
-    })
+    }))
 }
 
 /// Apply ellipsis truncation to a single line that overflows.
@@ -407,7 +441,11 @@ pub fn shape_ellipsis_advance_with_options(
 /// tail-prohibited characters (e.g. "（" must not precede "…").
 ///
 /// Returns the truncated line, or None if the text already fits.
-#[must_use]
+///
+/// # Errors
+///
+/// Propagates font resolution, shaping, processing-limit, allocation, and
+/// invalid-glyph-output failures while measuring the truncation candidates.
 pub fn apply_ellipsis(
     text: &str,
     max_width: f64,
@@ -418,7 +456,7 @@ pub fn apply_ellipsis(
     baseline_offset_px: f64,
     kinsoku_profile: Option<&KinsokuProfile>,
     options: &ShapeOptions,
-) -> Option<Line> {
+) -> Result<Option<Line>, crate::TextLayoutError> {
     apply_ellipsis_internal(
         text,
         max_width,
@@ -433,7 +471,12 @@ pub fn apply_ellipsis(
     )
 }
 
-#[must_use]
+/// Apply ellipsis while retaining source unit metadata for tests.
+///
+/// # Errors
+///
+/// Propagates font resolution, shaping, processing-limit, allocation, and
+/// invalid-glyph-output failures while measuring the truncation candidates.
 #[cfg(test)]
 pub(crate) fn apply_ellipsis_with_unit_metadata(
     text: &str,
@@ -445,7 +488,7 @@ pub(crate) fn apply_ellipsis_with_unit_metadata(
     baseline_offset_px: f64,
     kinsoku_profile: Option<&KinsokuProfile>,
     options: &ShapeOptions,
-) -> Option<Line> {
+) -> Result<Option<Line>, crate::TextLayoutError> {
     apply_ellipsis_internal(
         text,
         max_width,
@@ -471,12 +514,15 @@ fn apply_ellipsis_internal(
     kinsoku_profile: Option<&KinsokuProfile>,
     options: &ShapeOptions,
     should_include_unit_metadata: bool,
-) -> Option<Line> {
-    let full_glyphs = shape_text(font_ctx, text, font_size_px, letter_spacing_px, options)?;
+) -> Result<Option<Line>, crate::TextLayoutError> {
+    let Some(full_glyphs) = shape_text(font_ctx, text, font_size_px, letter_spacing_px, options)?
+    else {
+        return Ok(None);
+    };
     let full_width = total_advance(&full_glyphs);
 
     if full_width <= max_width {
-        return None; // No truncation needed
+        return Ok(None); // No truncation needed
     }
 
     let graphemes = grapheme_split(text);
@@ -486,48 +532,55 @@ fn apply_ellipsis_internal(
         kinsoku_profile
             .is_none_or(|profile| is_valid_ellipsis_boundary(&grapheme_refs, *keep, profile))
     });
-    let selected = super::ellipsis_plan::select_longest_fitting(
+    let selected = super::ellipsis_plan::try_select_longest_fitting(
         legal_candidates,
         |keep| {
             #[cfg(any(test, feature = "phase-trace"))]
             crate::phase_trace::record_ellipsis_candidate();
             let prefix = graphemes[..keep].concat();
-            let glyphs = shape_horizontal_candidate(
+            let Some(glyphs) = shape_horizontal_candidate(
                 font_ctx,
                 &prefix,
                 font_size_px,
                 letter_spacing_px,
                 options,
-            )?;
+            )?
+            else {
+                return Ok::<_, crate::TextLayoutError>(None);
+            };
             let width = total_advance(&glyphs);
-            Some((format!("{prefix}{ELLIPSIS}"), glyphs, width))
+            Ok(Some((format!("{prefix}{ELLIPSIS}"), glyphs, width)))
         },
         |(_, _, width)| *width <= max_width,
-    );
+    )?;
 
     if let Some((_keep, (display_text, glyphs, width))) = selected {
-        return Some(build_ellipsis_line(
+        return Ok(Some(build_ellipsis_line(
             display_text,
             glyphs,
             width,
             baseline_offset_px,
             should_include_unit_metadata,
-        ));
+        )));
     }
 
     // The fixed marker is display content, not an overflow fallback. If it
     // cannot satisfy the inline constraint, no display ink is materialized.
-    Some(build_empty_ellipsis_line(
+    Ok(Some(build_empty_ellipsis_line(
         baseline_offset_px,
         should_include_unit_metadata,
-    ))
+    )))
 }
 
 /// Apply ellipsis to multi-line text when lines exceed maxLines.
 ///
 /// Keeps the first (maxLines - 1) lines intact and applies ellipsis
 /// truncation to the last allowed line.
-#[must_use]
+///
+/// # Errors
+///
+/// Propagates font resolution, shaping, processing-limit, allocation, and
+/// invalid-glyph-output failures while measuring the truncation candidates.
 pub fn apply_multiline_ellipsis(
     lines: &[Line],
     max_lines: usize,
@@ -539,7 +592,7 @@ pub fn apply_multiline_ellipsis(
     baseline_offset_px: f64,
     kinsoku_profile: Option<&KinsokuProfile>,
     options: &ShapeOptions,
-) -> Option<Vec<Line>> {
+) -> Result<Option<Vec<Line>>, crate::TextLayoutError> {
     apply_multiline_ellipsis_internal(
         lines,
         max_lines,
@@ -555,7 +608,12 @@ pub fn apply_multiline_ellipsis(
     )
 }
 
-#[must_use]
+/// Apply multiline ellipsis while retaining source unit metadata for tests.
+///
+/// # Errors
+///
+/// Propagates font resolution, shaping, processing-limit, allocation, and
+/// invalid-glyph-output failures while measuring the truncation candidates.
 #[cfg(test)]
 pub(crate) fn apply_multiline_ellipsis_with_unit_metadata(
     lines: &[Line],
@@ -568,7 +626,7 @@ pub(crate) fn apply_multiline_ellipsis_with_unit_metadata(
     baseline_offset_px: f64,
     kinsoku_profile: Option<&KinsokuProfile>,
     options: &ShapeOptions,
-) -> Option<Vec<Line>> {
+) -> Result<Option<Vec<Line>>, crate::TextLayoutError> {
     apply_multiline_ellipsis_internal(
         lines,
         max_lines,
@@ -596,9 +654,9 @@ fn apply_multiline_ellipsis_internal(
     kinsoku_profile: Option<&KinsokuProfile>,
     options: &ShapeOptions,
     should_include_unit_metadata: bool,
-) -> Option<Vec<Line>> {
+) -> Result<Option<Vec<Line>>, crate::TextLayoutError> {
     if max_lines == 0 || lines.len() <= max_lines {
-        return None; // No truncation needed
+        return Ok(None); // No truncation needed
     }
 
     let kept: Vec<Line> = lines[..max_lines - 1].to_vec();
@@ -628,7 +686,7 @@ fn apply_multiline_ellipsis_internal(
         kinsoku_profile,
         options,
         should_include_unit_metadata,
-    );
+    )?;
 
     let mut result = kept;
     if let Some(mut el) = ellipsis_line {
@@ -648,7 +706,7 @@ fn apply_multiline_ellipsis_internal(
         result.push(last_line);
     }
 
-    Some(result)
+    Ok(Some(result))
 }
 
 #[cfg(test)]
@@ -688,7 +746,8 @@ mod tests {
             28.8,
             None,
             &ShapeOptions::default(),
-        );
+        )
+        .expect("font operation succeeds");
         assert!(result.is_none(), "should return None when text fits");
     }
 
@@ -713,7 +772,8 @@ mod tests {
             28.8,
             None,
             &ShapeOptions::default(),
-        );
+        )
+        .expect("font operation succeeds");
         let line = result.expect("should truncate");
         assert!(
             line.text.ends_with('\u{2026}'),
@@ -753,6 +813,7 @@ mod tests {
             None,
             &ShapeOptions::default(),
         )
+        .expect("font operation succeeds")
         .expect("should truncate");
         let positioned_glyphs = line.positioned_glyphs.expect("positioned glyph metadata");
         let ellipsis = positioned_glyphs
@@ -788,6 +849,7 @@ mod tests {
             None,
             &ShapeOptions::default(),
         )
+        .expect("font operation succeeds")
         .expect("should truncate after the literal ellipsis");
         assert!(line.text.starts_with("A…"));
         let synthetic_cluster_start = synthetic_ellipsis_cluster_start(&line.text);
@@ -822,6 +884,7 @@ mod tests {
             baseline_y: f64,
         ) -> Line {
             let glyphs = shape_text(font_ctx, text, 24.0, 0.0, &ShapeOptions::default())
+                .expect("font operation succeeds")
                 .expect("shape source line");
             let mut positioned_glyphs =
                 super::super::engine::build_positioned_glyphs_for_text(&glyphs, text, baseline_y);
@@ -873,6 +936,7 @@ mod tests {
             None,
             &ShapeOptions::default(),
         )
+        .expect("font operation succeeds")
         .expect("multiline ellipsis");
         let positioned_glyphs = result[0]
             .positioned_glyphs
@@ -934,6 +998,7 @@ mod tests {
                 None,
                 &ShapeOptions::default(),
             )
+            .expect("font operation succeeds")
             .is_none()
         );
     }
@@ -959,7 +1024,8 @@ mod tests {
             28.8,
             None,
             &ShapeOptions::default(),
-        );
+        )
+        .expect("font operation succeeds");
         let line = result.expect("should truncate");
         let without_ellipsis = line.text.trim_end_matches('\u{2026}');
         assert!(
@@ -991,7 +1057,8 @@ mod tests {
             28.8,
             None,
             &ShapeOptions::default(),
-        );
+        )
+        .expect("font operation succeeds");
         let line = result.expect("should return an empty display projection");
         assert_eq!(line.text, "");
         assert_eq!(line.width, 0.0);
@@ -1038,7 +1105,8 @@ mod tests {
             28.8,
             None,
             &ShapeOptions::default(),
-        );
+        )
+        .expect("font operation succeeds");
         assert!(
             result.is_none(),
             "should not truncate when lines <= max_lines"
@@ -1101,7 +1169,8 @@ mod tests {
             28.8,
             None,
             &ShapeOptions::default(),
-        );
+        )
+        .expect("font operation succeeds");
         let result = result.expect("should truncate");
         assert_eq!(result.len(), 2, "should have exactly max_lines lines");
         assert!(
@@ -1138,7 +1207,8 @@ mod tests {
             28.8,
             None,
             &ShapeOptions::default(),
-        );
+        )
+        .expect("font operation succeeds");
         let line = result.expect("should truncate");
 
         assert!(
@@ -1193,7 +1263,9 @@ mod tests {
                 28.8,
                 profile,
                 &ShapeOptions::default(),
-            ) {
+            )
+            .expect("font operation succeeds")
+            {
                 truncated_count += 1;
                 let prefix = line.text.trim_end_matches('\u{2026}');
                 assert!(

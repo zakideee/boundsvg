@@ -85,10 +85,10 @@ pub(super) fn text_fits(
             return false;
         }
     }
-    if let Some(max) = max_lines {
-        if lines.len() > max {
-            return false;
-        }
+    if let Some(max) = max_lines
+        && lines.len() > max
+    {
+        return false;
     }
     if let Some(max_h) = max_height {
         let total_height = lines.len() as f64 * line_height_px;

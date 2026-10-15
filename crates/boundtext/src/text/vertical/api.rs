@@ -213,7 +213,12 @@ pub fn layout_vertical_text(
                             false,
                         );
                         mark_vertical_ellipsis(&mut columns, marker_cluster_start);
-                        Ok(Some((candidate, cand_glyphs, columns, kinsoku_unresolved)))
+                        Ok::<_, crate::TextLayoutError>(Some((
+                            candidate,
+                            cand_glyphs,
+                            columns,
+                            kinsoku_unresolved,
+                        )))
                     },
                     |(_, _, candidate_columns, _)| {
                         candidate_columns.len() <= max

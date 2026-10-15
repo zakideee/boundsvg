@@ -18,6 +18,11 @@ use crate::text::types::{
 // Adapter: simple flow
 // ---------------------------------------------------------------------------
 
+/// Map a raw flow request to the authoritative text engine and convert its result.
+///
+/// # Errors
+///
+/// Propagates text validation, font, shaping, fit, and resource-limit failures.
 pub(crate) fn layout_text_flow(
     input: &TextFlowInput,
     registry: &FontRegistry,
@@ -382,6 +387,6 @@ pub(crate) fn layout_resolved_text_flow(
         grow_max_iterations: text_input.grow_max_iterations,
         fit_max_probes: text_input.fit_max_probes,
     };
-    crate::text::decoration::resolve_text_decorations(&decoration_request, &font_ctx, &mut result);
+    crate::text::decoration::resolve_text_decorations(&decoration_request, &font_ctx, &mut result)?;
     Ok(result)
 }

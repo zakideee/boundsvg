@@ -1,3 +1,4 @@
+use crate::error::{BoundtextError, FontFailureReason};
 use serde::{Deserialize, Serialize};
 
 use super::backend::{FontFace, ShapeDirection, ShapeFeature, ShapeVariation};
@@ -175,38 +176,39 @@ fn build_variations(options: &ShapeOptions) -> Vec<ShapeVariation> {
 
 fn resolve_vertical_origin_x_px(
     face: &dyn FontFace,
-    glyph_id: u16,
+    glyph_id: u32,
     scale: f64,
     fallback_em_size_px: f64,
-) -> f64 {
-    face.glyph_hor_advance(glyph_id)
-        .map(|advance| f64::from(advance) * scale * 0.5)
+) -> Result<f64, BoundtextError> {
+    Ok(face
+        .glyph_hor_advance(glyph_id)?
+        .map(|advance| advance * scale * 0.5)
         .filter(|advance| *advance > 0.0)
-        .unwrap_or(fallback_em_size_px * 0.5)
+        .unwrap_or(fallback_em_size_px * 0.5))
 }
 
 fn resolve_vertical_origin_y_px(
     face: &dyn FontFace,
-    glyph_id: u16,
+    glyph_id: u32,
     scale: f64,
     fallback_origin_y_px: f64,
-) -> f64 {
-    face.glyph_y_origin(glyph_id)
-        .map(|origin| f64::from(origin) * scale)
-        .or_else(|| {
-            let bbox = face.glyph_bounding_box(glyph_id)?;
-            let top_side_bearing = f64::from(face.glyph_ver_side_bearing(glyph_id)?);
-            Some((f64::from(bbox.y_max) + top_side_bearing) * scale)
-        })
+) -> Result<f64, BoundtextError> {
+    let origin = match face.glyph_y_origin(glyph_id)? {
+        Some(origin) => Some(origin * scale),
+        None => match (
+            face.glyph_bounding_box(glyph_id)?,
+            face.glyph_ver_side_bearing(glyph_id)?,
+        ) {
+            (Some(bbox), Some(bearing)) => Some((bbox.y_max + bearing) * scale),
+            _ => None,
+        },
+    };
+    Ok(origin
         .filter(|origin| *origin > 0.0)
-        .unwrap_or(fallback_origin_y_px)
+        .unwrap_or(fallback_origin_y_px))
 }
 
 /// Shape text via the registry's Shaper backend and convert raw glyphs to `GlyphInfo`.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "glyph IDs are OpenType u16 stored as u32; byte offsets fit in u32 for text shaping"
-)]
 fn shape_via_backend(
     registry: &FontRegistry,
     font_entry: &FontEntry,
@@ -214,19 +216,21 @@ fn shape_via_backend(
     font_size_px: f64,
     letter_spacing_px: f64,
     options: &ShapeOptions,
-) -> Vec<GlyphInfo> {
+) -> Result<Vec<GlyphInfo>, BoundtextError> {
+    u32::try_from(text.len()).map_err(|_| BoundtextError::TextShaping {
+        reason: FontFailureReason::InputTooLong,
+    })?;
     let features = build_features(options);
     let variations = build_variations(options);
     let vertical = is_vertical(options);
     let direction = if vertical {
         ShapeDirection::TopToBottom
     } else {
-        ShapeDirection::LeftToRight
+        ShapeDirection::Horizontal
     };
 
-    let Some(shaper_face) = font_entry.shaper_face(registry.shaper()) else {
-        return Vec::new();
-    };
+    super::backend::validate_variations(&variations)?;
+    let shaper_face = font_entry.shaper_face(registry.shaper())?;
     #[cfg(any(test, feature = "phase-trace"))]
     crate::phase_trace::record_backend_shape();
     let raw_glyphs = shaper_face.shape(
@@ -235,22 +239,23 @@ fn shape_via_backend(
         options.language.as_deref(),
         &features,
         &variations,
-    );
+    )?;
+    super::backend::validate_shaped_glyphs(text, font_entry.glyph_count, &raw_glyphs)?;
     #[cfg(any(test, feature = "phase-trace"))]
     crate::phase_trace::record_shaped_glyphs(raw_glyphs.len());
 
     if raw_glyphs.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let scale = font_size_px / f64::from(font_entry.units_per_em);
     let em_size_px = f64::from(font_entry.units_per_em) * scale;
     let fallback_vertical_origin_y_px = if let Some(vorg_y) = font_entry.default_vert_origin_y {
-        f64::from(vorg_y) * scale
-    } else if font_entry.typographic_ascender != 0 {
-        f64::from(font_entry.typographic_ascender) * scale
-    } else if font_entry.ascender != 0 {
-        f64::from(font_entry.ascender) * scale
+        vorg_y * scale
+    } else if font_entry.typographic_ascender != 0.0 {
+        font_entry.typographic_ascender * scale
+    } else if font_entry.ascender != 0.0 {
+        font_entry.ascender * scale
     } else {
         em_size_px
     };
@@ -259,7 +264,7 @@ fn shape_via_backend(
     // Routed through the FontEntry cache so the unvaried face is parsed once
     // and reused instead of re-parsed on every shape call.
     let font_face = if vertical {
-        font_entry.font_face(registry.backend(), &variations)
+        Some(font_entry.font_face(registry.backend(), &variations)?)
     } else {
         None
     };
@@ -311,21 +316,25 @@ fn shape_via_backend(
                     .unwrap_or(true);
                 rotation_deg = if upright { 0 } else { 90 };
                 if upright {
-                    let glyph_id = raw.glyph_id as u16;
-                    let origin_x_px = font_face.as_ref().map_or(em_size_px * 0.5, |face| {
-                        resolve_vertical_origin_x_px(face.as_ref(), glyph_id, scale, em_size_px)
-                    });
-                    let origin_y_px =
-                        font_face
-                            .as_ref()
-                            .map_or(fallback_vertical_origin_y_px, |face| {
-                                resolve_vertical_origin_y_px(
-                                    face.as_ref(),
-                                    glyph_id,
-                                    scale,
-                                    fallback_vertical_origin_y_px,
-                                )
-                            });
+                    let glyph_id = raw.glyph_id;
+                    let (origin_x_px, origin_y_px) = if let Some(face) = &font_face {
+                        (
+                            resolve_vertical_origin_x_px(
+                                face.as_ref(),
+                                glyph_id,
+                                scale,
+                                em_size_px,
+                            )?,
+                            resolve_vertical_origin_y_px(
+                                face.as_ref(),
+                                glyph_id,
+                                scale,
+                                fallback_vertical_origin_y_px,
+                            )?,
+                        )
+                    } else {
+                        (em_size_px * 0.5, fallback_vertical_origin_y_px)
+                    };
 
                     // Path extraction uses the glyph's horizontal origin, while vertical
                     // shaping positions are expressed relative to the vertical origin.
@@ -344,11 +353,13 @@ fn shape_via_backend(
                     } else {
                         font_face
                             .as_ref()
-                            .and_then(|face| face.glyph_hor_advance(raw.glyph_id as u16))
-                            .filter(|advance| *advance > 0)
+                            .map(|face| face.glyph_hor_advance(raw.glyph_id))
+                            .transpose()?
+                            .flatten()
+                            .filter(|advance| *advance > 0.0)
                             .map_or_else(
                                 || raw_x_advance_abs.max(raw_y_advance_abs),
-                                |advance| f64::from(advance) * scale,
+                                |advance| advance * scale,
                             )
                     };
                     let signed_advance = if raw.y_advance > 0 {
@@ -365,7 +376,7 @@ fn shape_via_backend(
                 }
             }
 
-            GlyphInfo {
+            Ok(GlyphInfo {
                 glyph_id: raw.glyph_id,
                 x_advance,
                 y_advance,
@@ -376,20 +387,24 @@ fn shape_via_backend(
                 font_weight: Some(font_entry.key.weight),
                 font_style: Some(font_entry.key.style.clone()),
                 rotation_deg: Some(rotation_deg),
-            }
+            })
         })
         .collect()
 }
 
 /// Shape text using the registry's backend and return glyph info array
-#[must_use]
+///
+/// # Errors
+///
+/// Returns font parsing, variation, shaping, processing-limit, allocation, or
+/// invalid-output failures without returning a partial glyph sequence.
 pub fn shape_text(
     registry: &FontRegistry,
     font_entry: &FontEntry,
     text: &str,
     font_size_px: f64,
     letter_spacing_px: f64,
-) -> Vec<GlyphInfo> {
+) -> Result<Vec<GlyphInfo>, BoundtextError> {
     shape_text_with_options(
         registry,
         font_entry,
@@ -401,7 +416,11 @@ pub fn shape_text(
 }
 
 /// Shape text using the registry's backend and return glyph info array (writing-mode aware).
-#[must_use]
+///
+/// # Errors
+///
+/// Returns font parsing, variation, shaping, processing-limit, allocation, or
+/// invalid-output failures without returning a partial glyph sequence.
 pub fn shape_text_with_options(
     registry: &FontRegistry,
     font_entry: &FontEntry,
@@ -409,7 +428,7 @@ pub fn shape_text_with_options(
     font_size_px: f64,
     letter_spacing_px: f64,
     options: &ShapeOptions,
-) -> Vec<GlyphInfo> {
+) -> Result<Vec<GlyphInfo>, BoundtextError> {
     shape_via_backend(
         registry,
         font_entry,
@@ -662,14 +681,18 @@ fn resolve_fallback_entries<'a>(
 /// 1) choose a font per grapheme cluster by glyph availability
 /// 2) merge contiguous graphemes into runs
 /// 3) shape each run with its selected font
-#[must_use]
+///
+/// # Errors
+///
+/// Returns font parsing, variation, shaping, processing-limit, allocation, or
+/// invalid-output failures without returning a partial glyph sequence.
 pub fn shape_with_fallback_and_options(
     font_ctx: &super::FontContext<'_>,
     text: &str,
     font_size_px: f64,
     letter_spacing_px: f64,
     options: &ShapeOptions,
-) -> FallbackShapeResult {
+) -> Result<FallbackShapeResult, BoundtextError> {
     shape_with_fallback_and_options_checked(
         font_ctx,
         text,
@@ -677,24 +700,31 @@ pub fn shape_with_fallback_and_options(
         letter_spacing_px,
         options,
     )
-    .unwrap_or_default()
+    .map(Option::unwrap_or_default)
 }
 
 /// Shape with the same fallback algorithm while preserving whether the
 /// requested alias chain resolved at all.
+///
+/// # Errors
+///
+/// Propagates font, shaping, processing-limit, allocation, and invalid-output failures; an unresolved chain remains `Ok(None)`.
 pub(crate) fn shape_with_fallback_and_options_checked(
     font_ctx: &super::FontContext<'_>,
     text: &str,
     font_size_px: f64,
     letter_spacing_px: f64,
     options: &ShapeOptions,
-) -> Option<FallbackShapeResult> {
+) -> Result<Option<FallbackShapeResult>, BoundtextError> {
+    u32::try_from(text.len()).map_err(|_| BoundtextError::TextShaping {
+        reason: FontFailureReason::InputTooLong,
+    })?;
     let resolved_entries = resolve_fallback_entries(font_ctx, font_ctx.weight, font_ctx.style);
     if resolved_entries.is_empty() {
-        return None;
+        return Ok(None);
     }
     if text.is_empty() {
-        return Some(FallbackShapeResult::default());
+        return Ok(Some(FallbackShapeResult::default()));
     }
 
     let mut grapheme_offset = 0usize;
@@ -707,7 +737,7 @@ pub(crate) fn shape_with_fallback_and_options_checked(
         })
         .collect();
     if graphemes.is_empty() {
-        return Some(FallbackShapeResult::default());
+        return Ok(Some(FallbackShapeResult::default()));
     }
 
     // Step 1: choose font per grapheme by probing glyph availability. This
@@ -724,7 +754,7 @@ pub(crate) fn shape_with_fallback_and_options_checked(
                 font_size_px,
                 0.0,
                 options,
-            );
+            )?;
             if has_only_supported_glyphs(&probe) {
                 selected = idx;
                 break;
@@ -765,31 +795,34 @@ pub(crate) fn shape_with_fallback_and_options_checked(
             font_size_px,
             letter_spacing_px,
             options,
-        );
+        )?;
         if glyphs.is_empty() {
             continue;
         }
 
         // Keep total letterSpacing compatible with whole-string shaping by
         // adding one boundary spacing at each non-final run.
-        if run_idx < run_specs.len() - 1 && letter_spacing_px != 0.0 {
-            if let Some(last) = glyphs.last_mut() {
-                if is_vertical(options) {
-                    last.y_advance =
-                        add_vertical_inline_tracking(last.y_advance, letter_spacing_px);
-                } else {
-                    last.x_advance = add_inline_tracking(last.x_advance, letter_spacing_px);
-                }
+        if run_idx < run_specs.len() - 1
+            && letter_spacing_px != 0.0
+            && let Some(last) = glyphs.last_mut()
+        {
+            if is_vertical(options) {
+                last.y_advance = add_vertical_inline_tracking(last.y_advance, letter_spacing_px);
+            } else {
+                last.x_advance = add_inline_tracking(last.x_advance, letter_spacing_px);
             }
         }
 
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "byte offset within a text string; text length is well within u32::MAX"
-        )]
-        let cluster_offset = *start as u32;
+        let cluster_offset = u32::try_from(*start).map_err(|_| BoundtextError::TextShaping {
+            reason: FontFailureReason::InputTooLong,
+        })?;
         for g in &mut glyphs {
-            g.cluster = g.cluster.saturating_add(cluster_offset);
+            g.cluster =
+                g.cluster
+                    .checked_add(cluster_offset)
+                    .ok_or(BoundtextError::TextShaping {
+                        reason: FontFailureReason::InputTooLong,
+                    })?;
         }
 
         all_glyphs.extend(glyphs.iter().cloned());
@@ -799,14 +832,18 @@ pub(crate) fn shape_with_fallback_and_options_checked(
         });
     }
 
-    Some(FallbackShapeResult {
+    Ok(Some(FallbackShapeResult {
         glyphs: all_glyphs,
         runs,
-    })
+    }))
 }
 
 /// Shape text with fallback chain: try each font in order
-#[must_use]
+///
+/// # Errors
+///
+/// Returns font parsing, variation, shaping, processing-limit, allocation, or
+/// invalid-output failures without returning a partial glyph sequence.
 pub fn shape_with_fallback(
     registry: &FontRegistry,
     aliases: &[String],
@@ -815,7 +852,7 @@ pub fn shape_with_fallback(
     text: &str,
     font_size_px: f64,
     letter_spacing_px: f64,
-) -> (Vec<GlyphInfo>, String) {
+) -> Result<(Vec<GlyphInfo>, String), BoundtextError> {
     let font_ctx = super::FontContext {
         registry,
         fallback_registry: None,
@@ -829,13 +866,13 @@ pub fn shape_with_fallback(
         font_size_px,
         letter_spacing_px,
         &ShapeOptions::default(),
-    );
+    )?;
     let primary_alias = shaped
         .runs
         .first()
         .map(|run| run.alias.clone())
         .unwrap_or_default();
-    (shaped.glyphs, primary_alias)
+    Ok((shaped.glyphs, primary_alias))
 }
 
 #[cfg(test)]
@@ -901,7 +938,8 @@ mod tests {
             16.0,
             0.0,
             &ShapeOptions::default(),
-        );
+        )
+        .expect("font operation succeeds");
 
         let latin_count = result
             .glyphs
@@ -962,9 +1000,11 @@ mod tests {
         };
         let text = "\u{65e5}\u{e0100}";
         let without_tracking =
-            shape_with_fallback_and_options(&font_ctx, text, 16.0, 0.0, &ShapeOptions::default());
+            shape_with_fallback_and_options(&font_ctx, text, 16.0, 0.0, &ShapeOptions::default())
+                .expect("font operation succeeds");
         let with_tracking =
-            shape_with_fallback_and_options(&font_ctx, text, 16.0, 2.0, &ShapeOptions::default());
+            shape_with_fallback_and_options(&font_ctx, text, 16.0, 2.0, &ShapeOptions::default())
+                .expect("font operation succeeds");
 
         assert_eq!(with_tracking.runs.len(), 1);
         assert_eq!(with_tracking.runs[0].alias, "JP");
@@ -982,7 +1022,8 @@ mod tests {
         let entry = registry
             .resolve("NotoSansJP", 400, &FontStyle::Normal)
             .unwrap();
-        let glyphs = shape_text(&registry, entry, "Hello", 16.0, 0.0);
+        let glyphs =
+            shape_text(&registry, entry, "Hello", 16.0, 0.0).expect("font operation succeeds");
         assert!(!glyphs.is_empty());
         assert_eq!(glyphs.len(), 5);
         let width = measure_width(&glyphs);
@@ -995,7 +1036,8 @@ mod tests {
         let entry = registry
             .resolve("NotoSansJP", 400, &FontStyle::Normal)
             .unwrap();
-        let glyphs = shape_text(&registry, entry, "こんにちは", 16.0, 0.0);
+        let glyphs =
+            shape_text(&registry, entry, "こんにちは", 16.0, 0.0).expect("font operation succeeds");
         assert!(!glyphs.is_empty());
         let width = measure_width(&glyphs);
         assert!(width > 0.0);
@@ -1007,8 +1049,10 @@ mod tests {
         let entry = registry
             .resolve("NotoSansJP", 400, &FontStyle::Normal)
             .unwrap();
-        let glyphs_no_spacing = shape_text(&registry, entry, "AB", 16.0, 0.0);
-        let glyphs_with_spacing = shape_text(&registry, entry, "AB", 16.0, 5.0);
+        let glyphs_no_spacing =
+            shape_text(&registry, entry, "AB", 16.0, 0.0).expect("font operation succeeds");
+        let glyphs_with_spacing =
+            shape_text(&registry, entry, "AB", 16.0, 5.0).expect("font operation succeeds");
         let w1 = measure_width(&glyphs_no_spacing);
         let w2 = measure_width(&glyphs_with_spacing);
         // Letter spacing of 5px applied to first glyph only (2 chars - 1 = 1 spacing)
@@ -1021,7 +1065,7 @@ mod tests {
         let entry = registry
             .resolve("NotoSansJP", 400, &FontStyle::Normal)
             .unwrap();
-        let glyphs = shape_text(&registry, entry, "", 16.0, 0.0);
+        let glyphs = shape_text(&registry, entry, "", 16.0, 0.0).expect("font operation succeeds");
         assert!(glyphs.is_empty());
     }
 
@@ -1031,8 +1075,10 @@ mod tests {
         let entry = registry
             .resolve("NotoSansJP", 400, &FontStyle::Normal)
             .unwrap();
-        let glyphs_16 = shape_text(&registry, entry, "A", 16.0, 0.0);
-        let glyphs_32 = shape_text(&registry, entry, "A", 32.0, 0.0);
+        let glyphs_16 =
+            shape_text(&registry, entry, "A", 16.0, 0.0).expect("font operation succeeds");
+        let glyphs_32 =
+            shape_text(&registry, entry, "A", 32.0, 0.0).expect("font operation succeeds");
         let w16 = measure_width(&glyphs_16);
         let w32 = measure_width(&glyphs_32);
         assert!(
@@ -1052,7 +1098,8 @@ mod tests {
             language: Some("ja".into()),
             ..ShapeOptions::default()
         };
-        let glyphs = shape_text_with_options(&registry, entry, "。", 24.0, 0.0, &options);
+        let glyphs = shape_text_with_options(&registry, entry, "。", 24.0, 0.0, &options)
+            .expect("font operation succeeds");
         assert!(!glyphs.is_empty());
         let glyph = &glyphs[0];
         assert!(
@@ -1073,9 +1120,11 @@ mod tests {
             ..ShapeOptions::default()
         };
         let glyphs_no_spacing =
-            shape_text_with_options(&registry, entry, "。、", 24.0, 0.0, &options);
+            shape_text_with_options(&registry, entry, "。、", 24.0, 0.0, &options)
+                .expect("font operation succeeds");
         let glyphs_with_spacing =
-            shape_text_with_options(&registry, entry, "。、", 24.0, 5.0, &options);
+            shape_text_with_options(&registry, entry, "。、", 24.0, 5.0, &options)
+                .expect("font operation succeeds");
 
         assert!(glyphs_no_spacing.len() >= 2);
         assert!(glyphs_with_spacing.len() >= 2);
@@ -1106,9 +1155,12 @@ mod tests {
             language: Some("ja".into()),
             ..ShapeOptions::default()
         };
-        let base = shape_text_with_options(&registry, entry, "技術ブログ", 26.0, 0.0, &options);
-        let wide = shape_text_with_options(&registry, entry, "技術ブログ", 26.0, 10.0, &options);
-        let narrow = shape_text_with_options(&registry, entry, "技術ブログ", 26.0, -4.0, &options);
+        let base = shape_text_with_options(&registry, entry, "技術ブログ", 26.0, 0.0, &options)
+            .expect("font operation succeeds");
+        let wide = shape_text_with_options(&registry, entry, "技術ブログ", 26.0, 10.0, &options)
+            .expect("font operation succeeds");
+        let narrow = shape_text_with_options(&registry, entry, "技術ブログ", 26.0, -4.0, &options)
+            .expect("font operation succeeds");
         assert_eq!(base.len(), 5);
         assert_eq!(wide.len(), 5);
         assert_eq!(narrow.len(), 5);
@@ -1147,8 +1199,10 @@ mod tests {
             ..ShapeOptions::default()
         };
         // ASCII runs render sideways (rotation 90) in vertical text.
-        let base = shape_text_with_options(&registry, entry, "AB", 32.0, 0.0, &options);
-        let wide = shape_text_with_options(&registry, entry, "AB", 32.0, 6.0, &options);
+        let base = shape_text_with_options(&registry, entry, "AB", 32.0, 0.0, &options)
+            .expect("font operation succeeds");
+        let wide = shape_text_with_options(&registry, entry, "AB", 32.0, 6.0, &options)
+            .expect("font operation succeeds");
         assert_eq!(base.len(), 2);
         assert_eq!(wide.len(), 2);
         assert_eq!(base[0].rotation_deg, Some(90));
@@ -1170,7 +1224,8 @@ mod tests {
             language: Some("ja".into()),
             ..ShapeOptions::default()
         };
-        let glyphs = shape_text_with_options(&registry, entry, "ABC", 64.0, 0.0, &options);
+        let glyphs = shape_text_with_options(&registry, entry, "ABC", 64.0, 0.0, &options)
+            .expect("font operation succeeds");
         assert_eq!(glyphs.len(), 3);
 
         for g in &glyphs {
@@ -1204,8 +1259,10 @@ mod tests {
             language: Some("ja".into()),
             ..ShapeOptions::default()
         };
-        let horizontal = shape_text(&registry, entry, "ABC123-", 48.0, 0.0);
-        let vertical = shape_text_with_options(&registry, entry, "ABC123-", 48.0, 0.0, &options);
+        let horizontal =
+            shape_text(&registry, entry, "ABC123-", 48.0, 0.0).expect("font operation succeeds");
+        let vertical = shape_text_with_options(&registry, entry, "ABC123-", 48.0, 0.0, &options)
+            .expect("font operation succeeds");
 
         assert_eq!(horizontal.len(), vertical.len());
         for (h, v) in horizontal.iter().zip(vertical.iter()) {
@@ -1231,8 +1288,10 @@ mod tests {
             language: Some("ja".into()),
             ..ShapeOptions::default()
         };
-        let glyphs_w = shape_text_with_options(&registry, entry, "W", 64.0, 0.0, &options);
-        let glyphs_1 = shape_text_with_options(&registry, entry, "1", 64.0, 0.0, &options);
+        let glyphs_w = shape_text_with_options(&registry, entry, "W", 64.0, 0.0, &options)
+            .expect("font operation succeeds");
+        let glyphs_1 = shape_text_with_options(&registry, entry, "1", 64.0, 0.0, &options)
+            .expect("font operation succeeds");
         assert!(!glyphs_w.is_empty());
         assert!(!glyphs_1.is_empty());
         assert!(
@@ -1275,8 +1334,10 @@ mod tests {
         };
 
         let decorated =
-            shape_text_with_options(&registry, entry, "e\u{0301}\u{0301}", 20.0, 0.0, &options);
-        let base = shape_text_with_options(&registry, entry, "e", 20.0, 0.0, &options);
+            shape_text_with_options(&registry, entry, "e\u{0301}\u{0301}", 20.0, 0.0, &options)
+                .expect("font operation succeeds");
+        let base = shape_text_with_options(&registry, entry, "e", 20.0, 0.0, &options)
+            .expect("font operation succeeds");
         assert!(decorated.iter().any(|glyph| glyph.y_advance == 0.0));
         assert!(
             (decorated
@@ -1289,9 +1350,11 @@ mod tests {
         );
 
         let with_zero_width =
-            shape_text_with_options(&registry, entry, "a\u{200b}b", 20.0, 0.0, &options);
+            shape_text_with_options(&registry, entry, "a\u{200b}b", 20.0, 0.0, &options)
+                .expect("font operation succeeds");
         let without_zero_width =
-            shape_text_with_options(&registry, entry, "ab", 20.0, 0.0, &options);
+            shape_text_with_options(&registry, entry, "ab", 20.0, 0.0, &options)
+                .expect("font operation succeeds");
         assert!(with_zero_width.iter().any(|glyph| glyph.y_advance == 0.0));
         assert!(
             (with_zero_width
@@ -1309,7 +1372,8 @@ mod tests {
         // The first acute composes with `e`; the second remains a separate
         // zero-advance glyph and exercises the signed-zero tracking path.
         let tracked_marks =
-            shape_text_with_options(&registry, entry, "e\u{0301}\u{0301}b", 20.0, 2.0, &options);
+            shape_text_with_options(&registry, entry, "e\u{0301}\u{0301}b", 20.0, 2.0, &options)
+                .expect("font operation succeeds");
         assert!(tracked_marks.iter().any(|glyph| glyph.y_advance == -2.0));
         assert!(
             tracked_marks.iter().all(|glyph| glyph.y_advance <= 0.0),
@@ -1318,10 +1382,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "glyph IDs are OpenType u16 stored as u32; truncation is correct"
-    )]
     fn test_vertical_cjk_offsets_are_normalized_for_svg_anchor() {
         let registry = test_registry();
         let entry = registry
@@ -1338,19 +1398,21 @@ mod tests {
             .expect("parse font");
         let scale = 64.0 / f64::from(entry.units_per_em);
         let fallback_origin_y_px = if let Some(vorg_y) = entry.default_vert_origin_y {
-            f64::from(vorg_y) * scale
+            vorg_y * scale
         } else {
-            f64::from(entry.typographic_ascender) * scale
+            entry.typographic_ascender * scale
         };
-        let glyphs = shape_text_with_options(&registry, entry, "縦", 64.0, 0.0, &options);
+        let glyphs = shape_text_with_options(&registry, entry, "縦", 64.0, 0.0, &options)
+            .expect("font operation succeeds");
         assert_eq!(glyphs.len(), 1);
         let glyph = &glyphs[0];
         let expected_origin_y = resolve_vertical_origin_y_px(
             face.as_ref(),
-            glyph.glyph_id as u16,
+            glyph.glyph_id,
             scale,
             fallback_origin_y_px,
-        );
+        )
+        .expect("font operation succeeds");
         assert!(
             glyph.x_offset.abs() < 2.0,
             "full-width CJK should stay horizontally centered in the column after normalization (x={})",
@@ -1365,10 +1427,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "glyph IDs are OpenType u16 stored as u32; truncation is correct"
-    )]
     fn test_vertical_upright_uses_per_glyph_vertical_origin_metrics() {
         let registry = test_registry();
         let entry = registry
@@ -1385,9 +1443,9 @@ mod tests {
             .expect("parse font");
         let scale = 48.0 / f64::from(entry.units_per_em);
         let fallback_origin_y_px = if let Some(vorg_y) = entry.default_vert_origin_y {
-            f64::from(vorg_y) * scale
+            vorg_y * scale
         } else {
-            f64::from(entry.typographic_ascender) * scale
+            entry.typographic_ascender * scale
         };
 
         let dash_pair = shape_text_with_options(
@@ -1397,9 +1455,11 @@ mod tests {
             48.0,
             0.0,
             &options,
-        );
+        )
+        .expect("font operation succeeds");
         let prolonged =
-            shape_text_with_options(&registry, entry, "と\u{30FC}", 48.0, 0.0, &options);
+            shape_text_with_options(&registry, entry, "と\u{30FC}", 48.0, 0.0, &options)
+                .expect("font operation succeeds");
 
         assert_eq!(dash_pair.len(), 3);
         assert_eq!(prolonged.len(), 2);
@@ -1409,16 +1469,18 @@ mod tests {
 
         let dash_expected = resolve_vertical_origin_y_px(
             face.as_ref(),
-            dash_glyph.glyph_id as u16,
+            dash_glyph.glyph_id,
             scale,
             fallback_origin_y_px,
-        );
+        )
+        .expect("font operation succeeds");
         let prolonged_expected = resolve_vertical_origin_y_px(
             face.as_ref(),
-            prolonged_glyph.glyph_id as u16,
+            prolonged_glyph.glyph_id,
             scale,
             fallback_origin_y_px,
-        );
+        )
+        .expect("font operation succeeds");
 
         assert_eq!(dash_glyph.rotation_deg, Some(0));
         assert_eq!(prolonged_glyph.rotation_deg, Some(0));

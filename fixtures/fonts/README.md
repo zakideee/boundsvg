@@ -38,7 +38,7 @@ These stay variable so the variable-font demos and tests have real axes to move.
 `wght` axis preserved.
 
 The unsubsetted `NotoSansCJKjp-VF.ttf` (36 MB) is not distributed in this repository.
-The public `ttf-parser` regression generates the relevant 65,535-entry table boundaries
+The public `boundtext` font contract test generates the relevant 65,535-entry table boundaries
 synthetically, so a clean checkout does not silently skip that contract. `scripts/subset-fonts.sh`
 fetches the upstream font into a temporary directory only and does not leave a copy behind.
 
@@ -94,3 +94,9 @@ The script downloads the four Japanese sources, converts the variable ones (Noto
 The script does not touch the two code fonts or `Inter-Variable.ttf` — those are committed as distributed upstream.
 
 The Joyo kanji character list is maintained at `scripts/joyo-kanji.txt`.
+
+## Original test font
+
+`only-a.ttf` is an original synthetic font distributed under this repository’s MIT OR Apache-2.0 license. It contains an unencoded empty .notdef, a space, and a triangular A. It intentionally omits the ellipsis to test missing-glyph diagnostics. Its metrics use 1,000 units per em and a 600-unit advance.
+
+`only-a-variable.ttf` adds an original `wght` axis (100 / 400 / 900), an identity avar map, a 50-unit horizontal delta for A’s second point, and independently authored 50-unit HVAR/VVAR/MVAR deltas. At `wght=655`, round-to-nearest F2Dot14 gives 8356/16384. The fixtures use FontTools 4.67.0 and fixed timestamps; their glyph geometry and table values are original and share the project license.

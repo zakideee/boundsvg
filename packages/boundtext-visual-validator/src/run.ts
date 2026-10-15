@@ -2,7 +2,7 @@
  * boundsvg-runner — Render boundtext spec cases as PNG via boundsvg's WASM pipeline.
  *
  * Unlike the browser-runner (which renders via headless Chromium), this tool
- * renders entirely through boundsvg's WASM pipeline (rustybuzz text shaping +
+ * renders entirely through boundsvg's WASM pipeline (HarfRust text shaping +
  * tiny_skia rasterisation). The resulting PNGs provide a true visual
  * representation of what boundsvg produces, enabling side-by-side comparison
  * with browser-rendered screenshots.

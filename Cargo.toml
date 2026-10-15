@@ -6,12 +6,11 @@ members = [
     "crates/boundtext-cli",
     "crates/boundmp4",
 ]
-exclude = ["vendor/ttf-parser"]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
 
 [workspace.lints.rust]
@@ -54,11 +53,3 @@ todo = { level = "deny", priority = 1 }
 opt-level = "s"
 lto = true
 panic = "unwind"
-
-# Vendored ttf-parser 0.25.1 with two one-line fixes for fonts that have
-# exactly 65535 glyphs (Noto Sans CJK VF): upstream discards the whole
-# loca/gvar tables, silently erasing every glyph outline. Also covers
-# rustybuzz's ttf-parser dependency (same version). See
-# vendor/ttf-parser/README-PATCH.md; drop once upstream ships a fix.
-[patch.crates-io]
-ttf-parser = { path = "vendor/ttf-parser" }

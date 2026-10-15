@@ -53,11 +53,16 @@ impl<'font> TextLayoutSession<'font> {
         )
     }
 
+    /// Reuse matching paragraph preparation and cache only successful shaping results.
+    ///
+    /// # Errors
+    ///
+    /// Propagates font and shaping failures without inserting a failed preparation into the cache.
     pub(super) fn prepare(
         &mut self,
         request: &TextLayoutRequest<'_>,
         font_ctx: &FontContext<'_>,
-    ) -> Arc<PreparedPlainText> {
+    ) -> Result<Arc<PreparedPlainText>, crate::TextLayoutError> {
         let has_matching_registry = std::ptr::eq(self.registry, font_ctx.registry)
             && match (self.fallback_registry, font_ctx.fallback_registry) {
                 (Some(first), Some(second)) => std::ptr::eq(first, second),
@@ -65,16 +70,16 @@ impl<'font> TextLayoutSession<'font> {
                 _ => false,
             };
         if !has_matching_registry {
-            return Arc::new(prepare_plain_text(request, font_ctx));
+            return Ok(Arc::new(prepare_plain_text(request, font_ctx)?));
         }
         if let Some((_, prepared)) = self
             .entries
             .iter()
             .find(|(key, _)| key.matches(request, font_ctx))
         {
-            return Arc::clone(prepared);
+            return Ok(Arc::clone(prepared));
         }
-        let prepared = Arc::new(prepare_plain_text(request, font_ctx));
+        let prepared = Arc::new(prepare_plain_text(request, font_ctx)?);
         if self.entries.len() >= PREPARED_TEXT_MAX {
             self.entries.clear();
         }
@@ -82,7 +87,7 @@ impl<'font> TextLayoutSession<'font> {
             PreparationKey::new(request, font_ctx),
             Arc::clone(&prepared),
         ));
-        prepared
+        Ok(prepared)
     }
 }
 
@@ -143,15 +148,21 @@ impl PreparationKey {
     }
 }
 
+/// Whitespace-normalized source text and its optional shaped paragraph.
 pub(super) struct PreparedPlainText {
     pub(super) text: String,
     pub(super) shaped: Option<ShapedParagraph>,
 }
 
+/// Normalize whitespace and prepare width-independent paragraph shaping.
+///
+/// # Errors
+///
+/// Propagates font, variation, shaping, resource-limit, and invalid-output failures.
 pub(super) fn prepare_plain_text(
     request: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
-) -> PreparedPlainText {
+) -> Result<PreparedPlainText, crate::TextLayoutError> {
     let text = crate::text::types::preprocess_text_for_white_space(
         request.text,
         request.white_space,
@@ -175,8 +186,8 @@ pub(super) fn prepare_plain_text(
         request.uax14_breaks,
         request.letter_spacing_px,
         request.has_forced_newline_breaks(),
-    );
-    PreparedPlainText { text, shaped }
+    )?;
+    Ok(PreparedPlainText { text, shaped })
 }
 
 #[cfg(test)]
@@ -244,7 +255,9 @@ mod tests {
         };
         let mut session = TextLayoutSession::new(&registry, None);
         let mut request = build_request(" A\t B\r\nHello あいうえお  ");
-        let first = session.prepare(&request, &font_ctx);
+        let first = session
+            .prepare(&request, &font_ctx)
+            .expect("font operation succeeds");
         assert!(first.shaped.is_some());
         for (width, height, lines, size) in [
             (480.0, None, None, 24.0),
@@ -255,7 +268,12 @@ mod tests {
             request.max_height = height;
             request.max_lines = lines;
             request.font_size_px = size;
-            assert!(Arc::ptr_eq(&first, &session.prepare(&request, &font_ctx)));
+            assert!(Arc::ptr_eq(
+                &first,
+                &session
+                    .prepare(&request, &font_ctx)
+                    .expect("font operation succeeds")
+            ));
             let actual = session
                 .layout_text(&request, &font_ctx, false)
                 .expect("cached layout");
@@ -283,7 +301,9 @@ mod tests {
         };
         let request = build_request("A\t B\nあいうえお");
         let mut session = TextLayoutSession::new(&registry, None);
-        let first = session.prepare(&request, &font_ctx);
+        let first = session
+            .prepare(&request, &font_ctx)
+            .expect("font operation succeeds");
         let breaks = [1, 3];
         for field in 0..10 {
             let mut changed = request.clone();
@@ -305,7 +325,12 @@ mod tests {
                     value: 700.0,
                 }),
             }
-            assert!(!Arc::ptr_eq(&first, &session.prepare(&changed, &font_ctx)));
+            assert!(!Arc::ptr_eq(
+                &first,
+                &session
+                    .prepare(&changed, &font_ctx)
+                    .expect("font operation succeeds")
+            ));
             let actual = session
                 .layout_text(&changed, &font_ctx, true)
                 .expect("cached layout");
@@ -341,7 +366,9 @@ mod tests {
         ] {
             assert!(!Arc::ptr_eq(
                 &first,
-                &session.prepare(&request, &changed_ctx)
+                &session
+                    .prepare(&request, &changed_ctx)
+                    .expect("font operation succeeds")
             ));
         }
     }
@@ -359,7 +386,9 @@ mod tests {
         };
         let mut session = TextLayoutSession::new(&registry, None);
         let request = build_request("hello あいうえお 🦄");
-        let first = session.prepare(&request, &font_ctx);
+        let first = session
+            .prepare(&request, &font_ctx)
+            .expect("font operation succeeds");
         assert!(first.shaped.is_none());
         for width in [200.0, 20.0] {
             let constrained = TextLayoutRequest {
@@ -371,19 +400,30 @@ mod tests {
             assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
             assert!(Arc::ptr_eq(
                 &first,
-                &session.prepare(&constrained, &font_ctx)
+                &session
+                    .prepare(&constrained, &font_ctx)
+                    .expect("font operation succeeds")
             ));
         }
         for index in 0..PREPARED_TEXT_MAX {
             let text = format!("entry {index}");
-            session.prepare(&build_request(&text), &font_ctx);
+            session
+                .prepare(&build_request(&text), &font_ctx)
+                .expect("font operation succeeds");
         }
         assert_eq!(session.entries.len(), 1);
-        assert!(!Arc::ptr_eq(&first, &session.prepare(&request, &font_ctx)));
+        assert!(!Arc::ptr_eq(
+            &first,
+            &session
+                .prepare(&request, &font_ctx)
+                .expect("font operation succeeds")
+        ));
         let mut next_session = TextLayoutSession::new(&registry, None);
         assert!(!Arc::ptr_eq(
             &first,
-            &next_session.prepare(&request, &font_ctx)
+            &next_session
+                .prepare(&request, &font_ctx)
+                .expect("font operation succeeds")
         ));
     }
 }

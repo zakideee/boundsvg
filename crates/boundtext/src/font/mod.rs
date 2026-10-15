@@ -1,8 +1,15 @@
+//! Font registration, metric queries, shaping, and outline extraction.
+
+#[cfg(any(feature = "skrifa-backend", feature = "harfrust-backend"))]
+mod admission;
+#[cfg(any(feature = "skrifa-backend", feature = "harfrust-backend"))]
+pub use admission::validate_font_collection;
+
 pub mod backend;
-#[cfg(feature = "rustybuzz-backend")]
-pub mod backend_rustybuzz;
-#[cfg(feature = "ttfparser-backend")]
-pub mod backend_ttfparser;
+#[cfg(feature = "harfrust-backend")]
+pub mod backend_harfrust;
+#[cfg(feature = "skrifa-backend")]
+pub mod backend_skrifa;
 pub mod line_metrics;
 pub mod outline;
 pub mod registry;

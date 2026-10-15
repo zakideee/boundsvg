@@ -104,6 +104,7 @@ fn legacy_projection_preserves_raw_controls_and_authored_advance()
         },
         &font_context,
     )
+    .expect("font operation succeeds")
     .expect("first face resolved from fallback registry");
     assert_eq!(projection.measured_width, 256.82);
     assert_eq!(
@@ -130,6 +131,7 @@ fn legacy_projection_preserves_raw_controls_and_authored_advance()
             &ShapeOptions::default(),
             &unresolved_context
         )
+        .expect("font operation succeeds")
         .is_none()
     );
     Ok(())
@@ -161,6 +163,7 @@ fn legacy_projection_does_not_select_a_fallback_face_per_glyph()
     };
     let projection =
         project_legacy_unwrapped_glyphs("Aあ", 20.0, 0.0, &ShapeOptions::default(), &font_context)
+            .expect("font operation succeeds")
             .expect("first face");
     assert!(projection.glyphs.iter().any(|glyph| glyph.glyph_id == 0));
     assert!(

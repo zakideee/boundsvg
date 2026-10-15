@@ -1701,7 +1701,8 @@ pub fn layout_flow_simple(
         None,
         req.letter_spacing_px,
         true,
-    ) else {
+    )?
+    else {
         return layout_flow_simple_fallback(req, font_ctx);
     };
 
@@ -2147,7 +2148,7 @@ pub(crate) fn layout_flow_with_regions_budgeted(
         None,
         req.letter_spacing_px,
         true,
-    )
+    )?
     .ok_or_else(|| flow_preparation_error(font_ctx))?;
 
     let min_region_width_fixed = req.min_region_width;
@@ -2590,7 +2591,7 @@ fn layout_flow_vertical(
         None,
         req.letter_spacing_px,
         true,
-    )
+    )?
     .ok_or_else(|| flow_preparation_error(font_ctx))?;
 
     let min_region_height_fixed = req.min_region_width;

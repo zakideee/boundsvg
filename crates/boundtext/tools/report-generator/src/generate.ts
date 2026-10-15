@@ -189,7 +189,7 @@ function buildBoundsvgColumnHtml(row: ReportRow): string {
   }
   return `<img data-src="${row.screenshotBoundsvg}" class="visual-screenshot lazy" alt="boundsvg">
     <div class="visual-meta">
-      <span class="mono">WASM pipeline (rustybuzz + tiny_skia)</span>
+      <span class="mono">WASM pipeline (HarfRust + tiny_skia)</span>
     </div>`;
 }
 

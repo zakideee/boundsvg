@@ -8,7 +8,7 @@ Scope: LTR only. Bidi and RTL reordering are not implemented, and the only line-
 
 ## Features
 
-- **Font shaping** via rustybuzz (HarfBuzz-compatible) — glyph IDs, advances, offsets
+- **Font shaping** via HarfRust (HarfBuzz-compatible) — glyph IDs, advances, offsets
 - **Font management** — registry with alias/weight/style resolution and multi-font fallback chains
 - **Line breaking** — UAX#14 break opportunities, word/char/none wrap modes
 - **Japanese kinsoku (禁則処理)** — JLREQ/JIS X 4051-informed line-break prohibition (head-prohibit, tail-prohibit, non-breaking pairs), enabled by `language: Ja`. A fixed `JaTypesettingV1` profile, not a conformance claim
@@ -122,7 +122,7 @@ the layout operation converts that failure to
 
 ### Shaping & Measurement
 
-- Shaping produces **glyph ID + advance + offsets** via rustybuzz (HarfBuzz-compatible)
+- Shaping produces **glyph ID + advance + offsets** via HarfRust (HarfBuzz-compatible)
 - Line width = sum of glyph advances + letter spacing
 - Line height = `line_height_px` or `font_size_px × line_height`
 - Vertical text uses `y_advance` for column height (falls back to `x_advance`)
@@ -299,6 +299,38 @@ RegionIntervalLimit, InvariantViolation}` and their closed reason enums.
   `Eq`; borrow or clone values where ownership requires it.
 
 These are breaking changes for the `0.x` Rust crate contract.
+
+## Font backend migration
+
+The default font stack uses `SkrifaBackend` (`skrifa-backend`) and
+`HarfRustShaper` (`harfrust-backend`). The old backend types, modules and feature
+names have been removed. Custom `FontBackend`, `FontFace`, `Shaper` and
+`ShaperFace` implementations remain supported.
+
+Font and varied metrics and `GlyphBBox` now use finite `f64` font units.
+`RawShapedGlyph` keeps signed `i32` advances and offsets and UTF-8 byte clusters.
+Glyph IDs remain `u32` at the API boundary and are rejected outside the face’s
+glyph count. Empty outlines are `Ok(None)`; parsing, drawing and shaping failures
+are errors. Shape entry points return `Result`, and APIs with a legitimate
+inapplicable case return `Result<Option<_>, _>`. Propagate these results through
+custom callers. `TextLayoutError::Font` preserves the underlying
+`BoundtextError`; match its parse, outline, shaping, limit and invalid-output
+variants rather than parsing message text. A shaping-limit error reports a
+buffer failure during processing, which may include allocation or operation
+limits; it does not identify the specific exhausted resource.
+
+Horizontal metrics retain the explicit OS/2/hhea selection rules. Line metrics
+still prefer typographic extents, normalize negative extents/gaps and keep the
+normal 1.2em floor. Registration uses default variation coordinates; creating or
+shaping a varied face does not mutate those metrics. Win ascent/descent are
+widened from unsigned fields before applying the descent sign. Outlines use
+Skrifa’s official unhinted floating point HarfBuzz path style; fractional bounds
+and varied metrics are retained. These corrections can change output bytes
+across versions. Reproducibility applies within one matched library/WASM version.
+
+The workspace MSRV is Rust 1.88.0. These are breaking changes to the pre-1.0
+native API. See the [migration reference](../../apps/docs/reference/font-backend-migration.md)
+for the WASM schema and diagnostic catalog.
 
 ## Known Limitations
 

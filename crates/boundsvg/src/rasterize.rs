@@ -8,9 +8,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::EngineError;
 
+/// Maximum raster edge length in pixels, represented for scale arithmetic.
 const PNG_MAX_LONG_EDGE: f64 = 3840.0;
+/// Maximum raster pixel area, represented for scale arithmetic.
 const PNG_MAX_PIXELS: f64 = 3840.0 * 2160.0;
+/// Maximum integer raster edge length used by the output dimension checks.
 const PNG_MAX_LONG_EDGE_U32: u32 = 3840;
+/// Maximum integer raster pixel area used by the output dimension checks.
 const PNG_MAX_PIXELS_U64: u64 = 3840 * 2160;
 
 /// Font family mapping configuration for generic CSS families.
@@ -46,6 +50,7 @@ pub struct FontFamilyConfig {
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// Choose automatic scale reduction or a fatal error when raster limits are exceeded.
 pub enum OversizeBehavior {
     AutoAdjust,
     Error,
@@ -89,6 +94,7 @@ pub struct RasterizeOptions {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// One ordered SVG layer supplied to composition validation.
 pub struct LayeredSvgValidationLayerInput {
     pub svg: String,
     pub paint_order: u32,
@@ -96,6 +102,7 @@ pub struct LayeredSvgValidationLayerInput {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Decoded pixel differences between layered and reference raster output.
 pub struct LayeredCompositionValidationMetrics {
     pub different_pixels: u32,
     pub difference_ratio: f64,
@@ -153,8 +160,11 @@ fn insert_png_generator_chunk(
     mut png: Vec<u8>,
     generator: &crate::output_generator::OutputGenerator,
 ) -> Result<Vec<u8>, EngineError> {
+    /// Byte length of the fixed PNG file signature.
     const PNG_SIGNATURE_LEN: usize = 8;
+    /// Byte length of the complete PNG IHDR chunk including length, type, data, and CRC.
     const IHDR_TOTAL_LEN: usize = 4 + 4 + 13 + 4;
+    /// Byte offset immediately after IHDR at which generator metadata is inserted.
     const INSERT_AT: usize = PNG_SIGNATURE_LEN + IHDR_TOTAL_LEN;
     if png.len() < INSERT_AT
         || &png[..PNG_SIGNATURE_LEN] != b"\x89PNG\r\n\x1a\n"
@@ -297,6 +307,11 @@ impl<'a> From<&'a RasterizeOptions> for RasterizeRequest<'a> {
     }
 }
 
+/// Parse an SVG with the injected fonts and rasterize it at the resolved scale.
+///
+/// # Errors
+///
+/// Returns invalid SVG, font-admission, scale, resolution-limit, color, or pixmap-allocation failures.
 pub(crate) fn rasterize_svg_to_pixmap(
     svg_string: &str,
     alias_map: &[(String, String)],
@@ -308,7 +323,7 @@ pub(crate) fn rasterize_svg_to_pixmap(
     assert_valid_raster_scale(requested_scale)?;
 
     let mut usvg_options = usvg::Options::default();
-    register_fonts_into_fontdb(&mut usvg_options, font_data, request.font_families);
+    register_fonts_into_fontdb(&mut usvg_options, font_data, request.font_families)?;
     let resolved_svg = substitute_font_aliases(svg_string, alias_map);
     let tree = usvg::Tree::from_str(&resolved_svg, &usvg_options)?;
 
@@ -359,6 +374,7 @@ pub(crate) fn rasterize_svg_to_pixmap(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Requested and applied raster dimensions after enforcing resolution limits.
 pub(crate) struct RasterScaleResolution {
     pub applied_scale: f64,
     pub requested_width: u32,
@@ -445,6 +461,11 @@ fn assert_positive_raster_output(
     ))
 }
 
+/// Resolve positive raster dimensions and reduce scale when resolution limits require it.
+///
+/// # Errors
+///
+/// Returns invalid canvas, invalid scale, or nonpositive output-dimension failures.
 pub(crate) fn resolve_png_scale(
     base_width: f64,
     base_height: f64,
@@ -888,14 +909,15 @@ fn register_fonts_into_fontdb(
     options: &mut usvg::Options,
     font_data: &[Arc<Vec<u8>>],
     font_families: Option<&FontFamilyConfig>,
-) {
+) -> Result<(), EngineError> {
     if font_data.is_empty() {
-        return;
+        return Ok(());
     }
 
     let fontdb = options.fontdb_mut();
 
     for arc in font_data {
+        boundtext::font::validate_font_collection(arc)?;
         fontdb.load_font_source(usvg::fontdb::Source::Binary(
             Arc::clone(arc) as Arc<dyn AsRef<[u8]> + Send + Sync>
         ));
@@ -918,7 +940,7 @@ fn register_fonts_into_fontdb(
         if let Some(ref name) = families.monospace {
             fontdb.set_monospace_family(name.clone());
         }
-        return;
+        return Ok(());
     }
 
     // Fallback: match all generic families to the first loaded face
@@ -937,6 +959,7 @@ fn register_fonts_into_fontdb(
         fontdb.set_fantasy_family(default_family.clone());
         fontdb.set_monospace_family(default_family);
     }
+    Ok(())
 }
 
 #[cfg(test)]

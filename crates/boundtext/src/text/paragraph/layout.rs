@@ -880,15 +880,15 @@ pub(crate) fn compute_vertical_advances_px(shaped: &ShapedParagraph, scale: f64)
             .copied()
             .unwrap_or(0);
         if char_idx < char_count {
-            let y_advance = i64::from(glyph.y_advance_funits).abs();
+            let y_advance = f64::from(glyph.y_advance_funits).abs();
             let advance_funits = glyph.vertical_inline_advance_funits.unwrap_or_else(|| {
-                if y_advance > 0 {
+                if y_advance > 0.0 {
                     y_advance
                 } else {
-                    i64::from(glyph.x_advance_funits).abs()
+                    f64::from(glyph.x_advance_funits).abs()
                 }
             });
-            let advance = advance_funits as f64 * scale;
+            let advance = advance_funits * scale;
             advances[char_idx] += advance;
         }
     }

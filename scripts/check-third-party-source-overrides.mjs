@@ -4,7 +4,6 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const APPROVED_VENDOR_DIRECTORIES = new Set(["ttf-parser"]);
 const SKIPPED_DIRECTORIES = new Set([".git", "node_modules", "target", "tmp"]);
 
 function relativePath(rootDirectory, targetPath) {
@@ -54,21 +53,7 @@ function collectCargoManifests(rootDirectory, currentDirectory = rootDirectory, 
   return manifests;
 }
 
-function isApprovedTtfParserPatch(isWorkspaceManifest, section, line) {
-  return (
-    isWorkspaceManifest &&
-    section === "patch.crates-io" &&
-    /^ttf-parser\s*=\s*\{\s*path\s*=\s*["']vendor\/ttf-parser["']\s*}$/.test(line)
-  );
-}
-
-function auditManifestEntry({
-  isWorkspaceManifest,
-  line,
-  lineNumber,
-  manifestRelativePath,
-  section,
-}) {
+function auditManifestEntry({ line, lineNumber, manifestRelativePath, section }) {
   const violations = [];
 
   if (/\bgit\s*=/.test(line)) {
@@ -76,14 +61,13 @@ function auditManifestEntry({
   }
 
   const vendorPathMatch = line.match(/\bpath\s*=\s*["']([^"']*vendor\/[^"']+)["']/);
-  const approvedTtfParserPatch = isApprovedTtfParserPatch(isWorkspaceManifest, section, line);
-  if (vendorPathMatch && !approvedTtfParserPatch) {
+  if (vendorPathMatch) {
     violations.push(
       `${manifestRelativePath}:${lineNumber}: vendored Cargo dependency ${vendorPathMatch[1]} is not approved`,
     );
   }
 
-  if (section === "patch.crates-io" && !approvedTtfParserPatch) {
+  if (section === "patch.crates-io") {
     violations.push(
       `${manifestRelativePath}:${lineNumber}: crates.io patch is not on the explicit allowlist`,
     );
@@ -95,7 +79,6 @@ function auditManifestEntry({
 function auditManifest(rootDirectory, manifestPath) {
   const violations = [];
   const manifestRelativePath = relativePath(rootDirectory, manifestPath);
-  const isWorkspaceManifest = manifestRelativePath === "Cargo.toml";
   let section = "";
 
   for (const [lineIndex, sourceLine] of readFileSync(manifestPath, "utf8").split("\n").entries()) {
@@ -106,10 +89,7 @@ function auditManifest(rootDirectory, manifestPath) {
     const sectionMatch = line.match(/^\[([^\]]+)]$/);
     if (sectionMatch) {
       section = sectionMatch[1];
-      if (
-        (section.startsWith("patch.") || section === "replace") &&
-        !(isWorkspaceManifest && section === "patch.crates-io")
-      ) {
+      if (section.startsWith("patch.") || section === "replace") {
         violations.push(
           `${manifestRelativePath}:${lineIndex + 1}: unauthorized [${section}] section`,
         );
@@ -118,7 +98,6 @@ function auditManifest(rootDirectory, manifestPath) {
     }
     violations.push(
       ...auditManifestEntry({
-        isWorkspaceManifest,
         line,
         lineNumber: lineIndex + 1,
         manifestRelativePath,
@@ -156,7 +135,7 @@ export function auditThirdPartySourceOverrides(rootDirectory) {
 
   if (existsSync(vendorDirectory)) {
     for (const entry of readdirSync(vendorDirectory, { withFileTypes: true })) {
-      if (entry.isDirectory() && !APPROVED_VENDOR_DIRECTORIES.has(entry.name)) {
+      if (entry.isDirectory()) {
         violations.push(`vendor/${entry.name}: vendored third-party source is not approved`);
       }
     }

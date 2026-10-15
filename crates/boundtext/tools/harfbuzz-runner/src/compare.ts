@@ -1,5 +1,5 @@
 /**
- * harfbuzz-runner: compares boundtext (rustybuzz) shaping output against HarfBuzz hb-shape.
+ * harfbuzz-runner: compares boundtext (HarfRust) shaping output against HarfBuzz hb-shape.
  *
  * Usage:
  *   tsx src/compare.ts --spec <spec.json> --fonts <fonts-dir> [--bt-output <boundtext-output.json>] [--output <output.json>]

@@ -136,6 +136,10 @@ pub fn prepare_inline_runs(
 ///
 /// Returns the merged glyphs (with adjusted cluster byte offsets) and
 /// `RunSegments` tracking which grapheme ranges belong to which span.
+///
+/// # Errors
+///
+/// Propagates shaping, missing-font, and empty-output failures from any nonempty inline run.
 pub(crate) fn shape_inline_runs(
     spans: &[TextSpanInput],
     font_ctx: &FontContext<'_>,
@@ -149,6 +153,10 @@ pub(crate) fn shape_inline_runs(
     clippy::cast_possible_truncation,
     reason = "byte offset within concatenated text spans; total length is well within u32::MAX"
 )]
+///
+/// # Errors
+///
+/// Propagates shaping, missing-font, and empty-output failures from any nonempty inline run.
 pub(crate) fn shape_inline_runs_with_mode(
     spans: &[TextSpanInput],
     font_ctx: &FontContext<'_>,
@@ -213,15 +221,15 @@ pub(crate) fn shape_inline_runs_with_mode(
         // Keep total letterSpacing compatible with whole-string shaping by
         // adding one boundary spacing at each non-final run (mirrors the
         // font-fallback run boundary compensation in shaping.rs).
-        if Some(span_idx) != last_shaped_span && letter_spacing_px != 0.0 {
-            if let Some(last) = run_glyphs.last_mut() {
-                if writing_mode.is_some() {
-                    last.y_advance =
-                        shaping::add_vertical_inline_tracking(last.y_advance, letter_spacing_px);
-                } else {
-                    last.x_advance =
-                        shaping::add_inline_tracking(last.x_advance, letter_spacing_px);
-                }
+        if Some(span_idx) != last_shaped_span
+            && letter_spacing_px != 0.0
+            && let Some(last) = run_glyphs.last_mut()
+        {
+            if writing_mode.is_some() {
+                last.y_advance =
+                    shaping::add_vertical_inline_tracking(last.y_advance, letter_spacing_px);
+            } else {
+                last.x_advance = shaping::add_inline_tracking(last.x_advance, letter_spacing_px);
             }
         }
 
@@ -278,6 +286,10 @@ pub(crate) fn shape_inline_runs_with_mode(
 /// After line breaking, split each line into fragments matching the original run boundaries.
 ///
 /// Each fragment is re-shaped with its span's font/size for precise width calculation.
+///
+/// # Errors
+///
+/// Propagates font and shaping failures while rebuilding the line fragments.
 pub(crate) fn apply_inline_fragments(
     lines: &mut [Line],
     segments: &[RunSegment],

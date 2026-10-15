@@ -36,7 +36,7 @@ order, and count. Mutable warning objects and contexts are detached when one
 operation fans out to independently mutable consumers; identity is not part of
 the determinism contract.
 
-This holds because the entire text pipeline — shaping (rustybuzz), line
+This holds because the entire text pipeline — shaping (HarfRust), line
 breaking, kinsoku, vertical layout, font metrics — and the rasterizer (resvg)
 and every bundled image encoder run in version-pinned WASM built from the same
 release source. There is no browser text engine, no `canvas.measureText`, and

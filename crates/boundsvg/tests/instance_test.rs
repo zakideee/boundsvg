@@ -56,7 +56,8 @@ fn register_font_and_shape() {
         .registry()
         .resolve("NotoTest", 400, &FontStyle::Normal)
         .expect("font should be registered");
-    let glyphs = shaping::shape_text(engine.registry(), entry, "テスト", 24.0, 0.0);
+    let glyphs = shaping::shape_text(engine.registry(), entry, "テスト", 24.0, 0.0)
+        .expect("font operation succeeds");
     assert!(!glyphs.is_empty(), "should produce glyphs");
 }
 
@@ -341,7 +342,8 @@ fn extract_glyph_paths_uses_instance_registry() {
         .registry()
         .resolve("PathFont", 400, &FontStyle::Normal)
         .expect("font should be registered");
-    let glyphs = shaping::shape_text(engine.registry(), entry, "A", 24.0, 0.0);
+    let glyphs = shaping::shape_text(engine.registry(), entry, "A", 24.0, 0.0)
+        .expect("font operation succeeds");
     let positions: Vec<outline::GlyphPosition> = glyphs
         .iter()
         .map(|g| outline::GlyphPosition {
@@ -359,7 +361,8 @@ fn extract_glyph_paths_uses_instance_registry() {
         0.0,
         &positions,
         &[],
-    );
+    )
+    .expect("font operation succeeds");
     assert!(!paths.is_empty(), "should produce glyph paths");
 }
 
@@ -398,7 +401,8 @@ fn shape_with_fallback_uses_instance_registry() {
         24.0,
         0.0,
         &shaping::ShapeOptions::default(),
-    );
+    )
+    .expect("font operation succeeds");
     assert!(
         !shaped.glyphs.is_empty(),
         "shape with fallback should produce glyphs"
@@ -416,7 +420,8 @@ fn shape_with_variations_uses_instance_registry() {
         .resolve("VariFont", 400, &FontStyle::Normal)
         .expect("font should be registered");
     // shape_text works fine even if the font doesn't have wght axis — no panic
-    let glyphs = shaping::shape_text(engine.registry(), entry, "テスト", 24.0, 0.0);
+    let glyphs = shaping::shape_text(engine.registry(), entry, "テスト", 24.0, 0.0)
+        .expect("font operation succeeds");
     assert!(!glyphs.is_empty(), "should produce glyphs");
 }
 

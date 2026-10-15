@@ -18,9 +18,11 @@ use boundtext::text::types::{
     FitMode, Language, TextLayoutRequest, TextOrientation, WhiteSpaceMode, WrapMode, WritingMode,
 };
 
+/// Font size used to expose shaping-option differences in ellipsis tests.
 const FONT_SIZE_PX: f64 = 48.0;
 /// Inline constraint that forces the fixture through ellipsis projection.
 const WIDTH_MAX: f64 = 430.0;
+/// Latin sample used by the variable-font ellipsis regression tests.
 const TEXT: &str = "The quick brown fox jumps over the lazy dog";
 
 fn variable_font_registry() -> FontRegistry {
@@ -103,7 +105,8 @@ fn single_line_ellipsis_fits_the_box_at_the_requested_variation() {
         ..ShapeOptions::default()
     };
     let shaped =
-        shape_with_fallback_and_options(&font_ctx, &line.text, FONT_SIZE_PX, 0.0, &options);
+        shape_with_fallback_and_options(&font_ctx, &line.text, FONT_SIZE_PX, 0.0, &options)
+            .expect("font operation succeeds");
     let rendered_width: f64 = shaped.glyphs.iter().map(|glyph| glyph.x_advance).sum();
 
     assert!(

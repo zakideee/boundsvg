@@ -6,7 +6,7 @@ use std::sync::Arc;
 use boundtext::font::backend::{
     RawShapedGlyph, ShapeDirection, ShapeFeature, ShapeVariation, Shaper, ShaperFace,
 };
-use boundtext::font::backend_ttfparser::TtfParserBackend;
+use boundtext::font::backend_skrifa::SkrifaBackend;
 use boundtext::font::{FontContext, FontRegistry, FontStyle};
 use boundtext::text::engine::layout_text;
 use boundtext::text::fit::fit_shrink;
@@ -23,8 +23,11 @@ struct EmptyShaper;
 struct EmptyShaperFace;
 
 impl Shaper for EmptyShaper {
-    fn create_face(&self, _data: Arc<Vec<u8>>) -> Option<Box<dyn ShaperFace>> {
-        Some(Box::new(EmptyShaperFace))
+    fn create_face(
+        &self,
+        _data: Arc<Vec<u8>>,
+    ) -> Result<Box<dyn ShaperFace>, boundtext::BoundtextError> {
+        Ok(Box::new(EmptyShaperFace))
     }
 }
 
@@ -36,14 +39,13 @@ impl ShaperFace for EmptyShaperFace {
         _language: Option<&str>,
         _features: &[ShapeFeature],
         _variations: &[ShapeVariation],
-    ) -> Vec<RawShapedGlyph> {
-        Vec::new()
+    ) -> Result<Vec<RawShapedGlyph>, boundtext::BoundtextError> {
+        Ok(Vec::new())
     }
 }
 
 fn empty_shaper_registry() -> Result<FontRegistry, Box<dyn std::error::Error>> {
-    let mut registry =
-        FontRegistry::with_backend(Arc::new(TtfParserBackend), Arc::new(EmptyShaper));
+    let mut registry = FontRegistry::with_backend(Arc::new(SkrifaBackend), Arc::new(EmptyShaper));
     registry.register(
         std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),

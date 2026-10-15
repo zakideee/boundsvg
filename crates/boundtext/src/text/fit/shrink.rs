@@ -43,6 +43,11 @@ pub fn fit_shrink(
     )
 }
 
+/// Fit text by shrinking while retaining authoritative source unit metadata.
+///
+/// # Errors
+///
+/// Propagates font, shaping, fit-probe, resource-limit, and ellipsis failures.
 pub(crate) fn fit_shrink_with_unit_metadata(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -98,7 +103,7 @@ fn fit_shrink_internal(
             &shape_options,
             req.uax14_breaks,
             req.letter_spacing_px,
-        ) {
+        )? {
             return fit_shrink_shaped(
                 req,
                 font_ctx,

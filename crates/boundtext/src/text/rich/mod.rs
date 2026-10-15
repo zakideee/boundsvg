@@ -1019,15 +1019,15 @@ fn is_rich_text_fit(req: &TextLayoutRequest, layout_result: &TextLayoutResult) -
     if layout_result.bbox.w > req.max_width {
         return false;
     }
-    if let Some(max_h) = req.max_height {
-        if layout_result.bbox.h > max_h {
-            return false;
-        }
+    if let Some(max_h) = req.max_height
+        && layout_result.bbox.h > max_h
+    {
+        return false;
     }
-    if let Some(max_lines) = req.max_lines {
-        if layout_result.lines.len() > max_lines {
-            return false;
-        }
+    if let Some(max_lines) = req.max_lines
+        && layout_result.lines.len() > max_lines
+    {
+        return false;
     }
     !layout_result.overflow.is_constraint_overflow()
 }
@@ -2841,7 +2841,7 @@ fn build_horizontal_ruby_token(
             fallback_registry,
             axis: RubyInkAxis::Horizontal,
         },
-    );
+    )?;
 
     let (kinsoku_start, kinsoku_end) = segment_kinsoku_edges(&ruby.base);
     Ok(LayoutToken {
@@ -3521,7 +3521,7 @@ fn build_vertical_ruby_token(
             fallback_registry,
             axis: RubyInkAxis::Vertical,
         },
-    );
+    )?;
 
     let (kinsoku_start, kinsoku_end) = segment_kinsoku_edges(&ruby.base);
     Ok(LayoutToken {
@@ -3646,10 +3646,13 @@ fn positioned_glyph_cluster_ranges(glyphs: &[PositionedGlyph]) -> Vec<(usize, us
     ranges
 }
 
-fn stabilize_ruby_ink_gaps(placement: RubyInkPlacement<'_>, context: RubyInkBoundsContext<'_>) {
+fn stabilize_ruby_ink_gaps(
+    placement: RubyInkPlacement<'_>,
+    context: RubyInkBoundsContext<'_>,
+) -> RichLayoutResult<()> {
     let glyphs = placement.glyphs;
-    let Some(base_bounds) = glyphs_ink_bounds(&glyphs[..placement.base_end], &context) else {
-        return;
+    let Some(base_bounds) = glyphs_ink_bounds(&glyphs[..placement.base_end], &context)? else {
+        return Ok(());
     };
     let mut over_inner = base_bounds;
     let mut under_inner = base_bounds;
@@ -3663,7 +3666,7 @@ fn stabilize_ruby_ink_gaps(placement: RubyInkPlacement<'_>, context: RubyInkBoun
         } else {
             under_inner
         };
-        let Some(mut level_bounds) = glyphs_ink_bounds(&glyphs[start..end], &context) else {
+        let Some(mut level_bounds) = glyphs_ink_bounds(&glyphs[start..end], &context)? else {
             continue;
         };
         let axis_shift = ruby_ink_gap_shift(
@@ -3698,8 +3701,9 @@ fn stabilize_ruby_ink_gaps(placement: RubyInkPlacement<'_>, context: RubyInkBoun
             &context,
             placement.cross_size,
             placement.reference_offset,
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn ruby_ink_gap_shift(
@@ -3750,9 +3754,9 @@ fn normalize_ruby_ink_extent(
     context: &RubyInkBoundsContext<'_>,
     cross_size: &mut f64,
     reference_offset: &mut f64,
-) {
-    let Some(mut bounds) = glyphs_ink_bounds(glyphs, context) else {
-        return;
+) -> RichLayoutResult<()> {
+    let Some(mut bounds) = glyphs_ink_bounds(glyphs, context)? else {
+        return Ok(());
     };
     match context.axis {
         RubyInkAxis::Horizontal => {
@@ -3780,15 +3784,16 @@ fn normalize_ruby_ink_extent(
             }
         }
     }
+    Ok(())
 }
 
 fn glyphs_ink_bounds(
     glyphs: &[PositionedGlyph],
     context: &RubyInkBoundsContext<'_>,
-) -> Option<GlyphInkBounds> {
+) -> RichLayoutResult<Option<GlyphInkBounds>> {
     let mut bounds = None;
     for glyph in glyphs {
-        let Some(glyph_bounds) = positioned_glyph_ink_bounds(glyph, context) else {
+        let Some(glyph_bounds) = positioned_glyph_ink_bounds(glyph, context)? else {
             continue;
         };
         bounds = Some(match bounds {
@@ -3796,16 +3801,20 @@ fn glyphs_ink_bounds(
             None => glyph_bounds,
         });
     }
-    bounds
+    Ok(bounds)
 }
 
 fn positioned_glyph_ink_bounds(
     glyph: &PositionedGlyph,
     context: &RubyInkBoundsContext<'_>,
-) -> Option<GlyphInkBounds> {
-    let glyph_id = u16::try_from(glyph.glyph_id).ok()?;
-    let font_size_px = glyph.font_size_px?;
-    let (font_entry, registry) = resolve_positioned_glyph_font(glyph, context)?;
+) -> RichLayoutResult<Option<GlyphInkBounds>> {
+    let glyph_id = glyph.glyph_id;
+    let Some(font_size_px) = glyph.font_size_px else {
+        return Ok(None);
+    };
+    let Some((font_entry, registry)) = resolve_positioned_glyph_font(glyph, context) else {
+        return Ok(None);
+    };
     let variation_settings = glyph
         .font_variation_settings
         .as_deref()
@@ -3813,14 +3822,16 @@ fn positioned_glyph_ink_bounds(
         .unwrap_or_default();
     let variations = shaping::to_shape_variations(&variation_settings);
     let face = font_entry.font_face(registry.backend(), &variations)?;
-    let bbox = face.glyph_bounding_box(glyph_id)?;
+    let Some(bbox) = face.glyph_bounding_box(glyph_id)? else {
+        return Ok(None);
+    };
     let scale = font_size_px / f64::from(face.units_per_em());
 
     let corners = [
-        (f64::from(bbox.x_min), f64::from(bbox.y_min)),
-        (f64::from(bbox.x_min), f64::from(bbox.y_max)),
-        (f64::from(bbox.x_max), f64::from(bbox.y_min)),
-        (f64::from(bbox.x_max), f64::from(bbox.y_max)),
+        (bbox.x_min, bbox.y_min),
+        (bbox.x_min, bbox.y_max),
+        (bbox.x_max, bbox.y_min),
+        (bbox.x_max, bbox.y_max),
     ];
     let mut bounds = None;
     for (x, y) in corners {
@@ -3832,7 +3843,7 @@ fn positioned_glyph_ink_bounds(
             scale,
             (x, y),
             context.axis,
-        );
+        )?;
         let point_bounds = GlyphInkBounds {
             min_x: point_x,
             max_x: point_x,
@@ -3844,7 +3855,7 @@ fn positioned_glyph_ink_bounds(
             None => point_bounds,
         });
     }
-    bounds
+    Ok(bounds)
 }
 
 fn resolve_positioned_glyph_font<'a>(
@@ -3867,57 +3878,59 @@ fn resolve_positioned_glyph_font<'a>(
 fn transform_glyph_bbox_point(
     glyph: &PositionedGlyph,
     face: &dyn FontFace,
-    glyph_id: u16,
+    glyph_id: u32,
     bbox: GlyphBBox,
     scale: f64,
     point: (f64, f64),
     axis: RubyInkAxis,
-) -> (f64, f64) {
+) -> RichLayoutResult<(f64, f64)> {
     let (x, y) = point;
     let (shift_x, shift_y) = match axis {
         RubyInkAxis::Horizontal => (0.0, 0.0),
-        RubyInkAxis::Vertical => vertical_glyph_outline_shift(glyph, face, glyph_id, bbox, scale),
+        RubyInkAxis::Vertical => vertical_glyph_outline_shift(glyph, face, glyph_id, bbox, scale)?,
     };
     let transformed_x = glyph.origin_x + x * scale + shift_x;
     let transformed_y = glyph.origin_y - y * scale + shift_y;
-    if matches!(axis, RubyInkAxis::Vertical) && glyph.rotation_deg == 90 {
-        let dx = transformed_x - glyph.origin_x;
-        let dy = transformed_y - glyph.origin_y;
-        (glyph.origin_x - dy, glyph.origin_y + dx)
-    } else {
-        (transformed_x, transformed_y)
-    }
+    Ok(
+        if matches!(axis, RubyInkAxis::Vertical) && glyph.rotation_deg == 90 {
+            let dx = transformed_x - glyph.origin_x;
+            let dy = transformed_y - glyph.origin_y;
+            (glyph.origin_x - dy, glyph.origin_y + dx)
+        } else {
+            (transformed_x, transformed_y)
+        },
+    )
 }
 
 fn vertical_glyph_outline_shift(
     glyph: &PositionedGlyph,
     face: &dyn FontFace,
-    glyph_id: u16,
+    glyph_id: u32,
     bbox: GlyphBBox,
     scale: f64,
-) -> (f64, f64) {
-    if glyph.rotation_deg == 90 {
-        let center_x = (f64::from(bbox.x_min) + f64::from(bbox.x_max)) * 0.5 * scale;
+) -> RichLayoutResult<(f64, f64)> {
+    Ok(if glyph.rotation_deg == 90 {
+        let center_x = (bbox.x_min + bbox.x_max) * 0.5 * scale;
         let font_center_y = face
             .typographic_ascender()
-            .map_or(f64::from(face.ascender()), f64::from)
+            .map_or(face.ascender(), f64::from)
             .mul_add(
                 0.5,
                 face.typographic_descender()
-                    .map_or(f64::from(face.descender()), f64::from)
+                    .map_or(face.descender(), f64::from)
                     * 0.5,
             )
             * scale;
         (-center_x, font_center_y)
     } else {
         (
-            face.glyph_hor_advance(glyph_id)
+            face.glyph_hor_advance(glyph_id)?
                 .map_or(-glyph.font_size_px.unwrap_or(0.0) * 0.5, |advance| {
-                    -(f64::from(advance) * scale * 0.5)
+                    -(advance * scale * 0.5)
                 }),
             0.0,
         )
-    }
+    })
 }
 
 fn union_bounds(left: GlyphInkBounds, right: GlyphInkBounds) -> GlyphInkBounds {
@@ -3950,7 +3963,7 @@ fn ruby_side_for_level(position: RubyPosition, level_index: usize) -> RubySide {
         RubyPosition::Under => RubySide::Under,
         RubyPosition::Over | RubyPosition::InterCharacter => RubySide::Over,
         RubyPosition::Alternate => {
-            if level_index % 2 == 0 {
+            if level_index.is_multiple_of(2) {
                 RubySide::Over
             } else {
                 RubySide::Under
@@ -4269,13 +4282,14 @@ fn shape_segment_run_horizontal(
             false,
             segment.run_index,
         )?;
-        if segment_index + 1 < segments.len() && segment.style.letter_spacing_px != 0.0 {
-            if let Some(last_glyph) = shaped.last_mut() {
-                last_glyph.x_advance = crate::font::shaping::add_inline_tracking(
-                    last_glyph.x_advance,
-                    segment.style.letter_spacing_px,
-                );
-            }
+        if segment_index + 1 < segments.len()
+            && segment.style.letter_spacing_px != 0.0
+            && let Some(last_glyph) = shaped.last_mut()
+        {
+            last_glyph.x_advance = crate::font::shaping::add_inline_tracking(
+                last_glyph.x_advance,
+                segment.style.letter_spacing_px,
+            );
         }
         let mut positioned = position_horizontal_glyphs(
             &segment.text,
@@ -4330,13 +4344,14 @@ fn shape_segment_run_vertical(
             true,
             segment.run_index,
         )?;
-        if segment_index + 1 < segments.len() && segment.style.letter_spacing_px != 0.0 {
-            if let Some(last_glyph) = shaped.last_mut() {
-                last_glyph.y_advance = crate::font::shaping::add_vertical_inline_tracking(
-                    last_glyph.y_advance,
-                    segment.style.letter_spacing_px,
-                );
-            }
+        if segment_index + 1 < segments.len()
+            && segment.style.letter_spacing_px != 0.0
+            && let Some(last_glyph) = shaped.last_mut()
+        {
+            last_glyph.y_advance = crate::font::shaping::add_vertical_inline_tracking(
+                last_glyph.y_advance,
+                segment.style.letter_spacing_px,
+            );
         }
         let mut positioned =
             position_vertical_glyphs(&segment.text, &shaped, &segment.style, center_x, cursor_y);
@@ -6382,8 +6397,12 @@ mod tests {
             fallback_registry: None,
             axis: RubyInkAxis::Horizontal,
         };
-        let base_bounds = glyphs_ink_bounds(&base_glyphs, &context).expect("base bounds");
-        let rt_bounds = glyphs_ink_bounds(&rt_glyphs, &context).expect("ruby bounds");
+        let base_bounds = glyphs_ink_bounds(&base_glyphs, &context)
+            .expect("font operation succeeds")
+            .expect("base bounds");
+        let rt_bounds = glyphs_ink_bounds(&rt_glyphs, &context)
+            .expect("font operation succeeds")
+            .expect("ruby bounds");
         base_bounds.min_y - rt_bounds.max_y
     }
 

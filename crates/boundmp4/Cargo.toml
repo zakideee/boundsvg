@@ -2,9 +2,7 @@
 name = "boundmp4"
 version = "0.1.0"
 edition.workspace = true
-# Above the workspace MSRV (1.85) because shiguredo_mp4 declares 1.88. Only this
-# crate is affected; the engine crates keep the workspace value.
-rust-version = "1.88.0"
+rust-version.workspace = true
 license.workspace = true
 authors = ["zakideee"]
 repository = "https://github.com/zakideee/boundsvg"

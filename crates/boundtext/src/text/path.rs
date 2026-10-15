@@ -785,7 +785,7 @@ pub fn layout_text_on_path(
         line.positioned_glyphs.as_deref().unwrap_or_default(),
         font_context,
         request.text.font_size_px,
-    )
+    )?
     .unwrap_or(TextBBox {
         x: 0.0,
         y: 0.0,
@@ -1584,7 +1584,7 @@ fn resolve_text_path_decorations(
                 false,
                 request.text.font_size_px,
                 font_context,
-            );
+            )?;
             let owner_baseline = owner_glyph.origin_y - owner_glyph.y_offset;
             let line_offset = metric_center - owner_baseline;
             let effective_normal_offset = normal_sign * request.path_offset_px + line_offset;
@@ -2406,7 +2406,7 @@ fn resolve_path_ink_bbox(
     glyphs: &[PositionedGlyph],
     font_context: &FontContext<'_>,
     default_font_size_px: f64,
-) -> Option<TextBBox> {
+) -> Result<Option<TextBBox>, crate::TextLayoutError> {
     let mut bounds: Option<InkBounds> = None;
     for glyph in glyphs {
         let Some((font_entry, font_registry)) = resolve_glyph_font(glyph, font_context) else {
@@ -2418,15 +2418,9 @@ fn resolve_path_ink_bbox(
             .map(shaping::parse_css_font_variation_settings)
             .unwrap_or_default();
         let variations = shaping::to_shape_variations(&variation_settings);
-        let Some(face) = font_entry.font_face(font_registry.backend(), &variations) else {
-            continue;
-        };
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "OpenType glyph IDs are u16 values transported as u32"
-        )]
-        let glyph_id = glyph.glyph_id as u16;
-        let Some(glyph_bbox) = face.glyph_bounding_box(glyph_id) else {
+        let face = font_entry.font_face(font_registry.backend(), &variations)?;
+        let glyph_id = glyph.glyph_id;
+        let Some(glyph_bbox) = face.glyph_bounding_box(glyph_id)? else {
             continue;
         };
         let scale =
@@ -2439,8 +2433,8 @@ fn resolve_path_ink_bbox(
             (glyph_bbox.x_max, glyph_bbox.y_min),
             (glyph_bbox.x_max, glyph_bbox.y_max),
         ] {
-            let local_x = f64::from(font_x) * scale * glyph.inline_scale.unwrap_or(1.0);
-            let local_y = -f64::from(font_y) * scale;
+            let local_x = font_x * scale * glyph.inline_scale.unwrap_or(1.0);
+            let local_y = -font_y * scale;
             let point_x = glyph.origin_x + cos * local_x - sin * local_y;
             let point_y = glyph.origin_y + sin * local_x + cos * local_y;
             let point_bounds = InkBounds {
@@ -2460,12 +2454,12 @@ fn resolve_path_ink_bbox(
             });
         }
     }
-    bounds.map(|value| TextBBox {
+    Ok(bounds.map(|value| TextBBox {
         x: value.min_x,
         y: value.min_y,
         w: value.max_x - value.min_x,
         h: value.max_y - value.min_y,
-    })
+    }))
 }
 
 fn resolve_glyph_font<'a>(

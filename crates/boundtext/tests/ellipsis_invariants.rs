@@ -90,6 +90,7 @@ fn shape_projected_display_advance(
             letter_spacing_px,
             options,
         )
+        .expect("font operation succeeds")
         .glyphs
         .iter()
         .map(|glyph| glyph.x_advance)
@@ -102,6 +103,7 @@ fn shape_projected_display_advance(
         letter_spacing_px,
         options,
     )
+    .expect("font operation succeeds")
     .glyphs
     .iter()
     .map(|glyph| glyph.x_advance)
@@ -113,6 +115,7 @@ fn shape_projected_display_advance(
         letter_spacing_px,
         options,
     )
+    .expect("font operation succeeds")
     .glyphs
     .iter()
     .map(|glyph| glyph.x_advance)
@@ -339,7 +342,8 @@ fn ligature_prefix_is_reshaped_as_end_of_text() {
         24.0,
         0.0,
         &ShapeOptions::default(),
-    );
+    )
+    .expect("font operation succeeds");
     let actual_ids = layout_result
         .lines
         .iter()
@@ -381,7 +385,8 @@ fn arabic_prefix_recomputes_its_contextual_end_form() {
     assert_eq!(prefix, "ببب");
 
     let expected =
-        shape_with_fallback_and_options(&font_context, prefix, 24.0, 0.0, &ShapeOptions::default());
+        shape_with_fallback_and_options(&font_context, prefix, 24.0, 0.0, &ShapeOptions::default())
+            .expect("font operation succeeds");
     let mut expected_glyphs = expected.glyphs;
     expected_glyphs.sort_by_key(|glyph| glyph.cluster);
     let expected_ids = expected_glyphs
@@ -429,14 +434,16 @@ fn synthetic_marker_is_shaped_in_an_isolated_run() {
         .flatten()
         .collect::<Vec<_>>();
     let authored_a =
-        shape_with_fallback_and_options(&font_context, "A", 24.0, 0.0, &ShapeOptions::default());
+        shape_with_fallback_and_options(&font_context, "A", 24.0, 0.0, &ShapeOptions::default())
+            .expect("font operation succeeds");
     let marker = shape_with_fallback_and_options(
         &font_context,
         "\u{2026}",
         24.0,
         0.0,
         &ShapeOptions::default(),
-    );
+    )
+    .expect("font operation succeeds");
 
     assert_eq!(glyphs.len(), 2, "A + ellipsis ligature must not form");
     assert_eq!(glyphs[0].glyph_id, authored_a.glyphs[0].glyph_id);
@@ -497,7 +504,8 @@ fn paint_and_line_box_boundaries_preserve_arabic_contextual_shaping() {
         .flatten()
         .collect::<Vec<_>>();
     let expected =
-        shape_with_fallback_and_options(&font_context, "بببب", 24.0, 0.0, &ShapeOptions::default());
+        shape_with_fallback_and_options(&font_context, "بببب", 24.0, 0.0, &ShapeOptions::default())
+            .expect("font operation succeeds");
     let mut expected_glyphs = expected.glyphs;
     expected_glyphs.sort_by_key(|glyph| glyph.cluster);
 
@@ -1813,7 +1821,7 @@ fn synthetic_marker_diagnostics_are_committed() {
         .register(
             std::fs::read(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../vendor/ttf-parser/tests/fonts/demo.ttf"
+                "/../../fixtures/fonts/only-a.ttf"
             ))
             .expect("single-glyph fixture font"),
             "OnlyA".to_string(),
@@ -1894,7 +1902,8 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
                         size,
                         None,
                         &ShapeOptions::default(),
-                    ) else {
+                    )
+                    .expect("font operation succeeds") else {
                         continue; // already fits — no truncation
                     };
                     checked += 1;
@@ -1973,7 +1982,8 @@ fn ellipsis_with_variations_still_fits() {
             32.0,
             None,
             &options,
-        ) else {
+        )
+        .expect("font operation succeeds") else {
             continue;
         };
         let actual = shape_projected_display_advance(&ctx, &line.text, 32.0, 0.0, &options);

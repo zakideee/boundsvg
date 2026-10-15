@@ -61,10 +61,10 @@ pub(super) fn vertical_text_fits(
     }
 
     // Check maxLines (max columns for vertical)
-    if let Some(max) = req.max_lines {
-        if columns.len() > max {
-            return false;
-        }
+    if let Some(max) = req.max_lines
+        && columns.len() > max
+    {
+        return false;
     }
 
     // Check height constraint (each column's height)

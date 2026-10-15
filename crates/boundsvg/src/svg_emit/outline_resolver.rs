@@ -301,6 +301,7 @@ fn resolve_text_outlines_inner(
             request,
             request_index,
             options.show_missing_glyphs,
+            &node_id,
         )?
         else {
             continue;
@@ -431,7 +432,7 @@ pub(super) fn extract_text_node_ink_paths(
         build_node_outline_requests(kind, node_bbox, node_id, Some(eligible_line_indices))?;
     let mut ink_paths = Vec::with_capacity(requests.len());
     for (request_index, request) in requests.iter().enumerate() {
-        let Some(d) = extract_request_path(registry, request, request_index, true)? else {
+        let Some(d) = extract_request_path(registry, request, request_index, true, node_id)? else {
             continue;
         };
         let Some(bbox) = filled_path_bbox(&d).map_err(|_| EngineError::Structured {
@@ -487,6 +488,7 @@ fn extract_request_path(
     request: &OutlineRequest,
     request_index: usize,
     show_missing_glyphs: bool,
+    node_id: &str,
 ) -> Result<Option<String>, EngineError> {
     let entry = registry
         .resolve(
@@ -495,12 +497,11 @@ fn extract_request_path(
             &request.font_style,
         )
         .ok_or_else(|| {
-            EngineError::Validation(format!(
-                "Font not found: alias={}, weight={}, style={}",
-                request.font_alias,
-                request.font_weight,
-                font_style_str(&request.font_style)
-            ))
+            EngineError::StructuredContext {
+                code: "TEXT_FONT_UNAVAILABLE".to_string(), message: "No requested font is available.".to_string(),
+                stage: Some(crate::diagnostics::PipelineStage::Font), node_id: Some(node_id.to_string()),
+                context: Box::new(serde_json::json!({"operation":"extractGlyphPaths","reason":"unregisteredFont","weight":request.font_weight})),
+            }
         })?;
 
     let variations = request
@@ -509,10 +510,17 @@ fn extract_request_path(
         .map(crate::font::shaping::parse_css_font_variation_settings)
         .map(|settings| crate::font::shaping::to_shape_variations(&settings))
         .unwrap_or_default();
-    let face = registry
-        .backend()
-        .create_face(&entry.data, &variations)
-        .map_err(|error| EngineError::Validation(format!("Failed to parse font face: {error}")))?;
+    let font_failure = |error: boundtext::BoundtextError| {
+        crate::text_diagnostics::classify_font_error(
+            &error,
+            "extractGlyphPaths",
+            Some(node_id.to_string()),
+        )
+        .into_engine_error()
+    };
+    let face = entry
+        .font_face(registry.backend(), &variations)
+        .map_err(font_failure)?;
 
     let outline_input = crate::font::outline::PositionedGlyphPathInput {
         glyph_id: request.glyph_id,
@@ -527,16 +535,10 @@ fn extract_request_path(
         show_missing_glyphs,
     };
     Ok(
-        crate::font::outline::extract_positioned_glyph_path(face.as_ref(), &outline_input)?
+        crate::font::outline::extract_positioned_glyph_path(face.as_ref(), &outline_input)
+            .map_err(font_failure)?
             .map(|path| path.d),
     )
-}
-
-fn font_style_str(style: &FontStyle) -> &'static str {
-    match style {
-        FontStyle::Italic => "italic",
-        FontStyle::Normal => "normal",
-    }
 }
 
 fn create_resolved_outline_path(
@@ -599,12 +601,11 @@ fn append_resolved_outline_path(
     previous.glyph_ids.extend(outline_path.glyph_ids);
     previous.text.push_str(&outline_path.text);
     previous.bbox = union_bbox(previous.bbox, outline_path.bbox);
-    if previous.source_role == outline_path.source_role {
-        if let (Some(previous_end), Some(current_end)) =
+    if previous.source_role == outline_path.source_role
+        && let (Some(previous_end), Some(current_end)) =
             (previous.source_end, outline_path.source_end)
-        {
-            previous.source_end = Some(previous_end.max(current_end));
-        }
+    {
+        previous.source_end = Some(previous_end.max(current_end));
     }
 }
 

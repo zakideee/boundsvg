@@ -24,6 +24,7 @@ use crate::text::kinsoku::{get_hanging_chars, get_kinsoku_profile};
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
+/// Measured text with authoritative grapheme bounds and inline advance.
 pub struct MeasuredTextLine {
     pub text: String,
     pub char_start: usize,
@@ -33,6 +34,7 @@ pub struct MeasuredTextLine {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Measured lines and the pixel dimensions of their complete text block.
 pub struct MeasuredTextBlock {
     pub lines: Vec<MeasuredTextLine>,
     pub used_width: f64,
@@ -147,6 +149,11 @@ pub fn layout_text_with_unit_metadata(
     layout_text_with_options(req, font_ctx, true, None)
 }
 
+/// Validate and lay out text with optional unit metadata and reusable preparation.
+///
+/// # Errors
+///
+/// Returns request-validation, shaping, layout, fit, ellipsis, or resource-limit failures.
 pub(super) fn layout_text_with_options(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -180,11 +187,11 @@ pub(super) fn layout_text_with_options(
             .is_some_and(|glyphs| !glyphs.is_empty())
     });
     if has_positioned_glyphs {
-        super::super::decoration::resolve_text_decorations(req, font_ctx, &mut layout_result);
+        super::super::decoration::resolve_text_decorations(req, font_ctx, &mut layout_result)?;
     } else if coalesced_spans.is_some() && !layout_result.lines.is_empty() {
         let mut decoration_layout =
             layout_text_inner_authoritative(layout_request, font_ctx, true, session)?;
-        super::super::decoration::resolve_text_decorations(req, font_ctx, &mut decoration_layout);
+        super::super::decoration::resolve_text_decorations(req, font_ctx, &mut decoration_layout)?;
         layout_result.text_decorations = decoration_layout.text_decorations;
     }
 
@@ -542,6 +549,11 @@ fn ensure_ellipsis_candidate_budget(
     Ok(())
 }
 
+/// Lay out an already validated request, including promotion to shaped span runs.
+///
+/// # Errors
+///
+/// Propagates shaping, paragraph, inline, and layout failures without returning a partial result.
 pub(crate) fn layout_text_inner(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -553,6 +565,10 @@ pub(crate) fn layout_text_inner(
 /// Text-on-path has already canonicalized shaping runs and paint ranges. It
 /// must retain those prepared span boundaries while obtaining the initial
 /// straight-line glyph plan.
+///
+/// # Errors
+///
+/// Propagates shaping and layout failures while preserving the supplied span boundaries.
 pub(crate) fn layout_text_inner_with_prepared_spans(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -596,8 +612,8 @@ fn layout_text_inner_with_span_promotion(
     // the result is distributed back onto the runs.
     let prepared_plain = if req.spans.is_none_or(<[TextSpanInput]>::is_empty) && !req.ellipsis {
         Some(match session {
-            Some(owner_session) => owner_session.prepare(req, font_ctx),
-            None => std::sync::Arc::new(super::session::prepare_plain_text(req, font_ctx)),
+            Some(owner_session) => owner_session.prepare(req, font_ctx)?,
+            None => std::sync::Arc::new(super::session::prepare_plain_text(req, font_ctx)?),
         })
     } else {
         None
@@ -932,6 +948,7 @@ fn shape_text_for_layout_result(
 // Language helpers
 // ---------------------------------------------------------------------------
 
+/// Map the layout language to its stable serialized label.
 pub(crate) fn language_to_str(lang: Language) -> &'static str {
     match lang {
         Language::Ja => "ja",
@@ -940,6 +957,7 @@ pub(crate) fn language_to_str(lang: Language) -> &'static str {
     }
 }
 
+/// Pass explicit language tags to shaping and leave automatic language unspecified.
 pub(crate) fn language_to_option_string(lang: Language) -> Option<String> {
     match lang {
         Language::Ja => Some("ja".to_string()),

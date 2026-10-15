@@ -46,13 +46,15 @@ pub fn compute_full_layout_with_registry(
     // this call, with the global registry serving as the per-character fallback.
     let mut local_registry = FontRegistry::new();
     for font in &input.fonts {
-        // Ignore duplicate errors (font may already be in global)
-        let _ = local_registry.register(
+        match local_registry.register(
             font.data.clone(),
             font.alias.clone(),
             font.weight,
             font.style.clone(),
-        );
+        ) {
+            Ok(()) | Err(boundtext::BoundtextError::FontAlreadyRegistered { .. }) => {}
+            Err(error) => return Err(error.into()),
+        }
     }
     // Use a combined resolver: try local first, then global
     compute_layout_inner_combined(input, &local_registry, global_registry)

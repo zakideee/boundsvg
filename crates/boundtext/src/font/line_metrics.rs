@@ -4,6 +4,7 @@ use super::{FontEntry, FontRegistry, FontStyle};
 pub const FALLBACK_NORMAL_LINE_HEIGHT_FACTOR: f64 = 1.2;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Pixel line-box metrics and baseline placement derived from the selected font metrics.
 pub struct LineMetrics {
     pub font_size_px: f64,
     pub line_height_px: f64,
@@ -15,6 +16,7 @@ pub struct LineMetrics {
 }
 
 #[must_use]
+/// Resolve the requested family chain in the primary registry, then the fallback registry.
 pub fn resolve_font_entry<'a>(
     registry: &'a FontRegistry,
     fallback_registry: Option<&'a FontRegistry>,
@@ -28,6 +30,7 @@ pub fn resolve_font_entry<'a>(
 }
 
 #[must_use]
+/// Resolve typographic baseline metrics with the normal 1.2em floor and explicit line-height precedence.
 pub fn resolve_line_metrics(
     font_entry: Option<&FontEntry>,
     font_size_px: f64,
@@ -45,7 +48,7 @@ pub fn resolve_line_metrics(
         |entry| {
             let scale = font_size_px / f64::from(entry.units_per_em.max(1));
             let has_typographic_vertical_extent =
-                entry.typographic_ascender != 0 || entry.typographic_descender != 0;
+                entry.typographic_ascender != 0.0 || entry.typographic_descender != 0.0;
             let ascent_units = if has_typographic_vertical_extent {
                 entry.typographic_ascender
             } else {
@@ -62,9 +65,9 @@ pub fn resolve_line_metrics(
                 entry.line_gap
             };
 
-            let ascent = f64::from(ascent_units).max(0.0) * scale;
-            let descent = f64::from(-descender_units).max(0.0) * scale;
-            let line_gap = f64::from(line_gap_units).max(0.0) * scale;
+            let ascent = ascent_units.max(0.0) * scale;
+            let descent = (-descender_units).max(0.0) * scale;
+            let line_gap = line_gap_units.max(0.0) * scale;
             // Keep glyph placement on typographic metrics, but avoid the old
             // 1.0em normal line box by applying the CSS-like 1.2em floor.
             // Using raw hhea/win extents here makes CJK fonts push baselines
@@ -103,6 +106,7 @@ pub fn resolve_line_metrics(
 }
 
 #[must_use]
+/// Resolve a styled font and derive its pixel line-box metrics.
 pub fn resolve_line_metrics_for_style(
     registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,

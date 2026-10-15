@@ -1,5 +1,6 @@
 import { FatalError } from "../errors.js";
 import type { MeasurementTextLayoutOperation } from "../text/layout-operation.js";
+import { matchesFontFailure } from "./font-fatal-decoder.js";
 
 const MAX_TEXT_LAYOUT_CONTEXT_BYTES = 4_096;
 const MAX_TEXT_LAYOUT_ENVELOPE_BYTES = 8_192;
@@ -293,6 +294,9 @@ type TextLayoutFatalCandidate = {
 
 function matchesCatalogTuple(candidate: TextLayoutFatalCandidate): boolean {
   const { code, message, stage, context, operation } = candidate;
+  if (matchesFontFailure({ code, message, stage, context, operation })) {
+    return true;
+  }
   switch (code) {
     case "TEXT_LAYOUT_INPUT_INVALID":
       return (

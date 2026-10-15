@@ -105,6 +105,7 @@ fn paragraph_non_applicability_uses_full_layout_without_a_geometry_probe()
                 0.0,
                 false
             )
+            .expect("font operation succeeds")
             .is_none()
         );
         let layout_result = shrinkwrap_text(&request(text), &font_context, &regions)
@@ -159,6 +160,7 @@ fn explicit_language_tag_changes_only_the_applicable_paragraph_shaping()
                 0.0,
                 false
             )
+            .expect("font operation succeeds")
             .is_some()
         );
         let layout_result =

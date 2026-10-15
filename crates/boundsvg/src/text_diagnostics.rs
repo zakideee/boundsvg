@@ -67,6 +67,104 @@ impl TextLayoutDiagnostic {
     }
 }
 
+/// Classify font failures without copying font bytes, paths, or input text.
+#[must_use]
+pub(crate) fn classify_font_error(
+    error: &boundtext::BoundtextError,
+    operation: &str,
+    node_id: Option<String>,
+) -> TextLayoutDiagnostic {
+    use boundtext::BoundtextError;
+    let mut context = serde_json::json!({ "operation": operation });
+    let (code, message, stage) = match error {
+        BoundtextError::FontParse {
+            reason,
+            table,
+            face_index,
+        } => {
+            context["reason"] = serde_json::json!(reason);
+            context["faceIndex"] = serde_json::json!(face_index);
+            if let Some(table) = table {
+                context["table"] = serde_json::json!(table);
+            }
+            (
+                "FONT_PARSE_FAILED",
+                "Font parsing or admission failed.",
+                PipelineStage::Font,
+            )
+        }
+        BoundtextError::FontOutline { reason, glyph_id } => {
+            context["reason"] = serde_json::json!(reason);
+            context["glyphId"] = serde_json::json!(glyph_id);
+            (
+                "FONT_OUTLINE_FAILED",
+                "Font outline extraction failed.",
+                PipelineStage::Font,
+            )
+        }
+        BoundtextError::TextShaping { reason } => {
+            context["reason"] = serde_json::json!(reason);
+            (
+                "TEXT_SHAPING_FAILED",
+                "Text shaping failed.",
+                PipelineStage::Text,
+            )
+        }
+        BoundtextError::TextShapingLimitExceeded => {
+            context["reason"] =
+                serde_json::json!(boundtext::error::FontFailureReason::BufferFailedDuringShaping);
+            (
+                "TEXT_SHAPING_LIMIT_EXCEEDED",
+                "The shaping buffer failed during processing.",
+                PipelineStage::Text,
+            )
+        }
+        BoundtextError::InvalidShapedOutput {
+            reason,
+            glyph_index,
+        } => {
+            context["reason"] = serde_json::json!(reason);
+            context["glyphIndex"] = serde_json::json!(glyph_index);
+            (
+                "TEXT_SHAPING_INVALID_OUTPUT",
+                "The shaper returned invalid glyph data.",
+                PipelineStage::Text,
+            )
+        }
+        BoundtextError::FontAlreadyRegistered { .. } => {
+            context["reason"] = serde_json::json!("duplicateRegistration");
+            (
+                "FONT_DUPLICATE",
+                "The font is already registered.",
+                PipelineStage::Font,
+            )
+        }
+        BoundtextError::InvalidBaselineRotation => {
+            context["reason"] = serde_json::json!("invalidBaselineRotation");
+            (
+                "FONT_OUTLINE_FAILED",
+                "Baseline glyph rotation must be finite.",
+                PipelineStage::Font,
+            )
+        }
+        BoundtextError::InvalidInlineScale => {
+            context["reason"] = serde_json::json!("invalidInlineScale");
+            (
+                "FONT_OUTLINE_FAILED",
+                "Glyph inline scale must be positive and finite.",
+                PipelineStage::Font,
+            )
+        }
+    };
+    TextLayoutDiagnostic {
+        code,
+        message,
+        stage,
+        node_id,
+        context,
+    }
+}
+
 /// Classify the text-on-path branch that completed shaping without a usable
 /// layout artifact. It is not a boundtext `TextLayoutError`, but it shares the
 /// same render operation identity and bounded diagnostic transport.
@@ -374,7 +472,13 @@ pub(crate) fn classify_text_layout_error(
     operation: TextLayoutOperation,
     node_id: Option<String>,
 ) -> TextLayoutDiagnostic {
+    if let TextLayoutError::Font(error) = error {
+        return classify_font_error(error, operation.as_str(), node_id);
+    }
     let (code, message, stage, context) = match error {
+        TextLayoutError::Font(error) => {
+            return classify_font_error(error, operation.as_str(), node_id);
+        }
         TextLayoutError::InvalidRequest { reason } => (
             "TEXT_LAYOUT_INPUT_INVALID",
             "Text layout request is invalid.",

@@ -20,11 +20,10 @@ function withFixture(files, run) {
   }
 }
 
-test("accepts the single pre-existing ttf-parser exception", () => {
+test("accepts registry dependencies without source overrides", () => {
   withFixture(
     {
-      "Cargo.toml": `[workspace]\n[patch.crates-io]\nttf-parser = { path = "vendor/ttf-parser" }\n`,
-      "vendor/ttf-parser/Cargo.toml": `[package]\nname = "ttf-parser"\nversion = "0.25.1"\n`,
+      "Cargo.toml": `[workspace]\n[dependencies]\nskrifa = "=0.48.0"\n`,
     },
     (fixtureRoot) => {
       assert.deepEqual(auditThirdPartySourceOverrides(fixtureRoot), []);
@@ -32,7 +31,7 @@ test("accepts the single pre-existing ttf-parser exception", () => {
   );
 });
 
-test("rejects a source override for a crate other than the vendored ttf-parser", () => {
+test("rejects every vendored crate and crates.io patch", () => {
   withFixture(
     {
       "Cargo.toml": `[workspace]\n[patch.crates-io]\nresvg = { path = "vendor/resvg" }\nttf-parser = { path = "vendor/ttf-parser" }\n`,

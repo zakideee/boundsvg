@@ -57,7 +57,7 @@ pub fn fit_grow(
             &shape_options,
             req.uax14_breaks,
             req.letter_spacing_px,
-        ) {
+        )? {
             return Ok(fit_grow_shaped(
                 req, font_ctx, &pp, max_size, epsilon, max_iter,
             ));

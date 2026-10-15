@@ -46,8 +46,8 @@ fn get_font_metrics_returns_numeric_fields() {
     let metrics_json = get_font_metrics(&test_font_data()).expect("font metrics should be parsed");
     let metrics: serde_json::Value = serde_json::from_str(&metrics_json).expect("valid json");
     assert!(metrics["unitsPerEm"].as_i64().unwrap_or_default() > 0);
-    assert!(metrics["ascender"].as_i64().unwrap_or_default() > 0);
-    assert!(metrics["descender"].as_i64().unwrap_or_default() < 0);
+    assert!(metrics["ascender"].as_f64().unwrap_or_default() > 0.0);
+    assert!(metrics["descender"].as_f64().unwrap_or_default() < 0.0);
 }
 
 #[test]
@@ -150,6 +150,7 @@ fn layout_transition_has_one_production_operation_and_no_probe_export() {
 
 #[test]
 fn all_text_layout_exports_use_the_one_total_wasm_family_owner() {
+    /// Authoritative text-layout exports that must share the total WASM boundary.
     const EXPECTED_EXPORTS: [&str; 6] = [
         "layout_text_flow",
         "layout_text_flow_with_exclusions",

@@ -4,6 +4,7 @@ use crate::text::kinsoku::{KinsokuProfile, apply_kinsoku};
 // UAX#14 break set (vertical)
 // ---------------------------------------------------------------------------
 
+/// Map UTF-8 line-break opportunities to the supplied vertical character boundaries.
 pub(super) fn build_uax14_break_set_vertical(
     chars: &[&str],
     uax14_breaks: Option<&[usize]>,
@@ -37,12 +38,12 @@ pub(super) fn build_uax14_break_set_vertical(
 
     let mut break_flags = vec![false; chars.len()];
     for &offset in uax14_breaks {
-        if offset < byte_to_char.len() {
-            if let Some(char_idx) = byte_to_char[offset] {
-                if char_idx > 0 && char_idx < chars.len() {
-                    break_flags[char_idx] = true;
-                }
-            }
+        if offset < byte_to_char.len()
+            && let Some(char_idx) = byte_to_char[offset]
+            && char_idx > 0
+            && char_idx < chars.len()
+        {
+            break_flags[char_idx] = true;
         }
     }
 
@@ -57,6 +58,7 @@ pub(super) fn build_uax14_break_set_vertical(
 // Vertical break finding
 // ---------------------------------------------------------------------------
 
+/// Vertical column boundaries and unresolved kinsoku status.
 pub(super) struct FindBreaksResult {
     pub(super) column_breaks: Vec<usize>,
     pub(super) kinsoku_unresolved: bool,
@@ -105,6 +107,11 @@ fn resolve_break_pos(
     clippy::cast_possible_wrap,
     reason = "character indices are well within isize::MAX on any target"
 )]
+/// Choose column boundaries from advances, height constraints, and legal break positions.
+///
+/// # Panics
+///
+/// Panics in debug builds when the caller supplies no column height constraint.
 pub(super) fn find_vertical_breaks(
     chars: &[&str],
     advances: &[f64],
@@ -153,12 +160,11 @@ pub(super) fn find_vertical_breaks(
         }
 
         // Check hanging punctuation
-        if let Some(hanging) = hanging_chars {
-            if let Some(ch) = chars[i].chars().next() {
-                if hanging.contains(&ch) {
-                    continue;
-                }
-            }
+        if let Some(hanging) = hanging_chars
+            && let Some(ch) = chars[i].chars().next()
+            && hanging.contains(&ch)
+        {
+            continue;
         }
 
         let (break_pos, unresolved) =
