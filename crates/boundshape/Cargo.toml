@@ -1,6 +1,6 @@
 [package]
 name = "boundshape"
-version = "0.3.0"
+version = "0.4.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -24,8 +24,3 @@ schema = ["dep:schemars"]
 [dev-dependencies]
 proptest = "1"
 serde_json = "1"
-
-[package.metadata.boundsvg-release]
-pending-version = "0.4.0"
-change-kind = "additive-public-api"
-obligation-id = "path-paint-bounds"

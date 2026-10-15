@@ -1,5 +1,22 @@
 # @boundsvg/core
 
+## 0.8.0
+
+### Minor Changes
+
+- [#47](https://github.com/zakideee/boundsvg/pull/47) [`a51ba51`](https://github.com/zakideee/boundsvg/commit/a51ba5110becd6e6a87e3ad0e304ed4528fb2bce) Thanks [@zakideee](https://github.com/zakideee)! - **Output-affecting:** Box, Flex, and Grid with `overflow: "clip"` now clip children using the same resolved `borderRadius` as their background. The clipping boundary also cuts the container's own border and shadow at rounded corners, where the previous clip was rectangular. `overflow: "visible"` leaves child paint unclipped.
+
+  Path paint, including strokes at layout-box edges, can now extend beyond its `width` and `height`, which continue to control layout. To retain the previous clipping, wrap the Path in a Box of the same size with `overflow: "clip"`. Move positioning, margin, flex/grid item props, `zIndex`, `layer`, `transform`, and `animate` to the wrapper so placement and the clip's coordinate system stay together. The clipped wrapper is atomic in layered output. Add `borderRadius` to that Box for a rounded clip. Layout and inspection bounds retain their placement meaning.
+
+- [#47](https://github.com/zakideee/boundsvg/pull/47) [`a51ba51`](https://github.com/zakideee/boundsvg/commit/a51ba5110becd6e6a87e3ad0e304ed4528fb2bce) Thanks [@zakideee](https://github.com/zakideee)! - Hit-test candidates include Path geometry and stroke outside its layout box. Explicit rectangular and rounded clips exclude invisible portions of their owner and descendants, including transformed and nested clips. Browser and React interaction verify painted Path fill/stroke, so empty space inside conservative bounds falls through to nodes underneath. Interactive container frames are tested in their own transformed coordinates, rather than the empty corners of a world-axis-aligned bounding box. React also uses the current native pointer hit stack for canvas-stable strokes under SVG viewport scaling.
+
+  Path IR now includes required Rust-derived `pathGeometry`, and the WASM schema is 34. Regenerate saved or hand-built older IR with the matching engine's `renderToIR(scene)` before hit testing; missing geometry raises `VALIDATION` rather than using layout bounds. Path `width`/`height`, layout `bbox`, and inspection bounds keep their placement meaning. Static and explicit `timeMs` samples are covered; live SVG playback does not synchronize the hit index at every instant.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @boundsvg/shape@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
