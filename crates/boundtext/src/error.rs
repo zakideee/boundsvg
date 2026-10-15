@@ -73,9 +73,15 @@ pub enum FontFailureReason {
     DrawingFailed,
 }
 
-/// Failures owned by font registration, backend construction, or glyph-outline input.
+/// Failures owned by font resolution, registration, backend operations, or glyph-outline input.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum BoundtextError {
+    /// No requested alias resolves to a registered font at the requested weight.
+    #[error("no requested font is available at weight {weight}")]
+    FontUnavailable {
+        /// Requested registered-font weight, in 0..=65535.
+        weight: u16,
+    },
     #[error("failed to parse font face {face_index}, table {table:?}: {reason}")]
     FontParse {
         reason: FontFailureReason,

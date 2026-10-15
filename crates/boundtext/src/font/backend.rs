@@ -4,6 +4,29 @@ use std::sync::Arc;
 
 use crate::error::{BoundtextError, FontFailureReason};
 
+/// Proof that all OpenType faces in one immutable byte allocation passed admission.
+///
+/// This retains the validated allocation and cannot be constructed by external callers.
+/// It certifies shared table admission, not successful drawing or shaping of every glyph.
+#[derive(Clone)]
+pub struct FontAdmission {
+    data: Arc<Vec<u8>>,
+}
+
+impl FontAdmission {
+    /// Retain bytes only after complete collection admission has succeeded.
+    #[cfg(feature = "skrifa-backend")]
+    pub(crate) fn from_validated_data(data: Arc<Vec<u8>>) -> Self {
+        Self { data }
+    }
+
+    /// Check allocation identity; equal contents in another allocation require admission.
+    #[must_use]
+    pub fn matches_data(&self, data: &Arc<Vec<u8>>) -> bool {
+        Arc::ptr_eq(&self.data, data)
+    }
+}
+
 /// A shaped glyph in font units before layout scaling or vertical adjustment.
 #[derive(Debug, Clone)]
 pub struct RawShapedGlyph {
@@ -209,6 +232,20 @@ pub trait FontBackend: Send + Sync {
     /// Return a structured failure for invalid font data or required tables.
     fn parse_metrics(&self, data: &[u8]) -> Result<FontMetrics, BoundtextError>;
 
+    /// Read default metrics and optionally retain admission proof for these immutable bytes.
+    ///
+    /// Custom backends keep their existing parsing path and return no proof by default.
+    ///
+    /// # Errors
+    ///
+    /// Preserve the same font admission and metric failures as `parse_metrics`.
+    fn parse_metrics_with_admission(
+        &self,
+        data: Arc<Vec<u8>>,
+    ) -> Result<(FontMetrics, Option<FontAdmission>), BoundtextError> {
+        self.parse_metrics(&data).map(|metrics| (metrics, None))
+    }
+
     /// Create an owning face at the supplied finite variation coordinates.
     ///
     /// # Errors
@@ -260,6 +297,22 @@ pub trait Shaper: Send + Sync {
     ///
     /// Return a structured failure if font admission or face construction fails.
     fn create_face(&self, data: Arc<Vec<u8>>) -> Result<Box<dyn ShaperFace>, BoundtextError>;
+
+    /// Construct a face with optional proof for the exact immutable input allocation.
+    ///
+    /// Implementations must fully admit absent or mismatched proof. Custom shapers
+    /// retain their existing construction path by default.
+    ///
+    /// # Errors
+    ///
+    /// Preserve font admission, allocation, and face construction failures.
+    fn create_face_with_admission(
+        &self,
+        data: Arc<Vec<u8>>,
+        _admission: Option<&FontAdmission>,
+    ) -> Result<Box<dyn ShaperFace>, BoundtextError> {
+        self.create_face(data)
+    }
 }
 
 /// Reject nonfinite variation inputs before either backend uses them.

@@ -68,6 +68,32 @@ describe("registered font admission", () => {
     }
   });
 
+  it("rejects unavailable fallback chains and recovers when a font becomes available", () => {
+    const handle = createWasmEngineInstance();
+    try {
+      for (const aliases of [[], [" ", ""], ["Absent"]]) {
+        const shape = handle.createShapeFnRegisteredWithFallback(aliases);
+        expect(() => shape("A", { fontSizePx: 20, letterSpacingPx: 0 })).toThrowError(
+          expect.objectContaining({
+            code: "TEXT_FONT_UNAVAILABLE",
+            stage: "font",
+            context: {
+              operation: "shapeTextWithFallback",
+              reason: "unregisteredFont",
+              weight: 400,
+            },
+          }),
+        );
+      }
+      handle.registerFont(loadSubsetFont(), { alias: "Available" });
+      const shape = handle.createShapeFnRegisteredWithFallback(["Absent", "Available"]);
+      expect(shape("A", { fontSizePx: 20, letterSpacingPx: 0 })[0]?.glyphId).toBeGreaterThan(0);
+      expect(shape("", { fontSizePx: 20, letterSpacingPx: 0 })).toEqual([]);
+    } finally {
+      handle.dispose();
+    }
+  });
+
   it("reports synthetic missing-glyph transform overflow as an outline failure", () => {
     const handle = createWasmEngineInstance();
     try {

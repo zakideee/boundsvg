@@ -1,3 +1,5 @@
+//! Shape registered fonts and apply scaling, tracking, and vertical origins.
+
 use crate::error::{BoundtextError, FontFailureReason};
 use serde::{Deserialize, Serialize};
 
@@ -693,6 +695,7 @@ fn resolve_fallback_entries<'a>(
 ///
 /// Returns font parsing, variation, shaping, processing-limit, allocation, or
 /// invalid-output failures without returning a partial glyph sequence.
+/// An unresolved alias chain returns [`BoundtextError::FontUnavailable`].
 pub fn shape_with_fallback_and_options(
     font_ctx: &super::FontContext<'_>,
     text: &str,
@@ -706,8 +709,10 @@ pub fn shape_with_fallback_and_options(
         font_size_px,
         letter_spacing_px,
         options,
-    )
-    .map(Option::unwrap_or_default)
+    )?
+    .ok_or(BoundtextError::FontUnavailable {
+        weight: font_ctx.weight,
+    })
 }
 
 /// Shape with the same fallback algorithm while preserving whether the
@@ -851,6 +856,7 @@ pub(crate) fn shape_with_fallback_and_options_checked(
 ///
 /// Returns font parsing, variation, shaping, processing-limit, allocation, or
 /// invalid-output failures without returning a partial glyph sequence.
+/// An unresolved alias chain returns [`BoundtextError::FontUnavailable`].
 pub fn shape_with_fallback(
     registry: &FontRegistry,
     aliases: &[String],

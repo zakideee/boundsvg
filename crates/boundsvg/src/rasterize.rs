@@ -144,9 +144,23 @@ pub fn svg_to_png(
     }
     let pixmap = rasterize_svg_to_pixmap(svg_string, alias_map, font_data, options)?;
 
-    let png = pixmap
-        .encode_png()
-        .map_err(|e| EngineError::Rasterize(format!("Failed to encode PNG: {e}")))?;
+    let width = pixmap.width();
+    let height = pixmap.height();
+    let rgba = pixmap.take_demultiplied();
+    let png = (|| {
+        let mut png_bytes = Vec::new();
+        let mut encoder = png::Encoder::new(&mut png_bytes, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        // Keep the established Fast/Sub policy independent of upstream defaults.
+        encoder.set_compression(png::Compression::Fast);
+        encoder.set_filter(png::Filter::Sub);
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(&rgba)?;
+        writer.finish()?;
+        Ok::<_, png::EncodingError>(png_bytes)
+    })()
+    .map_err(|e| EngineError::Rasterize(format!("Failed to encode PNG: {e}")))?;
     match &options.generator {
         Some(generator) => insert_png_generator_chunk(png, generator),
         None => Ok(png),
@@ -965,6 +979,23 @@ fn register_fonts_into_fontdb(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn png_output_keeps_straight_rgba_and_transparent_pixels() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="1" height="1" fill="red" fill-opacity="0.5"/></svg>"#;
+        let encoded = svg_to_png(svg, &[], &[], &RasterizeOptions::default()).unwrap();
+        let mut reader = png::Decoder::new(std::io::Cursor::new(encoded))
+            .read_info()
+            .unwrap();
+        let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+        let frame = reader.next_frame(&mut decoded).unwrap();
+        assert_eq!((frame.width, frame.height), (2, 1));
+        assert_eq!(frame.color_type, png::ColorType::Rgba);
+        assert_eq!(
+            &decoded[..frame.buffer_size()],
+            &[255, 0, 0, 128, 0, 0, 0, 0]
+        );
+    }
 
     fn decode_contract_number(value: &serde_json::Value) -> f64 {
         if let Some(number) = value.as_f64() {

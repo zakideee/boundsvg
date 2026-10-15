@@ -31,6 +31,7 @@ serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 taffy = { version = "0.9", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid"] }
 resvg = { version = "=0.48.1", optional = true }
 usvg = { version = "=0.48.1", optional = true }
+png = { version = "=0.18.1", optional = true }
 image-webp = { version = "0.2", optional = true }
 gif = { version = "0.13", optional = true }
 crc32fast = { version = "1", optional = true }
@@ -54,5 +55,5 @@ syn = { version = "2", features = ["full", "visit"] }
 [features]
 default = ["resvg-backend"]
 ir-schema = ["dep:schemars", "boundshape/schema", "boundtext/schema"]
-resvg-backend = ["dep:resvg", "dep:usvg", "dep:image-webp", "dep:gif", "dep:crc32fast"]
+resvg-backend = ["dep:resvg", "dep:usvg", "dep:png", "dep:image-webp", "dep:gif", "dep:crc32fast"]
 unicode-full = ["boundtext/unicode-full"]

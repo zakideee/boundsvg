@@ -1,3 +1,5 @@
+//! Build text-layout lines and source mappings from completed break results.
+
 use super::char_mapping::{GlyphCharSpan, GlyphRange};
 use super::line_breaking::BreakLineRange;
 use crate::font::shaping::{self, GlyphInfo};

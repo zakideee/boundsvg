@@ -1,3 +1,5 @@
+//! Fit vertical text into the requested column and size constraints.
+
 use super::column_breaking::{VerticalBreakResult, break_vertical_columns};
 use super::common::{language_to_option_string, language_to_str};
 use super::shape::shape_text_vertical;

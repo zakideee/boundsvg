@@ -1,3 +1,5 @@
+//! Text layout operations and shared propagation of shaping failures.
+
 pub mod decoration;
 pub mod ellipsis;
 pub(crate) mod ellipsis_plan;

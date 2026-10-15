@@ -1,3 +1,5 @@
+//! WASM entry points for layout, text resolution, SVG emission, and raster output.
+
 #![expect(
     clippy::too_many_lines,
     reason = "render/layout orchestration keeps stateful pipeline phases together for auditability"

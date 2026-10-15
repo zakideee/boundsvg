@@ -27,6 +27,7 @@ absence remains valid. Unknown unused tables are ignored.
 | `TEXT_SHAPING_FAILED`         | Input, buffer preparation or the shaping operation failed.                                               |
 | `TEXT_SHAPING_LIMIT_EXCEEDED` | The shaper reported buffer failure during processing, including possible allocation or operation limits. |
 | `TEXT_SHAPING_INVALID_OUTPUT` | Returned glyph arrays, glyph IDs or UTF-8 clusters violate the font contract.                            |
+| `TEXT_FONT_UNAVAILABLE`       | No requested alias resolves to a registered font, including an empty fallback chain.                     |
 
 Errors carry a typed reason and operation, plus table/face/glyph context where
 applicable. Rendering preserves node identity when available. Dependency-internal
@@ -62,3 +63,7 @@ separate comparison surfaces. Font and raster library upgrades can change them
 across versions. The byte reproducibility guarantee applies to repeated runs
 within one matched version and the documented input domain; compare outputs
 before upgrading pinned versions.
+
+PNG encoding explicitly selects fast compression and the Sub filter to retain
+the established encoding-speed policy across dependency upgrades. This remains
+a lossless RGBA path; no new PNG quality option is required.

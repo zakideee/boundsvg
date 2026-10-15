@@ -1,3 +1,5 @@
+//! Prepare vertical text, break columns, and project positioned glyphs.
+
 use super::column_breaking::{VerticalBreakResult, break_vertical_columns};
 use super::common::{language_to_option_string, language_to_str};
 use super::fit::{fit_vertical_grow, fit_vertical_shrink};

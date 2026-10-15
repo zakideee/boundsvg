@@ -1,3 +1,5 @@
+//! Check paragraph shaping, line breaking, and styled source mapping.
+
 use super::*;
 use crate::font::shaping::ShapeOptions;
 use crate::font::{FontContext, FontRegistry, FontStyle};

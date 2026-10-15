@@ -1,3 +1,5 @@
+//! Convert structured text and font failures into bounded render diagnostics.
+
 use boundtext::{
     FlowRegionError, FlowRegionField, RegionProviderError, RegionQueryError, RegionQueryField,
     TextConstraintField, TextLayoutError, TextLayoutInvariant, TextPreparationPhase,
@@ -77,6 +79,15 @@ pub(crate) fn classify_font_error(
     use boundtext::BoundtextError;
     let mut context = serde_json::json!({ "operation": operation });
     let (code, message, stage) = match error {
+        BoundtextError::FontUnavailable { weight } => {
+            context["reason"] = serde_json::json!("unregisteredFont");
+            context["weight"] = serde_json::json!(weight);
+            (
+                "TEXT_FONT_UNAVAILABLE",
+                "No requested font is available.",
+                PipelineStage::Font,
+            )
+        }
         BoundtextError::FontParse {
             reason,
             table,

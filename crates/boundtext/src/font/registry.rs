@@ -1,9 +1,11 @@
+//! Own injected font bytes and resolve registered faces and immutable backend state.
+
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use crate::error::{BoundtextError, FontFailureReason};
 
-use super::backend::{FontBackend, FontFace, ShapeVariation, Shaper, ShaperFace};
+use super::backend::{FontAdmission, FontBackend, FontFace, ShapeVariation, Shaper, ShaperFace};
 
 /// Recognize the generic CSS family names supported by registry fallback.
 pub(crate) fn is_css_generic_font_family(alias: &str) -> bool {
@@ -80,6 +82,8 @@ pub struct FontEntry {
     pub strikeout_thickness: Option<f64>,
     /// Cached font family name extracted from the name table at registration time
     pub family_name: Option<String>,
+    /// Admission proof tied to the exact immutable bytes; custom backends may omit it.
+    admission: Option<FontAdmission>,
     /// The registry admits this face before insertion and reuses its result.
     shaper_face: OnceLock<Result<Box<dyn ShaperFace>, BoundtextError>>,
     /// Parse-once metric/outline face for the unvaried (no variation axes) case.
@@ -100,7 +104,8 @@ impl FontEntry {
         style: FontStyle,
         backend: &dyn FontBackend,
     ) -> Result<Self, BoundtextError> {
-        let metrics = backend.parse_metrics(&data)?;
+        let data = Arc::new(data);
+        let (metrics, admission) = backend.parse_metrics_with_admission(Arc::clone(&data))?;
         if !(16..=16384).contains(&metrics.units_per_em) {
             return Err(BoundtextError::FontParse {
                 reason: FontFailureReason::InvalidUnitsPerEm,
@@ -148,7 +153,8 @@ impl FontEntry {
         }
 
         Ok(FontEntry {
-            data: Arc::new(data),
+            data,
+            admission,
             key: FontKey {
                 alias,
                 weight,
@@ -184,7 +190,9 @@ impl FontEntry {
     /// Preserve a failed admission or face construction on subsequent calls.
     pub fn shaper_face(&self, shaper: &dyn Shaper) -> Result<&dyn ShaperFace, BoundtextError> {
         self.shaper_face
-            .get_or_init(|| shaper.create_face(Arc::clone(&self.data)))
+            .get_or_init(|| {
+                shaper.create_face_with_admission(Arc::clone(&self.data), self.admission.as_ref())
+            })
             .as_ref()
             .map(std::convert::AsRef::as_ref)
             .map_err(Clone::clone)

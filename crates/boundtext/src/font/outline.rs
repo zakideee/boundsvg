@@ -1,3 +1,5 @@
+//! Turn unhinted font outlines into finite positioned SVG glyph paths.
+
 use serde::Serialize;
 
 use super::backend;

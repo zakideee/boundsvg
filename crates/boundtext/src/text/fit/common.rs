@@ -1,3 +1,5 @@
+//! Share shaping, constraints, and result adjustments between text fitting modes.
+
 use super::super::engine::{apply_feature_settings_to_lines, apply_variation_settings_to_lines};
 use super::super::engine::{break_lines_internal, measure_break_fit};
 use super::super::paragraph;

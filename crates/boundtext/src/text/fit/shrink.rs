@@ -1,3 +1,5 @@
+//! Find a reduced font size that fits the requested text constraints.
+
 use super::super::kinsoku::{get_hanging_chars, get_kinsoku_profile};
 use super::super::paragraph;
 use super::super::types::{TextLayoutRequest, TextOverflow, TextSpanInput};

@@ -1,3 +1,5 @@
+//! Find vertical column breaks under wrapping and kinsoku rules.
+
 use crate::text::kinsoku::{KinsokuProfile, apply_kinsoku};
 
 // ---------------------------------------------------------------------------

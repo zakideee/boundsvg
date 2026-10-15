@@ -1,3 +1,5 @@
+//! Shape styled inline runs while preserving grapheme and source boundaries.
+
 use super::super::grapheme::grapheme_split;
 use super::super::kinsoku::{get_hanging_chars, get_kinsoku_profile};
 use super::super::paragraph::build_uax14_break_set;

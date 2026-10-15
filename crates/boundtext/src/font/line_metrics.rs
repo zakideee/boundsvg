@@ -1,3 +1,5 @@
+//! Select font line-box metrics and compute baseline placement in pixels.
+
 use super::{FontEntry, FontRegistry, FontStyle};
 
 /// Last-resort fallback for fonts with unusable metrics.

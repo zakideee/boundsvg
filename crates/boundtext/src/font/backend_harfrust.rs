@@ -4,8 +4,8 @@ use std::{str::FromStr, sync::Arc};
 
 use super::admission::{parse_error, validate_font_collection};
 use super::backend::{
-    RawShapedGlyph, ShapeDirection, ShapeFeature, ShapeVariation, Shaper, ShaperFace,
-    validate_shaped_glyphs, validate_variations,
+    FontAdmission, RawShapedGlyph, ShapeDirection, ShapeFeature, ShapeVariation, Shaper,
+    ShaperFace, validate_shaped_glyphs, validate_variations,
 };
 use crate::error::{BoundtextError, FontFailureReason};
 
@@ -15,11 +15,27 @@ pub struct HarfRustShaper;
 impl Shaper for HarfRustShaper {
     fn create_face(&self, data: Arc<Vec<u8>>) -> Result<Box<dyn ShaperFace>, BoundtextError> {
         validate_font_collection(&data)?;
-        let shared: Arc<dyn AsRef<[u8]> + Send + Sync> = data;
-        let font = harfrust::Font::new(harfrust::font::Blob::Shared(shared), 0)
-            .ok_or_else(|| parse_error(FontFailureReason::InvalidData, None, 0))?;
-        Ok(Box::new(HarfRustFace { font }))
+        create_owning_face(data)
     }
+
+    fn create_face_with_admission(
+        &self,
+        data: Arc<Vec<u8>>,
+        admission: Option<&FontAdmission>,
+    ) -> Result<Box<dyn ShaperFace>, BoundtextError> {
+        if admission.is_some_and(|proof| proof.matches_data(&data)) {
+            create_owning_face(data)
+        } else {
+            self.create_face(data)
+        }
+    }
+}
+
+fn create_owning_face(data: Arc<Vec<u8>>) -> Result<Box<dyn ShaperFace>, BoundtextError> {
+    let shared: Arc<dyn AsRef<[u8]> + Send + Sync> = data;
+    let font = harfrust::Font::new(harfrust::font::Blob::Shared(shared), 0)
+        .ok_or_else(|| parse_error(FontFailureReason::InvalidData, None, 0))?;
+    Ok(Box::new(HarfRustFace { font }))
 }
 
 struct HarfRustFace {

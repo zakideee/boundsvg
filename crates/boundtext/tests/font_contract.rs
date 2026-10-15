@@ -294,3 +294,106 @@ fn finite_authored_inputs_cannot_return_nonfinite_scaled_glyphs() {
     .unwrap();
     assert_eq!(recovered[0].x_advance, 12.0);
 }
+
+#[test]
+fn unresolved_fallback_is_distinct_from_empty_text_with_a_registered_font() {
+    use boundtext::font::{FontContext, FontRegistry, FontStyle, shaping};
+
+    let mut registry = FontRegistry::new();
+    let families = vec!["Available".to_string()];
+    for text in ["A", ""] {
+        let context = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        assert_eq!(
+            shaping::shape_with_fallback_and_options(
+                &context,
+                text,
+                20.0,
+                0.0,
+                &shaping::ShapeOptions::default(),
+            )
+            .unwrap_err(),
+            BoundtextError::FontUnavailable { weight: 400 },
+        );
+    }
+    registry
+        .register(
+            STATIC_FONT.to_vec(),
+            "Available".to_string(),
+            400,
+            FontStyle::Normal,
+        )
+        .unwrap();
+    let context = FontContext {
+        registry: &registry,
+        fallback_registry: None,
+        families: &families,
+        weight: 400,
+        style: &FontStyle::Normal,
+    };
+    let empty = shaping::shape_with_fallback_and_options(
+        &context,
+        "",
+        20.0,
+        0.0,
+        &shaping::ShapeOptions::default(),
+    )
+    .unwrap();
+    assert!(empty.glyphs.is_empty());
+    let recovered = shaping::shape_with_fallback_and_options(
+        &context,
+        "A",
+        20.0,
+        0.0,
+        &shaping::ShapeOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(recovered.glyphs.len(), 1);
+}
+
+#[test]
+fn admission_proof_is_tied_to_immutable_bytes_and_cannot_admit_another_font() {
+    let mut data = Arc::new(STATIC_FONT.to_vec());
+    let (_, proof) = SkrifaBackend
+        .parse_metrics_with_admission(Arc::clone(&data))
+        .unwrap();
+    let proof = proof.unwrap();
+    assert!(proof.matches_data(&data));
+    assert!(Arc::get_mut(&mut data).is_none());
+    let face = HarfRustShaper
+        .create_face_with_admission(Arc::clone(&data), Some(&proof))
+        .unwrap();
+    assert_eq!(
+        face.shape("A", ShapeDirection::Horizontal, None, &[], &[])
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // Author a parseable head with invalid units so the upstream constructor alone is insufficient.
+    let table_count = usize::from(u16::from_be_bytes([STATIC_FONT[4], STATIC_FONT[5]]));
+    let record = STATIC_FONT[12..]
+        .chunks_exact(16)
+        .take(table_count)
+        .find(|record| &record[..4] == b"head")
+        .unwrap();
+    let offset = u32::from_be_bytes(record[8..12].try_into().unwrap()) as usize;
+    Arc::make_mut(&mut data)[offset + 18..offset + 20].copy_from_slice(&15u16.to_be_bytes());
+    assert!(!proof.matches_data(&data));
+    let shared: Arc<dyn AsRef<[u8]> + Send + Sync> = data.clone();
+    assert!(harfrust::Font::new(harfrust::font::Blob::Shared(shared), 0).is_some());
+    for candidate_proof in [None, Some(&proof)] {
+        assert!(matches!(
+            HarfRustShaper.create_face_with_admission(Arc::clone(&data), candidate_proof),
+            Err(BoundtextError::FontParse {
+                reason: FontFailureReason::InvalidUnitsPerEm,
+                ..
+            })
+        ));
+    }
+}

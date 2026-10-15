@@ -15,8 +15,8 @@ use skrifa::{
 use super::{
     admission::{has_table, parse_error, validate_font_collection},
     backend::{
-        FontBackend, FontFace, FontMetrics, GlyphBBox, OutlineBuilder, ShapeVariation,
-        validate_variations,
+        FontAdmission, FontBackend, FontFace, FontMetrics, GlyphBBox, OutlineBuilder,
+        ShapeVariation, validate_variations,
     },
 };
 use crate::error::{BoundtextError, FontFailureReason};
@@ -28,6 +28,15 @@ impl FontBackend for SkrifaBackend {
     fn parse_metrics(&self, data: &[u8]) -> Result<FontMetrics, BoundtextError> {
         validate_font_collection(data)?;
         read_metrics(&font_ref(data)?, &[], true)
+    }
+
+    fn parse_metrics_with_admission(
+        &self,
+        data: Arc<Vec<u8>>,
+    ) -> Result<(FontMetrics, Option<FontAdmission>), BoundtextError> {
+        validate_font_collection(&data)?;
+        let metrics = read_metrics(&font_ref(&data)?, &[], true)?;
+        Ok((metrics, Some(FontAdmission::from_validated_data(data))))
     }
 
     fn create_face(

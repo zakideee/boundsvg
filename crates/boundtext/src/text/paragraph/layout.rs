@@ -1,3 +1,5 @@
+//! Lay out shaped paragraph items within width, line, and alignment constraints.
+
 use crate::text::grapheme::grapheme_split;
 use crate::text::kinsoku::{
     add_bounded_intentional_overflow_px, apply_kinsoku, intentional_hanging_overflow_px,

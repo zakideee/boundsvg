@@ -1373,7 +1373,7 @@ export class WasmEngineHandle {
     };
   }
 
-  /** Create an owner-bound registered-font shaper with the supplied fallback aliases. */
+  /** Create an owner-bound shaper whose fallback chain must resolve to a registered font. */
   createShapeFnRegisteredWithFallback(
     aliases: readonly string[],
     weight = DEFAULT_FONT_WEIGHT,
@@ -1385,10 +1385,17 @@ export class WasmEngineHandle {
       text: string,
       params: { fontSizePx: number; letterSpacingPx: number; shapeOptions?: ShapingOptions },
     ): GlyphInfo[] => {
-      if (!primary) {
-        return [];
-      }
       this.ensureNotDisposed();
+      if (!primary) {
+        throw new FatalError("TEXT_FONT_UNAVAILABLE", "No requested font is available.", {
+          stage: "font",
+          context: {
+            operation: "shapeTextWithFallback",
+            reason: "unregisteredFont",
+            weight,
+          },
+        });
+      }
       const inst = this.instance;
       const shapeTextRegisteredWithFallback = inst.shape_text_registered_with_fallback;
       const shapeTextRegisteredWithFallbackWithOptions =

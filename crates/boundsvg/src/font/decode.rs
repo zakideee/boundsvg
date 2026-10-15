@@ -1,3 +1,5 @@
+//! Decode injected WOFF2 fonts and preserve uncompressed OpenType bytes.
+
 use std::io::Cursor;
 
 use crate::error::EngineError;

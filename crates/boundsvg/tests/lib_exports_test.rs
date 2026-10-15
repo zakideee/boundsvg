@@ -1,3 +1,5 @@
+//! Check exported WASM entry points and boundary contracts.
+
 // Integration tests always build with `cfg(test)`; declaring it lets clippy's
 // `allow-*-in-tests` config apply to helper functions in this file.
 #![cfg(test)]

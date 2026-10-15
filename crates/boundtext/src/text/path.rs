@@ -1,3 +1,5 @@
+//! Position shaped glyphs and decorations along authored text paths.
+
 use std::f64::consts::PI;
 
 use boundshape::{

@@ -1,3 +1,5 @@
+//! Break shaped horizontal text into physical lines with wrapping constraints.
+
 use super::break_detection::{build_uax14_break_set, find_breakable};
 use super::char_mapping::build_byte_to_char_map;
 use super::result_building::{build_horizontal_positioned_glyphs, build_lines_from_breaks};

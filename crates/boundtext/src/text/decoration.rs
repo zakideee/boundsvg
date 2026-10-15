@@ -1,3 +1,5 @@
+//! Compute text decoration geometry from shaped glyph and line metrics.
+
 use crate::font::FontContext;
 use crate::font::line_metrics::resolve_line_metrics_for_style;
 use crate::font::shaping::{parse_css_font_variation_settings, to_shape_variations};

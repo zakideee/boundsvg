@@ -169,6 +169,7 @@ dependencies = [
  "gif 0.13.3",
  "image-webp",
  "kurbo",
+ "png",
  "quote",
  "regex",
  "resvg",

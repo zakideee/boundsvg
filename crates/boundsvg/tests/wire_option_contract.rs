@@ -1,3 +1,5 @@
+//! Verify optional wire fields distinguish absence from invalid explicit values.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;

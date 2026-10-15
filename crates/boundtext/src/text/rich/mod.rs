@@ -1,3 +1,5 @@
+//! Prepare and lay out styled inline content, fallback runs, and ruby annotations.
+
 use std::collections::BTreeMap;
 
 use crate::font::FontContext;

@@ -1,3 +1,5 @@
+//! Prepare and execute horizontal text layout through the shared text engine.
+
 use super::super::fit;
 use super::super::inline_runs;
 use super::super::rich;

@@ -1,3 +1,5 @@
+//! Shape paragraph spans with resolved fonts and run-specific options.
+
 use std::sync::Arc;
 
 use crate::font::FontContext;
