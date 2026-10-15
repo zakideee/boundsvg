@@ -10,6 +10,7 @@ pub mod backend;
 pub mod backend_harfrust;
 #[cfg(feature = "skrifa-backend")]
 pub mod backend_skrifa;
+pub mod face_cache;
 pub mod line_metrics;
 pub mod outline;
 pub mod registry;

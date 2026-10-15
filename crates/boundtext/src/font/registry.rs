@@ -214,13 +214,21 @@ impl FontEntry {
             self.unvaried_face
                 .get_or_init(|| {
                     backend
-                        .create_face_shared(Arc::clone(&self.data), &[])
+                        .create_face_with_admission(
+                            Arc::clone(&self.data),
+                            &[],
+                            self.admission.as_ref(),
+                        )
                         .map(Arc::from)
                 })
                 .clone()
         } else {
             backend
-                .create_face_shared(Arc::clone(&self.data), variations)
+                .create_face_with_admission(
+                    Arc::clone(&self.data),
+                    variations,
+                    self.admission.as_ref(),
+                )
                 .map(Arc::from)
         }
     }
@@ -520,5 +528,28 @@ mod tests {
             &FontStyle::Normal,
         );
         assert!(result.is_some());
+    }
+    #[test]
+    fn immutable_font_faces_do_not_repeat_common_admission() {
+        let backend = SkrifaBackend;
+        let entry =
+            FontEntry::new(test_font_data(), "Shared".into(), 400, FontStyle::Normal).unwrap();
+        let admitted_count = crate::font::admission::admission_call_count();
+        for weight in [100.0, 400.0, 900.0, 400.0] {
+            entry
+                .font_face(
+                    &backend,
+                    &[ShapeVariation {
+                        tag: *b"wght",
+                        value: weight,
+                    }],
+                )
+                .unwrap();
+        }
+        entry.font_face(&backend, &[]).unwrap();
+        assert_eq!(
+            crate::font::admission::admission_call_count(),
+            admitted_count
+        );
     }
 }

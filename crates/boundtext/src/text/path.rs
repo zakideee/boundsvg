@@ -1,5 +1,6 @@
 //! Position shaped glyphs and decorations along authored text paths.
 
+use crate::font::face_cache::FontFaceCache;
 use std::f64::consts::PI;
 
 use boundshape::{
@@ -1512,6 +1513,7 @@ fn resolve_text_path_decorations(
         TextPathNormal::Right => -1.0,
     };
     let mut remaining_sample_budget = TEXT_PATH_DECORATION_SAMPLE_LIMIT;
+    let mut face_cache = FontFaceCache::new();
     let mut path_count = 0_usize;
     let mut contour_count = 0_usize;
     let mut segment_count = 0_usize;
@@ -1586,6 +1588,7 @@ fn resolve_text_path_decorations(
                 false,
                 request.text.font_size_px,
                 font_context,
+                &mut face_cache,
             )?;
             let owner_baseline = owner_glyph.origin_y - owner_glyph.y_offset;
             let line_offset = metric_center - owner_baseline;
@@ -2410,6 +2413,7 @@ fn resolve_path_ink_bbox(
     default_font_size_px: f64,
 ) -> Result<Option<TextBBox>, crate::TextLayoutError> {
     let mut bounds: Option<InkBounds> = None;
+    let mut face_cache = FontFaceCache::new();
     for glyph in glyphs {
         let Some((font_entry, font_registry)) = resolve_glyph_font(glyph, font_context) else {
             continue;
@@ -2420,7 +2424,7 @@ fn resolve_path_ink_bbox(
             .map(shaping::parse_css_font_variation_settings)
             .unwrap_or_default();
         let variations = shaping::to_shape_variations(&variation_settings);
-        let face = font_entry.font_face(font_registry.backend(), &variations)?;
+        let face = face_cache.resolve(font_registry.backend(), font_entry, &variations)?;
         let glyph_id = glyph.glyph_id;
         let Some(glyph_bbox) = face.glyph_bounding_box(glyph_id)? else {
             continue;

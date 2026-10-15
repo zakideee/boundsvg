@@ -21,13 +21,23 @@ use super::{
 };
 use crate::error::{BoundtextError, FontFailureReason};
 
+/// Preserve selected fallback metrics and the distinct raw optional typo values.
+struct ParsedFontMetrics {
+    /// Selected metrics in finite font units at the requested variation location.
+    metrics: FontMetrics,
+    /// Raw varied OS/2 ascender, including zero; None means OS/2 is absent.
+    typographic_ascender: Option<f64>,
+    /// Raw varied OS/2 descender, including zero; None means OS/2 is absent.
+    typographic_descender: Option<f64>,
+}
+
 /// Read metrics and unhinted outlines using the released Fontations libraries.
 pub struct SkrifaBackend;
 
 impl FontBackend for SkrifaBackend {
     fn parse_metrics(&self, data: &[u8]) -> Result<FontMetrics, BoundtextError> {
         validate_font_collection(data)?;
-        read_metrics(&font_ref(data)?, &[], true)
+        read_metrics(&font_ref(data)?, &[], true).map(|parsed| parsed.metrics)
     }
 
     fn parse_metrics_with_admission(
@@ -35,7 +45,7 @@ impl FontBackend for SkrifaBackend {
         data: Arc<Vec<u8>>,
     ) -> Result<(FontMetrics, Option<FontAdmission>), BoundtextError> {
         validate_font_collection(&data)?;
-        let metrics = read_metrics(&font_ref(&data)?, &[], true)?;
+        let metrics = read_metrics(&font_ref(&data)?, &[], true)?.metrics;
         Ok((metrics, Some(FontAdmission::from_validated_data(data))))
     }
 
@@ -57,8 +67,19 @@ impl FontBackend for SkrifaBackend {
         data: Arc<Vec<u8>>,
         variations: &[ShapeVariation],
     ) -> Result<Box<dyn FontFace>, BoundtextError> {
+        self.create_face_with_admission(data, variations, None)
+    }
+
+    fn create_face_with_admission(
+        &self,
+        data: Arc<Vec<u8>>,
+        variations: &[ShapeVariation],
+        admission: Option<&FontAdmission>,
+    ) -> Result<Box<dyn FontFace>, BoundtextError> {
         validate_variations(variations)?;
-        validate_font_collection(&data)?;
+        if !admission.is_some_and(|proof| proof.matches_data(&data)) {
+            validate_font_collection(&data)?;
+        }
         let shared: Arc<dyn AsRef<[u8]> + Send + Sync> = data.clone();
         let font = model::Font::new(model::Blob::Shared(shared), 0)
             .ok_or_else(|| parse_error(FontFailureReason::InvalidData, None, 0))?;
@@ -71,45 +92,15 @@ impl FontBackend for SkrifaBackend {
                 .iter()
                 .map(|variation| model::Variation::new(Tag::new(&variation.tag), variation.value)),
         );
-        let font = font.instance_builder().variations(&settings).build();
+        let font_instance = font.instance_builder().variations(&settings).build();
         let reference = font_ref(&data)?;
-        let metrics = read_metrics(&reference, font.normalized_coords(), false)?;
-        let typo_ascender = if has_table(&reference, *b"OS/2") {
-            Some(varied_metric(
-                &reference,
-                font.normalized_coords(),
-                f64::from(
-                    reference
-                        .os2()
-                        .map_err(|_| invalid_table("OS/2"))?
-                        .s_typo_ascender(),
-                ),
-                *b"hasc",
-            )?)
-        } else {
-            None
-        };
-        let typo_descender = if has_table(&reference, *b"OS/2") {
-            Some(varied_metric(
-                &reference,
-                font.normalized_coords(),
-                f64::from(
-                    reference
-                        .os2()
-                        .map_err(|_| invalid_table("OS/2"))?
-                        .s_typo_descender(),
-                ),
-                *b"hdsc",
-            )?)
-        } else {
-            None
-        };
+        let parsed = read_metrics(&reference, font_instance.normalized_coords(), false)?;
         Ok(Box::new(SkrifaFace {
             data,
-            font,
-            metrics,
-            typo_ascender,
-            typo_descender,
+            font: font_instance,
+            metrics: parsed.metrics,
+            typo_ascender: parsed.typographic_ascender,
+            typo_descender: parsed.typographic_descender,
         }))
     }
 }
@@ -169,7 +160,7 @@ fn read_metrics(
     font: &FontRef<'_>,
     coords: &[F2Dot14],
     include_name: bool,
-) -> Result<FontMetrics, BoundtextError> {
+) -> Result<ParsedFontMetrics, BoundtextError> {
     let head = font.head().map_err(|_| invalid_table("head"))?;
     let maxp = font.maxp().map_err(|_| invalid_table("maxp"))?;
     let hhea = font.hhea().map_err(|_| invalid_table("hhea"))?;
@@ -240,86 +231,92 @@ fn read_metrics(
     } else {
         None
     };
-    Ok(FontMetrics {
-        units_per_em: head.units_per_em(),
-        glyph_count: u32::from(maxp.num_glyphs()),
-        ascender: finite_metric(ascender)?,
-        descender: finite_metric(descender)?,
-        line_gap: finite_metric(line_gap)?,
-        typographic_ascender: typo_ascender
-            .filter(|value| *value != 0.0)
-            .unwrap_or(ascender),
-        typographic_descender: typo_descender
-            .filter(|value| *value != 0.0)
-            .unwrap_or(descender),
-        typographic_line_gap: typo_gap.unwrap_or(line_gap),
-        vertical_ascender: vertical
-            .as_ref()
-            .map(|table| {
-                varied_metric(font, coords, f64::from(table.ascender().to_i16()), *b"vasc")
-            })
-            .transpose()?,
-        vertical_descender: vertical
-            .as_ref()
-            .map(|table| {
-                varied_metric(
-                    font,
-                    coords,
-                    f64::from(table.descender().to_i16()),
-                    *b"vdsc",
-                )
-            })
-            .transpose()?,
-        vertical_line_gap: vertical
-            .as_ref()
-            .map(|table| {
-                varied_metric(font, coords, f64::from(table.line_gap().to_i16()), *b"vlgp")
-            })
-            .transpose()?,
-        family_name: if include_name {
-            family_name(font)?
-        } else {
-            None
+    Ok(ParsedFontMetrics {
+        metrics: FontMetrics {
+            units_per_em: head.units_per_em(),
+            glyph_count: u32::from(maxp.num_glyphs()),
+            ascender: finite_metric(ascender)?,
+            descender: finite_metric(descender)?,
+            line_gap: finite_metric(line_gap)?,
+            typographic_ascender: typo_ascender
+                .filter(|value| *value != 0.0)
+                .unwrap_or(ascender),
+            typographic_descender: typo_descender
+                .filter(|value| *value != 0.0)
+                .unwrap_or(descender),
+            typographic_line_gap: typo_gap.unwrap_or(line_gap),
+            vertical_ascender: vertical
+                .as_ref()
+                .map(|table| {
+                    varied_metric(font, coords, f64::from(table.ascender().to_i16()), *b"vasc")
+                })
+                .transpose()?,
+            vertical_descender: vertical
+                .as_ref()
+                .map(|table| {
+                    varied_metric(
+                        font,
+                        coords,
+                        f64::from(table.descender().to_i16()),
+                        *b"vdsc",
+                    )
+                })
+                .transpose()?,
+            vertical_line_gap: vertical
+                .as_ref()
+                .map(|table| {
+                    varied_metric(font, coords, f64::from(table.line_gap().to_i16()), *b"vlgp")
+                })
+                .transpose()?,
+            family_name: if include_name {
+                family_name(font)?
+            } else {
+                None
+            },
+            has_vorg: vorg.is_some(),
+            default_vert_origin_y: vorg.map(|table| f64::from(table.default_vert_origin_y())),
+            underline_position: post
+                .as_ref()
+                .map(|table| {
+                    varied_metric(
+                        font,
+                        coords,
+                        f64::from(table.underline_position().to_i16()),
+                        *b"undo",
+                    )
+                })
+                .transpose()?,
+            underline_thickness: post
+                .as_ref()
+                .map(|table| {
+                    varied_metric(
+                        font,
+                        coords,
+                        f64::from(table.underline_thickness().to_i16()),
+                        *b"unds",
+                    )
+                })
+                .transpose()?,
+            strikeout_position: os2
+                .as_ref()
+                .map(|table| {
+                    varied_metric(
+                        font,
+                        coords,
+                        f64::from(table.y_strikeout_position()),
+                        *b"stro",
+                    )
+                })
+                .transpose()?,
+            strikeout_thickness: os2
+                .as_ref()
+                .map(|table| {
+                    varied_metric(font, coords, f64::from(table.y_strikeout_size()), *b"strs")
+                })
+                .transpose()?,
         },
-        has_vorg: vorg.is_some(),
-        default_vert_origin_y: vorg.map(|table| f64::from(table.default_vert_origin_y())),
-        underline_position: post
-            .as_ref()
-            .map(|table| {
-                varied_metric(
-                    font,
-                    coords,
-                    f64::from(table.underline_position().to_i16()),
-                    *b"undo",
-                )
-            })
-            .transpose()?,
-        underline_thickness: post
-            .as_ref()
-            .map(|table| {
-                varied_metric(
-                    font,
-                    coords,
-                    f64::from(table.underline_thickness().to_i16()),
-                    *b"unds",
-                )
-            })
-            .transpose()?,
-        strikeout_position: os2
-            .as_ref()
-            .map(|table| {
-                varied_metric(
-                    font,
-                    coords,
-                    f64::from(table.y_strikeout_position()),
-                    *b"stro",
-                )
-            })
-            .transpose()?,
-        strikeout_thickness: os2
-            .as_ref()
-            .map(|table| varied_metric(font, coords, f64::from(table.y_strikeout_size()), *b"strs"))
-            .transpose()?,
+        typographic_ascender: typo_ascender,
+        typographic_descender: typo_descender,
     })
 }
 

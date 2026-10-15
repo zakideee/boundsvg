@@ -260,8 +260,7 @@ pub struct PositionedGlyphPathInput {
 
 /// Extract glyph outline paths for a sequence of positioned glyphs.
 ///
-/// - `font_backend`: backend used to create a `FontFace`
-/// - `font_data`: raw font bytes
+/// - `face`: an owning, admitted face at the requested variation location
 /// - `font_size_px`: desired font size in px
 /// - `baseline_y`: Y position of the text baseline in the SVG coordinate space
 /// - `start_x`: starting X position
@@ -274,16 +273,12 @@ pub struct PositionedGlyphPathInput {
 /// Returns font parsing, variation, invalid-glyph, drawing, nonfinite-coordinate,
 /// or allocation failures without returning a partial path sequence.
 pub fn extract_glyph_paths(
-    font_backend: &dyn backend::FontBackend,
-    font_data: &[u8],
+    face: &dyn backend::FontFace,
     font_size_px: f64,
     baseline_y: f64,
     start_x: f64,
     positions: &[GlyphPosition],
-    variations: &[backend::ShapeVariation],
 ) -> Result<Vec<GlyphPath>, BoundtextError> {
-    let face = font_backend.create_face(font_data, variations)?;
-
     let units_per_em = f64::from(face.units_per_em());
     let scale = font_size_px / units_per_em;
     let mut cursor_x = start_x;
@@ -607,8 +602,14 @@ mod tests {
             })
             .collect();
 
-        let paths = extract_glyph_paths(&backend, &data, 24.0, 20.0, 0.0, &positions, &[])
-            .expect("font operation succeeds");
+        let paths = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
+            24.0,
+            20.0,
+            0.0,
+            &positions,
+        )
+        .expect("font operation succeeds");
         assert!(!paths.is_empty(), "Should produce paths for ASCII glyphs");
         for p in &paths {
             assert!(p.d.starts_with('M'), "Path should start with M command");
@@ -635,8 +636,14 @@ mod tests {
             })
             .collect();
 
-        let paths = extract_glyph_paths(&backend, &data, 24.0, 20.0, 0.0, &positions, &[])
-            .expect("font operation succeeds");
+        let paths = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
+            24.0,
+            20.0,
+            0.0,
+            &positions,
+        )
+        .expect("font operation succeeds");
         assert!(!paths.is_empty(), "Should produce paths for CJK glyphs");
     }
 
@@ -644,8 +651,14 @@ mod tests {
     fn test_empty_text_returns_empty() {
         let data = test_font_data();
         let backend = test_backend();
-        let paths = extract_glyph_paths(&backend, &data, 24.0, 20.0, 0.0, &[], &[])
-            .expect("font operation succeeds");
+        let paths = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
+            24.0,
+            20.0,
+            0.0,
+            &[],
+        )
+        .expect("font operation succeeds");
         assert!(paths.is_empty());
     }
 
@@ -668,8 +681,14 @@ mod tests {
             })
             .collect();
 
-        let paths = extract_glyph_paths(&backend, &data, 24.0, 20.0, 10.0, &positions, &[])
-            .expect("font operation succeeds");
+        let paths = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
+            24.0,
+            20.0,
+            10.0,
+            &positions,
+        )
+        .expect("font operation succeeds");
         assert!(paths.len() >= 2);
         // First glyph starts at x=10
         assert!((paths[0].x - 10.0).abs() < 0.01);
@@ -1140,21 +1159,25 @@ mod tests {
             })
             .collect();
 
-        let paths_default = extract_glyph_paths(&backend, &data, 48.0, 40.0, 0.0, &positions, &[])
-            .expect("font operation succeeds");
-        let paths_bold = extract_glyph_paths(
-            &backend,
-            &data,
+        let paths_default = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
             48.0,
             40.0,
             0.0,
             &positions,
-            &[backend::ShapeVariation {
-                tag: *b"wght",
-                value: 900.0,
-            }],
         )
         .expect("font operation succeeds");
+        let bold_face = backend
+            .create_face(
+                &data,
+                &[backend::ShapeVariation {
+                    tag: *b"wght",
+                    value: 900.0,
+                }],
+            )
+            .unwrap();
+        let paths_bold = extract_glyph_paths(bold_face.as_ref(), 48.0, 40.0, 0.0, &positions)
+            .expect("font operation succeeds");
 
         assert!(!paths_default.is_empty(), "default should produce paths");
         assert!(!paths_bold.is_empty(), "bold should produce paths");

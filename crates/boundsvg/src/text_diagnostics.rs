@@ -483,9 +483,6 @@ pub(crate) fn classify_text_layout_error(
     operation: TextLayoutOperation,
     node_id: Option<String>,
 ) -> TextLayoutDiagnostic {
-    if let TextLayoutError::Font(error) = error {
-        return classify_font_error(error, operation.as_str(), node_id);
-    }
     let (code, message, stage, context) = match error {
         TextLayoutError::Font(error) => {
             return classify_font_error(error, operation.as_str(), node_id);

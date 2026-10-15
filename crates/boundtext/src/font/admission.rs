@@ -7,6 +7,18 @@ use read_fonts::{FontData, FontRead, FontRef, TableProvider, types::Tag};
 
 use crate::error::{BoundtextError, FontFailureReason};
 
+#[cfg(test)]
+std::thread_local! {
+    /// Common admission invocations on this test thread, including failed attempts.
+    static ADMISSION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Read the test thread's admission count without affecting production code.
+#[cfg(test)]
+pub(crate) fn admission_call_count() -> usize {
+    ADMISSION_CALLS.get()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum VisitKind {
     Directory,
@@ -21,12 +33,14 @@ enum VisitKind {
     GlyphVariationOffsets,
 }
 
-#[derive(Default)]
-struct Admission {
-    visited: HashSet<(usize, VisitKind)>,
+struct Admission<'visited> {
+    /// Distinguish external table parameters supplied by each unique face directory.
+    directory: usize,
+    /// Reuse visits only within that directory and the exact bounded table view.
+    visited: &'visited mut HashSet<(usize, usize, usize, VisitKind)>,
 }
 
-impl Admission {
+impl Admission<'_> {
     fn visit(
         &mut self,
         data: FontData<'_>,
@@ -34,7 +48,12 @@ impl Admission {
         face_index: u32,
         table: Option<&'static str>,
     ) -> Result<bool, BoundtextError> {
-        let key = (data.as_bytes().as_ptr() as usize, kind);
+        let key = (
+            self.directory,
+            data.as_bytes().as_ptr() as usize,
+            data.as_bytes().len(),
+            kind,
+        );
         if self.visited.contains(&key) {
             return Ok(false);
         }
@@ -69,7 +88,7 @@ pub(crate) fn has_table(font: &FontRef<'_>, tag: [u8; 4]) -> bool {
 
 /// Validate each distinct face before it enters a shaping or raster font database.
 ///
-/// Unknown tables are ignored. Lookup visits are keyed by target and expected
+/// Unknown tables are ignored. Lookup visits are keyed by face directory, target, bounded byte length, and expected
 /// type, so shared references do not multiply traversal work or bypass parsing.
 ///
 /// # Errors
@@ -77,9 +96,11 @@ pub(crate) fn has_table(font: &FontRef<'_>, tag: [u8; 4]) -> bool {
 /// Return a structured font error for an invalid container, required table,
 /// metric table, variation axis, or GSUB/GPOS lookup reference.
 pub fn validate_font_collection(data: &[u8]) -> Result<(), BoundtextError> {
+    #[cfg(test)]
+    ADMISSION_CALLS.set(ADMISSION_CALLS.get() + 1);
     let file = read_fonts::FileRef::new(data)
         .map_err(|_| parse_error(FontFailureReason::InvalidData, None, 0))?;
-    let mut admission = Admission::default();
+    let mut visited = HashSet::new();
     let mut face_count = 0usize;
     for (face_number, face) in file.fonts().enumerate() {
         let face_index = u32::try_from(face_number)
@@ -87,6 +108,10 @@ pub fn validate_font_collection(data: &[u8]) -> Result<(), BoundtextError> {
         let font =
             face.map_err(|_| parse_error(FontFailureReason::InvalidData, None, face_index))?;
         face_count += 1;
+        let mut admission = Admission {
+            directory: font.table_directory().offset_data().as_bytes().as_ptr() as usize,
+            visited: &mut visited,
+        };
         if !admission.visit(
             font.table_directory().offset_data(),
             VisitKind::Directory,
@@ -106,7 +131,7 @@ pub fn validate_font_collection(data: &[u8]) -> Result<(), BoundtextError> {
 fn validate_face(
     font: &FontRef<'_>,
     face_index: u32,
-    admission: &mut Admission,
+    admission: &mut Admission<'_>,
 ) -> Result<(), BoundtextError> {
     let invalid = |table| parse_error(FontFailureReason::InvalidTable, Some(table), face_index);
     let head = font.head().map_err(|_| invalid("head"))?;
@@ -261,7 +286,7 @@ fn validate_face(
 
 fn validate_references(
     font: &FontRef<'_>,
-    admission: &mut Admission,
+    admission: &mut Admission<'_>,
     face_index: u32,
 ) -> Result<(), BoundtextError> {
     let invalid = |table| parse_error(FontFailureReason::InvalidTable, Some(table), face_index);
@@ -388,7 +413,7 @@ fn validate_references(
 
 fn validate_variation_store(
     store: &read_fonts::tables::variations::ItemVariationStore<'_>,
-    admission: &mut Admission,
+    admission: &mut Admission<'_>,
     face_index: u32,
     table: &'static str,
 ) -> Result<(), BoundtextError> {
@@ -422,7 +447,7 @@ fn validate_variation_store(
 
 fn validate_lookup<'a, T: FontRead<'a, Args = ()>>(
     lookup: &Lookup<'a, T>,
-    admission: &mut Admission,
+    admission: &mut Admission<'_>,
     face_index: u32,
     is_position: bool,
 ) -> Result<(), BoundtextError> {
@@ -450,7 +475,7 @@ fn validate_lookup<'a, T: FontRead<'a, Args = ()>>(
 
 fn validate_substitution(
     lookup: gsub::SubstitutionLookup<'_>,
-    admission: &mut Admission,
+    admission: &mut Admission<'_>,
     face_index: u32,
 ) -> Result<(), BoundtextError> {
     macro_rules! ordinary {
@@ -529,7 +554,7 @@ fn validate_substitution(
 
 fn validate_position(
     lookup: gpos::PositionLookup<'_>,
-    admission: &mut Admission,
+    admission: &mut Admission<'_>,
     face_index: u32,
 ) -> Result<(), BoundtextError> {
     macro_rules! ordinary {

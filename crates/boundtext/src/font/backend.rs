@@ -10,6 +10,7 @@ use crate::error::{BoundtextError, FontFailureReason};
 /// It certifies shared table admission, not successful drawing or shaping of every glyph.
 #[derive(Clone)]
 pub struct FontAdmission {
+    /// The retained allocation whose complete collection admission was validated.
     data: Arc<Vec<u8>>,
 }
 
@@ -268,6 +269,23 @@ pub trait FontBackend: Send + Sync {
         variations: &[ShapeVariation],
     ) -> Result<Box<dyn FontFace>, BoundtextError> {
         self.create_face(&data, variations)
+    }
+
+    /// Create an owning face with optional admission proof for these exact bytes.
+    ///
+    /// Absent or mismatched proof requires full admission. Custom backends retain
+    /// their shared-face factory unless they explicitly support this proof.
+    ///
+    /// # Errors
+    ///
+    /// Preserve admission, finite-variation, allocation, and face-construction failures.
+    fn create_face_with_admission(
+        &self,
+        data: Arc<Vec<u8>>,
+        variations: &[ShapeVariation],
+        _admission: Option<&FontAdmission>,
+    ) -> Result<Box<dyn FontFace>, BoundtextError> {
+        self.create_face_shared(data, variations)
     }
 }
 

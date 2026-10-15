@@ -158,9 +158,12 @@ describe("npm packaging", () => {
     ]);
     for (const { directory, manifest } of wasmPackages) {
       expect(manifest.files, manifest.name).toContain("THIRD-PARTY-LICENSES");
-      expect(readFileSync(resolve(directory, "THIRD-PARTY-LICENSES"))).toEqual(
-        readFileSync(resolve(repositoryRoot, "THIRD-PARTY-LICENSES")),
-      );
+      expect(
+        readFileSync(resolve(directory, "THIRD-PARTY-LICENSES")).equals(
+          readFileSync(resolve(repositoryRoot, "THIRD-PARTY-LICENSES")),
+        ),
+        manifest.name,
+      ).toBe(true);
       // Same wasm-pack .gitignore trap as the core package guards above.
       expect(existsSync(resolve(directory, "wasm-pkg", ".gitignore")), manifest.name).toBe(false);
       assertShippedWasmPayload(directory, manifest);

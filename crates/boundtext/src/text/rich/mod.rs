@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::font::FontContext;
 use crate::font::backend::{FontFace, GlyphBBox};
+use crate::font::face_cache::FontFaceCache;
 use crate::font::line_metrics::{LineMetrics, resolve_line_metrics_for_style};
 use crate::font::shaping::{
     self, GlyphInfo, ShapeOptions, parse_css_font_feature_settings,
@@ -3794,8 +3795,10 @@ fn glyphs_ink_bounds(
     context: &RubyInkBoundsContext<'_>,
 ) -> RichLayoutResult<Option<GlyphInkBounds>> {
     let mut bounds = None;
+    let mut face_cache = FontFaceCache::new();
     for glyph in glyphs {
-        let Some(glyph_bounds) = positioned_glyph_ink_bounds(glyph, context)? else {
+        let Some(glyph_bounds) = positioned_glyph_ink_bounds(glyph, context, &mut face_cache)?
+        else {
             continue;
         };
         bounds = Some(match bounds {
@@ -3806,9 +3809,10 @@ fn glyphs_ink_bounds(
     Ok(bounds)
 }
 
-fn positioned_glyph_ink_bounds(
+fn positioned_glyph_ink_bounds<'font>(
     glyph: &PositionedGlyph,
-    context: &RubyInkBoundsContext<'_>,
+    context: &RubyInkBoundsContext<'font>,
+    face_cache: &mut FontFaceCache<'font>,
 ) -> RichLayoutResult<Option<GlyphInkBounds>> {
     let glyph_id = glyph.glyph_id;
     let Some(font_size_px) = glyph.font_size_px else {
@@ -3823,7 +3827,7 @@ fn positioned_glyph_ink_bounds(
         .map(parse_css_font_variation_settings)
         .unwrap_or_default();
     let variations = shaping::to_shape_variations(&variation_settings);
-    let face = font_entry.font_face(registry.backend(), &variations)?;
+    let face = face_cache.resolve(registry.backend(), font_entry, &variations)?;
     let Some(bbox) = face.glyph_bounding_box(glyph_id)? else {
         return Ok(None);
     };

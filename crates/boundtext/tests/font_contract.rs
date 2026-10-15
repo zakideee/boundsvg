@@ -389,6 +389,13 @@ fn admission_proof_is_tied_to_immutable_bytes_and_cannot_admit_another_font() {
     assert!(harfrust::Font::new(harfrust::font::Blob::Shared(shared), 0).is_some());
     for candidate_proof in [None, Some(&proof)] {
         assert!(matches!(
+            SkrifaBackend.create_face_with_admission(Arc::clone(&data), &[], candidate_proof),
+            Err(BoundtextError::FontParse {
+                reason: FontFailureReason::InvalidUnitsPerEm,
+                ..
+            })
+        ));
+        assert!(matches!(
             HarfRustShaper.create_face_with_admission(Arc::clone(&data), candidate_proof),
             Err(BoundtextError::FontParse {
                 reason: FontFailureReason::InvalidUnitsPerEm,
@@ -396,4 +403,76 @@ fn admission_proof_is_tied_to_immutable_bytes_and_cannot_admit_another_font() {
             })
         ));
     }
+}
+
+/// Build two collection faces sharing table bytes, with a shorter second GSUB view.
+fn collection_with_shared_gsub(
+    shorten_second: bool,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let original = include_bytes!("../../../fixtures/fonts/ContextualArabicTest.ttf");
+    let table_count = usize::from(u16::from_be_bytes([original[4], original[5]]));
+    let directory_length = 12 + 16 * table_count;
+    let second_offset = (20 + original.len() + 3) & !3;
+    let mut collection = b"ttcf".to_vec();
+    collection.extend(0x0001_0000_u32.to_be_bytes());
+    collection.extend(2_u32.to_be_bytes());
+    collection.extend(20_u32.to_be_bytes());
+    collection.extend(u32::try_from(second_offset)?.to_be_bytes());
+    collection.extend(original);
+    collection.resize(second_offset, 0);
+    collection.extend(&original[..directory_length]);
+    for (face_index, directory_offset) in [20, second_offset].into_iter().enumerate() {
+        for record_index in 0..table_count {
+            let record_offset = directory_offset + 12 + 16 * record_index;
+            let offset =
+                u32::from_be_bytes(collection[record_offset + 8..record_offset + 12].try_into()?);
+            collection[record_offset + 8..record_offset + 12]
+                .copy_from_slice(&(offset + 20).to_be_bytes());
+            if shorten_second
+                && face_index == 1
+                && &collection[record_offset..record_offset + 4] == b"GSUB"
+            {
+                let table_offset = usize::try_from(offset + 20)?;
+                let lookup_list_offset = usize::from(u16::from_be_bytes(
+                    collection[table_offset + 8..table_offset + 10].try_into()?,
+                ));
+                let lookup_count = usize::from(u16::from_be_bytes(
+                    collection
+                        [table_offset + lookup_list_offset..table_offset + lookup_list_offset + 2]
+                        .try_into()?,
+                ));
+                let offsets_start = table_offset + lookup_list_offset + 2;
+                let last_lookup_offset = collection
+                    [offsets_start..offsets_start + 2 * lookup_count]
+                    .chunks_exact(2)
+                    .map(|bytes| usize::from(u16::from_be_bytes([bytes[0], bytes[1]])))
+                    .max()
+                    .ok_or("original fixture contains at least one GSUB lookup")?;
+                let short_length = u32::try_from(lookup_list_offset + last_lookup_offset + 2)?;
+                collection[record_offset + 12..record_offset + 16]
+                    .copy_from_slice(&short_length.to_be_bytes());
+            }
+        }
+    }
+    Ok(collection)
+}
+
+#[test]
+fn collection_shared_tables_keep_their_individual_bounded_views()
+-> Result<(), Box<dyn std::error::Error>> {
+    boundtext::font::validate_font_collection(&collection_with_shared_gsub(false)?)?;
+    let admission_result =
+        boundtext::font::validate_font_collection(&collection_with_shared_gsub(true)?);
+    assert!(
+        matches!(
+            admission_result,
+            Err(BoundtextError::FontParse {
+                reason: FontFailureReason::InvalidTable,
+                table: Some("GSUB"),
+                face_index: 1,
+            })
+        ),
+        "{admission_result:?}"
+    );
+    Ok(())
 }

@@ -171,6 +171,11 @@ const MANUAL_SERIALIZE_ALLOWLIST: &[SourceAllowance] = &[
 const ITEM_MACRO_ALLOWLIST: &[SourceAllowance] = &[
     SourceAllowance {
         source: "crates/boundtext/src/font/admission.rs",
+        item: "thread_local@4e5a23eb4e8d57e4",
+        reason: "generates one cfg(test) Cell<usize> admission counter; no struct, enum, serde implementation, or wire DTO",
+    },
+    SourceAllowance {
+        source: "crates/boundtext/src/font/admission.rs",
         item: "macro_rules@96d72a523ee1aeea",
         reason: "validates typed OpenType tables through expressions; never declares a wire DTO",
     },

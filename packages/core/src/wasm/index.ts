@@ -1659,10 +1659,17 @@ export class WasmEngineHandle {
         pathOptions?: GlyphPathOptions;
       },
     ): WasmGlyphPath[] => {
-      if (!primary) {
-        return [];
-      }
       this.ensureNotDisposed();
+      if (!primary) {
+        throw new FatalError("TEXT_FONT_UNAVAILABLE", "No requested font is available.", {
+          stage: "font",
+          context: {
+            operation: "extractGlyphPaths",
+            reason: "unregisteredFont",
+            weight,
+          },
+        });
+      }
       const inst = this.instance;
       const extractGlyphPathsWithFallback = inst.extract_glyph_paths_with_fallback;
       const extractGlyphPathsWithFallbackWithOptions =

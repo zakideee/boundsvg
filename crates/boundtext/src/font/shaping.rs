@@ -211,13 +211,14 @@ fn resolve_vertical_origin_y_px(
 }
 
 /// Shape text via the registry's Shaper backend and convert raw glyphs to `GlyphInfo`.
-fn shape_via_backend(
-    registry: &FontRegistry,
-    font_entry: &FontEntry,
+fn shape_via_backend<'font>(
+    registry: &'font FontRegistry,
+    font_entry: &'font FontEntry,
     text: &str,
     font_size_px: f64,
     letter_spacing_px: f64,
     options: &ShapeOptions,
+    face_cache: &mut super::face_cache::FontFaceCache<'font>,
 ) -> Result<Vec<GlyphInfo>, BoundtextError> {
     u32::try_from(text.len()).map_err(|_| BoundtextError::TextShaping {
         reason: FontFailureReason::InputTooLong,
@@ -266,7 +267,7 @@ fn shape_via_backend(
     // Routed through the FontEntry cache so the unvaried face is parsed once
     // and reused instead of re-parsed on every shape call.
     let font_face = if vertical {
-        Some(font_entry.font_face(registry.backend(), &variations)?)
+        Some(face_cache.resolve(registry.backend(), font_entry, &variations)?)
     } else {
         None
     };
@@ -445,6 +446,7 @@ pub fn shape_text_with_options(
         font_size_px,
         letter_spacing_px,
         options,
+        &mut super::face_cache::FontFaceCache::new(),
     )
 }
 
@@ -752,6 +754,7 @@ pub(crate) fn shape_with_fallback_and_options_checked(
         return Ok(Some(FallbackShapeResult::default()));
     }
 
+    let mut face_cache = super::face_cache::FontFaceCache::new();
     // Step 1: choose font per grapheme by probing glyph availability. This
     // keeps combining marks, emoji selectors, and IVS sequences in the same
     // shaping run as their base character.
@@ -759,13 +762,14 @@ pub(crate) fn shape_with_fallback_and_options_checked(
     for (_, grapheme) in &graphemes {
         let mut selected = 0usize; // primary fallback
         for (idx, (_, entry)) in resolved_entries.iter().enumerate() {
-            let probe = shape_text_with_options(
+            let probe = shape_via_backend(
                 font_ctx.registry,
                 entry,
                 grapheme,
                 font_size_px,
                 0.0,
                 options,
+                &mut face_cache,
             )?;
             if has_only_supported_glyphs(&probe) {
                 selected = idx;
@@ -800,13 +804,14 @@ pub(crate) fn shape_with_fallback_and_options_checked(
     for (run_idx, (font_idx, start, end)) in run_specs.iter().enumerate() {
         let (alias, entry) = &resolved_entries[*font_idx];
         let run_text = &text[*start..*end];
-        let mut glyphs = shape_text_with_options(
+        let mut glyphs = shape_via_backend(
             font_ctx.registry,
             entry,
             run_text,
             font_size_px,
             letter_spacing_px,
             options,
+            &mut face_cache,
         )?;
         if glyphs.is_empty() {
             continue;

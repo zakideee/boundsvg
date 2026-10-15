@@ -82,28 +82,43 @@ pub enum BoundtextError {
         /// Requested registered-font weight, in 0..=65535.
         weight: u16,
     },
+    /// Admission or metric parsing failed before the font can be used.
     #[error("failed to parse font face {face_index}, table {table:?}: {reason}")]
     FontParse {
+        /// The closed cause without retaining input font bytes.
         reason: FontFailureReason,
+        /// The affected OpenType table; None denotes a container or whole-face failure.
         table: Option<&'static str>,
+        /// The zero-based face index in the input collection, or zero for a single font.
         face_index: u32,
     },
 
+    /// Drawing or transforming an individual glyph failed; discard any partial path.
     #[error("failed to draw glyph {glyph_id}: {reason}")]
     FontOutline {
+        /// The closed drawing, coordinate, or allocation failure cause.
         reason: FontFailureReason,
+        /// The requested OpenType glyph ID, including an invalid out-of-range request.
         glyph_id: u32,
     },
 
+    /// Shaping failed before a complete valid glyph sequence was available.
     #[error("text shaping failed: {reason}")]
-    TextShaping { reason: FontFailureReason },
+    TextShaping {
+        /// The closed input, allocation, or backend failure cause.
+        reason: FontFailureReason,
+    },
 
+    /// The backend buffer failed during processing; no prefix is a successful result.
     #[error("text shaping buffer failed during processing")]
     TextShapingLimitExceeded,
 
+    /// The backend returned a glyph record that violates the output contract.
     #[error("invalid shaped glyph at index {glyph_index}: {reason}")]
     InvalidShapedOutput {
+        /// The closed cause, such as an invalid ID, cluster, or parallel array length.
         reason: FontFailureReason,
+        /// The zero-based output-record index, not an OpenType glyph ID or UTF-8 offset.
         glyph_index: usize,
     },
 
@@ -263,7 +278,11 @@ pub enum TextLayoutInvariant {
 pub enum TextLayoutError {
     /// Preserve the structured font failure through every layout operation.
     #[error(transparent)]
-    Font(#[from] BoundtextError),
+    Font(
+        /// The underlying typed font failure; no partial layout accompanies it.
+        #[from]
+        BoundtextError,
+    ),
 
     #[error("invalid text-layout request: {reason}")]
     InvalidRequest { reason: TextRequestError },

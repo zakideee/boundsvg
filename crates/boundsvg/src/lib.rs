@@ -3384,7 +3384,7 @@ impl BoundSvgEngine {
                 font_size_px,
                 letter_spacing_px,
             )
-            .map_err(|error| font_error_to_js(&error, "shapeText"))?;
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let positions: Vec<font::outline::GlyphPosition> = glyphs
                 .iter()
                 .map(|g| font::outline::GlyphPosition {
@@ -3394,14 +3394,15 @@ impl BoundSvgEngine {
                     y_offset: g.y_offset,
                 })
                 .collect();
+            let face = entry
+                .font_face(self.registry.backend(), &[])
+                .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let paths = font::outline::extract_glyph_paths(
-                self.registry.backend(),
-                &entry.data,
+                face.as_ref(),
                 font_size_px,
                 baseline_y,
                 start_x,
                 &positions,
-                &[],
             )
             .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             serde_json::to_string(&paths)
@@ -3449,18 +3450,19 @@ impl BoundSvgEngine {
                 letter_spacing_px,
                 &options,
             )
-            .map_err(|error| font_error_to_js(&error, "shapeText"))?;
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let is_vertical = options.writing_mode.as_deref() == Some("vertical-rl");
             let variations = font::shaping::to_shape_variations(&options.font_variation_settings);
             let positions = to_glyph_positions(&glyphs, is_vertical);
+            let face = entry
+                .font_face(self.registry.backend(), &variations)
+                .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let paths = font::outline::extract_glyph_paths(
-                self.registry.backend(),
-                &entry.data,
+                face.as_ref(),
                 font_size_px,
                 baseline_y,
                 start_x,
                 &positions,
-                &variations,
             )
             .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             serde_json::to_string(&paths)
@@ -3507,7 +3509,7 @@ impl BoundSvgEngine {
                 letter_spacing_px,
                 &options,
             )
-            .map_err(|error| font_error_to_js(&error, "shapeTextWithFallback"))?;
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let mut cursor_x = start_x;
             let mut paths: Vec<font::outline::GlyphPath> = Vec::new();
             for run in &shaped.runs {
@@ -3524,14 +3526,15 @@ impl BoundSvgEngine {
                             )
                         })?;
                 let positions = to_glyph_positions(&run.glyphs, false);
+                let face = entry
+                    .font_face(self.registry.backend(), &[])
+                    .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
                 let mut run_paths = font::outline::extract_glyph_paths(
-                    self.registry.backend(),
-                    &entry.data,
+                    face.as_ref(),
                     font_size_px,
                     baseline_y,
                     cursor_x,
                     &positions,
-                    &[],
                 )
                 .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
                 paths.append(&mut run_paths);
@@ -3585,7 +3588,7 @@ impl BoundSvgEngine {
                 letter_spacing_px,
                 &options,
             )
-            .map_err(|error| font_error_to_js(&error, "shapeTextWithFallback"))?;
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let mut cursor_x = start_x;
             let mut paths: Vec<font::outline::GlyphPath> = Vec::new();
             for run in &shaped.runs {
@@ -3602,14 +3605,15 @@ impl BoundSvgEngine {
                             )
                         })?;
                 let positions = to_glyph_positions(&run.glyphs, is_vertical);
+                let face = entry
+                    .font_face(self.registry.backend(), &variations)
+                    .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
                 let mut run_paths = font::outline::extract_glyph_paths(
-                    self.registry.backend(),
-                    &entry.data,
+                    face.as_ref(),
                     font_size_px,
                     baseline_y,
                     cursor_x,
                     &positions,
-                    &variations,
                 )
                 .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
                 paths.append(&mut run_paths);
@@ -3632,7 +3636,7 @@ impl BoundSvgEngine {
             let inputs: Vec<PositionedGlyphPathRequest> = serde_json::from_str(glyphs_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid positioned glyph JSON: {e}")))?;
             let mut paths = Vec::with_capacity(inputs.len());
-            let mut face_cache = font::face_cache::OutlineFaceCache::new(self.registry.backend());
+            let mut face_cache = boundtext::font::face_cache::FontFaceCache::new();
 
             for (request_index, input) in inputs.iter().enumerate() {
                 let font_style = parse_font_style(&input.font_style);
@@ -3650,7 +3654,7 @@ impl BoundSvgEngine {
                     .map(|vs| font::shaping::to_shape_variations(&vs))
                     .unwrap_or_default();
                 let face = face_cache
-                    .resolve(entry, &variations)
+                    .resolve(self.registry.backend(), entry, &variations)
                     .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
 
                 let outline_input = font::outline::PositionedGlyphPathInput {

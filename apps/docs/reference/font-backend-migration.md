@@ -13,6 +13,13 @@ modules/types/features with `backend_skrifa::SkrifaBackend` / `skrifa-backend`
 and `backend_harfrust::HarfRustShaper` / `harfrust-backend`. The custom backend
 traits remain available. The workspace requires Rust 1.88.0 or later.
 
+`FontBackend::create_face_with_admission` can reuse proof for an exact immutable
+allocation; custom implementations keep their shared-face factory by default.
+Missing or mismatched proof still requires admission. Native
+`outline::extract_glyph_paths` now accepts a `&dyn FontFace` at the desired
+variation location. Construct or obtain that face first, then reuse it for the
+whole extraction instead of passing raw font bytes to the outline operation.
+
 Native metrics and control bounds now use finite `f64` values in font units.
 Shape and outline operations return `Result`; legitimate absent metrics and
 empty glyphs use `Option` inside the result. Drawing and shaping failures do not

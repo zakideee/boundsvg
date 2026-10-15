@@ -125,4 +125,68 @@ describe("registered font admission", () => {
       handle.dispose();
     }
   });
+  it("keeps typed shaping failures through all glyph path entry points", () => {
+    const handle = createWasmEngineInstance();
+    try {
+      handle.registerFont(loadSubsetFont(), { alias: "Paths" });
+      for (const fallback of [false, true]) {
+        const extract = fallback
+          ? handle.createGlyphPathFnWithFallback(["Paths"])
+          : handle.createGlyphPathFn("Paths");
+        for (const pathOptions of [undefined, { writingMode: "horizontal-tb" as const }]) {
+          expect(() =>
+            extract("AA", {
+              fontSizePx: Number.MAX_VALUE,
+              letterSpacingPx: Number.MAX_VALUE,
+              baselineY: 40,
+              startX: 0,
+              pathOptions,
+            }),
+          ).toThrowError(
+            expect.objectContaining({
+              code: "TEXT_SHAPING_FAILED",
+              stage: "text",
+              context: { operation: "extractGlyphPaths", reason: "nonFiniteMetric" },
+            }),
+          );
+          expect(
+            extract("A", { fontSizePx: 20, letterSpacingPx: 0, baselineY: 40, startX: 0 }),
+          ).not.toEqual([]);
+        }
+      }
+    } finally {
+      handle.dispose();
+    }
+  });
+
+  it("rejects empty or unavailable glyph path fallback chains and permits valid empty text", () => {
+    const handle = createWasmEngineInstance();
+    const params = { fontSizePx: 20, letterSpacingPx: 0, baselineY: 40, startX: 0 };
+    try {
+      handle.registerFont(loadSubsetFont(), { alias: "Paths" });
+      for (const aliases of [[], [" ", ""], ["Absent"]]) {
+        expect(() => handle.createGlyphPathFnWithFallback(aliases)("A", params)).toThrowError(
+          expect.objectContaining({
+            code: "TEXT_FONT_UNAVAILABLE",
+            stage: "font",
+            context: { operation: "extractGlyphPaths", reason: "unregisteredFont", weight: 400 },
+          }),
+        );
+      }
+      const extract = handle.createGlyphPathFnWithFallback(["Absent", "Paths"]);
+      expect(extract("A", params)).not.toEqual([]);
+      expect(extract("", params)).toEqual([]);
+    } finally {
+      handle.dispose();
+    }
+  });
+
+  it("checks disposal before rejecting an empty glyph path fallback chain", () => {
+    const handle = createWasmEngineInstance();
+    const extract = handle.createGlyphPathFnWithFallback([]);
+    handle.dispose();
+    expect(() =>
+      extract("A", { fontSizePx: 20, letterSpacingPx: 0, baselineY: 40, startX: 0 }),
+    ).toThrowError(expect.objectContaining({ code: "WASM_INSTANCE_DISPOSED", stage: "wasm" }));
+  });
 });

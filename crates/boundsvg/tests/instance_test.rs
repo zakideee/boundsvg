@@ -355,16 +355,9 @@ fn extract_glyph_paths_uses_instance_registry() {
             y_offset: g.y_offset,
         })
         .collect();
-    let paths = outline::extract_glyph_paths(
-        engine.registry().backend(),
-        &entry.data,
-        24.0,
-        20.0,
-        0.0,
-        &positions,
-        &[],
-    )
-    .expect("font operation succeeds");
+    let face = entry.font_face(engine.registry().backend(), &[]).unwrap();
+    let paths = outline::extract_glyph_paths(face.as_ref(), 24.0, 20.0, 0.0, &positions)
+        .expect("font operation succeeds");
     assert!(!paths.is_empty(), "should produce glyph paths");
 }
 

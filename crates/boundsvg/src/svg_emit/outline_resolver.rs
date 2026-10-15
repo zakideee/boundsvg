@@ -18,7 +18,6 @@ use boundshape::{
 };
 
 use crate::error::EngineError;
-use crate::font::face_cache::OutlineFaceCache;
 use crate::font::{FontRegistry, FontStyle};
 use crate::ir::types::{
     BBox, IrNode, IrNodeKind, IrTextAlign, TextOutlinePath, TextShadowLayer, TextStrokeLayer,
@@ -27,6 +26,7 @@ use crate::ir::types::{
 use crate::svg_emit::num_format::format_js_number;
 use crate::svg_emit::path_bbox::parse_path_bbox;
 use crate::text::types::{Line, PositionedGlyph, TextRunStyle};
+use boundtext::font::face_cache::FontFaceCache;
 
 /// Regular font weight used when an outline request omits its weight.
 const DEFAULT_FONT_WEIGHT: u16 = 400;
@@ -296,7 +296,7 @@ fn resolve_text_outlines_inner(
     }
 
     let mut resolved_paths: Vec<TextOutlinePath> = Vec::new();
-    let mut face_cache = OutlineFaceCache::new(registry.backend());
+    let mut face_cache = FontFaceCache::new();
     for (request_index, request) in requests.iter().enumerate() {
         let Some(path_data) = extract_request_path(
             registry,
@@ -434,7 +434,7 @@ pub(super) fn extract_text_node_ink_paths(
     let requests =
         build_node_outline_requests(kind, node_bbox, node_id, Some(eligible_line_indices))?;
     let mut ink_paths = Vec::with_capacity(requests.len());
-    let mut face_cache = OutlineFaceCache::new(registry.backend());
+    let mut face_cache = FontFaceCache::new();
     for (request_index, request) in requests.iter().enumerate() {
         let Some(d) = extract_request_path(
             registry,
@@ -497,7 +497,7 @@ fn filled_path_bbox(path_data: &str) -> Result<Option<BBox>, ShapeError> {
 /// WASM `extract_positioned_glyph_paths` export uses.
 fn extract_request_path<'font>(
     registry: &'font FontRegistry,
-    face_cache: &mut OutlineFaceCache<'font>,
+    face_cache: &mut FontFaceCache<'font>,
     request: &OutlineRequest,
     request_index: usize,
     show_missing_glyphs: bool,
@@ -532,7 +532,7 @@ fn extract_request_path<'font>(
         .into_engine_error()
     };
     let face = face_cache
-        .resolve(entry, &variations)
+        .resolve(registry.backend(), entry, &variations)
         .map_err(font_failure)?;
 
     let outline_input = crate::font::outline::PositionedGlyphPathInput {

@@ -1,6 +1,7 @@
 //! Compute text decoration geometry from shaped glyph and line metrics.
 
 use crate::font::FontContext;
+use crate::font::face_cache::FontFaceCache;
 use crate::font::line_metrics::resolve_line_metrics_for_style;
 use crate::font::shaping::{parse_css_font_variation_settings, to_shape_variations};
 use crate::text::grapheme::grapheme_split;
@@ -426,6 +427,7 @@ fn append_decoration_line<'a>(
         1
     };
     let mut active: [Option<(StripKey, PendingStrip)>; 2] = [None, None];
+    let mut face_cache = FontFaceCache::new();
     for glyph in glyphs {
         let (inline_start, inline_end) = glyph_inline_extent(glyph, vertical);
         let (center, thickness_px) = glyph_decoration_metrics(
@@ -435,6 +437,7 @@ fn append_decoration_line<'a>(
             vertical,
             chosen_font_size_px,
             font_ctx,
+            &mut face_cache,
         )?;
         let centers = match decoration.style {
             TextDecorationStyle::Double => {
@@ -530,13 +533,14 @@ fn glyph_inline_extent(glyph: &PositionedGlyph, vertical: bool) -> (f64, f64) {
 /// # Errors
 ///
 /// Propagates failure to create the varied font face used for decoration metrics.
-pub(crate) fn glyph_decoration_metrics(
+pub(crate) fn glyph_decoration_metrics<'font>(
     glyph: &PositionedGlyph,
     line: TextDecorationLine,
     decoration: &TextDecorationInput,
     vertical: bool,
     chosen_font_size_px: f64,
-    font_ctx: &FontContext<'_>,
+    font_ctx: &FontContext<'font>,
+    face_cache: &mut FontFaceCache<'font>,
 ) -> Result<(f64, f64), crate::TextLayoutError> {
     let font_size_px = glyph.font_size_px.unwrap_or(chosen_font_size_px);
     let mut aliases = Vec::with_capacity(glyph.font_fallback.len() + 1);
@@ -570,7 +574,7 @@ pub(crate) fn glyph_decoration_metrics(
     let variations = to_shape_variations(&variation_settings);
     let font_face = font_entry
         .zip(font_backend)
-        .map(|(entry, backend)| entry.font_face(backend, &variations))
+        .map(|(entry, backend)| face_cache.resolve(backend, entry, &variations))
         .transpose()?;
     let units_per_em = font_face.as_deref().map_or_else(
         || font_entry.map_or(1, |entry| entry.units_per_em),

@@ -307,6 +307,12 @@ The default font stack uses `SkrifaBackend` (`skrifa-backend`) and
 names have been removed. Custom `FontBackend`, `FontFace`, `Shaper` and
 `ShaperFace` implementations remain supported.
 
+Native `outline::extract_glyph_paths` takes a parsed `&dyn FontFace` instead of
+font bytes and a backend. Resolve the face at the requested variation location
+before extracting the sequence. Optional `FontAdmission` proof can be reused
+only for its exact retained byte allocation; custom shared-face factories keep
+their default behavior.
+
 Font and varied metrics and `GlyphBBox` now use finite `f64` font units.
 `RawShapedGlyph` keeps signed `i32` advances and offsets and UTF-8 byte clusters.
 Glyph IDs remain `u32` at the API boundary and are rejected outside the face’s
