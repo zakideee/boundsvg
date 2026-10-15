@@ -19,8 +19,15 @@ use super::backend_harfrust::HarfRustShaper;
 #[cfg(feature = "skrifa-backend")]
 use super::backend_skrifa::SkrifaBackend;
 
-/// Font data organized for rasterization: alias→family-name mapping and Arc-wrapped font bytes.
-pub type RasterizeFontData = (Vec<(String, String)>, Vec<Arc<Vec<u8>>>);
+/// Immutable raster font snapshot with optional proofs aligned to the byte allocations.
+pub struct RasterizeFontData {
+    /// Registered aliases mapped to their decoded font family names.
+    pub aliases: Vec<(String, String)>,
+    /// Retained font allocations; no font bytes are copied.
+    pub fonts: Vec<Arc<Vec<u8>>>,
+    /// Common-admission proofs at the corresponding font index; None requires validation.
+    pub admissions: Vec<Option<FontAdmission>>,
+}
 
 /// Key for font lookup: (alias, weight, style)
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -385,28 +392,46 @@ impl FontRegistry {
         None
     }
 
-    /// Collect alias→family-name mapping and Arc-wrapped font data for rasterization.
+    /// Snapshot aliases, font allocations and aligned optional admission proofs for rasterization.
     ///
-    /// Returns `(alias_map, font_arcs)` where:
-    /// - `alias_map`: `(alias, actual_family_name)` pairs for SVG font-family substitution
-    /// - `font_arcs`: `Arc<Vec<u8>>` references for zero-copy fontdb loading
+    /// Only Arc reference counts are incremented. Consumers must check each proof
+    /// against its exact font allocation; missing or mismatched proofs require admission.
     ///
-    /// No font data is cloned — only Arc reference counts are incremented.
-    #[must_use]
-    pub fn rasterize_font_data(&self) -> RasterizeFontData {
-        let mut alias_map = Vec::new();
-        let mut font_arcs = Vec::new();
-
+    /// # Errors
+    ///
+    /// Return a structured allocation failure if the snapshot vectors cannot be reserved.
+    pub fn rasterize_font_data(&self) -> Result<RasterizeFontData, BoundtextError> {
+        let mut aliases = Vec::new();
+        let mut fonts = Vec::new();
+        let mut admissions = Vec::new();
+        let allocation_error = |_| BoundtextError::FontParse {
+            reason: FontFailureReason::AllocationFailed,
+            table: None,
+            face_index: 0,
+        };
+        aliases
+            .try_reserve_exact(self.fonts.len())
+            .map_err(allocation_error)?;
+        fonts
+            .try_reserve_exact(self.fonts.len())
+            .map_err(allocation_error)?;
+        admissions
+            .try_reserve_exact(self.fonts.len())
+            .map_err(allocation_error)?;
         for entry in self.fonts.values() {
             if let Some(ref family_name) = entry.family_name
                 && !entry.key.alias.is_empty()
             {
-                alias_map.push((entry.key.alias.clone(), family_name.clone()));
+                aliases.push((entry.key.alias.clone(), family_name.clone()));
             }
-            font_arcs.push(Arc::clone(&entry.data));
+            fonts.push(Arc::clone(&entry.data));
+            admissions.push(entry.admission.clone());
         }
-
-        (alias_map, font_arcs)
+        Ok(RasterizeFontData {
+            aliases,
+            fonts,
+            admissions,
+        })
     }
 }
 

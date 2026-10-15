@@ -229,11 +229,14 @@ fn svg_to_png_uses_instance_registry() {
         <text x="10" y="30" font-family="PngFont" font-size="16">Test</text>
     </svg>"#;
 
-    let (alias_map, font_arcs) = engine.registry().rasterize_font_data();
+    let raster_fonts = engine
+        .registry()
+        .rasterize_font_data()
+        .expect("font snapshot");
     let result = rasterize::svg_to_png(
         svg,
-        &alias_map,
-        &font_arcs,
+        &raster_fonts.aliases,
+        &raster_fonts.fonts,
         &rasterize::RasterizeOptions::default(),
     );
     assert!(result.is_ok(), "svg_to_png should succeed");
@@ -252,11 +255,14 @@ fn svg_to_webp_uses_instance_registry() {
         <text x="10" y="30" font-family="WebpFont" font-size="16">Test</text>
     </svg>"#;
 
-    let (alias_map, font_arcs) = engine.registry().rasterize_font_data();
+    let raster_fonts = engine
+        .registry()
+        .rasterize_font_data()
+        .expect("font snapshot");
     let webp_bytes = webp_encode::svg_to_webp(
         svg,
-        &alias_map,
-        &font_arcs,
+        &raster_fonts.aliases,
+        &raster_fonts.fonts,
         &rasterize::RasterizeOptions::default(),
     )
     .expect("svg_to_webp should succeed");
@@ -287,7 +293,10 @@ fn animated_gif_session_uses_instance_registry() {
         <text x="4" y="20" font-family="GifFont" font-size="14">Test</text>
     </svg>"#;
 
-    let (alias_map, font_arcs) = engine.registry().rasterize_font_data();
+    let raster_fonts = engine
+        .registry()
+        .rasterize_font_data()
+        .expect("font snapshot");
     let mut session = AnimationSession::open(
         AnimatedRasterFormat::Gif,
         AnimationSessionOptions {
@@ -295,8 +304,8 @@ fn animated_gif_session_uses_instance_registry() {
             iterations: AnimatedRasterIterations::Infinite(AnimatedRasterInfinite::Infinite),
             raster_options: rasterize::RasterizeOptions::default(),
         },
-        alias_map,
-        font_arcs,
+        raster_fonts.aliases,
+        raster_fonts.fonts,
         StagedWriter::default(),
     )
     .expect("session should open");

@@ -3143,12 +3143,17 @@ impl BoundSvgEngine {
     /// Returns `JsValue` if SVG parsing or PNG rasterization fails.
     pub fn svg_to_png(&self, svg_string: &str) -> Result<Vec<u8>, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             self.renderer
-                .svg_to_png(
+                .svg_to_png_with_admission(
                     svg_string,
-                    &alias_map,
-                    &font_arcs,
+                    &raster_fonts.aliases,
+                    &raster_fonts.fonts,
+                    &raster_fonts.admissions,
                     &rasterize::RasterizeOptions::default(),
                 )
                 .map_err(raster_error_to_js_value)
@@ -3168,9 +3173,19 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let options: rasterize::RasterizeOptions = serde_json::from_str(options_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid rasterize options JSON: {e}")))?;
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             self.renderer
-                .svg_to_png(svg_string, &alias_map, &font_arcs, &options)
+                .svg_to_png_with_admission(
+                    svg_string,
+                    &raster_fonts.aliases,
+                    &raster_fonts.fonts,
+                    &raster_fonts.admissions,
+                    &options,
+                )
                 .map_err(raster_error_to_js_value)
         }))
     }
@@ -3188,9 +3203,19 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let options: rasterize::RasterizeOptions = serde_json::from_str(options_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid rasterize options JSON: {e}")))?;
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             self.renderer
-                .svg_to_webp(svg_string, &alias_map, &font_arcs, &options)
+                .svg_to_webp_with_admission(
+                    svg_string,
+                    &raster_fonts.aliases,
+                    &raster_fonts.fonts,
+                    &raster_fonts.admissions,
+                    &options,
+                )
                 .map_err(raster_error_to_js_value)
         }))
     }
@@ -3214,15 +3239,20 @@ impl BoundSvgEngine {
             let raw = raw.map_err(raster_error_to_js_value)?;
             let (format, options, render_options) =
                 wire::animation::parse_open(&raw).map_err(raster_error_to_js_value)?;
-            let (aliases, fonts) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             let session = raster_anim::AnimationSession::open(
                 format,
                 options,
-                aliases,
-                fonts,
+                raster_fonts.aliases,
+                raster_fonts.fonts,
                 animation_writer::StagedWriter::default(),
             )
-            .map_err(raster_error_to_js_value)?;
+            .map_err(raster_error_to_js_value)?
+            .with_font_admissions(raster_fonts.admissions);
             Ok(AnimatedRasterSession {
                 format,
                 owner: Arc::clone(&self.owner),
@@ -3330,13 +3360,18 @@ impl BoundSvgEngine {
                         "Invalid layered composition validation input: {e}"
                     ))
                 })?;
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             let options = input.options.unwrap_or_default();
-            let metrics = rasterize::validate_layered_svg_composition(
+            let metrics = rasterize::validate_layered_svg_composition_with_admission(
                 &input.single_svg,
                 &input.layers,
-                &alias_map,
-                &font_arcs,
+                &raster_fonts.aliases,
+                &raster_fonts.fonts,
+                &raster_fonts.admissions,
                 &options,
             )
             .map_err(|e| JsValue::from_str(&e.to_string()))?;

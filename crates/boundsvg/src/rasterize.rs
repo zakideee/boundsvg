@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use boundtext::font::backend::FontAdmission;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::EngineError;
@@ -139,10 +141,25 @@ pub fn svg_to_png(
     font_data: &[Arc<Vec<u8>>],
     options: &RasterizeOptions,
 ) -> Result<Vec<u8>, EngineError> {
+    svg_to_png_with_admission(svg_string, alias_map, font_data, &[], options)
+}
+
+/// Encode PNG from raw native fonts or an exact registered-font admission snapshot.
+///
+/// # Errors
+///
+/// Propagates SVG, font admission, rasterization, allocation and encoding failures.
+pub(crate) fn svg_to_png_with_admission(
+    svg_string: &str,
+    alias_map: &[(String, String)],
+    font_data: &[Arc<Vec<u8>>],
+    admissions: &[Option<FontAdmission>],
+    options: &RasterizeOptions,
+) -> Result<Vec<u8>, EngineError> {
     if let Some(generator) = &options.generator {
         generator.validate()?;
     }
-    let pixmap = rasterize_svg_to_pixmap(svg_string, alias_map, font_data, options)?;
+    let pixmap = rasterize_svg_to_pixmap(svg_string, alias_map, font_data, admissions, options)?;
 
     let width = pixmap.width();
     let height = pixmap.height();
@@ -228,6 +245,29 @@ pub fn validate_layered_svg_composition(
     font_data: &[Arc<Vec<u8>>],
     options: &RasterizeOptions,
 ) -> Result<LayeredCompositionValidationMetrics, EngineError> {
+    validate_layered_svg_composition_with_admission(
+        single_svg,
+        layers,
+        alias_map,
+        font_data,
+        &[],
+        options,
+    )
+}
+
+/// Validate layered composition with the same immutable font admission snapshot for every layer.
+///
+/// # Errors
+///
+/// Propagates SVG, font admission, rasterization, allocation and encoding failures.
+pub(crate) fn validate_layered_svg_composition_with_admission(
+    single_svg: &str,
+    layers: &[LayeredSvgValidationLayerInput],
+    alias_map: &[(String, String)],
+    font_data: &[Arc<Vec<u8>>],
+    admissions: &[Option<FontAdmission>],
+    options: &RasterizeOptions,
+) -> Result<LayeredCompositionValidationMetrics, EngineError> {
     let validation_options = RasterizeOptions {
         background: None,
         scale: None,
@@ -235,8 +275,13 @@ pub fn validate_layered_svg_composition(
         font_families: options.font_families.clone(),
         generator: None,
     };
-    let single_pixmap =
-        rasterize_svg_to_pixmap(single_svg, alias_map, font_data, &validation_options)?;
+    let single_pixmap = rasterize_svg_to_pixmap(
+        single_svg,
+        alias_map,
+        font_data,
+        admissions,
+        &validation_options,
+    )?;
     let mut composed_pixmap =
         resvg::tiny_skia::Pixmap::new(single_pixmap.width(), single_pixmap.height())
             .ok_or_else(|| EngineError::Rasterize("Failed to create pixmap".into()))?;
@@ -245,8 +290,13 @@ pub fn validate_layered_svg_composition(
     sorted_layers.sort_by_key(|layer| layer.paint_order);
 
     for layer in sorted_layers {
-        let layer_pixmap =
-            rasterize_svg_to_pixmap(&layer.svg, alias_map, font_data, &validation_options)?;
+        let layer_pixmap = rasterize_svg_to_pixmap(
+            &layer.svg,
+            alias_map,
+            font_data,
+            admissions,
+            &validation_options,
+        )?;
         if layer_pixmap.width() != single_pixmap.width()
             || layer_pixmap.height() != single_pixmap.height()
         {
@@ -330,6 +380,7 @@ pub(crate) fn rasterize_svg_to_pixmap(
     svg_string: &str,
     alias_map: &[(String, String)],
     font_data: &[Arc<Vec<u8>>],
+    admissions: &[Option<FontAdmission>],
     options: &RasterizeOptions,
 ) -> Result<resvg::tiny_skia::Pixmap, EngineError> {
     let request = RasterizeRequest::from(options);
@@ -337,7 +388,12 @@ pub(crate) fn rasterize_svg_to_pixmap(
     assert_valid_raster_scale(requested_scale)?;
 
     let mut usvg_options = usvg::Options::default();
-    register_fonts_into_fontdb(&mut usvg_options, font_data, request.font_families)?;
+    register_fonts_into_fontdb(
+        &mut usvg_options,
+        font_data,
+        admissions,
+        request.font_families,
+    )?;
     let resolved_svg = substitute_font_aliases(svg_string, alias_map);
     let tree = usvg::Tree::from_str(&resolved_svg, &usvg_options)?;
 
@@ -922,6 +978,7 @@ fn is_ascii_space(byte: u8) -> bool {
 fn register_fonts_into_fontdb(
     options: &mut usvg::Options,
     font_data: &[Arc<Vec<u8>>],
+    admissions: &[Option<FontAdmission>],
     font_families: Option<&FontFamilyConfig>,
 ) -> Result<(), EngineError> {
     if font_data.is_empty() {
@@ -930,10 +987,16 @@ fn register_fonts_into_fontdb(
 
     let fontdb = options.fontdb_mut();
 
-    for arc in font_data {
-        boundtext::font::validate_font_collection(arc)?;
+    for (index, font_bytes) in font_data.iter().enumerate() {
+        if !admissions
+            .get(index)
+            .and_then(Option::as_ref)
+            .is_some_and(|proof| proof.matches_data(font_bytes))
+        {
+            boundtext::font::validate_font_collection(font_bytes)?;
+        }
         fontdb.load_font_source(usvg::fontdb::Source::Binary(
-            Arc::clone(arc) as Arc<dyn AsRef<[u8]> + Send + Sync>
+            Arc::clone(font_bytes) as Arc<dyn AsRef<[u8]> + Send + Sync>
         ));
     }
 
@@ -979,6 +1042,72 @@ fn register_fonts_into_fontdb(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raster_proof_requires_the_exact_immutable_allocation() {
+        use boundtext::font::{backend::FontBackend, backend_skrifa::SkrifaBackend};
+        let original = include_bytes!("../../../fixtures/fonts/only-a.ttf");
+        let mut font = Arc::new(original.to_vec());
+        let (_, admission) = SkrifaBackend
+            .parse_metrics_with_admission(Arc::clone(&font))
+            .unwrap();
+        let admissions = [admission];
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>"#;
+        let options = RasterizeOptions::default();
+        let expected = svg_to_png(svg, &[], &[Arc::clone(&font)], &options).unwrap();
+        assert_eq!(
+            svg_to_png_with_admission(svg, &[], &[Arc::clone(&font)], &admissions, &options)
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            crate::webp_encode::svg_to_webp_with_admission(
+                svg,
+                &[],
+                &[Arc::clone(&font)],
+                &admissions,
+                &options
+            )
+            .unwrap(),
+            crate::webp_encode::svg_to_webp(svg, &[], &[Arc::clone(&font)], &options).unwrap()
+        );
+        assert!(Arc::get_mut(&mut font).is_none());
+        let table_count = usize::from(u16::from_be_bytes([original[4], original[5]]));
+        let record = original[12..]
+            .chunks_exact(16)
+            .take(table_count)
+            .find(|record| &record[..4] == b"head")
+            .unwrap();
+        let offset =
+            usize::try_from(u32::from_be_bytes(record[8..12].try_into().unwrap())).unwrap();
+        Arc::make_mut(&mut font)[offset + 18..offset + 20].copy_from_slice(&15_u16.to_be_bytes());
+        for proofs in [&[][..], &admissions[..]] {
+            assert!(matches!(
+                svg_to_png_with_admission(svg, &[], &[Arc::clone(&font)], proofs, &options),
+                Err(EngineError::Boundtext(
+                    boundtext::BoundtextError::FontParse {
+                        reason: boundtext::error::FontFailureReason::InvalidUnitsPerEm,
+                        ..
+                    }
+                ))
+            ));
+            assert!(matches!(
+                crate::webp_encode::svg_to_webp_with_admission(
+                    svg,
+                    &[],
+                    &[Arc::clone(&font)],
+                    proofs,
+                    &options
+                ),
+                Err(EngineError::Boundtext(
+                    boundtext::BoundtextError::FontParse {
+                        reason: boundtext::error::FontFailureReason::InvalidUnitsPerEm,
+                        ..
+                    }
+                ))
+            ));
+        }
+    }
 
     #[test]
     fn png_output_keeps_straight_rgba_and_transparent_pixels() {

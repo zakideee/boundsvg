@@ -653,6 +653,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_ellipsis_missing_chain_keeps_its_font_diagnostic() {
+        use boundtext::font::{FontContext, FontRegistry, FontStyle, shaping::ShapeOptions};
+        let registry = FontRegistry::new();
+        let families = vec!["Missing".to_string(), "AlsoMissing".to_string()];
+        let font_context = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let error = boundtext::text::ellipsis::shape_ellipsis_advance_with_options(
+            &font_context,
+            20.0,
+            0.0,
+            &ShapeOptions::default(),
+            false,
+        )
+        .unwrap_err();
+        let diagnostic = classify_text_layout_error(
+            &error,
+            TextLayoutOperation::RenderTextLayout,
+            Some("ellipsis".to_string()),
+        );
+        assert_eq!(diagnostic.code, "TEXT_FONT_UNAVAILABLE");
+        assert_eq!(diagnostic.message, "No requested font is available.");
+        assert!(matches!(diagnostic.stage, PipelineStage::Font));
+        assert_eq!(diagnostic.node_id.as_deref(), Some("ellipsis"));
+        assert_eq!(
+            diagnostic.context,
+            serde_json::json!({"operation":"renderTextLayout", "reason":"unregisteredFont", "weight":400})
+        );
+    }
+
+    #[test]
     fn font_alias_context_is_utf8_safe_and_bounded() {
         let families = (0..18)
             .map(|index| format!("{index}-{}", "é".repeat(200)))

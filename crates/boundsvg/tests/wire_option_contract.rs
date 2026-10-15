@@ -171,8 +171,8 @@ const MANUAL_SERIALIZE_ALLOWLIST: &[SourceAllowance] = &[
 const ITEM_MACRO_ALLOWLIST: &[SourceAllowance] = &[
     SourceAllowance {
         source: "crates/boundtext/src/font/admission.rs",
-        item: "thread_local@4e5a23eb4e8d57e4",
-        reason: "generates one cfg(test) Cell<usize> admission counter; no struct, enum, serde implementation, or wire DTO",
+        item: "thread_local@1cb8daed01548118",
+        reason: "generates three cfg(test) Cell<usize> admission/visited-view/reference counters; no struct, enum, serde implementation, or wire DTO",
     },
     SourceAllowance {
         source: "crates/boundtext/src/font/admission.rs",

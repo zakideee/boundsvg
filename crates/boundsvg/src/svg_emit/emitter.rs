@@ -1801,6 +1801,7 @@ mod tests {
             &svg,
             &[],
             &[],
+            &[],
             &crate::rasterize::RasterizeOptions::default(),
         )
         .expect("gradient SVG rasterizes")

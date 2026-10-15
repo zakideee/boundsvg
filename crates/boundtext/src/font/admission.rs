@@ -11,6 +11,10 @@ use crate::error::{BoundtextError, FontFailureReason};
 std::thread_local! {
     /// Common admission invocations on this test thread, including failed attempts.
     static ADMISSION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Successfully validated non-directory views on this test thread.
+    static ADMITTED_VIEWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Nested lookup/subtable reference visits, including already-seen views.
+    static NESTED_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Read the test thread's admission count without affecting production code.
@@ -27,17 +31,21 @@ enum VisitKind {
     SubstitutionSubtable(u16),
     PositionSubtable(u16),
     CharacterSubtable,
+    CharacterRecords,
+    NameRecords,
+    AxisSegments,
+    SubstitutionLookupList,
+    PositionLookupList,
     LocationOffsets(bool),
     VariationStore,
-    VariationData,
+    /// Item-data indices are checked against the enclosing store's region count.
+    VariationData(u16),
     GlyphVariationOffsets,
 }
 
 struct Admission<'visited> {
-    /// Distinguish external table parameters supplied by each unique face directory.
-    directory: usize,
-    /// Reuse visits only within that directory and the exact bounded table view.
-    visited: &'visited mut HashSet<(usize, usize, usize, VisitKind)>,
+    /// Reuse only the same bounded view with all external validation parameters in its kind.
+    visited: &'visited mut HashSet<(usize, usize, VisitKind)>,
 }
 
 impl Admission<'_> {
@@ -49,11 +57,21 @@ impl Admission<'_> {
         table: Option<&'static str>,
     ) -> Result<bool, BoundtextError> {
         let key = (
-            self.directory,
             data.as_bytes().as_ptr() as usize,
             data.as_bytes().len(),
             kind,
         );
+        #[cfg(test)]
+        if matches!(
+            kind,
+            VisitKind::SubstitutionLookup
+                | VisitKind::PositionLookup
+                | VisitKind::SubstitutionSubtable(_)
+                | VisitKind::PositionSubtable(_)
+                | VisitKind::CharacterSubtable
+        ) {
+            NESTED_VISITS.set(NESTED_VISITS.get() + 1);
+        }
         if self.visited.contains(&key) {
             return Ok(false);
         }
@@ -61,6 +79,10 @@ impl Admission<'_> {
             .try_reserve(1)
             .map_err(|_| parse_error(FontFailureReason::AllocationFailed, table, face_index))?;
         self.visited.insert(key);
+        #[cfg(test)]
+        if !matches!(kind, VisitKind::Directory) {
+            ADMITTED_VIEWS.set(ADMITTED_VIEWS.get() + 1);
+        }
         Ok(true)
     }
 }
@@ -88,13 +110,16 @@ pub(crate) fn has_table(font: &FontRef<'_>, tag: [u8; 4]) -> bool {
 
 /// Validate each distinct face before it enters a shaping or raster font database.
 ///
-/// Unknown tables are ignored. Lookup visits are keyed by face directory, target, bounded byte length, and expected
-/// type, so shared references do not multiply traversal work or bypass parsing.
+/// Unknown tables are ignored. Visits include the target, bounded byte length,
+/// expected type and external parsing parameters; shared physical tables are walked once.
 ///
 /// # Errors
 ///
 /// Return a structured font error for an invalid container, required table,
 /// metric table, variation axis, or GSUB/GPOS lookup reference.
+/// Face-specific glyph counts, outline lengths, and metric counts are checked
+/// before shared walks. Bounded bytes and the remaining external parameters
+/// identify a walk, so another face cannot hide an invalid shorter table view.
 pub fn validate_font_collection(data: &[u8]) -> Result<(), BoundtextError> {
     #[cfg(test)]
     ADMISSION_CALLS.set(ADMISSION_CALLS.get() + 1);
@@ -109,7 +134,6 @@ pub fn validate_font_collection(data: &[u8]) -> Result<(), BoundtextError> {
             face.map_err(|_| parse_error(FontFailureReason::InvalidData, None, face_index))?;
         face_count += 1;
         let mut admission = Admission {
-            directory: font.table_directory().offset_data().as_bytes().as_ptr() as usize,
             visited: &mut visited,
         };
         if !admission.visit(
@@ -241,44 +265,58 @@ fn validate_face(
     if has_table(font, *b"GSUB") {
         let table = font.gsub().map_err(|_| invalid("GSUB"))?;
         let lookups = table.lookup_list().map_err(|_| invalid("GSUB"))?;
-        for index in 0..lookups.lookup_offsets().len() {
-            let offset = lookups.lookup_offsets()[index].get().to_u32() as usize;
-            if offset == 0 {
-                return Err(invalid("GSUB"));
+        if admission.visit(
+            lookups.offset_data(),
+            VisitKind::SubstitutionLookupList,
+            face_index,
+            Some("GSUB"),
+        )? {
+            for index in 0..lookups.lookup_offsets().len() {
+                let offset = lookups.lookup_offsets()[index].get().to_u32() as usize;
+                if offset == 0 {
+                    return Err(invalid("GSUB"));
+                }
+                let target = lookups
+                    .offset_data()
+                    .slice(offset..)
+                    .ok_or_else(|| invalid("GSUB"))?;
+                if !admission.visit(
+                    target,
+                    VisitKind::SubstitutionLookup,
+                    face_index,
+                    Some("GSUB"),
+                )? {
+                    continue;
+                }
+                let lookup = lookups.lookups().get(index).map_err(|_| invalid("GSUB"))?;
+                validate_substitution(lookup, admission, face_index)?;
             }
-            let target = lookups
-                .offset_data()
-                .slice(offset..)
-                .ok_or_else(|| invalid("GSUB"))?;
-            if !admission.visit(
-                target,
-                VisitKind::SubstitutionLookup,
-                face_index,
-                Some("GSUB"),
-            )? {
-                continue;
-            }
-            let lookup = lookups.lookups().get(index).map_err(|_| invalid("GSUB"))?;
-            validate_substitution(lookup, admission, face_index)?;
         }
     }
     if has_table(font, *b"GPOS") {
         let table = font.gpos().map_err(|_| invalid("GPOS"))?;
         let lookups = table.lookup_list().map_err(|_| invalid("GPOS"))?;
-        for index in 0..lookups.lookup_offsets().len() {
-            let offset = lookups.lookup_offsets()[index].get().to_u32() as usize;
-            if offset == 0 {
-                return Err(invalid("GPOS"));
+        if admission.visit(
+            lookups.offset_data(),
+            VisitKind::PositionLookupList,
+            face_index,
+            Some("GPOS"),
+        )? {
+            for index in 0..lookups.lookup_offsets().len() {
+                let offset = lookups.lookup_offsets()[index].get().to_u32() as usize;
+                if offset == 0 {
+                    return Err(invalid("GPOS"));
+                }
+                let target = lookups
+                    .offset_data()
+                    .slice(offset..)
+                    .ok_or_else(|| invalid("GPOS"))?;
+                if !admission.visit(target, VisitKind::PositionLookup, face_index, Some("GPOS"))? {
+                    continue;
+                }
+                let lookup = lookups.lookups().get(index).map_err(|_| invalid("GPOS"))?;
+                validate_position(lookup, admission, face_index)?;
             }
-            let target = lookups
-                .offset_data()
-                .slice(offset..)
-                .ok_or_else(|| invalid("GPOS"))?;
-            if !admission.visit(target, VisitKind::PositionLookup, face_index, Some("GPOS"))? {
-                continue;
-            }
-            let lookup = lookups.lookups().get(index).map_err(|_| invalid("GPOS"))?;
-            validate_position(lookup, admission, face_index)?;
         }
     }
     Ok(())
@@ -295,37 +333,58 @@ fn validate_references(
         if name.version() > 1 || usize::from(name.storage_offset()) > name.offset_data().len() {
             return Err(invalid("name"));
         }
-        for record in name.name_record() {
-            record
-                .string(name.string_data())
-                .map_err(|_| invalid("name"))?;
-        }
-        for record in name.lang_tag_record().into_iter().flatten() {
-            record
-                .lang_tag(name.string_data())
-                .map_err(|_| invalid("name"))?;
+        if admission.visit(
+            name.offset_data(),
+            VisitKind::NameRecords,
+            face_index,
+            Some("name"),
+        )? {
+            for record in name.name_record() {
+                record
+                    .string(name.string_data())
+                    .map_err(|_| invalid("name"))?;
+            }
+            for record in name.lang_tag_record().into_iter().flatten() {
+                record
+                    .lang_tag(name.string_data())
+                    .map_err(|_| invalid("name"))?;
+            }
         }
     }
     if has_table(font, *b"cmap") {
         let cmap = font.cmap().map_err(|_| invalid("cmap"))?;
-        for record in cmap.encoding_records() {
-            let offset = record.subtable_offset().to_u32() as usize;
-            let data = cmap
-                .offset_data()
-                .slice(offset..)
-                .filter(|_| offset != 0)
-                .ok_or_else(|| invalid("cmap"))?;
-            if admission.visit(data, VisitKind::CharacterSubtable, face_index, Some("cmap"))? {
-                record
-                    .subtable(cmap.offset_data())
-                    .map_err(|_| invalid("cmap"))?;
+        if admission.visit(
+            cmap.offset_data(),
+            VisitKind::CharacterRecords,
+            face_index,
+            Some("cmap"),
+        )? {
+            for record in cmap.encoding_records() {
+                let offset = record.subtable_offset().to_u32() as usize;
+                let data = cmap
+                    .offset_data()
+                    .slice(offset..)
+                    .filter(|_| offset != 0)
+                    .ok_or_else(|| invalid("cmap"))?;
+                if admission.visit(data, VisitKind::CharacterSubtable, face_index, Some("cmap"))? {
+                    record
+                        .subtable(cmap.offset_data())
+                        .map_err(|_| invalid("cmap"))?;
+                }
             }
         }
     }
     if has_table(font, *b"avar") {
         let avar = font.avar().map_err(|_| invalid("avar"))?;
-        for segment in avar.axis_segment_maps().iter() {
-            segment.map_err(|_| invalid("avar"))?;
+        if admission.visit(
+            avar.offset_data(),
+            VisitKind::AxisSegments,
+            face_index,
+            Some("avar"),
+        )? {
+            for segment in avar.axis_segment_maps().iter() {
+                segment.map_err(|_| invalid("avar"))?;
+            }
         }
     }
     if has_table(font, *b"gvar") {
@@ -431,7 +490,7 @@ fn validate_variation_store(
         let data = data.map_err(|_| invalid())?;
         if admission.visit(
             data.offset_data(),
-            VisitKind::VariationData,
+            VisitKind::VariationData(regions.region_count()),
             face_index,
             Some(table),
         )? && data
@@ -630,5 +689,100 @@ fn validate_position(
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Give every distinct face directory the same physical tables and bounded views.
+    fn shared_collection(face_count: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let original = include_bytes!("../../../../fixtures/fonts/ContextualArabicTest.ttf");
+        let table_count = usize::from(u16::from_be_bytes([original[4], original[5]]));
+        let directory_length = 12 + 16 * table_count;
+        let directories_start = 12 + 4 * face_count;
+        let original_start = directories_start + directory_length * face_count;
+        let mut collection = b"ttcf".to_vec();
+        collection.extend(0x0001_0000_u32.to_be_bytes());
+        collection.extend(u32::try_from(face_count)?.to_be_bytes());
+        for face_index in 0..face_count {
+            collection.extend(
+                u32::try_from(directories_start + directory_length * face_index)?.to_be_bytes(),
+            );
+        }
+        for _ in 0..face_count {
+            let directory_start = collection.len();
+            collection.extend(&original[..directory_length]);
+            for record in collection[directory_start + 12..].chunks_exact_mut(16) {
+                let offset = u32::from_be_bytes(record[8..12].try_into()?);
+                record[8..12]
+                    .copy_from_slice(&(offset + u32::try_from(original_start)?).to_be_bytes());
+            }
+        }
+        collection.extend(original);
+        Ok(collection)
+    }
+
+    #[test]
+    fn shared_collection_walks_each_nested_table_once() -> Result<(), Box<dyn std::error::Error>> {
+        let mut observations = Vec::new();
+        for face_count in [1, 2, 64, 1024] {
+            let collection = shared_collection(face_count)?;
+            let before_views = ADMITTED_VIEWS.get();
+            let before_nested = NESTED_VISITS.get();
+            validate_font_collection(&collection)?;
+            observations.push((
+                face_count,
+                ADMITTED_VIEWS.get() - before_views,
+                NESTED_VISITS.get() - before_nested,
+            ));
+        }
+        println!(
+            "shared table visits (faces, validated views, nested references): {observations:?}"
+        );
+        assert!(
+            observations
+                .iter()
+                .all(|observation| observation.1 == observations[0].1
+                    && observation.2 == observations[0].2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn shared_variation_data_checks_each_region_count() -> Result<(), Box<dyn std::error::Error>> {
+        // Two stores share the same eight-byte item-data view; their region lists differ.
+        let mut bytes = vec![0; 58];
+        for (start, region_offset, data_offset) in [(0, 24_u32, 50_u32), (12, 28, 38)] {
+            bytes[start..start + 2].copy_from_slice(&1_u16.to_be_bytes());
+            bytes[start + 2..start + 6].copy_from_slice(&region_offset.to_be_bytes());
+            bytes[start + 6..start + 8].copy_from_slice(&1_u16.to_be_bytes());
+            bytes[start + 8..start + 12].copy_from_slice(&data_offset.to_be_bytes());
+        }
+        for (start, count) in [(24, 2_u16), (40, 1)] {
+            bytes[start..start + 2].copy_from_slice(&1_u16.to_be_bytes());
+            bytes[start + 2..start + 4].copy_from_slice(&count.to_be_bytes());
+        }
+        bytes[54..56].copy_from_slice(&1_u16.to_be_bytes());
+        bytes[56..58].copy_from_slice(&1_u16.to_be_bytes());
+        let first =
+            read_fonts::tables::variations::ItemVariationStore::read(FontData::new(&bytes))?;
+        let second =
+            read_fonts::tables::variations::ItemVariationStore::read(FontData::new(&bytes[12..]))?;
+        let mut visited = HashSet::new();
+        let mut admission = Admission {
+            visited: &mut visited,
+        };
+        validate_variation_store(&first, &mut admission, 0, "HVAR")?;
+        assert!(matches!(
+            validate_variation_store(&second, &mut admission, 0, "VVAR"),
+            Err(BoundtextError::FontParse {
+                reason: FontFailureReason::InvalidTable,
+                table: Some("VVAR"),
+                face_index: 0
+            })
+        ));
+        Ok(())
     }
 }

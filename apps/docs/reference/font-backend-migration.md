@@ -20,6 +20,15 @@ Missing or mismatched proof still requires admission. Native
 variation location. Construct or obtain that face first, then reuse it for the
 whole extraction instead of passing raw font bytes to the outline operation.
 
+`FontRegistry::rasterize_font_data` now returns `Result<RasterizeFontData, BoundtextError>`.
+The snapshot has `aliases`, `fonts` and aligned optional `admissions` fields.
+Snapshot allocation failures propagate before rasterization. The built-in renderer
+checks each proof against the exact immutable font allocation; missing or mismatched
+proofs take full admission. Animation sessions retain proofs only with their font
+snapshot and release them on finish, abort or failure. Standalone native raster
+functions still admit raw bytes. Custom `Renderer` implementations retain their
+existing methods through the provided proof-aware defaults.
+
 Native metrics and control bounds now use finite `f64` values in font units.
 Shape and outline operations return `Result`; legitimate absent metrics and
 empty glyphs use `Option` inside the result. Drawing and shaping failures do not
