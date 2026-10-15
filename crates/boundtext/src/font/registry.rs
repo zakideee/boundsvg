@@ -40,27 +40,43 @@ pub enum FontStyle {
 
 /// Stored font data with parsed metrics
 pub struct FontEntry {
+    /// Immutable admitted font bytes shared by shaping, outlines, and rasterization.
     pub data: Arc<Vec<u8>>,
+    /// Registered family alias, weight, and style used for face lookup.
     pub key: FontKey,
+    /// OpenType scale in 16..=16384 font units per em.
     pub units_per_em: u16,
     /// Number of addressable glyphs, including .notdef.
     pub glyph_count: u32,
+    /// Selected default-location horizontal ascender in font units, positive upward.
     pub ascender: f64,
+    /// Selected default-location horizontal line gap in font units.
     pub line_gap: f64,
+    /// Nonzero OS/2 typo ascender, falling back to the selected ascender, in font units.
     pub typographic_ascender: f64,
+    /// Nonzero OS/2 typo descender, falling back to the selected descender, in font units.
     pub typographic_descender: f64,
+    /// Default OS/2 typo gap when present, otherwise the selected gap, in font units.
     pub typographic_line_gap: f64,
+    /// Selected default-location horizontal descender in font units, normally negative.
     pub descender: f64,
+    /// Default upward vhea ascender in font units; None means vhea is absent.
     pub vertical_ascender: Option<f64>,
+    /// Default downward vhea descender in font units; None means vhea is absent.
     pub vertical_descender: Option<f64>,
+    /// Default vhea line gap in font units; None means vhea is absent.
     pub vertical_line_gap: Option<f64>,
     /// Whether the font contains a VORG (Vertical Origin) table
     pub has_vorg: bool,
-    /// Default vertical origin Y from VORG table (in font units), if present
+    /// Default upward VORG origin in font units; None means VORG is absent.
     pub default_vert_origin_y: Option<f64>,
+    /// Default post underline position in upward font units; None means post is absent.
     pub underline_position: Option<f64>,
+    /// Default post underline thickness in font units; None means post is absent.
     pub underline_thickness: Option<f64>,
+    /// Default OS/2 strikeout position in upward font units; None means OS/2 is absent.
     pub strikeout_position: Option<f64>,
+    /// Default OS/2 strikeout thickness in font units; None means OS/2 is absent.
     pub strikeout_thickness: Option<f64>,
     /// Cached font family name extracted from the name table at registration time
     pub family_name: Option<String>,
@@ -294,6 +310,13 @@ impl FontRegistry {
         }
         let entry = FontEntry::with_backend(data, alias, weight, style, &*self.backend)?;
         entry.shaper_face(&*self.shaper)?;
+        self.fonts
+            .try_reserve(1)
+            .map_err(|_| BoundtextError::FontParse {
+                reason: FontFailureReason::AllocationFailed,
+                table: None,
+                face_index: 0,
+            })?;
         self.fonts.insert(key, entry);
         Ok(())
     }

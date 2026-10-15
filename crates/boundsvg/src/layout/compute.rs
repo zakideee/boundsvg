@@ -18,7 +18,7 @@ pub fn compute_full_layout(input: &LayoutInput) -> Result<LayoutOutput, EngineEr
     let mut font_registry = FontRegistry::new();
     for font in &input.fonts {
         font_registry.register(
-            font.data.clone(),
+            crate::font::decode::decode_font(font.data.clone())?,
             font.alias.clone(),
             font.weight,
             font.style.clone(),
@@ -47,7 +47,7 @@ pub fn compute_full_layout_with_registry(
     let mut local_registry = FontRegistry::new();
     for font in &input.fonts {
         match local_registry.register(
-            font.data.clone(),
+            crate::font::decode::decode_font(font.data.clone())?,
             font.alias.clone(),
             font.weight,
             font.style.clone(),

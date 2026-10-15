@@ -74,20 +74,20 @@ type ReportRow = {
   rerunCommand: string;
 };
 
-function escapeHtml(s: string): string {
-  return s
+function escapeHtml(text: string): string {
+  return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
 
-function truncate(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n)}\u2026` : s;
+function truncate(text: string, lengthMax: number): string {
+  return text.length > lengthMax ? `${text.slice(0, lengthMax)}\u2026` : text;
 }
 
-function arraysEqual(a: unknown[], b: unknown[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+function arraysEqual(left: unknown[], right: unknown[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 /**
@@ -155,7 +155,7 @@ function buildBrowserColumnHtml(
   screenshotRelPath: string | undefined,
   label: string,
   entry: BrowserEntry | undefined,
-  bt: BtEntry["result"] | undefined,
+  boundtextResult: BtEntry["result"] | undefined,
   spec: SpecCase,
 ): string {
   if (!screenshotRelPath) {
@@ -164,10 +164,10 @@ function buildBrowserColumnHtml(
   const bbox = entry?.bbox;
 
   let matchBadge = "";
-  if (bt && entry) {
-    const breaksOk = breaksAgreeForCase(bt.break_indices, entry.break_indices, spec);
+  if (boundtextResult && entry) {
+    const breaksOk = breaksAgreeForCase(boundtextResult.break_indices, entry.break_indices, spec);
     const skip = isBrowserIncomparableCase(spec);
-    const linesOk = skip || bt.line_count === entry.line_count;
+    const linesOk = skip || boundtextResult.line_count === entry.line_count;
     if (breaksOk && linesOk) {
       matchBadge = '<span class="match-marker">MATCH</span>';
     }
@@ -269,16 +269,16 @@ function buildVisualPanel(row: ReportRow): string {
 
 /** Check if a browser result agrees with boundtext. */
 function browserMatchesBt(
-  bt: BtEntry["result"] | undefined,
+  boundtextResult: BtEntry["result"] | undefined,
   browser: BrowserEntry | undefined,
   spec: SpecCase,
 ): boolean {
-  if (!bt || !browser) {
+  if (!boundtextResult || !browser) {
     return false;
   }
-  const breaksOk = breaksAgreeForCase(bt.break_indices, browser.break_indices, spec);
+  const breaksOk = breaksAgreeForCase(boundtextResult.break_indices, browser.break_indices, spec);
   const skip = isBrowserIncomparableCase(spec);
-  const linesOk = skip || bt.line_count === browser.line_count;
+  const linesOk = skip || boundtextResult.line_count === browser.line_count;
   return breaksOk && linesOk;
 }
 
@@ -334,10 +334,10 @@ async function main() {
 
   // Load spec cases
   const specFiles = readdirSync(specDir).filter((f) => f.endsWith(".json"));
-  for (const f of specFiles) {
-    const cases: SpecCase[] = JSON.parse(readFileSync(resolve(specDir, f), "utf-8"));
-    for (const c of cases) {
-      specMap.set(c.id, c);
+  for (const specFile of specFiles) {
+    const cases: SpecCase[] = JSON.parse(readFileSync(resolve(specDir, specFile), "utf-8"));
+    for (const specCase of cases) {
+      specMap.set(specCase.id, specCase);
     }
   }
 
@@ -345,9 +345,9 @@ async function main() {
   const btFiles = readdirSync(btDir).filter(
     (f) => f.startsWith("boundtext-") && f.endsWith(".json"),
   );
-  for (const f of btFiles) {
+  for (const boundtextFile of btFiles) {
     try {
-      const entries: BtEntry[] = JSON.parse(readFileSync(resolve(btDir, f), "utf-8"));
+      const entries: BtEntry[] = JSON.parse(readFileSync(resolve(btDir, boundtextFile), "utf-8"));
       for (const e of entries) {
         btMap.set(e.id, e.result);
       }
@@ -360,9 +360,11 @@ async function main() {
   const browserFiles = readdirSync(browserDir).filter(
     (f) => f.startsWith("browser-") && f.endsWith(".json"),
   );
-  for (const f of browserFiles) {
+  for (const browserFile of browserFiles) {
     try {
-      const entries: BrowserEntry[] = JSON.parse(readFileSync(resolve(browserDir, f), "utf-8"));
+      const entries: BrowserEntry[] = JSON.parse(
+        readFileSync(resolve(browserDir, browserFile), "utf-8"),
+      );
       for (const e of entries) {
         if (e.engine === "chromium") {
           crMap.set(e.id, e);
@@ -379,32 +381,32 @@ async function main() {
   const rows: ReportRow[] = [];
 
   for (const [id, spec] of specMap) {
-    const bt = btMap.get(id);
-    const cr = crMap.get(id);
-    const ff = ffMap.get(id);
+    const boundtextResult = btMap.get(id);
+    const chromiumResult = crMap.get(id);
+    const firefoxResult = ffMap.get(id);
     const diffs: string[] = [];
 
     // Compare break_indices
     // For ellipsis cases, boundtext only emits breaks for visible lines (prefix match).
     // See breaksAgreeForCase() for details.
-    if (bt && cr) {
-      if (!breaksAgreeForCase(bt.break_indices, cr.break_indices, spec)) {
+    if (boundtextResult && chromiumResult) {
+      if (!breaksAgreeForCase(boundtextResult.break_indices, chromiumResult.break_indices, spec)) {
         diffs.push(
-          `break_indices: bt=${JSON.stringify(bt.break_indices)} cr=${JSON.stringify(cr.break_indices)}`,
+          `break_indices: bt=${JSON.stringify(boundtextResult.break_indices)} cr=${JSON.stringify(chromiumResult.break_indices)}`,
         );
       }
     }
-    if (bt && ff) {
-      if (!breaksAgreeForCase(bt.break_indices, ff.break_indices, spec)) {
+    if (boundtextResult && firefoxResult) {
+      if (!breaksAgreeForCase(boundtextResult.break_indices, firefoxResult.break_indices, spec)) {
         diffs.push(
-          `break_indices: bt=${JSON.stringify(bt.break_indices)} ff=${JSON.stringify(ff.break_indices)}`,
+          `break_indices: bt=${JSON.stringify(boundtextResult.break_indices)} ff=${JSON.stringify(firefoxResult.break_indices)}`,
         );
       }
     }
-    if (cr && ff) {
-      if (!arraysEqual(cr.break_indices, ff.break_indices)) {
+    if (chromiumResult && firefoxResult) {
+      if (!arraysEqual(chromiumResult.break_indices, firefoxResult.break_indices)) {
         diffs.push(
-          `break_indices: cr=${JSON.stringify(cr.break_indices)} ff=${JSON.stringify(ff.break_indices)}`,
+          `break_indices: cr=${JSON.stringify(chromiumResult.break_indices)} ff=${JSON.stringify(firefoxResult.break_indices)}`,
         );
       }
     }
@@ -413,11 +415,21 @@ async function main() {
     // Skip bt-vs-browser line_count diff for cases where the browser cannot
     // replicate boundtext's behavior (ellipsis truncation, fit size change).
     const skipBtBrowserLineCount = isBrowserIncomparableCase(spec);
-    if (bt && cr && bt.line_count !== cr.line_count && !skipBtBrowserLineCount) {
-      diffs.push(`line_count: bt=${bt.line_count} cr=${cr.line_count}`);
+    if (
+      boundtextResult &&
+      chromiumResult &&
+      boundtextResult.line_count !== chromiumResult.line_count &&
+      !skipBtBrowserLineCount
+    ) {
+      diffs.push(`line_count: bt=${boundtextResult.line_count} cr=${chromiumResult.line_count}`);
     }
-    if (bt && ff && bt.line_count !== ff.line_count && !skipBtBrowserLineCount) {
-      diffs.push(`line_count: bt=${bt.line_count} ff=${ff.line_count}`);
+    if (
+      boundtextResult &&
+      firefoxResult &&
+      boundtextResult.line_count !== firefoxResult.line_count &&
+      !skipBtBrowserLineCount
+    ) {
+      diffs.push(`line_count: bt=${boundtextResult.line_count} ff=${firefoxResult.line_count}`);
     }
 
     // Note: bbox dimensions are NOT compared for PASS/DIFF status.
@@ -428,34 +440,34 @@ async function main() {
     // break_indices, line_count, and overflow all agree.
 
     // Compare overflow
-    if (bt && cr) {
+    if (boundtextResult && chromiumResult) {
       const btOverflowType =
-        typeof bt.overflow === "object" && bt.overflow !== null
-          ? (bt.overflow as { type: string }).type
-          : String(bt.overflow);
+        typeof boundtextResult.overflow === "object" && boundtextResult.overflow !== null
+          ? (boundtextResult.overflow as { type: string }).type
+          : String(boundtextResult.overflow);
       const btOverflow = btOverflowType !== "none";
-      if (btOverflow !== cr.overflow) {
-        diffs.push(`overflow: bt=${btOverflowType} cr=${cr.overflow}`);
+      if (btOverflow !== chromiumResult.overflow) {
+        diffs.push(`overflow: bt=${btOverflowType} cr=${chromiumResult.overflow}`);
       }
     }
 
     let status: ReportRow["status"] = "SKIP";
-    if (bt && (cr || ff)) {
+    if (boundtextResult && (chromiumResult || firefoxResult)) {
       status = diffs.length === 0 ? "PASS" : "DIFF";
-    } else if (bt) {
+    } else if (boundtextResult) {
       status = "SKIP"; // No browser data
     }
 
     // Check spec expectations
-    if (bt && spec.expected) {
+    if (boundtextResult && spec.expected) {
       const e = spec.expected;
       if (
         e.kinsoku_violations !== undefined &&
-        bt.kinsoku_violations.length !== e.kinsoku_violations
+        boundtextResult.kinsoku_violations.length !== e.kinsoku_violations
       ) {
         status = "FAIL";
         diffs.push(
-          `kinsoku_violations: expected=${e.kinsoku_violations} actual=${bt.kinsoku_violations.length}`,
+          `kinsoku_violations: expected=${e.kinsoku_violations} actual=${boundtextResult.kinsoku_violations.length}`,
         );
       }
     }
@@ -482,9 +494,9 @@ async function main() {
       text: spec.request.text,
       status,
       spec,
-      bt,
-      chromium: cr,
-      firefox: ff,
+      bt: boundtextResult,
+      chromium: chromiumResult,
+      firefox: firefoxResult,
       diffs,
       screenshotBoundtext: relScreenshot("boundtext"),
       screenshotBoundsvg: relScreenshot("boundsvg"),

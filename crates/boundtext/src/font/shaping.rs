@@ -274,122 +274,129 @@ fn shape_via_backend(
         None
     };
 
-    raw_glyphs
-        .iter()
-        .enumerate()
-        .map(|(i, raw)| {
-            let mut x_advance = f64::from(raw.x_advance) * scale;
-            let mut y_advance = f64::from(raw.y_advance) * scale;
-            let raw_x_offset = f64::from(raw.x_offset) * scale;
-            let raw_y_offset = f64::from(raw.y_offset) * scale;
-            let mut x_offset = raw_x_offset;
-            let mut y_offset = raw_y_offset;
-            let mut rotation_deg = 0;
-            // Tracking belongs between text clusters, not between every
-            // emitted glyph. Combining marks and variation selectors can
-            // produce an extra glyph at the same cluster and must stay
-            // attached to their base character.
-            let tracking_adjust = if letter_spacing_px != 0.0
-                && raw_glyphs
-                    .get(i + 1)
-                    .is_some_and(|next| next.cluster != raw.cluster)
-            {
-                letter_spacing_px
-            } else {
-                0.0
-            };
-            // Add tracking in the inline progression axis (sign-aware:
-            // vertical advances are negative).
-            if tracking_adjust != 0.0 {
-                if vertical {
-                    y_advance = add_vertical_inline_tracking(y_advance, tracking_adjust);
-                } else {
-                    x_advance = add_inline_tracking(x_advance, tracking_adjust);
-                }
-            }
-
+    let mut glyphs = Vec::new();
+    glyphs
+        .try_reserve_exact(raw_glyphs.len())
+        .map_err(|_| BoundtextError::TextShaping {
+            reason: FontFailureReason::AllocationFailed,
+        })?;
+    raw_glyphs.iter().enumerate().try_for_each(|(i, raw)| {
+        let mut x_advance = f64::from(raw.x_advance) * scale;
+        let mut y_advance = f64::from(raw.y_advance) * scale;
+        let raw_x_offset = f64::from(raw.x_offset) * scale;
+        let raw_y_offset = f64::from(raw.y_offset) * scale;
+        let mut x_offset = raw_x_offset;
+        let mut y_offset = raw_y_offset;
+        let mut rotation_deg = 0;
+        // Tracking belongs between text clusters, not between every
+        // emitted glyph. Combining marks and variation selectors can
+        // produce an extra glyph at the same cluster and must stay
+        // attached to their base character.
+        let tracking_adjust = if letter_spacing_px != 0.0
+            && raw_glyphs
+                .get(i + 1)
+                .is_some_and(|next| next.cluster != raw.cluster)
+        {
+            letter_spacing_px
+        } else {
+            0.0
+        };
+        // Add tracking in the inline progression axis (sign-aware:
+        // vertical advances are negative).
+        if tracking_adjust != 0.0 {
             if vertical {
-                let upright = upright_by_byte
-                    .as_ref()
-                    .and_then(|m| m.get(raw.cluster as usize))
-                    .copied()
-                    .unwrap_or(true);
-                rotation_deg = if upright { 0 } else { 90 };
-                if upright {
-                    let glyph_id = raw.glyph_id;
-                    let (origin_x_px, origin_y_px) = if let Some(face) = &font_face {
-                        (
-                            resolve_vertical_origin_x_px(
-                                face.as_ref(),
-                                glyph_id,
-                                scale,
-                                em_size_px,
-                            )?,
-                            resolve_vertical_origin_y_px(
-                                face.as_ref(),
-                                glyph_id,
-                                scale,
-                                fallback_vertical_origin_y_px,
-                            )?,
-                        )
-                    } else {
-                        (em_size_px * 0.5, fallback_vertical_origin_y_px)
-                    };
-
-                    // Path extraction uses the glyph's horizontal origin, while vertical
-                    // shaping positions are expressed relative to the vertical origin.
-                    // Convert to our absolute-origin model using per-glyph vertical metrics.
-                    x_offset = raw_x_offset + origin_x_px;
-                    y_offset = origin_y_px;
-                } else {
-                    // Sideways glyphs in vertical text use their horizontal advance as the
-                    // logical height. The final ink centering is resolved from per-glyph
-                    // extents during outline extraction, similar to HarfBuzz/Pango's
-                    // separation of logical advance and ink extents.
-                    let raw_x_advance_abs = f64::from(raw.x_advance).abs() * scale;
-                    let raw_y_advance_abs = f64::from(raw.y_advance).abs() * scale;
-                    let advance_abs = if raw_x_advance_abs == 0.0 && raw_y_advance_abs == 0.0 {
-                        0.0
-                    } else {
-                        font_face
-                            .as_ref()
-                            .map(|face| face.glyph_hor_advance(raw.glyph_id))
-                            .transpose()?
-                            .flatten()
-                            .filter(|advance| *advance > 0.0)
-                            .map_or_else(
-                                || raw_x_advance_abs.max(raw_y_advance_abs),
-                                |advance| advance * scale,
-                            )
-                    };
-                    let signed_advance = if raw.y_advance > 0 {
-                        advance_abs
-                    } else {
-                        -advance_abs
-                    };
-                    y_advance = add_vertical_inline_tracking(signed_advance, tracking_adjust);
-                    // HarfBuzz sideways runs are positioned relative to the logical cell's
-                    // leading edge. Our vertical column model uses the cell center as the
-                    // anchor, so normalize x_offset into that coordinate space.
-                    x_offset = raw_x_offset + advance_abs * 0.5;
-                    y_offset = advance_abs * 0.5;
-                }
+                y_advance = add_vertical_inline_tracking(y_advance, tracking_adjust);
+            } else {
+                x_advance = add_inline_tracking(x_advance, tracking_adjust);
             }
+        }
 
-            Ok(GlyphInfo {
-                glyph_id: raw.glyph_id,
-                x_advance,
-                y_advance,
-                x_offset,
-                y_offset,
-                cluster: raw.cluster,
-                font_alias: Some(font_entry.key.alias.clone()),
-                font_weight: Some(font_entry.key.weight),
-                font_style: Some(font_entry.key.style.clone()),
-                rotation_deg: Some(rotation_deg),
-            })
-        })
-        .collect()
+        if vertical {
+            let upright = upright_by_byte
+                .as_ref()
+                .and_then(|m| m.get(raw.cluster as usize))
+                .copied()
+                .unwrap_or(true);
+            rotation_deg = if upright { 0 } else { 90 };
+            if upright {
+                let glyph_id = raw.glyph_id;
+                let (origin_x_px, origin_y_px) = if let Some(face) = &font_face {
+                    (
+                        resolve_vertical_origin_x_px(face.as_ref(), glyph_id, scale, em_size_px)?,
+                        resolve_vertical_origin_y_px(
+                            face.as_ref(),
+                            glyph_id,
+                            scale,
+                            fallback_vertical_origin_y_px,
+                        )?,
+                    )
+                } else {
+                    (em_size_px * 0.5, fallback_vertical_origin_y_px)
+                };
+
+                // Path extraction uses the glyph's horizontal origin, while vertical
+                // shaping positions are expressed relative to the vertical origin.
+                // Convert to our absolute-origin model using per-glyph vertical metrics.
+                x_offset = raw_x_offset + origin_x_px;
+                y_offset = origin_y_px;
+            } else {
+                // Sideways glyphs in vertical text use their horizontal advance as the
+                // logical height. The final ink centering is resolved from per-glyph
+                // extents during outline extraction, similar to HarfBuzz/Pango's
+                // separation of logical advance and ink extents.
+                let raw_x_advance_abs = f64::from(raw.x_advance).abs() * scale;
+                let raw_y_advance_abs = f64::from(raw.y_advance).abs() * scale;
+                let advance_abs = if raw_x_advance_abs == 0.0 && raw_y_advance_abs == 0.0 {
+                    0.0
+                } else {
+                    font_face
+                        .as_ref()
+                        .map(|face| face.glyph_hor_advance(raw.glyph_id))
+                        .transpose()?
+                        .flatten()
+                        .filter(|advance| *advance > 0.0)
+                        .map_or_else(
+                            || raw_x_advance_abs.max(raw_y_advance_abs),
+                            |advance| advance * scale,
+                        )
+                };
+                let signed_advance = if raw.y_advance > 0 {
+                    advance_abs
+                } else {
+                    -advance_abs
+                };
+                y_advance = add_vertical_inline_tracking(signed_advance, tracking_adjust);
+                // HarfBuzz sideways runs are positioned relative to the logical cell's
+                // leading edge. Our vertical column model uses the cell center as the
+                // anchor, so normalize x_offset into that coordinate space.
+                x_offset = raw_x_offset + advance_abs * 0.5;
+                y_offset = advance_abs * 0.5;
+            }
+        }
+
+        if [x_advance, y_advance, x_offset, y_offset]
+            .iter()
+            .any(|metric| !metric.is_finite())
+        {
+            return Err(BoundtextError::TextShaping {
+                reason: FontFailureReason::NonFiniteMetric,
+            });
+        }
+        glyphs.push(GlyphInfo {
+            glyph_id: raw.glyph_id,
+            x_advance,
+            y_advance,
+            x_offset,
+            y_offset,
+            cluster: raw.cluster,
+            font_alias: Some(font_entry.key.alias.clone()),
+            font_weight: Some(font_entry.key.weight),
+            font_style: Some(font_entry.key.style.clone()),
+            rotation_deg: Some(rotation_deg),
+        });
+        Ok(())
+    })?;
+    Ok(glyphs)
 }
 
 /// Shape text using the registry's backend and return glyph info array

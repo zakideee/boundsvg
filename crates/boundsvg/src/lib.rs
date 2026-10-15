@@ -1716,9 +1716,6 @@ fn transition_compatibility_error_to_js(
     )
 }
 
-/// Map an [`error::EngineError`] onto the structured envelope, preserving
-/// the TS `FatalError` contract for structured errors and falling back to a
-/// generic code otherwise.
 /// Classify a codec failure without forwarding codec messages or input data.
 fn font_decode_error_to_js(operation: &str) -> JsValue {
     font_error_to_js(
@@ -1743,6 +1740,7 @@ fn font_error_to_js(error: &boundtext::BoundtextError, operation: &str) -> JsVal
     )
 }
 
+/// Map renderer failures to the structured envelope without forwarding codec input data.
 fn engine_error_to_render_envelope(error: &error::EngineError) -> JsValue {
     match error {
         error::EngineError::Boundtext(error) => font_error_to_js(error, "render"),
@@ -2392,8 +2390,20 @@ impl BoundSvgEngine {
     ) -> Result<(), JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let font_style = parse_font_style(style);
-            let decoded = font::decode::decode_font(data.to_vec())
-                .map_err(|error| engine_error_to_render_envelope(&error))?;
+            let mut font_bytes = Vec::new();
+            font_bytes.try_reserve_exact(data.len()).map_err(|_| {
+                font_error_to_js(
+                    &boundtext::BoundtextError::FontParse {
+                        reason: boundtext::error::FontFailureReason::AllocationFailed,
+                        table: None,
+                        face_index: 0,
+                    },
+                    "registerFont",
+                )
+            })?;
+            font_bytes.extend_from_slice(data);
+            let decoded = font::decode::decode_font(font_bytes)
+                .map_err(|_| font_decode_error_to_js("registerFont"))?;
             self.registry
                 .register(decoded, alias.to_string(), weight, font_style)
                 .map_err(|error| font_error_to_js(&error, "registerFont"))
@@ -3620,6 +3630,7 @@ impl BoundSvgEngine {
             let inputs: Vec<PositionedGlyphPathRequest> = serde_json::from_str(glyphs_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid positioned glyph JSON: {e}")))?;
             let mut paths = Vec::with_capacity(inputs.len());
+            let mut face_cache = font::face_cache::OutlineFaceCache::new(self.registry.backend());
 
             for (request_index, input) in inputs.iter().enumerate() {
                 let font_style = parse_font_style(&input.font_style);
@@ -3636,8 +3647,8 @@ impl BoundSvgEngine {
                     .map(font::shaping::parse_css_font_variation_settings)
                     .map(|vs| font::shaping::to_shape_variations(&vs))
                     .unwrap_or_default();
-                let face = entry
-                    .font_face(self.registry.backend(), &variations)
+                let face = face_cache
+                    .resolve(entry, &variations)
                     .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
 
                 let outline_input = font::outline::PositionedGlyphPathInput {

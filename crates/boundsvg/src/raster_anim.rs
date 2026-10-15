@@ -400,10 +400,10 @@ impl<W: AnimationWriter> AnimationSession<W> {
 
     /// Disable output before dropping a GIF encoder, font snapshots or raster options.
     fn release_resources(&mut self) {
-        if let Some(codec) = &mut self.codec {
-            if let Some(writer) = codec.writer_mut() {
-                writer.disable();
-            }
+        if let Some(codec) = &mut self.codec
+            && let Some(writer) = codec.writer_mut()
+        {
+            writer.disable();
         }
         self.codec = None;
         self.fonts = Vec::new();
@@ -482,13 +482,13 @@ impl<W: AnimationWriter> AnimationSession<W> {
                 width: pixmap.width(),
                 height: pixmap.height(),
             };
-            if let Some(first) = self.canvas {
-                if first != canvas {
-                    return Err(EngineError::Rasterize(format!(
-                        "Animated frames must share one canvas size: frame {} is {}x{}, frame 0 is {}x{}",
-                        self.pushed_frames, canvas.width, canvas.height, first.width, first.height
-                    )));
-                }
+            if let Some(first) = self.canvas
+                && first != canvas
+            {
+                return Err(EngineError::Rasterize(format!(
+                    "Animated frames must share one canvas size: frame {} is {}x{}, frame 0 is {}x{}",
+                    self.pushed_frames, canvas.width, canvas.height, first.width, first.height
+                )));
             }
             self.canvas = Some(canvas);
             let codec = self.codec.as_mut().ok_or_else(|| {

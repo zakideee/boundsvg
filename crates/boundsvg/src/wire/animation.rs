@@ -364,14 +364,14 @@ fn assert_render_shape(
     if let Some(Value::Object(debug)) = options.get("debug") {
         assert_render_keys(debug, &["parts"], format)?;
         assert_render_optional(debug, "parts", format, Value::is_array)?;
-        if let Some(Value::Array(parts)) = debug.get("parts") {
-            if parts.iter().any(|part| !part.is_string()) {
-                return Err(render_options_failure(
-                    format,
-                    AnimationFailureReason::WrongType,
-                    Some("renderOptions"),
-                ));
-            }
+        if let Some(Value::Array(parts)) = debug.get("parts")
+            && parts.iter().any(|part| !part.is_string())
+        {
+            return Err(render_options_failure(
+                format,
+                AnimationFailureReason::WrongType,
+                Some("renderOptions"),
+            ));
         }
     }
     assert_render_optional(options, "resourceIdPrefix", format, Value::is_string)?;
@@ -410,17 +410,17 @@ fn parse_render_options(
     {
         return Err(domain());
     }
-    if let Some(crate::DebugOverlayInput::Config(debug)) = &render_options.debug {
-        if debug.parts.as_ref().is_some_and(|parts| {
+    if let Some(crate::DebugOverlayInput::Config(debug)) = &render_options.debug
+        && debug.parts.as_ref().is_some_and(|parts| {
             parts.iter().any(|part| {
                 !matches!(
                     part.as_str(),
                     "specified" | "layout" | "actual" | "baseline"
                 )
             })
-        }) {
-            return Err(domain());
-        }
+        })
+    {
+        return Err(domain());
     }
     if render_options
         .generator

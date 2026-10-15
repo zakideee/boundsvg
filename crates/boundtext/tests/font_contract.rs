@@ -255,3 +255,42 @@ fn call_specific_state_does_not_leak_and_nonfinite_axes_are_errors() {
     }
     assert_eq!(run(&light)[0].x_advance, before[0].x_advance);
 }
+
+#[test]
+fn finite_authored_inputs_cannot_return_nonfinite_scaled_glyphs() {
+    use boundtext::font::{FontRegistry, FontStyle, shaping};
+
+    let mut registry = FontRegistry::new();
+    registry
+        .register(
+            STATIC_FONT.to_vec(),
+            "Static".to_string(),
+            400,
+            FontStyle::Normal,
+        )
+        .unwrap();
+    let entry = registry.resolve("Static", 400, &FontStyle::Normal).unwrap();
+    for writing_mode in [None, Some("vertical-rl".to_string())] {
+        let options = shaping::ShapeOptions {
+            writing_mode,
+            ..Default::default()
+        };
+        assert_eq!(
+            shaping::shape_text_with_options(&registry, entry, "AA", f64::MAX, f64::MAX, &options,)
+                .unwrap_err(),
+            BoundtextError::TextShaping {
+                reason: FontFailureReason::NonFiniteMetric,
+            }
+        );
+    }
+    let recovered = shaping::shape_text_with_options(
+        &registry,
+        entry,
+        "A",
+        20.0,
+        0.0,
+        &shaping::ShapeOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(recovered[0].x_advance, 12.0);
+}

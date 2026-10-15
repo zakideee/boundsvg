@@ -151,6 +151,7 @@ type BtEntry = {
 // Font alias → filename map (same as browser-runner)
 // ---------------------------------------------------------------------------
 
+/** Map corpus font identifiers to injected fixture filenames. */
 const FONT_FILE_MAP: Record<string, string> = {
   NotoSansJP: "NotoSansJP-Regular.subset.ttf",
   NotoSerifJP: "NotoSerifJP-Regular.subset.ttf",
@@ -539,6 +540,7 @@ function buildSceneNode(spec: SpecCase, canvasWidth: number, canvasHeight: numbe
 // Canvas sizing
 // ---------------------------------------------------------------------------
 
+/** Extra vertical canvas margin in pixels for visual comparisons. */
 const HEIGHT_MARGIN = 8;
 
 function computeCanvasSize(

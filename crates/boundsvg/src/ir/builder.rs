@@ -329,12 +329,12 @@ fn build_node<S: std::hash::BuildHasher>(
         };
 
     // Image borderRadius → rounded clipPath
-    if input.node_type == "image" {
-        if let Some(raw_radius) = visual.border_radius.as_ref() {
-            clip_path = Some(bbox);
-            clip_border_radius =
-                resolve_border_radius(Some(&to_border_radius_input(raw_radius)), bbox.w, bbox.h);
-        }
+    if input.node_type == "image"
+        && let Some(raw_radius) = visual.border_radius.as_ref()
+    {
+        clip_path = Some(bbox);
+        clip_border_radius =
+            resolve_border_radius(Some(&to_border_radius_input(raw_radius)), bbox.w, bbox.h);
     }
 
     let opacity = visual.opacity.filter(|value| *value != 1.0);
@@ -501,15 +501,16 @@ fn resolve_aligned_text_bbox(
 fn append_text_warnings(context: &mut TextChildContext, layout: &TextLayoutOutput) {
     context.warnings.extend(layout.warnings.iter().cloned());
 
-    if let Some(overflow) = &layout.overflow {
-        if overflow.overflow_type == "kinsoku_unresolved" {
-            let node_id = context.node_id;
-            let reason_suffix = overflow
-                .reason
-                .as_deref()
-                .map(|reason| format!(" ({reason})"))
-                .unwrap_or_default();
-            context.warnings.push(SerializedRecoverableError::recoverable(
+    if let Some(overflow) = &layout.overflow
+        && overflow.overflow_type == "kinsoku_unresolved"
+    {
+        let node_id = context.node_id;
+        let reason_suffix = overflow
+            .reason
+            .as_deref()
+            .map(|reason| format!(" ({reason})"))
+            .unwrap_or_default();
+        context.warnings.push(SerializedRecoverableError::recoverable(
                 RecoverableCode::KinsokuUnresolved,
                 format!(
                     "Kinsoku line breaking could not be fully resolved for text node \"{node_id}\"; a forced break was used{reason_suffix}.",
@@ -518,7 +519,6 @@ fn append_text_warnings(context: &mut TextChildContext, layout: &TextLayoutOutpu
                 Some(node_id.to_string()),
                 "forced-break",
             ));
-        }
     }
 }
 
@@ -1064,9 +1064,10 @@ fn build_image_child(
 ) {
     // The serializer already embedded byte sources as data URIs. A string
     // reference passes through unchanged; absence means embedding failed.
-    if let Some(src) = visual.src.as_deref() {
-        if !src.starts_with("data:") {
-            warnings.push(SerializedRecoverableError::recoverable(
+    if let Some(src) = visual.src.as_deref()
+        && !src.starts_with("data:")
+    {
+        warnings.push(SerializedRecoverableError::recoverable(
                 RecoverableCode::ImageSrcNotEmbedded,
                 format!(
                     "Image src for node \"{node_id}\" is a reference, not embedded data. SVG keeps the reference; PNG rasterization omits the image. Pass a Uint8Array or a data: URI to embed it.",
@@ -1075,7 +1076,6 @@ fn build_image_child(
                 Some(node_id.to_string()),
                 "svg_reference_only",
             ));
-        }
     }
 
     let data_uri = match visual.src.as_deref() {
@@ -1510,10 +1510,10 @@ fn parse_svg_content(
 ) -> Result<(Option<String>, String), super::svg_id_rewrite::SvgIdRewriteError> {
     let view_box = extract_svg_view_box(svg_string);
     let mut inner = strip_outer_svg(svg_string);
-    if let Some(prefix) = content_id_prefix.filter(|prefix| !prefix.is_empty()) {
-        if !inner.is_empty() {
-            inner = rewrite_svg_ids(&inner, prefix)?;
-        }
+    if let Some(prefix) = content_id_prefix.filter(|prefix| !prefix.is_empty())
+        && !inner.is_empty()
+    {
+        inner = rewrite_svg_ids(&inner, prefix)?;
     }
     Ok((view_box, inner))
 }

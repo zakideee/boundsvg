@@ -1892,13 +1892,13 @@ fn resolve_debug_overlay_node(
             }
             push_shape_part_bounds_rects(node, items);
         }
-        if parts.actual {
-            if let Some(measured_bbox) = resolve_measured_glyph_bbox(node) {
-                items.push(PaintItem::DebugRect(DebugRectItem {
-                    bbox: measured_bbox,
-                    kind: DebugRectKind::Actual,
-                }));
-            }
+        if parts.actual
+            && let Some(measured_bbox) = resolve_measured_glyph_bbox(node)
+        {
+            items.push(PaintItem::DebugRect(DebugRectItem {
+                bbox: measured_bbox,
+                kind: DebugRectKind::Actual,
+            }));
         }
     }
     if parts.baseline {

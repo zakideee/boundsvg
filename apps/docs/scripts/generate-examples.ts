@@ -22,12 +22,19 @@ import { format as formatWithPrettier } from "prettier";
 
 // biome-ignore lint/style/useNamingConvention: Node.js __dirname convention
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/** Public workspace root used to resolve source and fixture paths. */
 const ROOT = path.resolve(__dirname, "../../..");
+/** Documentation application root. */
 const DOCS = path.resolve(__dirname, "..");
+/** Destination for generated documentation SVG images. */
 const OUT_SVG = path.resolve(DOCS, "public/generated");
+/** Destination for generated Markdown examples. */
 const OUT_MD = path.resolve(DOCS, "_generated");
+/** Destination for generated shared README SVG fixtures. */
 const OUT_FIXTURE_SVG = path.resolve(ROOT, "fixtures/generated");
+/** Destination for generated shared README PNG fixtures. */
 const OUT_FIXTURE_PNG = OUT_FIXTURE_SVG;
+/** Examples that also publish the shared README image fixtures. */
 const README_FIXTURE_IDS = new Set([
   "figure-flow",
   "terminal-code",
@@ -35,15 +42,24 @@ const README_FIXTURE_IDS = new Set([
   "terminal-typing",
   "vertical-ruby-ja",
 ]);
+/** Foreground color of the vertical base text. */
 const VERTICAL_RUBY_MAIN_FILL = "#f8fafc";
+/** Foreground color of the vertical ruby annotation. */
 const VERTICAL_RUBY_RT_FILL = "#bae6fd";
+/** Outline color that keeps vertical ruby legible. */
 const VERTICAL_RUBY_OUTLINE = "#172033";
+/** Injected Japanese font fixture for documentation rendering. */
 const FONT_PATH = path.resolve(ROOT, "fixtures/fonts/NotoSansJP-Regular.subset.ttf");
+/** Injected JetBrains Mono WOFF2 fixture. */
 const FONT_JETBRAINS = path.resolve(ROOT, "fixtures/fonts/JetBrainsMono-Regular.woff2");
+/** Injected Monaspace Neon WOFF2 fixture. */
 const FONT_MONASPACE = path.resolve(ROOT, "fixtures/fonts/MonaspaceNeon-Regular.woff2");
 
+/** Core public source entry imported by the example builders. */
 const CORE_SRC = path.resolve(ROOT, "packages/core/src/index.ts");
+/** Node initialization source entry for the generated WASM bindings. */
 const CORE_NODE_SRC = path.resolve(ROOT, "packages/core/src/node.ts");
+/** Core WASM bridge source entry used by the examples. */
 const CORE_WASM_SRC = path.resolve(ROOT, "packages/core/src/wasm/index.ts");
 
 // ---------------------------------------------------------------------------
@@ -95,6 +111,7 @@ type Example = ExampleDefinition &
 type FlowFragmentBox = { x: number; y: number; availableInlineSizePx: number; text: string };
 let figureFlowFragments: FlowFragmentBox[] = [];
 
+/** Authored example scenes and their matching documentation snippets. */
 const EXAMPLES: Example[] = [
   // --- Canvas ---
   {
@@ -691,16 +708,27 @@ engine.registerSymbol("arrow", arrow);
     build: (core) => {
       const canvasWidth = 780;
       const canvasHeight = 400;
+      /** Terminal frame width in pixels. */
       const FRAME_W = 740;
+      /** Terminal frame height in pixels. */
       const FRAME_H = 360;
+      /** Terminal header height in pixels. */
       const HDR = 40;
+      /** Terminal footer height in pixels. */
       const FTR = 32;
+      /** Gap between terminal panes in pixels. */
       const GAP = 10;
+      /** Terminal content height after header and footer, in pixels. */
       const CONTENT_H = FRAME_H - HDR - FTR;
+      /** Pane padding in top, right, bottom, left pixel order. */
       const PANE_PAD: [number, number, number, number] = [10, 12, 10, 12];
+      /** Source-code pane width in pixels. */
       const SRC_W = 410;
+      /** Output pane width in pixels. */
       const OUT_W = FRAME_W - 32 - SRC_W - GAP;
+      /** Pane header height in pixels. */
       const PANE_HDR = 30;
+      /** Pane body height in pixels. */
       const PANE_BODY = CONTENT_H - 28 - PANE_HDR;
 
       const srcFont = "JetBrainsMono";
@@ -1119,30 +1147,51 @@ const svg = engine.renderToSvg(vnode, { debug: true });`,
     code: `/* Self-animating terminal: one declarative SVG, no script, no runtime */`,
     build: (core) => {
       const { Box, Canvas, Inline, Text } = core;
+      /** Registered monospace font alias used by terminal text. */
       const MONO = "JetBrainsMono";
+      /** Registered Japanese sans-serif font alias. */
       const SANS = "NotoSansJP";
+      /** Animated terminal canvas width in pixels. */
       const CANVAS_W = 720;
+      /** Animated terminal canvas height in pixels. */
       const CANVAS_H = 360;
+      /** Terminal screen background color. */
       const SCREEN = "#0b1220";
+      /** Terminal text size in pixels. */
       const FONT_PX = 18;
+      /** Terminal line-height multiplier applied to the font size. */
       const LINE_H = 1.45;
       // JetBrains Mono advances every glyph by 0.6 em, which is what lets the
       // wipe below land exactly one character per easing step.
+      /** Monospace character advance in pixels. */
       const ADVANCE = FONT_PX * 0.6;
+      /** Rounded terminal row advance in pixels. */
       const ROW = Math.round(FONT_PX * LINE_H);
+      /** Terminal content left inset in pixels. */
       const LEFT = 54;
+      /** Terminal content top inset in pixels. */
       const TOP = 94;
+      /** Terminal content width in pixels. */
       const WIDTH = 612;
+      /** Shell prompt displayed before the animated command. */
       const PROMPT = "$ ";
+      /** Command revealed by the typing animation. */
       const COMMAND = "pnpm test --filter @boundsvg/core";
+      /** Total terminal animation duration in milliseconds. */
       const DURATION = 4_000;
       // Roughly 44 ms per keystroke, a beat before the runner starts, then a
       // held PASS so the payoff is on screen for most of a casual glance.
+      /** Normalized timeline progress at which command typing ends. */
       const TYPING_END = 0.3;
+      /** Normalized timeline progress at which execution begins. */
       const RUN_START = 0.34;
+      /** Normalized timeline progress at which execution finishes. */
       const RUN_END = 0.7;
+      /** Number of cells in the animated progress indicator. */
       const CELLS = 12;
+      /** Quarter-block glyphs used by the execution spinner. */
       const SPINNER = ["▖", "▘", "▝", "▗"];
+      /** Terminal foreground palette. */
       const INK = {
         prompt: "#4ade80",
         command: "#e2e8f0",
@@ -1155,15 +1204,15 @@ const svg = engine.renderToSvg(vnode, { debug: true });`,
       };
 
       /** Step-holds a node hidden until `from`, and hides it again at `to`. */
-      const reveal = (from: number, to: number | null) => {
-        const closing = to !== null && to < 1;
+      const reveal = (startProgress: number, endProgress: number | null) => {
+        const closing = endProgress !== null && endProgress < 1;
         const keyframes: Array<{ at: number; opacity: number }> = [];
-        if (from > 0) {
+        if (startProgress > 0) {
           keyframes.push({ at: 0, opacity: 0 });
         }
-        keyframes.push({ at: from, opacity: 1 });
+        keyframes.push({ at: startProgress, opacity: 1 });
         if (closing) {
-          keyframes.push({ at: to, opacity: 0 });
+          keyframes.push({ at: endProgress, opacity: 0 });
         }
         keyframes.push({ at: 1, opacity: closing ? 0 : 1 });
         return {
@@ -1753,10 +1802,10 @@ const flow = engine.layoutTextFlowWithExclusions({
       const circlePath = (r: number) =>
         `M ${cx - r} ${cy} A ${r} ${r} 0 1 1 ${cx + r} ${cy} A ${r} ${r} 0 1 1 ${cx - r} ${cy} Z`;
       // A bare Path participates in flex layout; anchor each one to the canvas.
-      const figurePath = (d: string, fill: string) =>
+      const figurePath = (pathData: string, fill: string) =>
         core.Box(
           { position: "absolute", left: 0, top: 0, width: 760, height: 300 },
-          core.Path({ d, width: 760, height: 300, fill }),
+          core.Path({ d: pathData, width: 760, height: 300, fill }),
         );
       const lineHeightPx = 15 * 1.8;
       return core.Canvas(

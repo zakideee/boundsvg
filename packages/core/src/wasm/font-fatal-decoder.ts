@@ -1,7 +1,9 @@
+/** Decode the bounded font-failure catalog shared by direct and text-layout WASM calls. */
+
 import { FatalError } from "../errors.js";
 
 /** Maximum serialized font diagnostic accepted from the WASM transport. */
-const MAX_FONT_ENVELOPE_BYTES = 8_192;
+const FONT_ENVELOPE_BYTES_MAX = 8_192;
 /** Parse failures that the font backend can report without exposing input bytes. */
 const PARSE_REASONS = new Set([
   "invalidData",
@@ -26,6 +28,7 @@ const OUTLINE_REASONS = new Set([
 /** Failures reported before or by the shaping operation itself. */
 const SHAPING_REASONS = new Set([
   "nonFiniteVariation",
+  "nonFiniteMetric",
   "allocationFailed",
   "bufferPreparationFailed",
   "inputTooLong",
@@ -160,8 +163,8 @@ export function matchesFontFailure(candidate: FontFatalCandidate): boolean {
 export function decodeWasmFontFatal(error: unknown, operation: string): FatalError | undefined {
   if (
     typeof error !== "string" ||
-    error.length > MAX_FONT_ENVELOPE_BYTES ||
-    new TextEncoder().encode(error).length > MAX_FONT_ENVELOPE_BYTES
+    error.length > FONT_ENVELOPE_BYTES_MAX ||
+    new TextEncoder().encode(error).length > FONT_ENVELOPE_BYTES_MAX
   ) {
     return undefined;
   }

@@ -115,6 +115,53 @@ fn centered_column_text_input() -> LayoutInput {
     }
 }
 
+#[test]
+fn inline_woff2_matches_ttf_layout_and_invalid_woff2_is_fatal() {
+    let ttf_input = centered_column_text_input();
+    let expected = compute_full_layout(&ttf_input).expect("valid TTF layout");
+    let mut woff2_input = centered_column_text_input();
+    woff2_input.fonts[0].data = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/fonts/NotoSansJP-Regular.subset.woff2"
+    ))
+    .expect("WOFF2 fixture");
+    let external_registry = FontRegistry::new();
+    for actual in [
+        compute_full_layout(&woff2_input),
+        compute_full_layout_with_registry(&woff2_input, &external_registry),
+    ] {
+        let actual = actual.expect("inline WOFF2 must decode before admission");
+        assert_eq!(actual.nodes.len(), expected.nodes.len());
+        for (actual_node, expected_node) in actual.nodes.iter().zip(&expected.nodes) {
+            assert_eq!(actual_node.node_id, expected_node.node_id);
+            assert_eq!(
+                [
+                    actual_node.x,
+                    actual_node.y,
+                    actual_node.width,
+                    actual_node.height
+                ],
+                [
+                    expected_node.x,
+                    expected_node.y,
+                    expected_node.width,
+                    expected_node.height
+                ]
+            );
+        }
+    }
+    woff2_input.fonts[0].data = b"wOF2truncated".to_vec();
+    for actual in [
+        compute_full_layout(&woff2_input),
+        compute_full_layout_with_registry(&woff2_input, &external_registry),
+    ] {
+        assert!(matches!(
+            actual,
+            Err(crate::error::EngineError::Woff2Decode(_))
+        ));
+    }
+}
+
 fn nested_layout_input(depth: usize) -> LayoutInput {
     let mut child = LayoutNodeInput {
         node_id: format!("box-{depth}"),

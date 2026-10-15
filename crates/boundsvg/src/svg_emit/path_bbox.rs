@@ -68,12 +68,12 @@ fn tokenize(path_data: &str) -> Vec<PathToken> {
             cursor += 1;
             continue;
         }
-        if let Some(end) = match_number_token(bytes, cursor) {
-            if let Ok(value) = path_data[cursor..end].parse::<f64>() {
-                tokens.push(PathToken::Number(value));
-                cursor = end;
-                continue;
-            }
+        if let Some(end) = match_number_token(bytes, cursor)
+            && let Ok(value) = path_data[cursor..end].parse::<f64>()
+        {
+            tokens.push(PathToken::Number(value));
+            cursor = end;
+            continue;
         }
         cursor += 1;
     }

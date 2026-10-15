@@ -50,6 +50,13 @@ metrics are retained, and normalized axis-coordinate quantization can differ
 from previous versions. Fonts with 65,535 glyphs, including a nonempty last
 glyph, no longer require a vendored parser.
 
+Raw SVG text follows usvg's optical sizing behavior: when a variable font has
+an `opsz` axis, `font-optical-sizing: auto` selects an optical size from the
+font size. This can change outlines from older versions. Use
+`font-optical-sizing: none` or an explicit `font-variation-settings: "opsz" 14`
+when the SVG needs a fixed optical size. This does not implicitly add an `opsz`
+setting to the declarative `Text` API.
+
 SVG text, geometry, decoded RGBA pixels and encoded PNG/WebP/GIF bytes are
 separate comparison surfaces. Font and raster library upgrades can change them
 across versions. The byte reproducibility guarantee applies to repeated runs

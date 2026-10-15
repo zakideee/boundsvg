@@ -938,22 +938,21 @@ fn valid_offset_suffix(suffix: &str) -> bool {
 
 fn classify_smil_suffix(suffix: &str) -> Option<&'static str> {
     for base in ["begin", "end"] {
-        if let Some(rest) = suffix.strip_prefix(base) {
-            if valid_offset_suffix(rest) {
-                return Some("syncbase");
-            }
+        if let Some(rest) = suffix.strip_prefix(base)
+            && valid_offset_suffix(rest)
+        {
+            return Some("syncbase");
         }
     }
     if let Some(rest) = suffix.strip_prefix("repeat(") {
-        if let Some(close) = rest.find(')') {
-            if !rest[..close].is_empty()
-                && rest[..close]
-                    .chars()
-                    .all(|character| character.is_ascii_digit())
-                && valid_offset_suffix(&rest[close + 1..])
-            {
-                return Some("repeat");
-            }
+        if let Some(close) = rest.find(')')
+            && !rest[..close].is_empty()
+            && rest[..close]
+                .chars()
+                .all(|character| character.is_ascii_digit())
+            && valid_offset_suffix(&rest[close + 1..])
+        {
+            return Some("repeat");
         }
         return None;
     }

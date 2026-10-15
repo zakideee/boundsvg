@@ -1,4 +1,9 @@
+//! Injected font decoding and text-engine font contracts used by rendering.
+
+/// Decode supported font containers before text-engine admission.
 pub mod decode;
+/// Reuse consecutive immutable faces within one outline operation.
+pub(crate) mod face_cache;
 
 // Re-export all boundtext font submodules and types
 pub use boundtext::font::line_metrics;

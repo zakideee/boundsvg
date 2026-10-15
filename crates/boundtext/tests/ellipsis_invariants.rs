@@ -1860,10 +1860,10 @@ fn synthetic_marker_diagnostics_are_committed() {
 
 #[test]
 fn ellipsis_line_always_fits_or_is_ellipsis_only() {
-    let jp = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let japanese_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
     let families = vec!["JP".to_string()];
     let ctx = FontContext {
-        registry: &jp,
+        registry: &japanese_registry,
         fallback_registry: None,
         families: &families,
         weight: 400,
@@ -1888,7 +1888,7 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
 
     for text in texts {
         for &size in &sizes {
-            for &ls in &letter_spacings {
+            for &letter_spacing_px in &letter_spacings {
                 // sweep widths from tiny to generous
                 for step in 0..16 {
                     let max_width = f64::from(step) * 8.0;
@@ -1897,7 +1897,7 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
                         max_width,
                         &ctx,
                         size,
-                        ls,
+                        letter_spacing_px,
                         size * 1.5,
                         size,
                         None,
@@ -1912,7 +1912,7 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
                     // unless the line is the "…" alone (documented best effort).
                     if line.width > max_width + 0.001 && line.text != "\u{2026}" {
                         violations.push(format!(
-                            "text={text:?} size={size} ls={ls} max_width={max_width} -> kept {:?} width {:.3}",
+                            "text={text:?} size={size} letter_spacing_px={letter_spacing_px} max_width={max_width} -> kept {:?} width {:.3}",
                             line.text, line.width
                         ));
                     }
@@ -1922,12 +1922,12 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
                         &ctx,
                         &line.text,
                         size,
-                        ls,
+                        letter_spacing_px,
                         &ShapeOptions::default(),
                     );
                     if (actual - line.width).abs() > 0.01 {
                         violations.push(format!(
-                            "REPORTED != ACTUAL text={text:?} size={size} ls={ls} kept={:?} reported={:.3} actual={:.3}",
+                            "REPORTED != ACTUAL text={text:?} size={size} letter_spacing_px={letter_spacing_px} kept={:?} reported={:.3} actual={:.3}",
                             line.text, line.width, actual
                         ));
                     }
@@ -1940,8 +1940,8 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
         "checked {checked} truncations, {} violations",
         violations.len()
     );
-    for v in violations.iter().take(12) {
-        println!("  {v}");
+    for violation in violations.iter().take(12) {
+        println!("  {violation}");
     }
     assert!(
         violations.is_empty(),
@@ -1952,10 +1952,10 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
 
 #[test]
 fn ellipsis_with_variations_still_fits() {
-    let vf = registry("VF", "Inter-Variable.ttf");
+    let variable_registry = registry("VF", "Inter-Variable.ttf");
     let families = vec!["VF".to_string()];
     let ctx = FontContext {
-        registry: &vf,
+        registry: &variable_registry,
         fallback_registry: None,
         families: &families,
         weight: 400,

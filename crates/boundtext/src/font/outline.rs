@@ -5,7 +5,7 @@ use crate::error::{BoundtextError, FontFailureReason};
 use std::fmt::Write;
 
 /// Bytes sufficient for six fixed-notation finite f64 coordinates and SVG punctuation.
-const SVG_COMMAND_MAX_BYTES: usize = 1900;
+const SVG_COMMAND_BYTES_MAX: usize = 1900;
 
 /// SVG path data for a single glyph, positioned at (x, y)
 #[derive(Debug, Clone, Serialize)]
@@ -105,7 +105,7 @@ impl PathBuilder {
         if self.failure.is_some() {
             return;
         }
-        if self.commands.try_reserve(SVG_COMMAND_MAX_BYTES).is_err() {
+        if self.commands.try_reserve(SVG_COMMAND_BYTES_MAX).is_err() {
             self.failure = Some(FontFailureReason::AllocationFailed);
             return;
         }
@@ -366,7 +366,7 @@ pub fn extract_positioned_glyph_path(
     // tofu marker — never render the font's own .notdef outline (which may be
     // a filled rectangle indistinguishable from a real glyph).
     if glyph_id == 0 && input.show_missing_glyphs {
-        return Ok(Some(build_tofu_rect(face, input, scale)));
+        return build_tofu_rect(face, input, scale).map(Some);
     }
 
     let mut recorded = RecordedOutline::default();
@@ -455,7 +455,7 @@ fn build_tofu_rect(
     face: &dyn backend::FontFace,
     input: &PositionedGlyphPathInput,
     scale: f64,
-) -> GlyphPath {
+) -> Result<GlyphPath, BoundtextError> {
     // Use font_size_px as width so the marker matches surrounding glyph cells.
     let cell = input.font_size_px;
     let ascender = face
@@ -483,7 +483,24 @@ fn build_tofu_rect(
     let rect_width = (cell - inset * 2.0).max(0.5);
     let rect_height = (em_height - inset * 2.0).max(0.5);
     let rect_right = rect_x + rect_width;
+    let rect_bottom = rect_y + rect_height;
     let negative_rect_width = -rect_width;
+    if [
+        rect_x,
+        rect_y,
+        rect_width,
+        rect_height,
+        rect_right,
+        rect_bottom,
+    ]
+    .iter()
+    .any(|coordinate| !coordinate.is_finite())
+    {
+        return Err(BoundtextError::FontOutline {
+            reason: FontFailureReason::NonFiniteMetric,
+            glyph_id: input.glyph_id,
+        });
+    }
 
     // Preserve the established tofu bytes unless the additive rotation is active.
     let inline_scale = input.inline_scale.unwrap_or(1.0);
@@ -507,13 +524,18 @@ fn build_tofu_rect(
             pivot_x: input.origin_x,
             pivot_y: input.origin_y,
         };
-        let rect_bottom = rect_y + rect_height;
         let points = [
             transform.apply_positioned_rotations(rect_x, rect_y),
             transform.apply_positioned_rotations(rect_right, rect_y),
             transform.apply_positioned_rotations(rect_right, rect_bottom),
             transform.apply_positioned_rotations(rect_x, rect_bottom),
         ];
+        if points.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
+            return Err(BoundtextError::FontOutline {
+                reason: FontFailureReason::NonFiniteMetric,
+                glyph_id: input.glyph_id,
+            });
+        }
         format!(
             "M{},{}L{},{}L{},{}L{},{}ZM{},{}L{},{}M{},{}L{},{}",
             PathBuilder::fmt(points[0].0),
@@ -535,13 +557,13 @@ fn build_tofu_rect(
         )
     };
 
-    GlyphPath {
+    Ok(GlyphPath {
         d: path_data,
         x: input.origin_x,
         y: input.origin_y,
         glyph_id: Some(input.glyph_id),
         request_index: Some(input.request_index),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -941,6 +963,42 @@ mod tests {
         assert!(tofu.d.contains('Z'));
         assert!(!tofu.d.contains("NaN"));
         assert!(!tofu.d.contains("inf"));
+    }
+
+    #[test]
+    fn synthetic_tofu_rejects_nonfinite_geometry_from_finite_inputs() {
+        let data = test_font_data();
+        let face = make_face(&data);
+        let input = PositionedGlyphPathInput {
+            glyph_id: 0,
+            show_missing_glyphs: true,
+            ..positioned_input(0)
+        };
+        for overflowing in [
+            PositionedGlyphPathInput {
+                font_size_px: f64::MAX,
+                origin_x: f64::MAX,
+                ..input.clone()
+            },
+            PositionedGlyphPathInput {
+                inline_scale: Some(f64::MAX),
+                baseline_rotation_deg: Some(45.0),
+                ..input.clone()
+            },
+        ] {
+            assert_eq!(
+                extract_positioned_glyph_path(face.as_ref(), &overflowing).unwrap_err(),
+                BoundtextError::FontOutline {
+                    reason: FontFailureReason::NonFiniteMetric,
+                    glyph_id: 0,
+                }
+            );
+        }
+        assert!(
+            extract_positioned_glyph_path(face.as_ref(), &input)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

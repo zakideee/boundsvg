@@ -97,6 +97,7 @@ type CliResult = {
 // Font file mapping
 // ---------------------------------------------------------------------------
 
+/** Map corpus font identifiers to injected fixture filenames. */
 const FONT_FILE_MAP: Record<string, string> = {
   NotoSansJP: "NotoSansJP-Regular.subset.ttf",
   NotoSerifJP: "NotoSerifJP-Regular.subset.ttf",
