@@ -44,4 +44,3 @@ _build/
 # Playwright
 e2e/test-results/
 e2e/playwright-report/
-vendor/ttf-parser/Cargo.lock
