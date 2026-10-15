@@ -43,6 +43,9 @@ export type IrNode1 =
       fontFallback?: string[];
       fontSizePx: number;
       fontWeight?: number;
+      /**
+       * Registered font style used for face lookup and serialized glyph provenance.
+       */
       fontStyle?: "normal" | "italic";
       letterSpacingPx?: number;
       fontVariationSettings?: string;
@@ -175,6 +178,9 @@ export type StrokeLinecap = "butt" | "round" | "square";
  * Stroke line join.
  */
 export type StrokeLinejoin = "miter" | "round" | "bevel";
+/**
+ * Registered font style used for face lookup and serialized glyph provenance.
+ */
 export type FontStyle = "normal" | "italic";
 /**
  * Choose mixed glyph orientation or upright glyphs in vertical writing.

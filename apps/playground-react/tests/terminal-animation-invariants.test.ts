@@ -7,6 +7,7 @@ import ts from "typescript";
 import { DEFAULT_LAYOUT_REACTIVE_PLAYGROUND_CONTROLS } from "../../playground-shared/animation-playground.ts";
 import { LAYOUT_REACTIVE_PRESETS } from "../src/pages/animation/layout-reactive-presets.ts";
 
+/** Terminal lines whose leading spaces must survive both rendering paths. */
 const EXPECTED_WHITESPACE_LINES = [
   " RUNS  packages/core",
   " ✓ typing-ime.test.ts   312ms",
@@ -212,8 +213,8 @@ function assertReadmeTerminalSourceInvariants(): void {
   visitReveal(reveal);
   assert.deepEqual(pushedKeyframes, [
     "{at:0,opacity:0}",
-    "{at:from,opacity:1}",
-    "{at:to,opacity:0}",
+    "{at:startProgress,opacity:1}",
+    "{at:endProgress,opacity:0}",
     "{at:1,opacity:closing?0:1}",
   ]);
   assert.ok(revealReturn, "README terminal reveal return must exist");
