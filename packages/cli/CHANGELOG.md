@@ -1,5 +1,24 @@
 # @boundsvg/cli
 
+## 0.8.0
+
+### Minor Changes
+
+- [#47](https://github.com/zakideee/boundsvg/pull/47) [`a51ba51`](https://github.com/zakideee/boundsvg/commit/a51ba5110becd6e6a87e3ad0e304ed4528fb2bce) Thanks [@zakideee](https://github.com/zakideee)! - Remove the `boundsvg-convert` executable and use the standard `boundsvg convert`
+  command instead. For example, replace `boundsvg-convert --input card.svg
+--default-font Inter` with `boundsvg convert --input card.svg --default-font Inter`.
+  The old executable has no alias after upgrading. Conversion options, library
+  exports, and the `boundsvg` executable remain available.
+
+  The executable now dispatches each command once when started through its real
+  Node path as well as the installed launcher. Root and animation library imports
+  do not execute commands or produce CLI output.
+
+### Patch Changes
+
+- Updated dependencies [[`a51ba51`](https://github.com/zakideee/boundsvg/commit/a51ba5110becd6e6a87e3ad0e304ed4528fb2bce), [`a51ba51`](https://github.com/zakideee/boundsvg/commit/a51ba5110becd6e6a87e3ad0e304ed4528fb2bce)]:
+  - @boundsvg/core@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes

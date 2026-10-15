@@ -1,5 +1,22 @@
 # @boundsvg/react
 
+## 0.8.0
+
+### Minor Changes
+
+- [#47](https://github.com/zakideee/boundsvg/pull/47) [`a51ba51`](https://github.com/zakideee/boundsvg/commit/a51ba5110becd6e6a87e3ad0e304ed4528fb2bce) Thanks [@zakideee](https://github.com/zakideee)! - Hit-test candidates include Path geometry and stroke outside its layout box. Explicit rectangular and rounded clips exclude invisible portions of their owner and descendants, including transformed and nested clips. Browser and React interaction verify painted Path fill/stroke, so empty space inside conservative bounds falls through to nodes underneath. Interactive container frames are tested in their own transformed coordinates, rather than the empty corners of a world-axis-aligned bounding box. React also uses the current native pointer hit stack for canvas-stable strokes under SVG viewport scaling.
+
+  Path IR now includes required Rust-derived `pathGeometry`, and the WASM schema is 34. Regenerate saved or hand-built older IR with the matching engine's `renderToIR(scene)` before hit testing; missing geometry raises `VALIDATION` rather than using layout bounds. Path `width`/`height`, layout `bbox`, and inspection bounds keep their placement meaning. Static and explicit `timeMs` samples are covered; live SVG playback does not synchronize the hit index at every instant.
+
+### Patch Changes
+
+- [#48](https://github.com/zakideee/boundsvg/pull/48) [`ba96cd2`](https://github.com/zakideee/boundsvg/commit/ba96cd210cac218ef2cacbba39b8c87583d51aa8) Thanks [@zakideee](https://github.com/zakideee)! - Preserve displayed SVG DOM across unrelated parent updates in `BoundSvg`, `AnimatedBoundSvg`, and `InteractiveBoundSvg`. `InteractiveBoundSvg` also preserves the DOM through hover while using current event handlers. In animated displays, these updates preserve animation clocks. Changed SVG content still replaces the display.
+
+- Updated dependencies [[`a51ba51`](https://github.com/zakideee/boundsvg/commit/a51ba5110becd6e6a87e3ad0e304ed4528fb2bce), [`a51ba51`](https://github.com/zakideee/boundsvg/commit/a51ba5110becd6e6a87e3ad0e304ed4528fb2bce)]:
+  - @boundsvg/core@0.8.0
+  - @boundsvg/browser@0.8.0
+  - @boundsvg/worker@0.8.0
+
 ## 0.7.0
 
 ### Patch Changes
