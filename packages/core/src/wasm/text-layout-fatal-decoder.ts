@@ -1,10 +1,15 @@
 import { FatalError } from "../errors.js";
 import type { MeasurementTextLayoutOperation } from "../text/layout-operation.js";
+import { matchesFontFailure } from "./font-fatal-decoder.js";
 
-const MAX_TEXT_LAYOUT_CONTEXT_BYTES = 4_096;
-const MAX_TEXT_LAYOUT_ENVELOPE_BYTES = 8_192;
-const MAX_REQUESTED_ALIASES = 16;
-const MAX_ALIAS_BYTES = 256;
+/** Maximum UTF-8 byte length accepted for diagnostic context. */
+const TEXT_LAYOUT_CONTEXT_BYTES_MAX = 4_096;
+/** Maximum UTF-8 byte length accepted for a diagnostic envelope. */
+const TEXT_LAYOUT_ENVELOPE_BYTES_MAX = 8_192;
+/** Maximum number of requested font aliases accepted in a diagnostic. */
+const REQUESTED_ALIASES_MAX = 16;
+/** Maximum UTF-8 byte length accepted for one font alias. */
+const ALIAS_BYTES_MAX = 256;
 
 type JsonObject = Record<string, unknown>;
 
@@ -41,7 +46,7 @@ function hasExactFields(value: unknown, fields: readonly string[]): value is Jso
 function contextFitsWireLimit(context: JsonObject): boolean {
   try {
     const serialized = JSON.stringify(context);
-    return fitsUtf8ByteLimit(serialized, MAX_TEXT_LAYOUT_CONTEXT_BYTES);
+    return fitsUtf8ByteLimit(serialized, TEXT_LAYOUT_CONTEXT_BYTES_MAX);
   } catch {
     return false;
   }
@@ -71,13 +76,16 @@ function isExceededLimit(required: unknown, limit: unknown): boolean {
   return isSafeCount(required) && isSafeCount(limit) && required > limit;
 }
 
+/** Input failure reasons whose wire context has no field member. */
 const REQUEST_REASONS_WITHOUT_FIELD = new Set([
   "malformedJson",
   "missingLineWidths",
   "conflictingTextSources",
   "invalidRequestShape",
 ]);
+/** Allowed inline-constraint field names in input diagnostics. */
 const TEXT_CONSTRAINT_FIELDS = new Set(["maxWidth", "lineWidths", "flowBounds"]);
+/** Allowed text preparation phases in failure diagnostics. */
 const PREPARATION_PHASES = new Set([
   "fontResolution",
   "plainShaping",
@@ -87,6 +95,7 @@ const PREPARATION_PHASES = new Set([
   "flowPreparation",
   "resultProjection",
 ]);
+/** Allowed numeric region-query fields in flow diagnostics. */
 const REGION_QUERY_FIELDS = new Set([
   "flowX",
   "flowY",
@@ -96,14 +105,18 @@ const REGION_QUERY_FIELDS = new Set([
   "crossEnd",
   "minimumInlineSize",
 ]);
+/** Flow dimensions whose negative values are rejected. */
 const NEGATIVE_FLOW_EXTENT_FIELDS = new Set(["flowWidth", "flowHeight"]);
+/** Allowed failures from a flow region provider. */
 const REGION_PROVIDER_REASONS = new Set([
   "unavailable",
   "unsupportedQuery",
   "resourceExhausted",
   "internalFailure",
 ]);
+/** Allowed numeric fields in a returned flow region. */
 const FLOW_REGION_FIELDS = new Set(["inlineStart", "inlineSize", "inlineEnd"]);
+/** Closed catalog of supported text-layout invariant failures. */
 const TEXT_LAYOUT_INVARIANTS = new Set([
   "lineRangeMissing",
   "lineRangeReversed",
@@ -142,9 +155,9 @@ function isFontContext(context: unknown, operation: MeasurementTextLayoutOperati
     ]) ||
     !isSafeCount(context.runIndex) ||
     !Array.isArray(context.requestedAliases) ||
-    context.requestedAliases.length > MAX_REQUESTED_ALIASES ||
+    context.requestedAliases.length > REQUESTED_ALIASES_MAX ||
     !context.requestedAliases.every(
-      (alias) => typeof alias === "string" && fitsUtf8ByteLimit(alias, MAX_ALIAS_BYTES),
+      (alias) => typeof alias === "string" && fitsUtf8ByteLimit(alias, ALIAS_BYTES_MAX),
     ) ||
     !isSafeCount(context.omittedAliasCount) ||
     !isSafeCount(context.fontWeight) ||
@@ -293,6 +306,9 @@ type TextLayoutFatalCandidate = {
 
 function matchesCatalogTuple(candidate: TextLayoutFatalCandidate): boolean {
   const { code, message, stage, context, operation } = candidate;
+  if (matchesFontFailure({ code, message, stage, context, operation })) {
+    return true;
+  }
   switch (code) {
     case "TEXT_LAYOUT_INPUT_INVALID":
       return (
@@ -412,7 +428,7 @@ export function decodeWasmTextLayoutFatal(
   error: unknown,
   operation: MeasurementTextLayoutOperation,
 ): FatalError | undefined {
-  if (typeof error !== "string" || !fitsUtf8ByteLimit(error, MAX_TEXT_LAYOUT_ENVELOPE_BYTES)) {
+  if (typeof error !== "string" || !fitsUtf8ByteLimit(error, TEXT_LAYOUT_ENVELOPE_BYTES_MAX)) {
     return undefined;
   }
 
@@ -448,6 +464,7 @@ export function decodeWasmTextLayoutFatal(
   }
 }
 
+/** Create a fatal diagnostic for a text-layout transport failure. */
 export function textLayoutWasmBoundaryFailure(
   operation: MeasurementTextLayoutOperation,
 ): FatalError {

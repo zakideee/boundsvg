@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use boundtext::font::backend::FontAdmission;
+
 use crate::error::EngineError;
 use crate::rasterize::{RasterizeOptions, rasterize_svg_to_pixmap};
 
@@ -59,10 +61,25 @@ pub fn svg_to_webp(
     font_data: &[Arc<Vec<u8>>],
     options: &RasterizeOptions,
 ) -> Result<Vec<u8>, EngineError> {
+    svg_to_webp_with_admission(svg_string, alias_map, font_data, &[], options)
+}
+
+/// Encode WebP while reusing only proofs for exactly matching immutable font allocations.
+///
+/// # Errors
+///
+/// Propagates font admission, SVG, scale, pixmap, generator and WebP encoding failures.
+pub(crate) fn svg_to_webp_with_admission(
+    svg_string: &str,
+    alias_map: &[(String, String)],
+    font_data: &[Arc<Vec<u8>>],
+    admissions: &[Option<FontAdmission>],
+    options: &RasterizeOptions,
+) -> Result<Vec<u8>, EngineError> {
     if let Some(generator) = &options.generator {
         generator.validate()?;
     }
-    let pixmap = rasterize_svg_to_pixmap(svg_string, alias_map, font_data, options)?;
+    let pixmap = rasterize_svg_to_pixmap(svg_string, alias_map, font_data, admissions, options)?;
     let rgba = pixmap_to_rgba(&pixmap);
     let webp = rgba_to_webp(&rgba, pixmap.width(), pixmap.height())?;
     match &options.generator {
@@ -84,6 +101,7 @@ fn wrap_still_webp_with_generator(
     has_alpha: bool,
     generator: &crate::output_generator::OutputGenerator,
 ) -> Result<Vec<u8>, EngineError> {
+    /// Bytes in the RIFF size and WEBP form header, before its first chunk.
     const RIFF_HEADER_LEN: usize = 12;
     if bare_webp.len() < RIFF_HEADER_LEN + 8
         || &bare_webp[0..4] != b"RIFF"
@@ -116,6 +134,11 @@ fn wrap_still_webp_with_generator(
     Ok(out)
 }
 
+/// Append a little-endian RIFF chunk with one padding byte for an odd payload length.
+///
+/// # Errors
+///
+/// Return a raster diagnostic before modifying output if the payload exceeds u32 bytes.
 pub(crate) fn append_riff_chunk(
     out: &mut Vec<u8>,
     name: [u8; 4],
@@ -132,6 +155,11 @@ pub(crate) fn append_riff_chunk(
     Ok(())
 }
 
+/// Write the RIFF payload size after checking its header and excluding the first eight bytes.
+///
+/// # Errors
+///
+/// Return a raster diagnostic for an invalid header or a payload exceeding u32 bytes.
 pub(crate) fn finalize_riff_size(out: &mut [u8]) -> Result<(), EngineError> {
     if out.len() < 12 || &out[0..4] != b"RIFF" || &out[8..12] != b"WEBP" {
         return Err(EngineError::Rasterize(
@@ -153,6 +181,7 @@ fn push_u24(out: &mut Vec<u8>, value: u32) {
 mod tests {
     use super::*;
 
+    /// Authored 200 by100 pixel opaque red rectangle for codec roundtrip checks.
     const RED_RECT_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect width="200" height="100" fill="#ff0000"/></svg>"##;
 
     fn encode(svg: &str, options: &RasterizeOptions) -> Vec<u8> {

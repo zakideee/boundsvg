@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use boundtext::font::backend::FontAdmission;
+
 use serde::{Deserialize, Serialize};
 
 use crate::animation_writer::{AnimationPatch, AnimationWriter, GuardedWriter, StagedWriter};
@@ -290,6 +292,8 @@ pub struct AnimationSession<W: AnimationWriter> {
     options: Option<RasterizeOptions>,
     aliases: Vec<(String, String)>,
     fonts: Vec<Arc<Vec<u8>>>,
+    /// Optional proofs aligned to this session's immutable font snapshot.
+    font_admissions: Vec<Option<FontAdmission>>,
     canvas: Option<AnimationCanvas>,
     codec: Option<AnimationCodec<W>>,
     state: AnimationState,
@@ -359,10 +363,17 @@ impl<W: AnimationWriter> AnimationSession<W> {
             options: Some(options.raster_options),
             aliases,
             fonts,
+            font_admissions: Vec::new(),
             canvas: None,
             codec: Some(codec),
             state: AnimationState::Active,
         })
+    }
+
+    /// Retain optional registry proofs; each raster call still verifies the exact allocation.
+    pub(crate) fn with_font_admissions(mut self, admissions: Vec<Option<FontAdmission>>) -> Self {
+        self.font_admissions = admissions;
+        self
     }
 
     /// Check terminal state before a transport adapter parses a new frame payload.
@@ -400,13 +411,14 @@ impl<W: AnimationWriter> AnimationSession<W> {
 
     /// Disable output before dropping a GIF encoder, font snapshots or raster options.
     fn release_resources(&mut self) {
-        if let Some(codec) = &mut self.codec {
-            if let Some(writer) = codec.writer_mut() {
-                writer.disable();
-            }
+        if let Some(codec) = &mut self.codec
+            && let Some(writer) = codec.writer_mut()
+        {
+            writer.disable();
         }
         self.codec = None;
         self.fonts = Vec::new();
+        self.font_admissions = Vec::new();
         self.aliases = Vec::new();
         self.options = None;
     }
@@ -477,18 +489,24 @@ impl<W: AnimationWriter> AnimationSession<W> {
                     None,
                 )
             })?;
-            let pixmap = rasterize_svg_to_pixmap(&frame.svg, &self.aliases, &self.fonts, options)?;
+            let pixmap = rasterize_svg_to_pixmap(
+                &frame.svg,
+                &self.aliases,
+                &self.fonts,
+                &self.font_admissions,
+                options,
+            )?;
             let canvas = AnimationCanvas {
                 width: pixmap.width(),
                 height: pixmap.height(),
             };
-            if let Some(first) = self.canvas {
-                if first != canvas {
-                    return Err(EngineError::Rasterize(format!(
-                        "Animated frames must share one canvas size: frame {} is {}x{}, frame 0 is {}x{}",
-                        self.pushed_frames, canvas.width, canvas.height, first.width, first.height
-                    )));
-                }
+            if let Some(first) = self.canvas
+                && first != canvas
+            {
+                return Err(EngineError::Rasterize(format!(
+                    "Animated frames must share one canvas size: frame {} is {}x{}, frame 0 is {}x{}",
+                    self.pushed_frames, canvas.width, canvas.height, first.width, first.height
+                )));
             }
             self.canvas = Some(canvas);
             let codec = self.codec.as_mut().ok_or_else(|| {
@@ -601,6 +619,7 @@ impl<W: AnimationWriter> AnimationSession<W> {
             .bytes_written();
         self.state = AnimationState::Finishing;
         self.fonts = Vec::new();
+        self.font_admissions = Vec::new();
         self.aliases = Vec::new();
         self.options = None;
         Ok(AnimationFinishOutput {
@@ -816,6 +835,44 @@ mod tests {
             );
             assert_eq!(probe.borrow().bytes, output);
             assert_eq!(reason(&staged.finish().unwrap_err()), "alreadyFinished");
+        }
+    }
+
+    #[test]
+    fn animation_releases_admission_snapshots_on_every_terminal_path() {
+        use boundtext::font::{backend::FontBackend, backend_skrifa::SkrifaBackend};
+        for terminal in ["finish", "abort", "failure"] {
+            let font = Arc::new(include_bytes!("../../../fixtures/fonts/only-a.ttf").to_vec());
+            let (_, proof) = SkrifaBackend
+                .parse_metrics_with_admission(Arc::clone(&font))
+                .unwrap();
+            let mut session = AnimationSession::open(
+                AnimatedRasterFormat::Webp,
+                options(1),
+                vec![],
+                vec![Arc::clone(&font)],
+                StagedWriter::default(),
+            )
+            .unwrap()
+            .with_font_admissions(vec![proof]);
+            assert_eq!(Arc::strong_count(&font), 3);
+            match terminal {
+                "finish" => {
+                    session.push(frame()).unwrap();
+                    drain(&mut session, &mut Vec::new());
+                    session.finish().unwrap();
+                }
+                "abort" => session.abort().unwrap(),
+                _ => {
+                    session
+                        .push(AnimationFrameInput {
+                            duration_ms: 0,
+                            ..frame()
+                        })
+                        .unwrap_err();
+                }
+            }
+            assert_eq!(Arc::strong_count(&font), 1, "{terminal}");
         }
     }
 

@@ -17,6 +17,7 @@ const guideSidebar = [
       { text: "Choosing an API", link: "/reference/api-selection" },
       { text: "Determinism Contract", link: "/reference/determinism" },
       { text: "Known Limitations", link: "/reference/known-limitations" },
+      { text: "Font Backend Migration", link: "/reference/font-backend-migration" },
     ],
   },
   {

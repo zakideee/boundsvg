@@ -14,6 +14,7 @@ import {
   loadSubsetFont,
 } from "./test-prerequisites.js";
 
+/** Representative baseline rotations in degrees for the outline fixtures. */
 const ANGLES = [-179, -90, -45, 0, 45, 90, 179] as const;
 
 function hashPath(pathData: string): string {
@@ -97,37 +98,37 @@ describe("baseline glyph rotation", () => {
     expect(fixtures).toEqual([
       {
         angle: -179,
-        hash: "d6d93234af8d4378",
+        hash: "1fafc9314b4b3437",
         bbox: { minX: 71.01, minY: 119.49, maxX: 99.81, maxY: 154.97 },
       },
       {
         angle: -90,
-        hash: "525a4c836b6ddf12",
+        hash: "ea7abd401ff0deaa",
         bbox: { minX: 64.82, minY: 91.01, maxX: 100, maxY: 119.81 },
       },
       {
         angle: -45,
-        hash: "c47efea18b72907c",
+        hash: "8c7f39e41be818da",
         bbox: { minX: 83.67, minY: 83.07, maxX: 120.5, maxY: 119.86 },
       },
       {
         angle: 0,
-        hash: "99bfaabd8cb1d40f",
+        hash: "884090dfffb2e95e",
         bbox: { minX: 100.19, minY: 84.82, maxX: 128.99, maxY: 120 },
       },
       {
         angle: 45,
-        hash: "a3896f2f56617afc",
+        hash: "6eeb53e2d8116453",
         bbox: { minX: 100.14, minY: 103.67, maxX: 136.93, maxY: 140.5 },
       },
       {
         angle: 90,
-        hash: "181f18e3484c6577",
+        hash: "0d769aa4f8241dfa",
         bbox: { minX: 100, minY: 120.19, maxX: 135.18, maxY: 148.99 },
       },
       {
         angle: 179,
-        hash: "2d4484bced3148b6",
+        hash: "2dcff0af73e61ec3",
         bbox: { minX: 71.01, minY: 120, maxX: 99.81, maxY: 155.48 },
       },
     ]);
@@ -176,11 +177,11 @@ describe("baseline glyph rotation", () => {
     expect(hashPath(regular.d)).not.toBe(hashPath(bold.d));
     expect([pathFixture(regular.d), pathFixture(bold.d)]).toEqual([
       {
-        hash: "d9ee3a21e1af9742",
+        hash: "df48b4839893ee9e",
         bbox: { minX: 102.98, minY: 98.29, maxX: 146.93, maxY: 142.24 },
       },
       {
-        hash: "45de6253a3eea24e",
+        hash: "5282317351ebd3c8",
         bbox: { minX: 101.59, minY: 96.9, maxX: 148.56, maxY: 143.86 },
       },
     ]);

@@ -1,5 +1,5 @@
 /**
- * harfbuzz-runner: compares boundtext (rustybuzz) shaping output against HarfBuzz hb-shape.
+ * harfbuzz-runner: compares boundtext (HarfRust) shaping output against HarfBuzz hb-shape.
  *
  * Usage:
  *   tsx src/compare.ts --spec <spec.json> --fonts <fonts-dir> [--bt-output <boundtext-output.json>] [--output <output.json>]
@@ -97,6 +97,7 @@ type CliResult = {
 // Font file mapping
 // ---------------------------------------------------------------------------
 
+/** Map corpus font identifiers to injected fixture filenames. */
 const FONT_FILE_MAP: Record<string, string> = {
   NotoSansJP: "NotoSansJP-Regular.subset.ttf",
   NotoSerifJP: "NotoSerifJP-Regular.subset.ttf",

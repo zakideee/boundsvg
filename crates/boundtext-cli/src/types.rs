@@ -530,15 +530,15 @@ fn detect_kinsoku_violations(
         }
 
         // Check line-start character
-        if let Some(first_char) = line.text.chars().next() {
-            if is_head_prohibit(first_char, profile) {
-                violations.push(KinsokuViolation {
-                    line_index: i,
-                    violation_type: "head_prohibit".to_string(),
-                    character: first_char.to_string(),
-                    position: "line_start".to_string(),
-                });
-            }
+        if let Some(first_char) = line.text.chars().next()
+            && is_head_prohibit(first_char, profile)
+        {
+            violations.push(KinsokuViolation {
+                line_index: i,
+                violation_type: "head_prohibit".to_string(),
+                character: first_char.to_string(),
+                position: "line_start".to_string(),
+            });
         }
     }
 
@@ -548,15 +548,15 @@ fn detect_kinsoku_violations(
         }
 
         // Check line-end character
-        if let Some(last_char) = line.text.chars().last() {
-            if is_tail_prohibit(last_char, profile) {
-                violations.push(KinsokuViolation {
-                    line_index: i,
-                    violation_type: "tail_prohibit".to_string(),
-                    character: last_char.to_string(),
-                    position: "line_end".to_string(),
-                });
-            }
+        if let Some(last_char) = line.text.chars().last()
+            && is_tail_prohibit(last_char, profile)
+        {
+            violations.push(KinsokuViolation {
+                line_index: i,
+                violation_type: "tail_prohibit".to_string(),
+                character: last_char.to_string(),
+                position: "line_end".to_string(),
+            });
         }
     }
 
@@ -564,15 +564,14 @@ fn detect_kinsoku_violations(
         if let (Some(last_char), Some(first_char)) = (
             lines[i].text.chars().last(),
             lines[i + 1].text.chars().next(),
-        ) {
-            if is_non_breaking_pair(last_char, first_char, profile) {
-                violations.push(KinsokuViolation {
-                    line_index: i,
-                    violation_type: "non_break_pair".to_string(),
-                    character: format!("{last_char}{first_char}"),
-                    position: "line_boundary".to_string(),
-                });
-            }
+        ) && is_non_breaking_pair(last_char, first_char, profile)
+        {
+            violations.push(KinsokuViolation {
+                line_index: i,
+                violation_type: "non_break_pair".to_string(),
+                character: format!("{last_char}{first_char}"),
+                position: "line_boundary".to_string(),
+            });
         }
     }
 

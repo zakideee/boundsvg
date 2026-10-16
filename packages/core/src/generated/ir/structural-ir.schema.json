@@ -207,6 +207,7 @@
               "minimum": 0
             },
             "fontStyle": {
+              "description": "Registered font style used for face lookup and serialized glyph provenance.",
               "type": "string",
               "enum": [
                 "normal",
@@ -1140,6 +1141,7 @@
       ]
     },
     "FontStyle": {
+      "description": "Registered font style used for face lookup and serialized glyph provenance.",
       "type": "string",
       "enum": [
         "normal",

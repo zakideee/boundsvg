@@ -30,6 +30,7 @@ import {
   snapshotAnimationOpenInput,
   WasmAnimatedRasterSessionHandle,
 } from "./animation-session.js";
+import { invokeWasmFont } from "./font-fatal-decoder.js";
 import {
   decodeIntrinsicInlineSizeResult,
   decodeMeasureTextBlockResult,
@@ -75,7 +76,7 @@ let wasmModule: WasmModule | null = null;
  * `crates/boundsvg/src/lib.rs`; both sides change in the same commit.
  * Bump whenever a WASM-boundary DTO shape or export signature changes.
  */
-export const EXPECTED_WASM_SCHEMA_VERSION = 34;
+export const EXPECTED_WASM_SCHEMA_VERSION = 35;
 
 function assertWasmSchemaVersion(preloaded: WasmModule): void {
   const readSchemaVersion = preloaded.wasm_schema_version;
@@ -347,7 +348,7 @@ export function getWasmFontMetrics(fontData: Uint8Array): {
 } {
   const wasm = getWasm();
   return parseWasmJson(
-    wasm.get_font_metrics(fontData),
+    invokeWasmFont("getFontMetrics", () => wasm.get_font_metrics(fontData)),
     isFontMetrics,
     "WASM_INVALID_FONT_METRICS",
     "WASM get_font_metrics returned invalid JSON.",
@@ -363,7 +364,9 @@ export function createWasmShapeFn(fontData: Uint8Array): ShapeFn {
     text: string,
     params: { fontSizePx: number; letterSpacingPx: number; shapeOptions?: ShapingOptions },
   ): GlyphInfo[] => {
-    const json = wasm.shape_text(fontData, text, params.fontSizePx, params.letterSpacingPx);
+    const json = invokeWasmFont("shapeText", () =>
+      wasm.shape_text(fontData, text, params.fontSizePx, params.letterSpacingPx),
+    );
     // WASM output is already camelCase (serde rename_all = "camelCase")
     return parseWasmJson(
       json,
@@ -1048,7 +1051,7 @@ export class WasmEngineHandle {
   ): void {
     this.ensureNotDisposed();
     const { alias, weight = DEFAULT_FONT_WEIGHT, style = "normal" } = options;
-    this.instance.register_font(data, alias, weight, style);
+    invokeWasmFont("registerFont", () => this.instance.register_font(data, alias, weight, style));
   }
 
   /** Create a layout transport bound to this engine; calls reject after owner disposal. */
@@ -1342,20 +1345,26 @@ export class WasmEngineHandle {
     ): GlyphInfo[] => {
       this.ensureNotDisposed();
       const inst = this.instance;
+      const shapeTextRegisteredWithOptions = inst.shape_text_registered_with_options;
       const { fontSizePx, letterSpacingPx, shapeOptions } = params;
       let json: string;
-      if (shapeOptions && typeof inst.shape_text_registered_with_options === "function") {
-        json = inst.shape_text_registered_with_options(
-          alias,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          letterSpacingPx,
-          JSON.stringify(shapeOptions),
+      if (shapeOptions && typeof shapeTextRegisteredWithOptions === "function") {
+        json = invokeWasmFont("shapeText", () =>
+          shapeTextRegisteredWithOptions.call(
+            inst,
+            alias,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            letterSpacingPx,
+            JSON.stringify(shapeOptions),
+          ),
         );
       } else {
-        json = inst.shape_text_registered(alias, weight, style, text, fontSizePx, letterSpacingPx);
+        json = invokeWasmFont("shapeText", () =>
+          inst.shape_text_registered(alias, weight, style, text, fontSizePx, letterSpacingPx),
+        );
       }
       return parseWasmJson(
         json,
@@ -1366,7 +1375,7 @@ export class WasmEngineHandle {
     };
   }
 
-  /** Create an owner-bound registered-font shaper with the supplied fallback aliases. */
+  /** Create an owner-bound shaper whose fallback chain must resolve to a registered font. */
   createShapeFnRegisteredWithFallback(
     aliases: readonly string[],
     weight = DEFAULT_FONT_WEIGHT,
@@ -1378,54 +1387,66 @@ export class WasmEngineHandle {
       text: string,
       params: { fontSizePx: number; letterSpacingPx: number; shapeOptions?: ShapingOptions },
     ): GlyphInfo[] => {
-      if (!primary) {
-        return [];
-      }
       this.ensureNotDisposed();
+      if (!primary) {
+        throw new FatalError("TEXT_FONT_UNAVAILABLE", "No requested font is available.", {
+          stage: "font",
+          context: {
+            operation: "shapeTextWithFallback",
+            reason: "unregisteredFont",
+            weight,
+          },
+        });
+      }
       const inst = this.instance;
+      const shapeTextRegisteredWithFallback = inst.shape_text_registered_with_fallback;
+      const shapeTextRegisteredWithFallbackWithOptions =
+        inst.shape_text_registered_with_fallback_with_options;
+      const shapeTextRegisteredWithOptions = inst.shape_text_registered_with_options;
       const { fontSizePx, letterSpacingPx, shapeOptions } = params;
       const aliasesJson = JSON.stringify(chain);
       let json: string;
-      if (
-        shapeOptions &&
-        typeof inst.shape_text_registered_with_fallback_with_options === "function"
-      ) {
-        json = inst.shape_text_registered_with_fallback_with_options(
-          aliasesJson,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          letterSpacingPx,
-          JSON.stringify(shapeOptions),
+      if (shapeOptions && typeof shapeTextRegisteredWithFallbackWithOptions === "function") {
+        json = invokeWasmFont("shapeTextWithFallback", () =>
+          shapeTextRegisteredWithFallbackWithOptions.call(
+            inst,
+            aliasesJson,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            letterSpacingPx,
+            JSON.stringify(shapeOptions),
+          ),
         );
-      } else if (typeof inst.shape_text_registered_with_fallback === "function") {
-        json = inst.shape_text_registered_with_fallback(
-          aliasesJson,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          letterSpacingPx,
+      } else if (typeof shapeTextRegisteredWithFallback === "function") {
+        json = invokeWasmFont("shapeTextWithFallback", () =>
+          shapeTextRegisteredWithFallback.call(
+            inst,
+            aliasesJson,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            letterSpacingPx,
+          ),
         );
-      } else if (shapeOptions && typeof inst.shape_text_registered_with_options === "function") {
-        json = inst.shape_text_registered_with_options(
-          primary,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          letterSpacingPx,
-          JSON.stringify(shapeOptions),
+      } else if (shapeOptions && typeof shapeTextRegisteredWithOptions === "function") {
+        json = invokeWasmFont("shapeText", () =>
+          shapeTextRegisteredWithOptions.call(
+            inst,
+            primary,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            letterSpacingPx,
+            JSON.stringify(shapeOptions),
+          ),
         );
       } else {
-        json = inst.shape_text_registered(
-          primary,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          letterSpacingPx,
+        json = invokeWasmFont("shapeText", () =>
+          inst.shape_text_registered(primary, weight, style, text, fontSizePx, letterSpacingPx),
         );
       }
       return parseWasmJson(
@@ -1581,30 +1602,36 @@ export class WasmEngineHandle {
     ): WasmGlyphPath[] => {
       this.ensureNotDisposed();
       const inst = this.instance;
+      const extractGlyphPathsWithOptions = inst.extract_glyph_paths_with_options;
       const { fontSizePx, letterSpacingPx, baselineY, startX, pathOptions } = params;
       let json: string;
-      if (pathOptions && typeof inst.extract_glyph_paths_with_options === "function") {
-        json = inst.extract_glyph_paths_with_options(
-          alias,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          baselineY,
-          startX,
-          letterSpacingPx,
-          JSON.stringify({ writingMode: pathOptions.writingMode }),
+      if (pathOptions && typeof extractGlyphPathsWithOptions === "function") {
+        json = invokeWasmFont("extractGlyphPaths", () =>
+          extractGlyphPathsWithOptions.call(
+            inst,
+            alias,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            baselineY,
+            startX,
+            letterSpacingPx,
+            JSON.stringify({ writingMode: pathOptions.writingMode }),
+          ),
         );
       } else {
-        json = inst.extract_glyph_paths(
-          alias,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          baselineY,
-          startX,
-          letterSpacingPx,
+        json = invokeWasmFont("extractGlyphPaths", () =>
+          inst.extract_glyph_paths(
+            alias,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            baselineY,
+            startX,
+            letterSpacingPx,
+          ),
         );
       }
       return parseWasmJson(
@@ -1634,62 +1661,81 @@ export class WasmEngineHandle {
         pathOptions?: GlyphPathOptions;
       },
     ): WasmGlyphPath[] => {
-      if (!primary) {
-        return [];
-      }
       this.ensureNotDisposed();
+      if (!primary) {
+        throw new FatalError("TEXT_FONT_UNAVAILABLE", "No requested font is available.", {
+          stage: "font",
+          context: {
+            operation: "extractGlyphPaths",
+            reason: "unregisteredFont",
+            weight,
+          },
+        });
+      }
       const inst = this.instance;
+      const extractGlyphPathsWithFallback = inst.extract_glyph_paths_with_fallback;
+      const extractGlyphPathsWithFallbackWithOptions =
+        inst.extract_glyph_paths_with_fallback_with_options;
+      const extractGlyphPathsWithOptions = inst.extract_glyph_paths_with_options;
       const { fontSizePx, letterSpacingPx, baselineY, startX, pathOptions } = params;
       const aliasesJson = JSON.stringify(chain);
       let json: string;
-      if (
-        pathOptions &&
-        typeof inst.extract_glyph_paths_with_fallback_with_options === "function"
-      ) {
-        json = inst.extract_glyph_paths_with_fallback_with_options(
-          aliasesJson,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          baselineY,
-          startX,
-          letterSpacingPx,
-          JSON.stringify({ writingMode: pathOptions.writingMode }),
+      if (pathOptions && typeof extractGlyphPathsWithFallbackWithOptions === "function") {
+        json = invokeWasmFont("extractGlyphPaths", () =>
+          extractGlyphPathsWithFallbackWithOptions.call(
+            inst,
+            aliasesJson,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            baselineY,
+            startX,
+            letterSpacingPx,
+            JSON.stringify({ writingMode: pathOptions.writingMode }),
+          ),
         );
-      } else if (typeof inst.extract_glyph_paths_with_fallback === "function") {
-        json = inst.extract_glyph_paths_with_fallback(
-          aliasesJson,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          baselineY,
-          startX,
-          letterSpacingPx,
+      } else if (typeof extractGlyphPathsWithFallback === "function") {
+        json = invokeWasmFont("extractGlyphPaths", () =>
+          extractGlyphPathsWithFallback.call(
+            inst,
+            aliasesJson,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            baselineY,
+            startX,
+            letterSpacingPx,
+          ),
         );
-      } else if (pathOptions && typeof inst.extract_glyph_paths_with_options === "function") {
-        json = inst.extract_glyph_paths_with_options(
-          primary,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          baselineY,
-          startX,
-          letterSpacingPx,
-          JSON.stringify({ writingMode: pathOptions.writingMode }),
+      } else if (pathOptions && typeof extractGlyphPathsWithOptions === "function") {
+        json = invokeWasmFont("extractGlyphPaths", () =>
+          extractGlyphPathsWithOptions.call(
+            inst,
+            primary,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            baselineY,
+            startX,
+            letterSpacingPx,
+            JSON.stringify({ writingMode: pathOptions.writingMode }),
+          ),
         );
       } else {
-        json = inst.extract_glyph_paths(
-          primary,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          baselineY,
-          startX,
-          letterSpacingPx,
+        json = invokeWasmFont("extractGlyphPaths", () =>
+          inst.extract_glyph_paths(
+            primary,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            baselineY,
+            startX,
+            letterSpacingPx,
+          ),
         );
       }
       return parseWasmJson(
@@ -1734,7 +1780,10 @@ export class WasmEngineHandle {
         { stage: "wasm" },
       );
     }
-    const json = this.instance.extract_positioned_glyph_paths(JSON.stringify(glyphs));
+    const extractPositionedGlyphPaths = this.instance.extract_positioned_glyph_paths;
+    const json = invokeWasmFont("extractGlyphPaths", () =>
+      extractPositionedGlyphPaths.call(this.instance, JSON.stringify(glyphs)),
+    );
     return parseWasmJson(
       json,
       isWasmGlyphPathArray,
@@ -1763,28 +1812,36 @@ export class WasmEngineHandle {
     ): GlyphInfo[] => {
       this.ensureNotDisposed();
       const inst = this.instance;
+      const shapeTextWithVariations = inst.shape_text_with_variations;
+      const shapeTextWithVariationsWithOptions = inst.shape_text_with_variations_with_options;
       const { fontSizePx, letterSpacingPx, variationsJson, shapeOptions } = params;
       let json: string;
-      if (shapeOptions && typeof inst.shape_text_with_variations_with_options === "function") {
-        json = inst.shape_text_with_variations_with_options(
-          alias,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          letterSpacingPx,
-          variationsJson,
-          JSON.stringify(shapeOptions),
+      if (shapeOptions && typeof shapeTextWithVariationsWithOptions === "function") {
+        json = invokeWasmFont("shapeText", () =>
+          shapeTextWithVariationsWithOptions.call(
+            inst,
+            alias,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            letterSpacingPx,
+            variationsJson,
+            JSON.stringify(shapeOptions),
+          ),
         );
-      } else if (typeof inst.shape_text_with_variations === "function") {
-        json = inst.shape_text_with_variations(
-          alias,
-          weight,
-          style,
-          text,
-          fontSizePx,
-          letterSpacingPx,
-          variationsJson,
+      } else if (typeof shapeTextWithVariations === "function") {
+        json = invokeWasmFont("shapeText", () =>
+          shapeTextWithVariations.call(
+            inst,
+            alias,
+            weight,
+            style,
+            text,
+            fontSizePx,
+            letterSpacingPx,
+            variationsJson,
+          ),
         );
       } else {
         throw new FatalError(

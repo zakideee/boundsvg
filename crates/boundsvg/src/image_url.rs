@@ -18,10 +18,10 @@ fn unsafe_href_reason(href: &str) -> Option<&'static str> {
     // references. URI consumers ignore ASCII whitespace/control characters in
     // schemes, so `java&#x09;script:` must be treated as `javascript:` rather
     // than passed to the caller's resolver.
-    if let Some(scheme) = normalized_uri_scheme(href) {
-        if !matches!(scheme.as_str(), "http" | "https" | "mailto" | "data") {
-            return Some("URI scheme is not allowed");
-        }
+    if let Some(scheme) = normalized_uri_scheme(href)
+        && !matches!(scheme.as_str(), "http" | "https" | "mailto" | "data")
+    {
+        return Some("URI scheme is not allowed");
     }
 
     // Percent-decode for traversal detection
@@ -97,12 +97,13 @@ fn percent_decode(input: &str) -> String {
     let mut result = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                result.push(hi << 4 | lo);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2]))
+        {
+            result.push(hi << 4 | lo);
+            i += 3;
+            continue;
         }
         result.push(bytes[i]);
         i += 1;

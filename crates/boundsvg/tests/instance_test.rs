@@ -1,3 +1,5 @@
+//! Verify per-instance font registration, shaping, and rendering isolation.
+
 // Integration tests always build with `cfg(test)`; declaring it lets clippy's
 // `allow-*-in-tests` config apply to helper functions in this file.
 #![cfg(test)]
@@ -56,7 +58,8 @@ fn register_font_and_shape() {
         .registry()
         .resolve("NotoTest", 400, &FontStyle::Normal)
         .expect("font should be registered");
-    let glyphs = shaping::shape_text(engine.registry(), entry, "テスト", 24.0, 0.0);
+    let glyphs = shaping::shape_text(engine.registry(), entry, "テスト", 24.0, 0.0)
+        .expect("font operation succeeds");
     assert!(!glyphs.is_empty(), "should produce glyphs");
 }
 
@@ -226,11 +229,14 @@ fn svg_to_png_uses_instance_registry() {
         <text x="10" y="30" font-family="PngFont" font-size="16">Test</text>
     </svg>"#;
 
-    let (alias_map, font_arcs) = engine.registry().rasterize_font_data();
+    let raster_fonts = engine
+        .registry()
+        .rasterize_font_data()
+        .expect("font snapshot");
     let result = rasterize::svg_to_png(
         svg,
-        &alias_map,
-        &font_arcs,
+        &raster_fonts.aliases,
+        &raster_fonts.fonts,
         &rasterize::RasterizeOptions::default(),
     );
     assert!(result.is_ok(), "svg_to_png should succeed");
@@ -249,11 +255,14 @@ fn svg_to_webp_uses_instance_registry() {
         <text x="10" y="30" font-family="WebpFont" font-size="16">Test</text>
     </svg>"#;
 
-    let (alias_map, font_arcs) = engine.registry().rasterize_font_data();
+    let raster_fonts = engine
+        .registry()
+        .rasterize_font_data()
+        .expect("font snapshot");
     let webp_bytes = webp_encode::svg_to_webp(
         svg,
-        &alias_map,
-        &font_arcs,
+        &raster_fonts.aliases,
+        &raster_fonts.fonts,
         &rasterize::RasterizeOptions::default(),
     )
     .expect("svg_to_webp should succeed");
@@ -284,7 +293,10 @@ fn animated_gif_session_uses_instance_registry() {
         <text x="4" y="20" font-family="GifFont" font-size="14">Test</text>
     </svg>"#;
 
-    let (alias_map, font_arcs) = engine.registry().rasterize_font_data();
+    let raster_fonts = engine
+        .registry()
+        .rasterize_font_data()
+        .expect("font snapshot");
     let mut session = AnimationSession::open(
         AnimatedRasterFormat::Gif,
         AnimationSessionOptions {
@@ -292,8 +304,8 @@ fn animated_gif_session_uses_instance_registry() {
             iterations: AnimatedRasterIterations::Infinite(AnimatedRasterInfinite::Infinite),
             raster_options: rasterize::RasterizeOptions::default(),
         },
-        alias_map,
-        font_arcs,
+        raster_fonts.aliases,
+        raster_fonts.fonts,
         StagedWriter::default(),
     )
     .expect("session should open");
@@ -341,7 +353,8 @@ fn extract_glyph_paths_uses_instance_registry() {
         .registry()
         .resolve("PathFont", 400, &FontStyle::Normal)
         .expect("font should be registered");
-    let glyphs = shaping::shape_text(engine.registry(), entry, "A", 24.0, 0.0);
+    let glyphs = shaping::shape_text(engine.registry(), entry, "A", 24.0, 0.0)
+        .expect("font operation succeeds");
     let positions: Vec<outline::GlyphPosition> = glyphs
         .iter()
         .map(|g| outline::GlyphPosition {
@@ -351,15 +364,9 @@ fn extract_glyph_paths_uses_instance_registry() {
             y_offset: g.y_offset,
         })
         .collect();
-    let paths = outline::extract_glyph_paths(
-        engine.registry().backend(),
-        &entry.data,
-        24.0,
-        20.0,
-        0.0,
-        &positions,
-        &[],
-    );
+    let face = entry.font_face(engine.registry().backend(), &[]).unwrap();
+    let paths = outline::extract_glyph_paths(face.as_ref(), 24.0, 20.0, 0.0, &positions)
+        .expect("font operation succeeds");
     assert!(!paths.is_empty(), "should produce glyph paths");
 }
 
@@ -398,7 +405,8 @@ fn shape_with_fallback_uses_instance_registry() {
         24.0,
         0.0,
         &shaping::ShapeOptions::default(),
-    );
+    )
+    .expect("font operation succeeds");
     assert!(
         !shaped.glyphs.is_empty(),
         "shape with fallback should produce glyphs"
@@ -416,7 +424,8 @@ fn shape_with_variations_uses_instance_registry() {
         .resolve("VariFont", 400, &FontStyle::Normal)
         .expect("font should be registered");
     // shape_text works fine even if the font doesn't have wght axis — no panic
-    let glyphs = shaping::shape_text(engine.registry(), entry, "テスト", 24.0, 0.0);
+    let glyphs = shaping::shape_text(engine.registry(), entry, "テスト", 24.0, 0.0)
+        .expect("font operation succeeds");
     assert!(!glyphs.is_empty(), "should produce glyphs");
 }
 

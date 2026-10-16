@@ -1,7 +1,13 @@
+//! Turn unhinted font outlines into finite positioned SVG glyph paths.
+
 use serde::Serialize;
 
 use super::backend;
-use crate::error::BoundtextError;
+use crate::error::{BoundtextError, FontFailureReason};
+use std::fmt::Write;
+
+/// Bytes sufficient for six fixed-notation finite f64 coordinates and SVG punctuation.
+const SVG_COMMAND_BYTES_MAX: usize = 1900;
 
 /// SVG path data for a single glyph, positioned at (x, y)
 #[derive(Debug, Clone, Serialize)]
@@ -60,14 +66,16 @@ impl PathTransform {
 
 /// Collects SVG path commands from `backend::OutlineBuilder`
 struct PathBuilder {
-    commands: Vec<String>,
+    commands: String,
+    failure: Option<FontFailureReason>,
     transform: PathTransform,
 }
 
 impl PathBuilder {
     fn new(transform: PathTransform) -> Self {
         PathBuilder {
-            commands: Vec::new(),
+            commands: String::new(),
+            failure: None,
             transform,
         }
     }
@@ -88,55 +96,137 @@ impl PathBuilder {
         formatted.to_string()
     }
 
-    fn to_path_string(&self) -> String {
-        self.commands.join("")
+    fn into_path_string(self, glyph_id: u32) -> Result<String, BoundtextError> {
+        if let Some(reason) = self.failure {
+            return Err(BoundtextError::FontOutline { reason, glyph_id });
+        }
+        Ok(self.commands)
+    }
+
+    fn command(&mut self, kind: char, points: &[(f32, f32)]) {
+        if self.failure.is_some() {
+            return;
+        }
+        if self.commands.try_reserve(SVG_COMMAND_BYTES_MAX).is_err() {
+            self.failure = Some(FontFailureReason::AllocationFailed);
+            return;
+        }
+        self.commands.push(kind);
+        for (index, &(x, y)) in points.iter().enumerate() {
+            let (tx, ty) = self.transform(x, y);
+            if !tx.is_finite() || !ty.is_finite() {
+                self.failure = Some(FontFailureReason::NonFiniteMetric);
+                return;
+            }
+            if index > 0 {
+                self.commands.push(' ');
+            }
+            for (coordinate_index, coordinate) in [tx, ty].into_iter().enumerate() {
+                if coordinate_index > 0 {
+                    self.commands.push(',');
+                }
+                let _ = write!(self.commands, "{coordinate:.2}");
+                while self.commands.ends_with('0') {
+                    self.commands.pop();
+                }
+                if self.commands.ends_with('.') {
+                    self.commands.pop();
+                }
+            }
+        }
     }
 }
 
 impl backend::OutlineBuilder for PathBuilder {
     fn move_to(&mut self, x: f32, y: f32) {
-        let (tx, ty) = self.transform(x, y);
-        let cmd = format!("M{},{}", Self::fmt(tx), Self::fmt(ty));
-        self.commands.push(cmd);
+        self.command('M', &[(x, y)]);
     }
 
     fn line_to(&mut self, x: f32, y: f32) {
-        let (tx, ty) = self.transform(x, y);
-        let cmd = format!("L{},{}", Self::fmt(tx), Self::fmt(ty));
-        self.commands.push(cmd);
+        self.command('L', &[(x, y)]);
     }
 
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let (tx1, ty1) = self.transform(x1, y1);
-        let (tx, ty) = self.transform(x, y);
-        let cmd = format!(
-            "Q{},{} {},{}",
-            Self::fmt(tx1),
-            Self::fmt(ty1),
-            Self::fmt(tx),
-            Self::fmt(ty),
-        );
-        self.commands.push(cmd);
+        self.command('Q', &[(x1, y1), (x, y)]);
     }
 
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let (tx1, ty1) = self.transform(x1, y1);
-        let (tx2, ty2) = self.transform(x2, y2);
-        let (tx, ty) = self.transform(x, y);
-        let cmd = format!(
-            "C{},{} {},{} {},{}",
-            Self::fmt(tx1),
-            Self::fmt(ty1),
-            Self::fmt(tx2),
-            Self::fmt(ty2),
-            Self::fmt(tx),
-            Self::fmt(ty),
-        );
-        self.commands.push(cmd);
+        self.command('C', &[(x1, y1), (x2, y2), (x, y)]);
     }
 
     fn close(&mut self) {
-        self.commands.push("Z".to_string());
+        self.command('Z', &[]);
+    }
+}
+
+enum OutlineCommand {
+    Move(f32, f32),
+    Line(f32, f32),
+    Quad(f32, f32, f32, f32),
+    Curve(f32, f32, f32, f32, f32, f32),
+    Close,
+}
+
+/// Keep one glyph's commands until its bounds determine the vertical transform.
+#[derive(Default)]
+struct RecordedOutline {
+    commands: Vec<OutlineCommand>,
+    allocation_failed: bool,
+}
+
+impl RecordedOutline {
+    fn push(&mut self, command: OutlineCommand) {
+        if self.allocation_failed {
+            return;
+        }
+        if self.commands.try_reserve(1).is_err() {
+            self.allocation_failed = true;
+            return;
+        }
+        self.commands.push(command);
+    }
+
+    fn replay(
+        self,
+        builder: &mut dyn backend::OutlineBuilder,
+        glyph_id: u32,
+    ) -> Result<(), BoundtextError> {
+        if self.allocation_failed {
+            return Err(BoundtextError::FontOutline {
+                reason: FontFailureReason::AllocationFailed,
+                glyph_id,
+            });
+        }
+        for command in self.commands {
+            match command {
+                OutlineCommand::Move(x, y) => builder.move_to(x, y),
+                OutlineCommand::Line(x, y) => builder.line_to(x, y),
+                OutlineCommand::Quad(x1, y1, x, y) => builder.quad_to(x1, y1, x, y),
+                OutlineCommand::Curve(x1, y1, x2, y2, x, y) => {
+                    builder.curve_to(x1, y1, x2, y2, x, y);
+                }
+                OutlineCommand::Close => builder.close(),
+            }
+        }
+        Ok(())
+    }
+}
+
+impl backend::OutlineBuilder for RecordedOutline {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.push(OutlineCommand::Move(x, y));
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.push(OutlineCommand::Line(x, y));
+    }
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        self.push(OutlineCommand::Quad(x1, y1, x, y));
+    }
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        self.push(OutlineCommand::Curve(x1, y1, x2, y2, x, y));
+    }
+    fn close(&mut self) {
+        self.push(OutlineCommand::Close);
     }
 }
 
@@ -152,6 +242,7 @@ pub struct GlyphPosition {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// One glyph outline request with its final baseline origin and display transforms.
 pub struct PositionedGlyphPathInput {
     pub glyph_id: u32,
     pub font_size_px: f64,
@@ -169,38 +260,42 @@ pub struct PositionedGlyphPathInput {
 
 /// Extract glyph outline paths for a sequence of positioned glyphs.
 ///
-/// - `font_backend`: backend used to create a `FontFace`
-/// - `font_data`: raw font bytes
+/// - `face`: an owning, admitted face at the requested variation location
 /// - `font_size_px`: desired font size in px
 /// - `baseline_y`: Y position of the text baseline in the SVG coordinate space
 /// - `start_x`: starting X position
 /// - `positions`: glyph positions from shaping
 ///
 /// Returns a list of SVG path data strings (one per glyph that has outlines).
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "glyph IDs are OpenType u16 stored as u32 in GlyphPosition; truncation is correct"
-)]
+///
+/// # Errors
+///
+/// Returns font parsing, variation, invalid-glyph, drawing, nonfinite-coordinate,
+/// or allocation failures without returning a partial path sequence.
+/// A sequence output-allocation failure identifies the first requested glyph.
+/// Empty sequences require no output allocation.
 pub fn extract_glyph_paths(
-    font_backend: &dyn backend::FontBackend,
-    font_data: &[u8],
+    face: &dyn backend::FontFace,
     font_size_px: f64,
     baseline_y: f64,
     start_x: f64,
     positions: &[GlyphPosition],
-    variations: &[backend::ShapeVariation],
-) -> Vec<GlyphPath> {
-    let Ok(face) = font_backend.create_face(font_data, variations) else {
-        return Vec::new();
-    };
-
+) -> Result<Vec<GlyphPath>, BoundtextError> {
     let units_per_em = f64::from(face.units_per_em());
     let scale = font_size_px / units_per_em;
     let mut cursor_x = start_x;
     let mut paths = Vec::new();
+    if let Some(first_position) = positions.first() {
+        paths
+            .try_reserve_exact(positions.len())
+            .map_err(|_| BoundtextError::FontOutline {
+                reason: FontFailureReason::AllocationFailed,
+                glyph_id: first_position.glyph_id,
+            })?;
+    }
 
     for pos in positions {
-        let glyph_id = pos.glyph_id as u16;
+        let glyph_id = pos.glyph_id;
         let gx = cursor_x + pos.x_offset;
         let gy = baseline_y + pos.y_offset;
 
@@ -217,23 +312,22 @@ pub fn extract_glyph_paths(
             pivot_y: gy,
         });
 
-        if face.outline_glyph(glyph_id, &mut builder) {
-            let path_data = builder.to_path_string();
-            if !path_data.is_empty() {
-                paths.push(GlyphPath {
-                    d: path_data,
-                    x: gx,
-                    y: gy,
-                    glyph_id: None,
-                    request_index: None,
-                });
-            }
+        let has_outline = face.outline_glyph(glyph_id, &mut builder)?.is_some();
+        let path_data = builder.into_path_string(glyph_id)?;
+        if has_outline && !path_data.is_empty() {
+            paths.push(GlyphPath {
+                d: path_data,
+                x: gx,
+                y: gy,
+                glyph_id: None,
+                request_index: None,
+            });
         }
 
         cursor_x += pos.x_advance;
     }
 
-    paths
+    Ok(paths)
 }
 
 /// Extract one already-positioned glyph outline around its baseline origin.
@@ -243,10 +337,8 @@ pub fn extract_glyph_paths(
 /// Returns [`BoundtextError::InvalidBaselineRotation`] when the additive
 /// baseline rotation is not finite, or [`BoundtextError::InvalidInlineScale`]
 /// when the inline-axis scale is not positive and finite.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "glyph IDs are OpenType u16 stored as u32; truncation is correct"
-)]
+/// Propagates invalid-glyph, metric, drawing, and allocation failures from the
+/// complete outline operation.
 pub fn extract_positioned_glyph_path(
     face: &dyn backend::FontFace,
     input: &PositionedGlyphPathInput,
@@ -261,7 +353,13 @@ pub fn extract_positioned_glyph_path(
     if !inline_scale.is_finite() || inline_scale <= 0.0 {
         return Err(BoundtextError::InvalidInlineScale);
     }
-    let glyph_id = input.glyph_id as u16;
+    let glyph_id = input.glyph_id;
+    if glyph_id >= face.glyph_count() {
+        return Err(BoundtextError::FontOutline {
+            reason: FontFailureReason::InvalidGlyphId,
+            glyph_id,
+        });
+    }
     let units_per_em = f64::from(face.units_per_em());
     let scale = input.font_size_px / units_per_em;
 
@@ -269,32 +367,49 @@ pub fn extract_positioned_glyph_path(
     // tofu marker — never render the font's own .notdef outline (which may be
     // a filled rectangle indistinguishable from a real glyph).
     if glyph_id == 0 && input.show_missing_glyphs {
-        return Ok(Some(build_tofu_rect(face, input, scale)));
+        return build_tofu_rect(face, input, scale).map(Some);
     }
 
-    let Some(bbox) = face.glyph_bounding_box(glyph_id) else {
+    let mut recorded = RecordedOutline::default();
+    let bbox = face.outline_glyph(glyph_id, &mut recorded)?;
+    if recorded.allocation_failed {
+        return Err(BoundtextError::FontOutline {
+            reason: FontFailureReason::AllocationFailed,
+            glyph_id,
+        });
+    }
+    let Some(bbox) = bbox else {
         return Ok(None);
     };
+    if [bbox.x_min, bbox.x_max, bbox.y_min, bbox.y_max]
+        .iter()
+        .any(|value| !value.is_finite())
+    {
+        return Err(BoundtextError::FontOutline {
+            reason: FontFailureReason::NonFiniteMetric,
+            glyph_id,
+        });
+    }
 
     let (shift_x, shift_y) = if input.writing_mode == "vertical-rl" {
         if input.rotation_deg == 90 {
-            let center_x = (f64::from(bbox.x_min) + f64::from(bbox.x_max)) * 0.5 * scale;
+            let center_x = (bbox.x_min + bbox.x_max) * 0.5 * scale;
             let font_center_y = face
                 .typographic_ascender()
-                .map_or(f64::from(face.ascender()), f64::from)
+                .map_or(face.ascender(), f64::from)
                 .mul_add(
                     0.5,
                     face.typographic_descender()
-                        .map_or(f64::from(face.descender()), f64::from)
+                        .map_or(face.descender(), f64::from)
                         * 0.5,
                 )
                 * scale;
             (-center_x, font_center_y)
         } else {
             (
-                face.glyph_hor_advance(glyph_id)
+                face.glyph_hor_advance(glyph_id)?
                     .map_or(-input.font_size_px * 0.5, |advance| {
-                        -(f64::from(advance) * scale * 0.5)
+                        -(advance * scale * 0.5)
                     }),
                 0.0,
             )
@@ -316,11 +431,8 @@ pub fn extract_positioned_glyph_path(
         pivot_y: input.origin_y,
     });
 
-    if !face.outline_glyph(glyph_id, &mut builder) {
-        return Ok(None);
-    }
-
-    let path_data = builder.to_path_string();
+    recorded.replay(&mut builder, glyph_id)?;
+    let path_data = builder.into_path_string(glyph_id)?;
     if path_data.is_empty() {
         return Ok(None);
     }
@@ -344,16 +456,16 @@ fn build_tofu_rect(
     face: &dyn backend::FontFace,
     input: &PositionedGlyphPathInput,
     scale: f64,
-) -> GlyphPath {
+) -> Result<GlyphPath, BoundtextError> {
     // Use font_size_px as width so the marker matches surrounding glyph cells.
     let cell = input.font_size_px;
     let ascender = face
         .typographic_ascender()
-        .map_or(f64::from(face.ascender()), f64::from)
+        .map_or(face.ascender(), f64::from)
         * scale;
     let descender = face
         .typographic_descender()
-        .map_or(f64::from(face.descender()), f64::from)
+        .map_or(face.descender(), f64::from)
         * scale;
     let em_height = ascender - descender;
 
@@ -372,7 +484,24 @@ fn build_tofu_rect(
     let rect_width = (cell - inset * 2.0).max(0.5);
     let rect_height = (em_height - inset * 2.0).max(0.5);
     let rect_right = rect_x + rect_width;
+    let rect_bottom = rect_y + rect_height;
     let negative_rect_width = -rect_width;
+    if [
+        rect_x,
+        rect_y,
+        rect_width,
+        rect_height,
+        rect_right,
+        rect_bottom,
+    ]
+    .iter()
+    .any(|coordinate| !coordinate.is_finite())
+    {
+        return Err(BoundtextError::FontOutline {
+            reason: FontFailureReason::NonFiniteMetric,
+            glyph_id: input.glyph_id,
+        });
+    }
 
     // Preserve the established tofu bytes unless the additive rotation is active.
     let inline_scale = input.inline_scale.unwrap_or(1.0);
@@ -396,13 +525,18 @@ fn build_tofu_rect(
             pivot_x: input.origin_x,
             pivot_y: input.origin_y,
         };
-        let rect_bottom = rect_y + rect_height;
         let points = [
             transform.apply_positioned_rotations(rect_x, rect_y),
             transform.apply_positioned_rotations(rect_right, rect_y),
             transform.apply_positioned_rotations(rect_right, rect_bottom),
             transform.apply_positioned_rotations(rect_x, rect_bottom),
         ];
+        if points.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
+            return Err(BoundtextError::FontOutline {
+                reason: FontFailureReason::NonFiniteMetric,
+                glyph_id: input.glyph_id,
+            });
+        }
         format!(
             "M{},{}L{},{}L{},{}L{},{}ZM{},{}L{},{}M{},{}L{},{}",
             PathBuilder::fmt(points[0].0),
@@ -424,20 +558,20 @@ fn build_tofu_rect(
         )
     };
 
-    GlyphPath {
+    Ok(GlyphPath {
         d: path_data,
         x: input.origin_x,
         y: input.origin_y,
         glyph_id: Some(input.glyph_id),
         request_index: Some(input.request_index),
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::font::backend::FontBackend;
-    use crate::font::backend_ttfparser::TtfParserBackend;
+    use crate::font::backend_skrifa::SkrifaBackend;
     use crate::font::shaping;
     use crate::font::{FontEntry, FontRegistry, FontStyle};
 
@@ -449,8 +583,8 @@ mod tests {
         .expect("Test font file not found")
     }
 
-    fn test_backend() -> TtfParserBackend {
-        TtfParserBackend
+    fn test_backend() -> SkrifaBackend {
+        SkrifaBackend
     }
 
     #[test]
@@ -459,7 +593,8 @@ mod tests {
         let backend = test_backend();
         let registry = FontRegistry::new();
         let entry = FontEntry::new(data.clone(), "Test".into(), 400, FontStyle::Normal).unwrap();
-        let glyphs = shaping::shape_text(&registry, &entry, "AB", 24.0, 0.0);
+        let glyphs = shaping::shape_text(&registry, &entry, "AB", 24.0, 0.0)
+            .expect("font operation succeeds");
 
         let positions: Vec<GlyphPosition> = glyphs
             .iter()
@@ -471,7 +606,14 @@ mod tests {
             })
             .collect();
 
-        let paths = extract_glyph_paths(&backend, &data, 24.0, 20.0, 0.0, &positions, &[]);
+        let paths = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
+            24.0,
+            20.0,
+            0.0,
+            &positions,
+        )
+        .expect("font operation succeeds");
         assert!(!paths.is_empty(), "Should produce paths for ASCII glyphs");
         for p in &paths {
             assert!(p.d.starts_with('M'), "Path should start with M command");
@@ -485,7 +627,8 @@ mod tests {
         let backend = test_backend();
         let registry = FontRegistry::new();
         let entry = FontEntry::new(data.clone(), "Test".into(), 400, FontStyle::Normal).unwrap();
-        let glyphs = shaping::shape_text(&registry, &entry, "あ", 24.0, 0.0);
+        let glyphs = shaping::shape_text(&registry, &entry, "あ", 24.0, 0.0)
+            .expect("font operation succeeds");
 
         let positions: Vec<GlyphPosition> = glyphs
             .iter()
@@ -497,7 +640,14 @@ mod tests {
             })
             .collect();
 
-        let paths = extract_glyph_paths(&backend, &data, 24.0, 20.0, 0.0, &positions, &[]);
+        let paths = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
+            24.0,
+            20.0,
+            0.0,
+            &positions,
+        )
+        .expect("font operation succeeds");
         assert!(!paths.is_empty(), "Should produce paths for CJK glyphs");
     }
 
@@ -505,7 +655,14 @@ mod tests {
     fn test_empty_text_returns_empty() {
         let data = test_font_data();
         let backend = test_backend();
-        let paths = extract_glyph_paths(&backend, &data, 24.0, 20.0, 0.0, &[], &[]);
+        let paths = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
+            24.0,
+            20.0,
+            0.0,
+            &[],
+        )
+        .expect("font operation succeeds");
         assert!(paths.is_empty());
     }
 
@@ -515,7 +672,8 @@ mod tests {
         let backend = test_backend();
         let registry = FontRegistry::new();
         let entry = FontEntry::new(data.clone(), "Test".into(), 400, FontStyle::Normal).unwrap();
-        let glyphs = shaping::shape_text(&registry, &entry, "AB", 24.0, 0.0);
+        let glyphs = shaping::shape_text(&registry, &entry, "AB", 24.0, 0.0)
+            .expect("font operation succeeds");
 
         let positions: Vec<GlyphPosition> = glyphs
             .iter()
@@ -527,7 +685,14 @@ mod tests {
             })
             .collect();
 
-        let paths = extract_glyph_paths(&backend, &data, 24.0, 20.0, 10.0, &positions, &[]);
+        let paths = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
+            24.0,
+            20.0,
+            10.0,
+            &positions,
+        )
+        .expect("font operation succeeds");
         assert!(paths.len() >= 2);
         // First glyph starts at x=10
         assert!((paths[0].x - 10.0).abs() < 0.01);
@@ -536,10 +701,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "glyph IDs are OpenType u16 stored as u32; truncation is correct"
-    )]
     fn test_vertical_rotated_punctuation_preserves_cross_axis_side() {
         let data = test_font_data();
         let backend = test_backend();
@@ -555,26 +716,30 @@ mod tests {
         };
         let registry = FontRegistry::new();
         let glyphs =
-            shaping::shape_text_with_options(&registry, &entry, "A,.\"", 42.0, 0.0, &options);
+            shaping::shape_text_with_options(&registry, &entry, "A,.\"", 42.0, 0.0, &options)
+                .expect("font operation succeeds");
         assert_eq!(glyphs.len(), 4);
 
         let scale = 42.0 / f64::from(face.units_per_em());
         let font_center_y = face
             .typographic_ascender()
-            .map_or(f64::from(face.ascender()), f64::from)
+            .map_or(face.ascender(), f64::from)
             .mul_add(
                 0.5,
                 face.typographic_descender()
-                    .map_or(f64::from(face.descender()), f64::from)
+                    .map_or(face.descender(), f64::from)
                     * 0.5,
             )
             * scale;
         let cross_axis_offsets: Vec<f64> = glyphs
             .iter()
             .map(|glyph| {
-                let glyph_id = glyph.glyph_id as u16;
-                let bbox = face.glyph_bounding_box(glyph_id).expect("bbox");
-                let bbox_center_y = (f64::from(bbox.y_min) + f64::from(bbox.y_max)) * 0.5 * scale;
+                let glyph_id = glyph.glyph_id;
+                let bbox = face
+                    .glyph_bounding_box(glyph_id)
+                    .expect("font operation succeeds")
+                    .expect("bbox");
+                let bbox_center_y = (bbox.y_min + bbox.y_max) * 0.5 * scale;
                 bbox_center_y - font_center_y
             })
             .collect();
@@ -598,9 +763,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn make_face(data: &[u8]) -> Box<dyn backend::FontFace + '_> {
-        TtfParserBackend
-            .create_face(data, &[])
-            .expect("create face")
+        SkrifaBackend.create_face(data, &[]).expect("create face")
     }
 
     #[test]
@@ -746,7 +909,8 @@ mod tests {
         let registry = FontRegistry::new();
         let entry = FontEntry::new(data.to_vec(), "Test".into(), 400, FontStyle::Normal)
             .expect("font entry");
-        shaping::shape_text(&registry, &entry, text, 48.0, 0.0)[0].glyph_id
+        shaping::shape_text(&registry, &entry, text, 48.0, 0.0).expect("font operation succeeds")[0]
+            .glyph_id
     }
 
     #[test]
@@ -824,6 +988,42 @@ mod tests {
         assert!(tofu.d.contains('Z'));
         assert!(!tofu.d.contains("NaN"));
         assert!(!tofu.d.contains("inf"));
+    }
+
+    #[test]
+    fn synthetic_tofu_rejects_nonfinite_geometry_from_finite_inputs() {
+        let data = test_font_data();
+        let face = make_face(&data);
+        let input = PositionedGlyphPathInput {
+            glyph_id: 0,
+            show_missing_glyphs: true,
+            ..positioned_input(0)
+        };
+        for overflowing in [
+            PositionedGlyphPathInput {
+                font_size_px: f64::MAX,
+                origin_x: f64::MAX,
+                ..input.clone()
+            },
+            PositionedGlyphPathInput {
+                inline_scale: Some(f64::MAX),
+                baseline_rotation_deg: Some(45.0),
+                ..input.clone()
+            },
+        ] {
+            assert_eq!(
+                extract_positioned_glyph_path(face.as_ref(), &overflowing).unwrap_err(),
+                BoundtextError::FontOutline {
+                    reason: FontFailureReason::NonFiniteMetric,
+                    glyph_id: 0,
+                }
+            );
+        }
+        assert!(
+            extract_positioned_glyph_path(face.as_ref(), &input)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -950,7 +1150,8 @@ mod tests {
         let backend = test_backend();
         let registry = FontRegistry::new();
         let entry = FontEntry::new(data.clone(), "Inter".into(), 400, FontStyle::Normal).unwrap();
-        let glyphs = shaping::shape_text(&registry, &entry, "H", 48.0, 0.0);
+        let glyphs = shaping::shape_text(&registry, &entry, "H", 48.0, 0.0)
+            .expect("font operation succeeds");
 
         let positions: Vec<GlyphPosition> = glyphs
             .iter()
@@ -962,19 +1163,25 @@ mod tests {
             })
             .collect();
 
-        let paths_default = extract_glyph_paths(&backend, &data, 48.0, 40.0, 0.0, &positions, &[]);
-        let paths_bold = extract_glyph_paths(
-            &backend,
-            &data,
+        let paths_default = extract_glyph_paths(
+            backend.create_face(&data, &[]).unwrap().as_ref(),
             48.0,
             40.0,
             0.0,
             &positions,
-            &[backend::ShapeVariation {
-                tag: *b"wght",
-                value: 900.0,
-            }],
-        );
+        )
+        .expect("font operation succeeds");
+        let bold_face = backend
+            .create_face(
+                &data,
+                &[backend::ShapeVariation {
+                    tag: *b"wght",
+                    value: 900.0,
+                }],
+            )
+            .unwrap();
+        let paths_bold = extract_glyph_paths(bold_face.as_ref(), 48.0, 40.0, 0.0, &positions)
+            .expect("font operation succeeds");
 
         assert!(!paths_default.is_empty(), "default should produce paths");
         assert!(!paths_bold.is_empty(), "bold should produce paths");

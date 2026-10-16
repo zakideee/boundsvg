@@ -156,13 +156,13 @@ fn parse(input: &str) -> Option<Vec<Segment>> {
             }
             *coordinate_value = coordinate(bytes, &mut pos)?;
         }
-        if let Some(next) = bytes.get(pos) {
-            if !matches!(
+        if let Some(next) = bytes.get(pos)
+            && !matches!(
                 next,
                 b' ' | b'\t' | b'\r' | b'\n' | b'M' | b'L' | b'Q' | b'C' | b'Z'
-            ) {
-                return None;
-            }
+            )
+        {
+            return None;
         }
         needs_move = op == b'Z';
         segments.push(Segment {
@@ -200,7 +200,7 @@ fn number_properties(value: i64) -> NumberProperties {
     } else {
         whole.ilog10() as usize + 1
     };
-    let fraction_digits = if fraction % 10 == 0 { 1 } else { 2 };
+    let fraction_digits = if fraction.is_multiple_of(10) { 1 } else { 2 };
     NumberProperties {
         length: u8::try_from(sign_length + whole_digits + 1 + fraction_digits).unwrap_or(u8::MAX),
         has_dot: true,
@@ -258,7 +258,7 @@ fn append_number(output: &mut String, value: i64) {
     }
     if fraction != 0 {
         output.push('.');
-        if fraction % 10 == 0 {
+        if fraction.is_multiple_of(10) {
             output.push(char::from(b'0' + (fraction / 10) as u8));
         } else {
             output.push(char::from(b'0' + (fraction / 10) as u8));

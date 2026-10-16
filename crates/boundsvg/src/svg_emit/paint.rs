@@ -110,28 +110,30 @@ pub fn append_stroke_style_attrs(
     style: &StrokeStyleFields,
     attrs: &mut Vec<String>,
 ) -> Result<(), EngineError> {
-    if let Some(linecap) = style.linecap {
-        if !linecap.is_empty() && linecap != "butt" {
-            attrs.push(format!("stroke-linecap=\"{}\"", escape_xml(linecap)));
-        }
+    if let Some(linecap) = style.linecap
+        && !linecap.is_empty()
+        && linecap != "butt"
+    {
+        attrs.push(format!("stroke-linecap=\"{}\"", escape_xml(linecap)));
     }
-    if let Some(linejoin) = style.linejoin {
-        if !linejoin.is_empty() && linejoin != "miter" {
-            attrs.push(format!("stroke-linejoin=\"{}\"", escape_xml(linejoin)));
-        }
+    if let Some(linejoin) = style.linejoin
+        && !linejoin.is_empty()
+        && linejoin != "miter"
+    {
+        attrs.push(format!("stroke-linejoin=\"{}\"", escape_xml(linejoin)));
     }
-    if let Some(dasharray) = style.dasharray {
-        if !dasharray.is_empty() {
-            attrs.push(format!("stroke-dasharray=\"{}\"", escape_xml(dasharray)));
-        }
+    if let Some(dasharray) = style.dasharray
+        && !dasharray.is_empty()
+    {
+        attrs.push(format!("stroke-dasharray=\"{}\"", escape_xml(dasharray)));
     }
-    if let Some(miterlimit) = style.miterlimit {
-        if miterlimit != 4.0 {
-            attrs.push(format!(
-                "stroke-miterlimit=\"{}\"",
-                format_number(miterlimit, 2)?
-            ));
-        }
+    if let Some(miterlimit) = style.miterlimit
+        && miterlimit != 4.0
+    {
+        attrs.push(format!(
+            "stroke-miterlimit=\"{}\"",
+            format_number(miterlimit, 2)?
+        ));
     }
     Ok(())
 }
@@ -177,12 +179,11 @@ pub fn build_shape_paint_attrs(
     } else if stroke_is_set || mode == ShapePaintMode::Stroke {
         attrs.push("fill=\"none\"".to_string());
     }
-    if mode != ShapePaintMode::Stroke {
-        if let Some(fill_rule) = node.fill_rule {
-            if fill_rule != "nonzero" {
-                attrs.push(format!("fill-rule=\"{}\"", escape_xml(fill_rule)));
-            }
-        }
+    if mode != ShapePaintMode::Stroke
+        && let Some(fill_rule) = node.fill_rule
+        && fill_rule != "nonzero"
+    {
+        attrs.push(format!("fill-rule=\"{}\"", escape_xml(fill_rule)));
     }
     if stroke_is_set {
         if let Some(stroke_value) = stroke {

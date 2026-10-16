@@ -1,3 +1,5 @@
+//! Text layout operations and shared propagation of shaping failures.
+
 pub mod decoration;
 pub mod ellipsis;
 pub(crate) mod ellipsis_plan;
@@ -22,9 +24,13 @@ use crate::font::shaping::{self, GlyphInfo, ShapeOptions};
 /// Shape one non-empty effective text run for a checked layout operation.
 ///
 /// Font lookup and the empty-glyph failure boundary are intentionally shared
-/// by plain, span, rich, fit, and vertical callers. Low-level shaping remains
-/// fallible-by-empty, while checked layout never treats a non-empty run with
-/// no produced glyphs as a successful layout.
+/// by plain, span, rich, fit, and vertical callers. Backend failures propagate
+/// through `Result`; checked layout also rejects a non-empty run with no
+/// produced glyphs.
+///
+/// # Errors
+///
+/// Returns a missing-font or empty-output failure for a nonempty run, or propagates a backend shaping failure.
 pub(crate) fn shape_checked_text_run(
     font_context: &FontContext<'_>,
     text: &str,
@@ -45,7 +51,7 @@ pub(crate) fn shape_checked_text_run(
             font_size_px,
             letter_spacing_px,
             shape_options,
-        )
+        )?
         .ok_or_else(|| crate::TextLayoutError::FontUnavailable {
             run_index,
             families: font_context.families.to_vec(),
@@ -74,7 +80,7 @@ pub(crate) fn shape_checked_text_run(
             font_size_px,
             letter_spacing_px,
             shape_options,
-        )
+        )?
     };
 
     if glyphs.is_empty() {

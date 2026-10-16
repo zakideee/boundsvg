@@ -1,3 +1,5 @@
+//! Verify optional wire fields distinguish absence from invalid explicit values.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
@@ -168,6 +170,16 @@ const MANUAL_SERIALIZE_ALLOWLIST: &[SourceAllowance] = &[
 /// Exact macros proven to create helpers rather than unexpanded wire DTOs.
 const ITEM_MACRO_ALLOWLIST: &[SourceAllowance] = &[
     SourceAllowance {
+        source: "crates/boundtext/src/font/admission.rs",
+        item: "thread_local@1cb8daed01548118",
+        reason: "generates three cfg(test) Cell<usize> admission/visited-view/reference counters; no struct, enum, serde implementation, or wire DTO",
+    },
+    SourceAllowance {
+        source: "crates/boundtext/src/font/admission.rs",
+        item: "macro_rules@96d72a523ee1aeea",
+        reason: "validates typed OpenType tables through expressions; never declares a wire DTO",
+    },
+    SourceAllowance {
         source: "crates/boundsvg/src/animation_frame_tests.rs",
         item: "thread_local@04e3059c5905515e",
         reason: "generates cfg(test) weak lifetime probes for frame-local allocations, not a wire DTO",
@@ -183,14 +195,24 @@ const ITEM_MACRO_ALLOWLIST: &[SourceAllowance] = &[
         reason: "generates hidden benchmark counters, not a wire DTO",
     },
     SourceAllowance {
-        source: "crates/boundtext/src/font/backend_rustybuzz.rs",
-        item: "self_cell@9abaf6da1176dbb1",
-        reason: "generates a self-referential rustybuzz font holder, not a wire DTO",
+        source: "crates/boundtext/src/font/admission.rs",
+        item: "macro_rules@4e9f907cd977f635",
+        reason: "validates typed OpenType tables through expressions; never declares a wire DTO",
     },
     SourceAllowance {
-        source: "crates/boundtext/src/font/backend_ttfparser.rs",
-        item: "self_cell@1766b3a991d52a96",
-        reason: "generates a self-referential ttf-parser font holder, not a wire DTO",
+        source: "crates/boundtext/src/font/admission.rs",
+        item: "macro_rules@97b0d5559b561bc4",
+        reason: "validates typed OpenType tables through expressions; never declares a wire DTO",
+    },
+    SourceAllowance {
+        source: "crates/boundtext/src/font/admission.rs",
+        item: "macro_rules@d7fa8c81ff97d052",
+        reason: "validates typed OpenType tables through expressions; never declares a wire DTO",
+    },
+    SourceAllowance {
+        source: "crates/boundtext/src/font/admission.rs",
+        item: "macro_rules@dec701911813d02f",
+        reason: "validates typed OpenType tables through expressions; never declares a wire DTO",
     },
 ];
 

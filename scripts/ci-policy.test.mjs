@@ -398,7 +398,6 @@ test("actual workflow wiring keeps required jobs, coverage, and unique acceptanc
     "pnpm bench:smoke",
     "node scripts/pack-e2e.mjs",
     "pnpm knip",
-    "cargo test --manifest-path vendor/ttf-parser/Cargo.toml --all-features",
     "--test lib_exports_test --features unicode-full",
     "cargo llvm-cov --workspace --lcov",
     "pnpm run test:e2e",
@@ -412,4 +411,21 @@ test("actual workflow wiring keeps required jobs, coverage, and unique acceptanc
   assert.equal(release.match(/node scripts\/verify-release-checks.mjs/g)?.length, 2);
   assert.doesNotMatch(release, /REQUIRED_CHECKS:/);
   assert.doesNotMatch(release, /cache: pnpm|uses: Swatinem\/rust-cache/);
+  assert.doesNotMatch(
+    ci,
+    /uses: (?:actions\/cache|Swatinem\/rust-cache)|cache: pnpm|steps\.wasm-cache/,
+  );
+  assert.doesNotMatch(ci, /vendor\/ttf-parser/);
+  for (const setup of ci.matchAll(
+    /uses: actions\/setup-node@([^\n]+)\n {8}with:\n([^\n]+)\n([^\n]+)/g,
+  )) {
+    assert.equal(setup[1], "949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0");
+    assert.match(setup[2], /node-version: 22$/);
+    assert.match(setup[3], /package-manager-cache: false$/);
+  }
+  for (const name of ["lint-and-typecheck", "test-ts"]) {
+    const block = jobBlock(ci, name);
+    assert.match(block, /- name: Build WASM\n {8}run:/);
+    assert.match(block, /pnpm build:wasm\n {10}pnpm build:wasm:web/);
+  }
 });

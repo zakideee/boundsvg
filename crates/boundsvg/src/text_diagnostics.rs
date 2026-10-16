@@ -1,3 +1,5 @@
+//! Convert structured text and font failures into bounded render diagnostics.
+
 use boundtext::{
     FlowRegionError, FlowRegionField, RegionProviderError, RegionQueryError, RegionQueryField,
     TextConstraintField, TextLayoutError, TextLayoutInvariant, TextPreparationPhase,
@@ -64,6 +66,113 @@ impl TextLayoutDiagnostic {
             node_id: self.node_id,
             context: Box::new(self.context),
         }
+    }
+}
+
+/// Classify font failures without copying font bytes, paths, or input text.
+#[must_use]
+pub(crate) fn classify_font_error(
+    error: &boundtext::BoundtextError,
+    operation: &str,
+    node_id: Option<String>,
+) -> TextLayoutDiagnostic {
+    use boundtext::BoundtextError;
+    let mut context = serde_json::json!({ "operation": operation });
+    let (code, message, stage) = match error {
+        BoundtextError::FontUnavailable { weight } => {
+            context["reason"] = serde_json::json!("unregisteredFont");
+            context["weight"] = serde_json::json!(weight);
+            (
+                "TEXT_FONT_UNAVAILABLE",
+                "No requested font is available.",
+                PipelineStage::Font,
+            )
+        }
+        BoundtextError::FontParse {
+            reason,
+            table,
+            face_index,
+        } => {
+            context["reason"] = serde_json::json!(reason);
+            context["faceIndex"] = serde_json::json!(face_index);
+            if let Some(table) = table {
+                context["table"] = serde_json::json!(table);
+            }
+            (
+                "FONT_PARSE_FAILED",
+                "Font parsing or admission failed.",
+                PipelineStage::Font,
+            )
+        }
+        BoundtextError::FontOutline { reason, glyph_id } => {
+            context["reason"] = serde_json::json!(reason);
+            context["glyphId"] = serde_json::json!(glyph_id);
+            (
+                "FONT_OUTLINE_FAILED",
+                "Font outline extraction failed.",
+                PipelineStage::Font,
+            )
+        }
+        BoundtextError::TextShaping { reason } => {
+            context["reason"] = serde_json::json!(reason);
+            (
+                "TEXT_SHAPING_FAILED",
+                "Text shaping failed.",
+                PipelineStage::Text,
+            )
+        }
+        BoundtextError::TextShapingLimitExceeded => {
+            context["reason"] =
+                serde_json::json!(boundtext::error::FontFailureReason::BufferFailedDuringShaping);
+            (
+                "TEXT_SHAPING_LIMIT_EXCEEDED",
+                "The shaping buffer failed during processing.",
+                PipelineStage::Text,
+            )
+        }
+        BoundtextError::InvalidShapedOutput {
+            reason,
+            glyph_index,
+        } => {
+            context["reason"] = serde_json::json!(reason);
+            context["glyphIndex"] = serde_json::json!(glyph_index);
+            (
+                "TEXT_SHAPING_INVALID_OUTPUT",
+                "The shaper returned invalid glyph data.",
+                PipelineStage::Text,
+            )
+        }
+        BoundtextError::FontAlreadyRegistered { .. } => {
+            context["reason"] = serde_json::json!("duplicateRegistration");
+            (
+                "FONT_DUPLICATE",
+                "The font is already registered.",
+                PipelineStage::Font,
+            )
+        }
+        BoundtextError::InvalidBaselineRotation => {
+            context["reason"] = serde_json::json!("invalidBaselineRotation");
+            (
+                "FONT_OUTLINE_FAILED",
+                "Baseline glyph rotation must be finite.",
+                PipelineStage::Font,
+            )
+        }
+        BoundtextError::InvalidInlineScale => {
+            context["reason"] = serde_json::json!("invalidInlineScale");
+            (
+                "FONT_OUTLINE_FAILED",
+                "Glyph inline scale must be positive and finite.",
+                PipelineStage::Font,
+            )
+        }
+    };
+    TextLayoutDiagnostic {
+        code,
+        message,
+        stage,
+        node_id,
+        context,
     }
 }
 
@@ -375,6 +484,9 @@ pub(crate) fn classify_text_layout_error(
     node_id: Option<String>,
 ) -> TextLayoutDiagnostic {
     let (code, message, stage, context) = match error {
+        TextLayoutError::Font(error) => {
+            return classify_font_error(error, operation.as_str(), node_id);
+        }
         TextLayoutError::InvalidRequest { reason } => (
             "TEXT_LAYOUT_INPUT_INVALID",
             "Text layout request is invalid.",
@@ -539,6 +651,41 @@ pub(crate) fn classify_text_layout_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_ellipsis_missing_chain_keeps_its_font_diagnostic() {
+        use boundtext::font::{FontContext, FontRegistry, FontStyle, shaping::ShapeOptions};
+        let registry = FontRegistry::new();
+        let families = vec!["Missing".to_string(), "AlsoMissing".to_string()];
+        let font_context = FontContext {
+            registry: &registry,
+            fallback_registry: None,
+            families: &families,
+            weight: 400,
+            style: &FontStyle::Normal,
+        };
+        let error = boundtext::text::ellipsis::shape_ellipsis_advance_with_options(
+            &font_context,
+            20.0,
+            0.0,
+            &ShapeOptions::default(),
+            false,
+        )
+        .unwrap_err();
+        let diagnostic = classify_text_layout_error(
+            &error,
+            TextLayoutOperation::RenderTextLayout,
+            Some("ellipsis".to_string()),
+        );
+        assert_eq!(diagnostic.code, "TEXT_FONT_UNAVAILABLE");
+        assert_eq!(diagnostic.message, "No requested font is available.");
+        assert!(matches!(diagnostic.stage, PipelineStage::Font));
+        assert_eq!(diagnostic.node_id.as_deref(), Some("ellipsis"));
+        assert_eq!(
+            diagnostic.context,
+            serde_json::json!({"operation":"renderTextLayout", "reason":"unregisteredFont", "weight":400})
+        );
+    }
 
     #[test]
     fn font_alias_context_is_utf8_safe_and_bounded() {

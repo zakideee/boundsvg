@@ -21,6 +21,7 @@ use crate::font::shaping::ShapeOptions;
 const DEFAULT_EPSILON: f64 = 0.25;
 /// Default max binary search iterations.
 const DEFAULT_MAX_ITERATIONS: usize = 12;
+/// Pixel tolerance for final shrinkwrap containment comparisons.
 const CONTAINMENT_EPSILON_PX: f64 = 1e-6;
 
 // ---------------------------------------------------------------------------
@@ -637,6 +638,7 @@ mod tests {
             None,
             0.0,
         )
+        .expect("font operation succeeds")
         .expect("shape_paragraph should succeed")
     }
 

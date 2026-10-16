@@ -1,3 +1,5 @@
+//! Break shaped horizontal text into physical lines with wrapping constraints.
+
 use super::break_detection::{build_uax14_break_set, find_breakable};
 use super::char_mapping::build_byte_to_char_map;
 use super::result_building::{build_horizontal_positioned_glyphs, build_lines_from_breaks};
@@ -12,18 +14,21 @@ use super::char_mapping::{CharGlyphMap, build_char_to_glyph_map};
 // Line breaking
 // ---------------------------------------------------------------------------
 
+/// Horizontal lines together with unresolved kinsoku status.
 pub struct BreakResult {
     pub lines: Vec<Line>,
     pub kinsoku_unresolved: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Half-open grapheme bounds and kinsoku status for one horizontal line.
 pub(crate) struct BreakLineRange {
     pub char_start: usize,
     pub char_end: usize,
     pub kinsoku_unresolved: bool,
 }
 
+/// Horizontal layout and the corresponding authoritative source ranges.
 pub(crate) struct BreakResultWithRanges {
     pub result: BreakResult,
     pub line_ranges: Vec<BreakLineRange>,
@@ -51,10 +56,10 @@ impl BreakMeasure {
         if self.max_line_width > max_width {
             return false;
         }
-        if let Some(max) = max_lines {
-            if self.line_count > max {
-                return false;
-            }
+        if let Some(max) = max_lines
+            && self.line_count > max
+        {
+            return false;
         }
         if let Some(max_h) = max_height {
             let total_height = self.line_count as f64 * line_height_px;
@@ -128,10 +133,10 @@ pub(crate) fn measure_break_fit(
 
         if current_width > max_width && i > line_start {
             // Check hanging punctuation
-            if let Some(ch) = chars_ref[i].chars().next() {
-                if is_hanging_char(ch, hanging_chars) {
-                    continue;
-                }
+            if let Some(ch) = chars_ref[i].chars().next()
+                && is_hanging_char(ch, hanging_chars)
+            {
+                continue;
             }
 
             let Some(mut break_pos) =
@@ -235,6 +240,7 @@ pub(crate) fn break_lines_internal(
     clippy::too_many_arguments,
     reason = "text layout pipeline passes font context and layout constraints through stages"
 )]
+/// Break shaped horizontal text using wrap, kinsoku, indentation, and authored break options.
 pub(crate) fn break_lines_internal_with_options(
     glyphs: &[GlyphInfo],
     text: &str,
@@ -350,10 +356,10 @@ pub(crate) fn break_lines_internal_with_options(
 
         if current_width > max_width && i > line_start {
             // Check hanging punctuation
-            if let Some(ch) = chars_ref[i].chars().next() {
-                if is_hanging_char(ch, hanging_chars) {
-                    continue;
-                }
+            if let Some(ch) = chars_ref[i].chars().next()
+                && is_hanging_char(ch, hanging_chars)
+            {
+                continue;
             }
 
             let Some(mut break_pos) =

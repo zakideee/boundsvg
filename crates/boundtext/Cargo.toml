@@ -20,9 +20,9 @@ crate-type = ["rlib"]
 [dependencies]
 boundshape = { path = "../boundshape", version = "0.4.0" }
 schemars = { version = "=1.2.2", optional = true }
-rustybuzz = { version = "0.20", optional = true }
-self_cell = { version = "1", optional = true }
-ttf-parser = { version = "0.25", optional = true }
+harfrust = { version = "=0.14.0", optional = true }
+skrifa = { version = "=0.48.0", default-features = false, features = ["std"], optional = true }
+read-fonts = { version = "=0.45.0", default-features = false, features = ["std", "experimental_font_api"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -33,11 +33,11 @@ version = "1.12"
 optional = true
 
 [features]
-default = ["rustybuzz-backend", "ttfparser-backend", "unicode-full"]
+default = ["harfrust-backend", "skrifa-backend", "unicode-full"]
 phase-trace = []
-rustybuzz-backend = ["dep:rustybuzz", "dep:self_cell"]
+harfrust-backend = ["dep:harfrust", "dep:read-fonts"]
 schema = ["dep:schemars", "boundshape/schema"]
-ttfparser-backend = ["dep:ttf-parser", "dep:self_cell"]
+skrifa-backend = ["dep:skrifa", "dep:read-fonts"]
 unicode-full = ["unicode-segmentation"]
 
 [[bench]]

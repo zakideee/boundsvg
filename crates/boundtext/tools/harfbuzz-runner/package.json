@@ -2,7 +2,7 @@
   "name": "@boundsvg/harfbuzz-runner",
   "version": "0.1.0",
   "private": true,
-  "description": "Compares boundtext (rustybuzz) shaping output against HarfBuzz hb-shape",
+  "description": "Compares boundtext (HarfRust) shaping output against HarfBuzz hb-shape",
   "type": "module",
   "scripts": {
     "compare": "tsx src/compare.ts"

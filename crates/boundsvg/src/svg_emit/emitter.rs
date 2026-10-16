@@ -879,10 +879,10 @@ fn emit_styles(scene: &PaintScene) -> Result<String, EngineError> {
             }
         }
     }
-    if scene.reduced_motion == ReducedMotionMode::Pause {
-        if let Some(rule) = reduced_motion_rule(scene)? {
-            lines.extend(rule.lines().map(str::to_string));
-        }
+    if scene.reduced_motion == ReducedMotionMode::Pause
+        && let Some(rule) = reduced_motion_rule(scene)?
+    {
+        lines.extend(rule.lines().map(str::to_string));
     }
     lines.extend(emit_canvas_stroke_rules(scene)?);
     lines.push("  </style>".to_string());
@@ -1216,15 +1216,15 @@ fn emit_text_effect_layers(
                 format!("stroke-linejoin=\"{}\"", escape_xml(&stroke_layer.linejoin)),
                 format!("stroke-linecap=\"{}\"", escape_xml(&stroke_layer.linecap)),
             ];
-            if let Some(dasharray) = &stroke_layer.dasharray {
-                if !dasharray.is_empty() {
-                    layer_attrs.push(format!("stroke-dasharray=\"{}\"", escape_xml(dasharray)));
-                }
+            if let Some(dasharray) = &stroke_layer.dasharray
+                && !dasharray.is_empty()
+            {
+                layer_attrs.push(format!("stroke-dasharray=\"{}\"", escape_xml(dasharray)));
             }
-            if let Some(miterlimit) = stroke_layer.miterlimit {
-                if miterlimit != 4.0 {
-                    layer_attrs.push(format!("stroke-miterlimit=\"{}\"", fmt2(miterlimit)?));
-                }
+            if let Some(miterlimit) = stroke_layer.miterlimit
+                && miterlimit != 4.0
+            {
+                layer_attrs.push(format!("stroke-miterlimit=\"{}\"", fmt2(miterlimit)?));
             }
             lines.push(format!("{inner}<g {}>", layer_attrs.join(" ")));
             for glyph_index in &range.glyph_indices {
@@ -1324,10 +1324,11 @@ fn emit_path(path: &PathItem, options: SvgEmitOptions) -> Result<String, EngineE
         path_attrs.push("fill=\"none\"".to_string());
     }
 
-    if let Some(fill_rule) = path.fill_rule.as_deref() {
-        if !fill_rule.is_empty() && fill_rule != "nonzero" {
-            path_attrs.push(format!("fill-rule=\"{}\"", escape_xml(fill_rule)));
-        }
+    if let Some(fill_rule) = path.fill_rule.as_deref()
+        && !fill_rule.is_empty()
+        && fill_rule != "nonzero"
+    {
+        path_attrs.push(format!("fill-rule=\"{}\"", escape_xml(fill_rule)));
     }
 
     if path
@@ -1400,10 +1401,10 @@ fn emit_nested_svg(
             format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&nested.node_id)),
         );
     }
-    if let Some(view_box) = &nested.view_box {
-        if !view_box.is_empty() {
-            attrs.push(format!("viewBox=\"{}\"", escape_xml(view_box)));
-        }
+    if let Some(view_box) = &nested.view_box
+        && !view_box.is_empty()
+    {
+        attrs.push(format!("viewBox=\"{}\"", escape_xml(view_box)));
     }
     if !nested.preserve_aspect_ratio.is_empty() {
         attrs.push(format!(
@@ -1798,6 +1799,7 @@ mod tests {
         );
         crate::rasterize::rasterize_svg_to_pixmap(
             &svg,
+            &[],
             &[],
             &[],
             &crate::rasterize::RasterizeOptions::default(),

@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "referenceCommit": "442833c415f049b86ba5fd510e6d253a6a025295",
+  "referenceCommit": "d2245a816d1b372c8b2ca374db182bc06f39d8d2",
   "artifacts": [
     "conformance/native-layered-parts.ir.json",
     "conformance/native-layered-parts.layer-0-default.svg",

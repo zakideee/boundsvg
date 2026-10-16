@@ -69,15 +69,12 @@ supported props and error codes.
 
 ## Fonts
 
-- **Fonts with exactly 65,535 glyphs** (e.g. unsubsetted Noto Sans CJK) hit an
-  offset-arithmetic limitation in released `ttf-parser`: the `loca`/`gvar`
-  tables fail to parse and every glyph outline is lost. The published npm
-  packages are unaffected — their WASM is built against the patched copy in
-  `vendor/ttf-parser` (see `vendor/ttf-parser/README-PATCH.md`). A build of
-  the Rust crates against released `ttf-parser` rejects such a font at
-  registration with an explicit error instead of rendering nothing; the
-  workarounds are subsetting the font below 65,535 glyphs or applying the
-  vendored patch to your build.
+Fonts with 65,535 glyphs are supported, including variable outlines and the last
+valid glyph ID (65,534). Inject font bytes explicitly; system font lookup is not
+supported. Registration rejects malformed required tables and malformed known
+tables used for metrics or shaping. Empty glyphs remain valid. See the
+[font backend migration](./font-backend-migration) for native API changes,
+structured failure codes, and output differences across versions.
 
 ## Layout & visuals
 

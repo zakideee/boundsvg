@@ -1227,16 +1227,16 @@ fn parse_track_sizing(value: &str) -> TrackSizingFunction {
         return taffy::prelude::auto();
     }
 
-    if let Some(fr_str) = trimmed.strip_suffix("fr") {
-        if let Ok(fr) = fr_str.trim().parse::<f32>() {
-            return taffy::prelude::fr(fr);
-        }
+    if let Some(fr_str) = trimmed.strip_suffix("fr")
+        && let Ok(fr) = fr_str.trim().parse::<f32>()
+    {
+        return taffy::prelude::fr(fr);
     }
 
-    if let Some(px_str) = trimmed.strip_suffix("px") {
-        if let Ok(px) = px_str.trim().parse::<f32>() {
-            return taffy::prelude::length(px);
-        }
+    if let Some(px_str) = trimmed.strip_suffix("px")
+        && let Ok(px) = px_str.trim().parse::<f32>()
+    {
+        return taffy::prelude::length(px);
     }
 
     // Try parsing as a plain number (treat as px)
@@ -1286,16 +1286,22 @@ fn collect_layout_results(
         if text_input.unit_map.is_some() && rust_result.is_none() {
             return Err(unit_map_unavailable_error());
         }
-        let legacy_projection = context
-            .legacy_projections
-            .remove(&node_id)
-            .unwrap_or_else(|| {
-                build_legacy_projection(
-                    text_input,
-                    context.font_registry,
-                    context.fallback_registry,
+        let legacy_projection = match context.legacy_projections.remove(&node_id) {
+            Some(projection) => projection,
+            None => build_legacy_projection(
+                text_input,
+                context.font_registry,
+                context.fallback_registry,
+            )
+            .map_err(|error| {
+                crate::text_diagnostics::classify_font_error(
+                    &error,
+                    "renderTextLayout",
+                    Some(string_id.clone()),
                 )
-            });
+                .into_engine_error()
+            })?,
+        };
         if let Some(legacy_projection) = legacy_projection {
             let glyphs = legacy_projection.glyphs;
             let measured_width = legacy_projection.measured_width;

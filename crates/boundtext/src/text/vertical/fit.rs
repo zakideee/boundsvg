@@ -1,3 +1,5 @@
+//! Fit vertical text into the requested column and size constraints.
+
 use super::column_breaking::{VerticalBreakResult, break_vertical_columns};
 use super::common::{language_to_option_string, language_to_str};
 use super::shape::shape_text_vertical;
@@ -61,10 +63,10 @@ pub(super) fn vertical_text_fits(
     }
 
     // Check maxLines (max columns for vertical)
-    if let Some(max) = req.max_lines {
-        if columns.len() > max {
-            return false;
-        }
+    if let Some(max) = req.max_lines
+        && columns.len() > max
+    {
+        return false;
     }
 
     // Check height constraint (each column's height)

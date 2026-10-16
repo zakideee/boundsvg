@@ -39,9 +39,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Test CI policy
         run: node --test scripts/ci-policy.test.mjs scripts/verify-release-checks.test.mjs
@@ -80,10 +81,10 @@ jobs:
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          cache: pnpm
+          package-manager-cache: false
 
       - run: pnpm install --frozen-lockfile
 
@@ -100,12 +101,11 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      # Toolchain only feeds the WASM fallback build; Rust lint/tests run in
+      # Toolchain feeds the WASM build; Rust lint/tests run in
       # test-rust, and preflight below runs with --checks-only.
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.97.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install wasm-pack
         uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
@@ -114,43 +114,21 @@ jobs:
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          cache: pnpm
+          package-manager-cache: false
 
       - run: pnpm install --frozen-lockfile
 
       - name: Check generated IR contract freshness
         run: pnpm check:ir-schema
 
-      # Restore-only (test-ts saves the exact-key artifact).
-      - name: Restore WASM artifacts
-        id: wasm-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            packages/core/wasm-pkg
-            crates/boundsvg/pkg-web
-          key: wasm-${{ runner.os }}-${{ hashFiles('crates/*/src/**', 'crates/*/Cargo.toml', 'vendor/**', 'crates/boundsvg/build.sh', 'package.json', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
-          # Lint only needs wasm-pkg/pkg-web type surfaces for `pnpm typecheck`;
-          # a slightly stale artifact is fine here (test-ts always builds the
-          # exact one), so fall back to the newest available instead of paying
-          # a full WASM build on every crates change.
-          restore-keys: |
-            wasm-${{ runner.os }}-
-
-      # Stale fallback types are only safe when the PR does not touch Rust -
-      # a crates change may add/alter WASM exports that `pnpm typecheck`
-      # references, so exact-miss + rust-changed builds fresh.
       - name: Build WASM
-        if: steps.wasm-cache.outputs.cache-matched-key == '' || (steps.wasm-cache.outputs.cache-hit != 'true' && needs.changes.outputs.rust == 'true')
         run: |
           pnpm build:wasm
           pnpm build:wasm:web
 
-      # Seconds to build and not covered by the conditional restore above, so a
-      # cache from before the crate existed cannot red a TS-only run.
       - name: Build MP4 muxer WASM
         run: pnpm build:wasm:mp4
 
@@ -187,7 +165,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.97.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install wasm-pack
         uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
@@ -196,26 +173,14 @@ jobs:
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          cache: pnpm
+          package-manager-cache: false
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Restore WASM artifacts
-        id: wasm-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            packages/core/wasm-pkg
-            crates/boundsvg/pkg-web
-          key: wasm-${{ runner.os }}-${{ hashFiles('crates/*/src/**', 'crates/*/Cargo.toml', 'vendor/**', 'crates/boundsvg/build.sh', 'package.json', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml') }}
-
-      # ts-only changes still need the WASM artifacts (browser bundles pkg-web,
-      # core tests load wasm-pkg) - build only when the cache misses.
       - name: Build WASM
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: |
           pnpm build:wasm
           pnpm build:wasm:web
@@ -315,8 +280,6 @@ jobs:
           toolchain: 1.97.0
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-
       - name: Check formatting
         run: cargo fmt --all --check
         working-directory: crates/boundsvg
@@ -329,9 +292,6 @@ jobs:
         if: needs.changes.outputs.full != 'true'
         run: cargo test --workspace
         working-directory: crates/boundsvg
-
-      - name: Test vendored ttf-parser patch
-        run: cargo test --manifest-path vendor/ttf-parser/Cargo.toml --all-features
 
       # Feature-unification contract (was preflight's job before --checks-only):
       # the default-features run above does not cover unicode-full.
@@ -376,7 +336,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.97.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install wasm-pack
         uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2
@@ -385,10 +344,10 @@ jobs:
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          cache: pnpm
+          package-manager-cache: false
 
       - run: pnpm install --frozen-lockfile
 
@@ -415,9 +374,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - name: Check prose formatting
         run: pnpm exec prettier --check README.md CONTRIBUTING.md
@@ -442,9 +402,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+          package-manager-cache: false
       - name: Require expected job results
         env:
           CI_MODE: ${{ needs.changes.outputs.mode }}

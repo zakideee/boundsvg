@@ -1,5 +1,5 @@
 [toolchain]
-# MSRV is 1.85.0 (set in Cargo.toml workspace.package.rust-version).
+# MSRV is 1.88.0 (set in Cargo.toml workspace.package.rust-version).
 # Pinned to an exact stable so local clippy/rustfmt match CI byte-for-byte
 # (floating "stable" let CI drift ahead and fail lints that passed locally).
 # Bump deliberately: update the pin, run `pnpm lint:rust` + full tests.

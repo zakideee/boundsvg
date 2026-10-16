@@ -1,3 +1,5 @@
+//! Find a reduced font size that fits the requested text constraints.
+
 use super::super::kinsoku::{get_hanging_chars, get_kinsoku_profile};
 use super::super::paragraph;
 use super::super::types::{TextLayoutRequest, TextOverflow, TextSpanInput};
@@ -43,6 +45,11 @@ pub fn fit_shrink(
     )
 }
 
+/// Fit text by shrinking while retaining authoritative source unit metadata.
+///
+/// # Errors
+///
+/// Propagates font, shaping, fit-probe, resource-limit, and ellipsis failures.
 pub(crate) fn fit_shrink_with_unit_metadata(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -98,7 +105,7 @@ fn fit_shrink_internal(
             &shape_options,
             req.uax14_breaks,
             req.letter_spacing_px,
-        ) {
+        )? {
             return fit_shrink_shaped(
                 req,
                 font_ctx,

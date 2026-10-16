@@ -108,7 +108,7 @@ Changes spanning multiple packages use comma-joined scopes, most-affected first 
 - Do not vendor, fork, patch, or replace a third-party dependency's source
   without explicit maintainer approval naming that dependency.
   `pnpm check:third-party-source-overrides` enforces the allowlist
-  (`vendor/ttf-parser` is the sole approved entry) and runs in preflight.
+  and runs in preflight; there are no approved source overrides.
 
 ## Third-Party SVG License Safety (Mandatory)
 

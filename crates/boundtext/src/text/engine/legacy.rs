@@ -18,15 +18,19 @@ pub struct LegacyUnwrappedGlyphProjection {
 /// Whitespace, authored size, and missing glyphs are retained: per-glyph fallback
 /// and resolved layout would change the legacy fields. Returns `None` when no
 /// requested face can be resolved.
-#[must_use]
+///
+/// # Errors
+///
+/// Propagates font parsing, variation, shaping, processing-limit, allocation,
+/// and invalid-glyph-output failures.
 pub fn project_legacy_unwrapped_glyphs(
     text: &str,
     font_size_px: f64,
     letter_spacing_px: f64,
     shape_options: &ShapeOptions,
     font_context: &FontContext<'_>,
-) -> Option<LegacyUnwrappedGlyphProjection> {
-    let font_entry = font_context
+) -> Result<Option<LegacyUnwrappedGlyphProjection>, crate::BoundtextError> {
+    let Some(font_entry) = font_context
         .registry
         .resolve_chain(
             font_context.families,
@@ -41,7 +45,10 @@ pub fn project_legacy_unwrapped_glyphs(
                     font_context.style,
                 )
             })
-        })?;
+        })
+    else {
+        return Ok(None);
+    };
     let glyphs = shape_text_with_options(
         font_context.registry,
         font_entry,
@@ -49,10 +56,10 @@ pub fn project_legacy_unwrapped_glyphs(
         font_size_px,
         letter_spacing_px,
         shape_options,
-    );
+    )?;
     let measured_width = measure_width(&glyphs);
-    Some(LegacyUnwrappedGlyphProjection {
+    Ok(Some(LegacyUnwrappedGlyphProjection {
         glyphs,
         measured_width,
-    })
+    }))
 }

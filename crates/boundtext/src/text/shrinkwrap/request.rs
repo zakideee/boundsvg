@@ -711,7 +711,7 @@ pub fn shrinkwrap_text(
             None,
             input.letter_spacing_px,
             force_newline,
-        );
+        )?;
         let Some(pp) = pp else {
             let layout_request = plain_layout_request(input);
             let fallback_result = shrinkwrap::shrinkwrap_text_layout_horizontal(
@@ -964,7 +964,7 @@ pub fn shrinkwrap_flow(
                 None,
                 input.letter_spacing_px,
                 true,
-            )
+            )?
             .ok_or_else(|| shrinkwrap_preparation_error(font_ctx))?,
         )
     } else {

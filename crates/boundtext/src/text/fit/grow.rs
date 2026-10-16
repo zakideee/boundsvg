@@ -1,3 +1,5 @@
+//! Find an expanded font size that fits the requested text constraints.
+
 use super::super::kinsoku::{get_hanging_chars, get_kinsoku_profile};
 use super::super::paragraph;
 use super::super::types::{TextLayoutRequest, TextOverflow, TextSpanInput};
@@ -57,7 +59,7 @@ pub fn fit_grow(
             &shape_options,
             req.uax14_breaks,
             req.letter_spacing_px,
-        ) {
+        )? {
             return Ok(fit_grow_shaped(
                 req, font_ctx, &pp, max_size, epsilon, max_iter,
             ));

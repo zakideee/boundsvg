@@ -13,7 +13,7 @@ release), **Not supported** (documented gap).
 
 | Capability                                              | Status        | Notes                                                                                                                                |
 | ------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Shaping (kerning, ligatures, OpenType features)         | Supported     | rustybuzz (HarfBuzz-compatible), `fontFeatureSettings`                                                                               |
+| Shaping (kerning, ligatures, OpenType features)         | Supported     | HarfRust (HarfBuzz-compatible), `fontFeatureSettings`                                                                                |
 | Line breaking (UAX #14)                                 | Supported     | Greedy first-fit; no Knuth–Plass                                                                                                     |
 | Japanese kinsoku (JLREQ-informed) + hanging punctuation | Supported     | `language: "ja"` only; fixed `JaTypesettingV1` profile; no zh/ko profiles                                                            |
 | Vertical writing (`vertical-rl`, UTR #50, vert/vkna)    | Supported     | `textOrientation: "sideways"` not implemented                                                                                        |

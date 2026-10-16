@@ -1,3 +1,5 @@
+//! Decode injected WOFF2 fonts and preserve uncompressed OpenType bytes.
+
 use std::io::Cursor;
 
 use crate::error::EngineError;
@@ -65,7 +67,7 @@ mod tests {
     #[test]
     fn test_decode_woff2_produces_valid_ttf() {
         let decoded = decode_font(woff2_data()).expect("WOFF2 decode failed");
-        let backend = boundtext::font::backend_ttfparser::TtfParserBackend;
+        let backend = boundtext::font::backend_skrifa::SkrifaBackend;
         let metrics = boundtext::font::backend::FontBackend::parse_metrics(&backend, &decoded)
             .expect("Decoded data is not valid TTF/OTF");
         assert!(metrics.units_per_em > 0);

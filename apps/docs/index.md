@@ -21,7 +21,7 @@ hero:
       link: /api/core
 features:
   - title: Precise Text Measurement
-    details: rustybuzz-based shaping gives precise glyph bounds in WASM.
+    details: HarfRust-based shaping gives precise glyph bounds in WASM.
   - title: Auto-fit & Layout System
     details: Auto-fit text and use Flexbox/Grid layouts via Taffy.
   - title: Deterministic Output

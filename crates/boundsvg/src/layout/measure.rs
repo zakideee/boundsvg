@@ -216,11 +216,16 @@ pub(super) struct MeasureCacheKey {
     feedback_width_bits: Option<u32>,
 }
 
+/// Project authored text into the compatibility glyph fields using the resolved font.
+///
+/// # Errors
+///
+/// Propagates font parsing, variation, shaping, allocation, and invalid-output failures.
 pub(super) fn build_legacy_projection(
     text_input: &TextInput,
     font_registry: &FontRegistry,
     fallback_registry: Option<&FontRegistry>,
-) -> Option<LegacyUnwrappedGlyphProjection> {
+) -> Result<Option<LegacyUnwrappedGlyphProjection>, boundtext::BoundtextError> {
     let families = text_input_font_families(text_input);
     let font_context = crate::font::FontContext {
         registry: font_registry,
@@ -263,6 +268,10 @@ pub(super) fn build_legacy_projection(
     clippy::too_many_arguments,
     reason = "text layout measure requires font context, metrics, caches, and layout constraints"
 )]
+///
+/// # Errors
+///
+/// Returns font or layout failures encountered during text measurement and projection.
 pub(super) fn measure_text_node(
     text_input: &TextInput,
     font_registry: &FontRegistry,
@@ -313,15 +322,11 @@ pub(super) fn measure_text_node(
     // other query uses the tighter of Taffy's available size and the preferred
     // measurement frame. Authored/known dimensions continue to control the box.
     if let Some(ref pf) = text_input.preferred_frame {
-        if !width_is_min_content {
-            if let Some(pw) = pf.w {
-                max_width = max_width.min(pw);
-            }
+        if !width_is_min_content && let Some(pw) = pf.w {
+            max_width = max_width.min(pw);
         }
-        if !height_is_min_content {
-            if let Some(ph) = pf.h {
-                max_height = max_height.min(ph);
-            }
+        if !height_is_min_content && let Some(ph) = pf.h {
+            max_height = max_height.min(ph);
         }
     }
 
@@ -346,9 +351,11 @@ pub(super) fn measure_text_node(
         .is_some_and(|feedback_width| feedback_width.to_bits() == max_width.to_bits());
     let horizontal_max_width = horizontal_constraint_px(max_width, is_shrink_to_fit_feedback);
 
-    legacy_projections
-        .entry(node_id)
-        .or_insert_with(|| build_legacy_projection(text_input, font_registry, fallback_registry));
+    if let std::collections::hash_map::Entry::Vacant(entry) = legacy_projections.entry(node_id) {
+        let projection = build_legacy_projection(text_input, font_registry, fallback_registry)
+            .map_err(|error| render_text_layout_error(&error.into()))?;
+        entry.insert(projection);
+    }
     let cache_key = MeasureCacheKey {
         node_id,
         known_width_bits: known_dimensions.width.map(f32::to_bits),

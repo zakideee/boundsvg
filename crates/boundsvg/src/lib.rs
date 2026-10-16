@@ -1,3 +1,5 @@
+//! WASM entry points for layout, text resolution, SVG emission, and raster output.
+
 #![expect(
     clippy::too_many_lines,
     reason = "render/layout orchestration keeps stateful pipeline phases together for auditability"
@@ -1716,11 +1718,42 @@ fn transition_compatibility_error_to_js(
     )
 }
 
-/// Map an [`error::EngineError`] onto the structured envelope, preserving
-/// the TS `FatalError` contract for structured errors and falling back to a
-/// generic code otherwise.
+/// Classify a codec failure without forwarding codec messages or input data.
+fn font_decode_error_to_js(operation: &str) -> JsValue {
+    font_error_to_js(
+        &boundtext::BoundtextError::FontParse {
+            reason: boundtext::error::FontFailureReason::InvalidData,
+            table: None,
+            face_index: 0,
+        },
+        operation,
+    )
+}
+
+/// Preserve typed font diagnostics at direct WASM entry points.
+fn font_error_to_js(error: &boundtext::BoundtextError, operation: &str) -> JsValue {
+    let diagnostic = text_diagnostics::classify_font_error(error, operation, None);
+    render_error_envelope_with_context(
+        diagnostic.code,
+        diagnostic.message,
+        Some(diagnostic.stage),
+        None,
+        &diagnostic.context,
+    )
+}
+
+/// Map renderer failures to the structured envelope without forwarding codec input data.
 fn engine_error_to_render_envelope(error: &error::EngineError) -> JsValue {
     match error {
+        error::EngineError::Boundtext(error) => font_error_to_js(error, "render"),
+        error::EngineError::Woff2Decode(_) => font_error_to_js(
+            &boundtext::BoundtextError::FontParse {
+                reason: boundtext::error::FontFailureReason::InvalidData,
+                table: None,
+                face_index: 0,
+            },
+            "registerFont",
+        ),
         error::EngineError::Structured {
             code,
             message,
@@ -1741,9 +1774,8 @@ fn engine_error_to_render_envelope(error: &error::EngineError) -> JsValue {
 fn raster_error_to_js_value(error: error::EngineError) -> JsValue {
     match error {
         structured @ (error::EngineError::Structured { .. }
-        | error::EngineError::StructuredContext { .. }) => {
-            engine_error_to_render_envelope(&structured)
-        }
+        | error::EngineError::StructuredContext { .. }
+        | error::EngineError::Boundtext(_)) => engine_error_to_render_envelope(&structured),
         other => JsValue::from_str(&other.to_string()),
     }
 }
@@ -1836,15 +1868,15 @@ fn resolve_raster_scene_outlines(
 /// Mirrors the `VNode` build path check (`unsafe_svg_reason`),
 /// walking every `Svg` node's content.
 fn assert_ir_svg_content_safe(node: &ir::types::IrNode) -> Result<(), JsValue> {
-    if let ir::types::IrNodeKind::Svg { content, .. } = &node.kind {
-        if let Some(reason) = ir::svg_security::unsafe_svg_reason(content) {
-            return Err(render_error_envelope(
-                "VALIDATION",
-                &format!("Validation error: Svg content contains disallowed markup ({reason})"),
-                Some(diagnostics::PipelineStage::Ir),
-                Some(&node.node_id),
-            ));
-        }
+    if let ir::types::IrNodeKind::Svg { content, .. } = &node.kind
+        && let Some(reason) = ir::svg_security::unsafe_svg_reason(content)
+    {
+        return Err(render_error_envelope(
+            "VALIDATION",
+            &format!("Validation error: Svg content contains disallowed markup ({reason})"),
+            Some(diagnostics::PipelineStage::Ir),
+            Some(&node.node_id),
+        ));
     }
     if let ir::types::IrNodeKind::Group { children, .. } = &node.kind {
         for child in children {
@@ -2098,7 +2130,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 34;
+pub const WASM_SCHEMA_VERSION: u32 = 35;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -2350,7 +2382,7 @@ impl BoundSvgEngine {
     ///
     /// # Errors
     ///
-    /// Returns `JsValue` if WOFF2 decoding or font registration fails.
+    /// Returns `JsValue` if font-buffer allocation, WOFF2 decoding, or registration fails.
     pub fn register_font(
         &mut self,
         data: &[u8],
@@ -2360,11 +2392,12 @@ impl BoundSvgEngine {
     ) -> Result<(), JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let font_style = parse_font_style(style);
-            let decoded = font::decode::decode_font(data.to_vec())
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            let font_bytes = copy_font_data(data, "registerFont")?;
+            let decoded = font::decode::decode_font(font_bytes)
+                .map_err(|_| font_decode_error_to_js("registerFont"))?;
             self.registry
                 .register(decoded, alias.to_string(), weight, font_style)
-                .map_err(|e| JsValue::from_str(&e.to_string()))
+                .map_err(|error| font_error_to_js(&error, "registerFont"))
         }))
     }
 
@@ -2922,9 +2955,7 @@ impl BoundSvgEngine {
                 .registry
                 .resolve(alias, weight, &font_style)
                 .ok_or_else(|| {
-                    JsValue::from_str(&format!(
-                        "Font not found: alias={alias}, weight={weight}, style={style}"
-                    ))
+                    render_error_envelope_with_context("TEXT_FONT_UNAVAILABLE", "No requested font is available.", Some(diagnostics::PipelineStage::Font), None, &serde_json::json!({"operation":"shapeText","reason":"unregisteredFont","weight":weight}))
                 })?;
             let glyphs = font::shaping::shape_text(
                 &self.registry,
@@ -2932,7 +2963,8 @@ impl BoundSvgEngine {
                 text,
                 font_size_px,
                 letter_spacing_px,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "shapeText"))?;
             serde_json::to_string(&glyphs)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize: {e}")))
         }))
@@ -2966,9 +2998,7 @@ impl BoundSvgEngine {
                 .registry
                 .resolve(alias, weight, &font_style)
                 .ok_or_else(|| {
-                    JsValue::from_str(&format!(
-                        "Font not found: alias={alias}, weight={weight}, style={style}"
-                    ))
+                    render_error_envelope_with_context("TEXT_FONT_UNAVAILABLE", "No requested font is available.", Some(diagnostics::PipelineStage::Font), None, &serde_json::json!({"operation":"shapeText","reason":"unregisteredFont","weight":weight}))
                 })?;
             let glyphs = font::shaping::shape_text_with_options(
                 &self.registry,
@@ -2977,7 +3007,8 @@ impl BoundSvgEngine {
                 font_size_px,
                 letter_spacing_px,
                 &options,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "shapeText"))?;
             serde_json::to_string(&glyphs)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize: {e}")))
         }))
@@ -3013,7 +3044,8 @@ impl BoundSvgEngine {
                 font_size_px,
                 letter_spacing_px,
                 &font::shaping::ShapeOptions::default(),
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "shapeTextWithFallback"))?;
             serde_json::to_string(&shaped.glyphs)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize: {e}")))
         }))
@@ -3057,7 +3089,8 @@ impl BoundSvgEngine {
                 font_size_px,
                 letter_spacing_px,
                 &options,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "shapeTextWithFallback"))?;
             serde_json::to_string(&shaped.glyphs)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize: {e}")))
         }))
@@ -3099,12 +3132,17 @@ impl BoundSvgEngine {
     /// Returns `JsValue` if SVG parsing or PNG rasterization fails.
     pub fn svg_to_png(&self, svg_string: &str) -> Result<Vec<u8>, JsValue> {
         catch_unwind_to_js(AssertUnwindSafe(|| {
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             self.renderer
-                .svg_to_png(
+                .svg_to_png_with_admission(
                     svg_string,
-                    &alias_map,
-                    &font_arcs,
+                    &raster_fonts.aliases,
+                    &raster_fonts.fonts,
+                    &raster_fonts.admissions,
                     &rasterize::RasterizeOptions::default(),
                 )
                 .map_err(raster_error_to_js_value)
@@ -3124,9 +3162,19 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let options: rasterize::RasterizeOptions = serde_json::from_str(options_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid rasterize options JSON: {e}")))?;
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             self.renderer
-                .svg_to_png(svg_string, &alias_map, &font_arcs, &options)
+                .svg_to_png_with_admission(
+                    svg_string,
+                    &raster_fonts.aliases,
+                    &raster_fonts.fonts,
+                    &raster_fonts.admissions,
+                    &options,
+                )
                 .map_err(raster_error_to_js_value)
         }))
     }
@@ -3144,9 +3192,19 @@ impl BoundSvgEngine {
         catch_unwind_to_js(AssertUnwindSafe(|| {
             let options: rasterize::RasterizeOptions = serde_json::from_str(options_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid rasterize options JSON: {e}")))?;
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             self.renderer
-                .svg_to_webp(svg_string, &alias_map, &font_arcs, &options)
+                .svg_to_webp_with_admission(
+                    svg_string,
+                    &raster_fonts.aliases,
+                    &raster_fonts.fonts,
+                    &raster_fonts.admissions,
+                    &options,
+                )
                 .map_err(raster_error_to_js_value)
         }))
     }
@@ -3170,15 +3228,20 @@ impl BoundSvgEngine {
             let raw = raw.map_err(raster_error_to_js_value)?;
             let (format, options, render_options) =
                 wire::animation::parse_open(&raw).map_err(raster_error_to_js_value)?;
-            let (aliases, fonts) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             let session = raster_anim::AnimationSession::open(
                 format,
                 options,
-                aliases,
-                fonts,
+                raster_fonts.aliases,
+                raster_fonts.fonts,
                 animation_writer::StagedWriter::default(),
             )
-            .map_err(raster_error_to_js_value)?;
+            .map_err(raster_error_to_js_value)?
+            .with_font_admissions(raster_fonts.admissions);
             Ok(AnimatedRasterSession {
                 format,
                 owner: Arc::clone(&self.owner),
@@ -3286,13 +3349,18 @@ impl BoundSvgEngine {
                         "Invalid layered composition validation input: {e}"
                     ))
                 })?;
-            let (alias_map, font_arcs) = self.registry.rasterize_font_data();
+            let raster_fonts = self
+                .registry
+                .rasterize_font_data()
+                .map_err(error::EngineError::from)
+                .map_err(raster_error_to_js_value)?;
             let options = input.options.unwrap_or_default();
-            let metrics = rasterize::validate_layered_svg_composition(
+            let metrics = rasterize::validate_layered_svg_composition_with_admission(
                 &input.single_svg,
                 &input.layers,
-                &alias_map,
-                &font_arcs,
+                &raster_fonts.aliases,
+                &raster_fonts.fonts,
+                &raster_fonts.admissions,
                 &options,
             )
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -3331,9 +3399,7 @@ impl BoundSvgEngine {
                 .registry
                 .resolve(alias, weight, &font_style)
                 .ok_or_else(|| {
-                    JsValue::from_str(&format!(
-                        "Font not found: alias={alias}, weight={weight}, style={style}"
-                    ))
+                    render_error_envelope_with_context("TEXT_FONT_UNAVAILABLE", "No requested font is available.", Some(diagnostics::PipelineStage::Font), None, &serde_json::json!({"operation":"extractGlyphPaths","reason":"unregisteredFont","weight":weight}))
                 })?;
             let glyphs = font::shaping::shape_text(
                 &self.registry,
@@ -3341,7 +3407,8 @@ impl BoundSvgEngine {
                 text,
                 font_size_px,
                 letter_spacing_px,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let positions: Vec<font::outline::GlyphPosition> = glyphs
                 .iter()
                 .map(|g| font::outline::GlyphPosition {
@@ -3351,15 +3418,17 @@ impl BoundSvgEngine {
                     y_offset: g.y_offset,
                 })
                 .collect();
+            let face = entry
+                .font_face(self.registry.backend(), &[])
+                .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let paths = font::outline::extract_glyph_paths(
-                self.registry.backend(),
-                &entry.data,
+                face.as_ref(),
                 font_size_px,
                 baseline_y,
                 start_x,
                 &positions,
-                &[],
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             serde_json::to_string(&paths)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize glyph paths: {e}")))
         }))
@@ -3395,9 +3464,7 @@ impl BoundSvgEngine {
                 .registry
                 .resolve(alias, weight, &font_style)
                 .ok_or_else(|| {
-                    JsValue::from_str(&format!(
-                        "Font not found: alias={alias}, weight={weight}, style={style}"
-                    ))
+                    render_error_envelope_with_context("TEXT_FONT_UNAVAILABLE", "No requested font is available.", Some(diagnostics::PipelineStage::Font), None, &serde_json::json!({"operation":"extractGlyphPaths","reason":"unregisteredFont","weight":weight}))
                 })?;
             let glyphs = font::shaping::shape_text_with_options(
                 &self.registry,
@@ -3406,19 +3473,22 @@ impl BoundSvgEngine {
                 font_size_px,
                 letter_spacing_px,
                 &options,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let is_vertical = options.writing_mode.as_deref() == Some("vertical-rl");
             let variations = font::shaping::to_shape_variations(&options.font_variation_settings);
             let positions = to_glyph_positions(&glyphs, is_vertical);
+            let face = entry
+                .font_face(self.registry.backend(), &variations)
+                .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let paths = font::outline::extract_glyph_paths(
-                self.registry.backend(),
-                &entry.data,
+                face.as_ref(),
                 font_size_px,
                 baseline_y,
                 start_x,
                 &positions,
-                &variations,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             serde_json::to_string(&paths)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize glyph paths: {e}")))
         }))
@@ -3462,7 +3532,8 @@ impl BoundSvgEngine {
                 font_size_px,
                 letter_spacing_px,
                 &options,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let mut cursor_x = start_x;
             let mut paths: Vec<font::outline::GlyphPath> = Vec::new();
             for run in &shaped.runs {
@@ -3470,21 +3541,26 @@ impl BoundSvgEngine {
                     self.registry
                         .resolve(&run.alias, weight, &font_style)
                         .ok_or_else(|| {
-                            JsValue::from_str(&format!(
-                                "Font not found while extracting fallback paths: alias={}, weight={weight}, style={style}",
-                                run.alias
-                            ))
+                            render_error_envelope_with_context(
+                                "TEXT_FONT_UNAVAILABLE",
+                                "No requested font is available.",
+                                Some(diagnostics::PipelineStage::Font),
+                                None,
+                                &serde_json::json!({"operation":"extractGlyphPaths","reason":"unregisteredFont","weight":weight}),
+                            )
                         })?;
                 let positions = to_glyph_positions(&run.glyphs, false);
+                let face = entry
+                    .font_face(self.registry.backend(), &[])
+                    .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
                 let mut run_paths = font::outline::extract_glyph_paths(
-                    self.registry.backend(),
-                    &entry.data,
+                    face.as_ref(),
                     font_size_px,
                     baseline_y,
                     cursor_x,
                     &positions,
-                    &[],
-                );
+                )
+                .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
                 paths.append(&mut run_paths);
                 cursor_x += run.glyphs.iter().map(|g| g.x_advance).sum::<f64>();
             }
@@ -3535,7 +3611,8 @@ impl BoundSvgEngine {
                 font_size_px,
                 letter_spacing_px,
                 &options,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
             let mut cursor_x = start_x;
             let mut paths: Vec<font::outline::GlyphPath> = Vec::new();
             for run in &shaped.runs {
@@ -3543,21 +3620,26 @@ impl BoundSvgEngine {
                     self.registry
                         .resolve(&run.alias, weight, &font_style)
                         .ok_or_else(|| {
-                            JsValue::from_str(&format!(
-                                "Font not found while extracting fallback paths: alias={}, weight={weight}, style={style}",
-                                run.alias
-                            ))
+                            render_error_envelope_with_context(
+                                "TEXT_FONT_UNAVAILABLE",
+                                "No requested font is available.",
+                                Some(diagnostics::PipelineStage::Font),
+                                None,
+                                &serde_json::json!({"operation":"extractGlyphPaths","reason":"unregisteredFont","weight":weight}),
+                            )
                         })?;
                 let positions = to_glyph_positions(&run.glyphs, is_vertical);
+                let face = entry
+                    .font_face(self.registry.backend(), &variations)
+                    .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
                 let mut run_paths = font::outline::extract_glyph_paths(
-                    self.registry.backend(),
-                    &entry.data,
+                    face.as_ref(),
                     font_size_px,
                     baseline_y,
                     cursor_x,
                     &positions,
-                    &variations,
-                );
+                )
+                .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
                 paths.append(&mut run_paths);
                 if !is_vertical {
                     cursor_x += run.glyphs.iter().map(|g| g.x_advance).sum::<f64>();
@@ -3578,6 +3660,7 @@ impl BoundSvgEngine {
             let inputs: Vec<PositionedGlyphPathRequest> = serde_json::from_str(glyphs_json)
                 .map_err(|e| JsValue::from_str(&format!("Invalid positioned glyph JSON: {e}")))?;
             let mut paths = Vec::with_capacity(inputs.len());
+            let mut face_cache = boundtext::font::face_cache::FontFaceCache::new();
 
             for (request_index, input) in inputs.iter().enumerate() {
                 let font_style = parse_font_style(&input.font_style);
@@ -3585,10 +3668,7 @@ impl BoundSvgEngine {
                     .registry
                     .resolve(&input.font_alias, input.font_weight, &font_style)
                     .ok_or_else(|| {
-                        JsValue::from_str(&format!(
-                            "Font not found: alias={}, weight={}, style={}",
-                            input.font_alias, input.font_weight, input.font_style
-                        ))
+                        render_error_envelope_with_context("TEXT_FONT_UNAVAILABLE", "No requested font is available.", Some(diagnostics::PipelineStage::Font), None, &serde_json::json!({"operation":"extractGlyphPaths","reason":"unregisteredFont","weight":input.font_weight}))
                     })?;
 
                 let variations = input
@@ -3597,11 +3677,9 @@ impl BoundSvgEngine {
                     .map(font::shaping::parse_css_font_variation_settings)
                     .map(|vs| font::shaping::to_shape_variations(&vs))
                     .unwrap_or_default();
-                let face = self
-                    .registry
-                    .backend()
-                    .create_face(&entry.data, &variations)
-                    .map_err(|e| JsValue::from_str(&format!("Failed to parse font face: {e}")))?;
+                let face = face_cache
+                    .resolve(self.registry.backend(), entry, &variations)
+                    .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?;
 
                 let outline_input = font::outline::PositionedGlyphPathInput {
                     glyph_id: input.glyph_id,
@@ -3618,7 +3696,7 @@ impl BoundSvgEngine {
 
                 if let Some(path) =
                     font::outline::extract_positioned_glyph_path(face.as_ref(), &outline_input)
-                        .map_err(|error| JsValue::from_str(&error.to_string()))?
+                        .map_err(|error| font_error_to_js(&error, "extractGlyphPaths"))?
                 {
                     paths.push(path);
                 }
@@ -3659,9 +3737,7 @@ impl BoundSvgEngine {
                 .registry
                 .resolve(alias, weight, &font_style)
                 .ok_or_else(|| {
-                    JsValue::from_str(&format!(
-                        "Font not found: alias={alias}, weight={weight}, style={style}"
-                    ))
+                    render_error_envelope_with_context("TEXT_FONT_UNAVAILABLE", "No requested font is available.", Some(diagnostics::PipelineStage::Font), None, &serde_json::json!({"operation":"shapeText","reason":"unregisteredFont","weight":weight}))
                 })?;
             let options = font::shaping::ShapeOptions {
                 font_variation_settings: variations,
@@ -3674,7 +3750,8 @@ impl BoundSvgEngine {
                 font_size_px,
                 letter_spacing_px,
                 &options,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "shapeText"))?;
             serde_json::to_string(&glyphs)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize: {e}")))
         }))
@@ -3713,9 +3790,7 @@ impl BoundSvgEngine {
                 .registry
                 .resolve(alias, weight, &font_style)
                 .ok_or_else(|| {
-                    JsValue::from_str(&format!(
-                        "Font not found: alias={alias}, weight={weight}, style={style}"
-                    ))
+                    render_error_envelope_with_context("TEXT_FONT_UNAVAILABLE", "No requested font is available.", Some(diagnostics::PipelineStage::Font), None, &serde_json::json!({"operation":"shapeText","reason":"unregisteredFont","weight":weight}))
                 })?;
             let glyphs = font::shaping::shape_text_with_options(
                 &self.registry,
@@ -3724,7 +3799,8 @@ impl BoundSvgEngine {
                 font_size_px,
                 letter_spacing_px,
                 &options,
-            );
+            )
+            .map_err(|error| font_error_to_js(&error, "shapeText"))?;
             serde_json::to_string(&glyphs)
                 .map_err(|e| JsValue::from_str(&format!("Failed to serialize: {e}")))
         }))
@@ -3755,6 +3831,23 @@ where
 {
     std::panic::catch_unwind(f)
         .unwrap_or_else(|panic_info| Err(JsValue::from_str(&panic_payload_message(&*panic_info))))
+}
+
+/// Copy a borrowed font buffer and preserve the calling export's allocation error.
+fn copy_font_data(font_data: &[u8], operation: &str) -> Result<Vec<u8>, JsValue> {
+    let mut font_bytes = Vec::new();
+    font_bytes.try_reserve_exact(font_data.len()).map_err(|_| {
+        font_error_to_js(
+            &boundtext::BoundtextError::FontParse {
+                reason: boundtext::error::FontFailureReason::AllocationFailed,
+                table: None,
+                face_index: 0,
+            },
+            operation,
+        )
+    })?;
+    font_bytes.extend_from_slice(font_data);
+    Ok(font_bytes)
 }
 
 fn parse_font_style(style_str: &str) -> FontStyle {
@@ -3804,15 +3897,15 @@ fn to_glyph_positions(
 ///
 /// # Errors
 ///
-/// Returns `JsValue` if WOFF2 decoding or font parsing fails.
+/// Returns `JsValue` if font-buffer allocation, WOFF2 decoding, or parsing fails.
 #[wasm_bindgen]
 pub fn get_font_metrics(font_data: &[u8]) -> Result<String, JsValue> {
-    let font_data = font_data.to_vec();
-    catch_unwind_to_js(AssertUnwindSafe(move || {
-        let decoded =
-            font::decode::decode_font(font_data).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    catch_unwind_to_js(AssertUnwindSafe(|| {
+        let font_bytes = copy_font_data(font_data, "getFontMetrics")?;
+        let decoded = font::decode::decode_font(font_bytes)
+            .map_err(|_| font_decode_error_to_js("getFontMetrics"))?;
         let entry = font::FontEntry::new(decoded, "tmp".into(), 400, FontStyle::Normal)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|error| font_error_to_js(&error, "getFontMetrics"))?;
         let metrics = serde_json::json!({
             "unitsPerEm": entry.units_per_em,
             "ascender": entry.ascender,
@@ -3826,7 +3919,8 @@ pub fn get_font_metrics(font_data: &[u8]) -> Result<String, JsValue> {
 ///
 /// # Errors
 ///
-/// Returns `JsValue` if WOFF2 decoding, font parsing, or serialization fails.
+/// Returns `JsValue` if font-buffer allocation, WOFF2 decoding, parsing, shaping,
+/// or serialization fails.
 #[wasm_bindgen]
 pub fn shape_text(
     font_data: &[u8],
@@ -3834,16 +3928,16 @@ pub fn shape_text(
     font_size_px: f64,
     letter_spacing_px: f64,
 ) -> Result<String, JsValue> {
-    let font_data = font_data.to_vec();
-    let text = text.to_string();
-    catch_unwind_to_js(AssertUnwindSafe(move || {
-        let decoded =
-            font::decode::decode_font(font_data).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    catch_unwind_to_js(AssertUnwindSafe(|| {
+        let font_bytes = copy_font_data(font_data, "shapeText")?;
+        let decoded = font::decode::decode_font(font_bytes)
+            .map_err(|_| font_decode_error_to_js("shapeText"))?;
         let entry = font::FontEntry::new(decoded, "tmp".into(), 400, FontStyle::Normal)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|error| font_error_to_js(&error, "shapeText"))?;
         let registry = font::FontRegistry::new();
         let glyphs =
-            font::shaping::shape_text(&registry, &entry, &text, font_size_px, letter_spacing_px);
+            font::shaping::shape_text(&registry, &entry, text, font_size_px, letter_spacing_px)
+                .map_err(|error| font_error_to_js(&error, "shapeText"))?;
         serde_json::to_string(&glyphs)
             .map_err(|e| JsValue::from_str(&format!("Failed to serialize: {e}")))
     }))

@@ -72,12 +72,12 @@ pub(super) fn build_uax14_break_set(
 
     let mut break_flags = vec![false; chars.len()];
     for &offset in uax14_breaks {
-        if offset < byte_to_char.len() {
-            if let Some(char_idx) = byte_to_char[offset] {
-                if char_idx > 0 && char_idx < chars.len() {
-                    break_flags[char_idx] = true;
-                }
-            }
+        if offset < byte_to_char.len()
+            && let Some(char_idx) = byte_to_char[offset]
+            && char_idx > 0
+            && char_idx < chars.len()
+        {
+            break_flags[char_idx] = true;
         }
     }
 

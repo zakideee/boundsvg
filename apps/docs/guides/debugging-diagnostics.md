@@ -134,6 +134,22 @@ and context.
 | `TEXT_LAYOUT_RESULT_MISSING`     | Text layout result is missing required text data. | `text`     |
 | `TEXT_PATH_LAYOUT_UNAVAILABLE`   | Text-on-path layout is unavailable.               | `text`     |
 
+Font parsing, outline extraction and shaping errors can also propagate through
+these layout operations. Their codes, fixed messages, stages and typed reason
+contexts are shared with the [font backend diagnostic catalog](../reference/font-backend-migration.md#fixed-messages-and-typed-context):
+`FONT_PARSE_FAILED`, `FONT_OUTLINE_FAILED`, `TEXT_SHAPING_FAILED`,
+`TEXT_SHAPING_LIMIT_EXCEEDED` and `TEXT_SHAPING_INVALID_OUTPUT`.
+
+`TEXT_FONT_UNAVAILABLE` has two precise forms. Layout preparation uses the
+`text` stage and the message in the table above, with effective-run and requested
+alias context. A lower-level native shaping or ellipsis call that cannot resolve
+its chain uses stage `font`, message `No requested font is available.`, and
+`reason: "unregisteredFont"` with the requested weight. Propagating that native
+font error through a layout operation preserves the latter form. Normal Engine
+layout detects a missing chain during preparation first; callers must preserve
+the received message, stage and context rather than rewriting one form into the
+other.
+
 Font availability is decided by the registered Rust font registry, not by a
 JavaScript alias precheck. The resolver keeps the authored family order,
 ignores empty and generic CSS family names as non-resolving candidates, and

@@ -1,3 +1,5 @@
+//! Prepare vertical text, break columns, and project positioned glyphs.
+
 use super::column_breaking::{VerticalBreakResult, break_vertical_columns};
 use super::common::{language_to_option_string, language_to_str};
 use super::fit::{fit_vertical_grow, fit_vertical_shrink};
@@ -213,7 +215,12 @@ pub fn layout_vertical_text(
                             false,
                         );
                         mark_vertical_ellipsis(&mut columns, marker_cluster_start);
-                        Ok(Some((candidate, cand_glyphs, columns, kinsoku_unresolved)))
+                        Ok::<_, crate::TextLayoutError>(Some((
+                            candidate,
+                            cand_glyphs,
+                            columns,
+                            kinsoku_unresolved,
+                        )))
                     },
                     |(_, _, candidate_columns, _)| {
                         candidate_columns.len() <= max

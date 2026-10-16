@@ -309,6 +309,7 @@ fn measurement_enforces_the_returned_interval_budget() {
         0.0,
         true,
     )
+    .expect("font operation succeeds")
     .expect("shaped paragraph");
 
     let error = measure_flow(

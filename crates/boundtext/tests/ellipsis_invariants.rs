@@ -90,6 +90,7 @@ fn shape_projected_display_advance(
             letter_spacing_px,
             options,
         )
+        .expect("font operation succeeds")
         .glyphs
         .iter()
         .map(|glyph| glyph.x_advance)
@@ -102,6 +103,7 @@ fn shape_projected_display_advance(
         letter_spacing_px,
         options,
     )
+    .expect("font operation succeeds")
     .glyphs
     .iter()
     .map(|glyph| glyph.x_advance)
@@ -113,6 +115,7 @@ fn shape_projected_display_advance(
         letter_spacing_px,
         options,
     )
+    .expect("font operation succeeds")
     .glyphs
     .iter()
     .map(|glyph| glyph.x_advance)
@@ -339,7 +342,8 @@ fn ligature_prefix_is_reshaped_as_end_of_text() {
         24.0,
         0.0,
         &ShapeOptions::default(),
-    );
+    )
+    .expect("font operation succeeds");
     let actual_ids = layout_result
         .lines
         .iter()
@@ -381,7 +385,8 @@ fn arabic_prefix_recomputes_its_contextual_end_form() {
     assert_eq!(prefix, "ببب");
 
     let expected =
-        shape_with_fallback_and_options(&font_context, prefix, 24.0, 0.0, &ShapeOptions::default());
+        shape_with_fallback_and_options(&font_context, prefix, 24.0, 0.0, &ShapeOptions::default())
+            .expect("font operation succeeds");
     let mut expected_glyphs = expected.glyphs;
     expected_glyphs.sort_by_key(|glyph| glyph.cluster);
     let expected_ids = expected_glyphs
@@ -429,14 +434,16 @@ fn synthetic_marker_is_shaped_in_an_isolated_run() {
         .flatten()
         .collect::<Vec<_>>();
     let authored_a =
-        shape_with_fallback_and_options(&font_context, "A", 24.0, 0.0, &ShapeOptions::default());
+        shape_with_fallback_and_options(&font_context, "A", 24.0, 0.0, &ShapeOptions::default())
+            .expect("font operation succeeds");
     let marker = shape_with_fallback_and_options(
         &font_context,
         "\u{2026}",
         24.0,
         0.0,
         &ShapeOptions::default(),
-    );
+    )
+    .expect("font operation succeeds");
 
     assert_eq!(glyphs.len(), 2, "A + ellipsis ligature must not form");
     assert_eq!(glyphs[0].glyph_id, authored_a.glyphs[0].glyph_id);
@@ -497,7 +504,8 @@ fn paint_and_line_box_boundaries_preserve_arabic_contextual_shaping() {
         .flatten()
         .collect::<Vec<_>>();
     let expected =
-        shape_with_fallback_and_options(&font_context, "بببب", 24.0, 0.0, &ShapeOptions::default());
+        shape_with_fallback_and_options(&font_context, "بببب", 24.0, 0.0, &ShapeOptions::default())
+            .expect("font operation succeeds");
     let mut expected_glyphs = expected.glyphs;
     expected_glyphs.sort_by_key(|glyph| glyph.cluster);
 
@@ -1813,7 +1821,7 @@ fn synthetic_marker_diagnostics_are_committed() {
         .register(
             std::fs::read(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../vendor/ttf-parser/tests/fonts/demo.ttf"
+                "/../../fixtures/fonts/only-a.ttf"
             ))
             .expect("single-glyph fixture font"),
             "OnlyA".to_string(),
@@ -1852,10 +1860,10 @@ fn synthetic_marker_diagnostics_are_committed() {
 
 #[test]
 fn ellipsis_line_always_fits_or_is_ellipsis_only() {
-    let jp = registry("JP", "NotoSansJP-Regular.subset.ttf");
+    let japanese_registry = registry("JP", "NotoSansJP-Regular.subset.ttf");
     let families = vec!["JP".to_string()];
     let ctx = FontContext {
-        registry: &jp,
+        registry: &japanese_registry,
         fallback_registry: None,
         families: &families,
         weight: 400,
@@ -1880,7 +1888,7 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
 
     for text in texts {
         for &size in &sizes {
-            for &ls in &letter_spacings {
+            for &letter_spacing_px in &letter_spacings {
                 // sweep widths from tiny to generous
                 for step in 0..16 {
                     let max_width = f64::from(step) * 8.0;
@@ -1889,12 +1897,13 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
                         max_width,
                         &ctx,
                         size,
-                        ls,
+                        letter_spacing_px,
                         size * 1.5,
                         size,
                         None,
                         &ShapeOptions::default(),
-                    ) else {
+                    )
+                    .expect("font operation succeeds") else {
                         continue; // already fits — no truncation
                     };
                     checked += 1;
@@ -1903,7 +1912,7 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
                     // unless the line is the "…" alone (documented best effort).
                     if line.width > max_width + 0.001 && line.text != "\u{2026}" {
                         violations.push(format!(
-                            "text={text:?} size={size} ls={ls} max_width={max_width} -> kept {:?} width {:.3}",
+                            "text={text:?} size={size} letter_spacing_px={letter_spacing_px} max_width={max_width} -> kept {:?} width {:.3}",
                             line.text, line.width
                         ));
                     }
@@ -1913,12 +1922,12 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
                         &ctx,
                         &line.text,
                         size,
-                        ls,
+                        letter_spacing_px,
                         &ShapeOptions::default(),
                     );
                     if (actual - line.width).abs() > 0.01 {
                         violations.push(format!(
-                            "REPORTED != ACTUAL text={text:?} size={size} ls={ls} kept={:?} reported={:.3} actual={:.3}",
+                            "REPORTED != ACTUAL text={text:?} size={size} letter_spacing_px={letter_spacing_px} kept={:?} reported={:.3} actual={:.3}",
                             line.text, line.width, actual
                         ));
                     }
@@ -1931,8 +1940,8 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
         "checked {checked} truncations, {} violations",
         violations.len()
     );
-    for v in violations.iter().take(12) {
-        println!("  {v}");
+    for violation in violations.iter().take(12) {
+        println!("  {violation}");
     }
     assert!(
         violations.is_empty(),
@@ -1943,10 +1952,10 @@ fn ellipsis_line_always_fits_or_is_ellipsis_only() {
 
 #[test]
 fn ellipsis_with_variations_still_fits() {
-    let vf = registry("VF", "Inter-Variable.ttf");
+    let variable_registry = registry("VF", "Inter-Variable.ttf");
     let families = vec!["VF".to_string()];
     let ctx = FontContext {
-        registry: &vf,
+        registry: &variable_registry,
         fallback_registry: None,
         families: &families,
         weight: 400,
@@ -1973,7 +1982,8 @@ fn ellipsis_with_variations_still_fits() {
             32.0,
             None,
             &options,
-        ) else {
+        )
+        .expect("font operation succeeds") else {
             continue;
         };
         let actual = shape_projected_display_advance(&ctx, &line.text, 32.0, 0.0, &options);

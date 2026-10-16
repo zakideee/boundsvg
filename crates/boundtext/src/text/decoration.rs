@@ -1,4 +1,7 @@
+//! Compute text decoration geometry from shaped glyph and line metrics.
+
 use crate::font::FontContext;
+use crate::font::face_cache::FontFaceCache;
 use crate::font::line_metrics::resolve_line_metrics_for_style;
 use crate::font::shaping::{parse_css_font_variation_settings, to_shape_variations};
 use crate::text::grapheme::grapheme_split;
@@ -210,14 +213,19 @@ impl DecorationGlyphIndex {
 /// Resolve decoration ranges after text layout. This is deliberately a paint
 /// pass: it reads positioned glyph source ranges and never changes shaping,
 /// line breaking, intrinsic sizes, or unit membership.
+///
+/// # Errors
+///
+/// Propagates font and shaping failures encountered while measuring decoration
+/// offsets; the caller must discard the layout result on failure.
 pub fn resolve_text_decorations(
     req: &TextLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     result: &mut TextLayoutResult,
-) {
+) -> Result<(), crate::TextLayoutError> {
     let ranges = decoration_ranges(req, font_ctx, result.chosen_font_size_px);
     if ranges.is_empty() {
-        return;
+        return Ok(());
     }
 
     let vertical = req.is_vertical();
@@ -257,7 +265,7 @@ pub fn resolve_text_decorations(
                     vertical,
                     result.chosen_font_size_px,
                     font_ctx,
-                );
+                )?;
                 if strips.len() > remaining_paths {
                     break;
                 }
@@ -280,7 +288,7 @@ pub fn resolve_text_decorations(
                     source_end: range.source_end,
                 });
                 result.text_decorations = fragments;
-                return;
+                return Ok(());
             }
 
             let mut paths = Vec::with_capacity(strips.len());
@@ -313,7 +321,7 @@ pub fn resolve_text_decorations(
                             source_end: range.source_end,
                         });
                         result.text_decorations = fragments;
-                        return;
+                        return Ok(());
                     }
                 }
             }
@@ -331,6 +339,7 @@ pub fn resolve_text_decorations(
     }
 
     result.text_decorations = fragments;
+    Ok(())
 }
 
 fn decoration_ranges(
@@ -403,14 +412,14 @@ fn append_decoration_line<'a>(
     vertical: bool,
     chosen_font_size_px: f64,
     font_ctx: &FontContext<'_>,
-) {
+) -> Result<(), crate::TextLayoutError> {
     let glyphs = glyphs.into_iter().collect::<Vec<_>>();
     let phase_origin_inline = glyphs
         .iter()
         .map(|glyph| glyph_inline_extent(glyph, vertical).0)
         .fold(f64::INFINITY, f64::min);
     if !phase_origin_inline.is_finite() {
-        return;
+        return Ok(());
     }
     let strip_count = if decoration.style == TextDecorationStyle::Double {
         2
@@ -418,6 +427,7 @@ fn append_decoration_line<'a>(
         1
     };
     let mut active: [Option<(StripKey, PendingStrip)>; 2] = [None, None];
+    let mut face_cache = FontFaceCache::new();
     for glyph in glyphs {
         let (inline_start, inline_end) = glyph_inline_extent(glyph, vertical);
         let (center, thickness_px) = glyph_decoration_metrics(
@@ -427,7 +437,8 @@ fn append_decoration_line<'a>(
             vertical,
             chosen_font_size_px,
             font_ctx,
-        );
+            &mut face_cache,
+        )?;
         let centers = match decoration.style {
             TextDecorationStyle::Double => {
                 if vertical {
@@ -456,7 +467,7 @@ fn append_decoration_line<'a>(
                 strip.inline_end = strip.inline_end.max(inline_end);
             } else {
                 if flush_active_strip(output, &mut active[strip_index], segment_limit) {
-                    return;
+                    return Ok(());
                 }
                 active[strip_index] = Some((
                     key,
@@ -477,9 +488,10 @@ fn append_decoration_line<'a>(
     }
     for current in active.iter_mut().take(strip_count) {
         if flush_active_strip(output, current, segment_limit) {
-            return;
+            return Ok(());
         }
     }
+    Ok(())
 }
 
 fn flush_active_strip(
@@ -517,14 +529,19 @@ fn glyph_inline_extent(glyph: &PositionedGlyph, vertical: bool) -> (f64, f64) {
 }
 
 /// Resolve decoration center and thickness from the glyph font metrics and authored overrides.
-pub(crate) fn glyph_decoration_metrics(
+///
+/// # Errors
+///
+/// Propagates failure to create the varied font face used for decoration metrics.
+pub(crate) fn glyph_decoration_metrics<'font>(
     glyph: &PositionedGlyph,
     line: TextDecorationLine,
     decoration: &TextDecorationInput,
     vertical: bool,
     chosen_font_size_px: f64,
-    font_ctx: &FontContext<'_>,
-) -> (f64, f64) {
+    font_ctx: &FontContext<'font>,
+    face_cache: &mut FontFaceCache<'font>,
+) -> Result<(f64, f64), crate::TextLayoutError> {
     let font_size_px = glyph.font_size_px.unwrap_or(chosen_font_size_px);
     let mut aliases = Vec::with_capacity(glyph.font_fallback.len() + 1);
     aliases.push(glyph.font_alias.clone());
@@ -557,7 +574,8 @@ pub(crate) fn glyph_decoration_metrics(
     let variations = to_shape_variations(&variation_settings);
     let font_face = font_entry
         .zip(font_backend)
-        .and_then(|(entry, backend)| entry.font_face(backend, &variations));
+        .map(|(entry, backend)| face_cache.resolve(backend, entry, &variations))
+        .transpose()?;
     let units_per_em = font_face.as_deref().map_or_else(
         || font_entry.map_or(1, |entry| entry.units_per_em),
         crate::font::backend::FontFace::units_per_em,
@@ -575,7 +593,7 @@ pub(crate) fn glyph_decoration_metrics(
             .or_else(|| font_entry.and_then(|entry| entry.strikeout_thickness)),
         TextDecorationLine::Overline => None,
     }
-    .map(|value| f64::from(value).abs() * scale)
+    .map(|value| value.abs() * scale)
     .filter(|value| value.is_finite() && *value > 0.0)
     .unwrap_or(fallback_thickness);
     let thickness_px = decoration.thickness_px.unwrap_or(metric_thickness);
@@ -595,12 +613,12 @@ pub(crate) fn glyph_decoration_metrics(
                 .as_deref()
                 .and_then(crate::font::backend::FontFace::underline_position)
                 .or_else(|| font_entry.and_then(|entry| entry.underline_position))
-                .map_or(font_size_px / 10.0, |value| -f64::from(value) * scale),
+                .map_or(font_size_px / 10.0, |value| -value * scale),
             TextDecorationLine::LineThrough => font_face
                 .as_deref()
                 .and_then(crate::font::backend::FontFace::strikeout_position)
                 .or_else(|| font_entry.and_then(|entry| entry.strikeout_position))
-                .map_or(-font_size_px * 0.30, |value| -f64::from(value) * scale),
+                .map_or(-font_size_px * 0.30, |value| -value * scale),
             TextDecorationLine::Overline => {
                 let line_metrics = resolve_line_metrics_for_style(
                     font_ctx.registry,
@@ -630,7 +648,7 @@ pub(crate) fn glyph_decoration_metrics(
     } else {
         baseline + logical_auto_offset
     };
-    (center, thickness_px)
+    Ok((center, thickness_px))
 }
 
 fn quantized_hundredths_bits(value: f64) -> u64 {
@@ -2160,7 +2178,8 @@ mod tests {
             &request(&content, &spans, None, WritingMode::HorizontalTb),
             &font_ctx,
             &mut result,
-        );
+        )
+        .expect("font operation succeeds");
         let path_count = result
             .text_decorations
             .iter()

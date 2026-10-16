@@ -5408,30 +5408,26 @@ fn line_line_intersections(
             if let (Some(t_a), Some(t_b)) = (
                 parameter_on_line(left.0, left.1, point),
                 parameter_on_line(right.0, right.1, point),
-            ) {
-                if parameter_within_segment(t_a, left_length, tolerance)
-                    && parameter_within_segment(t_b, right_length, tolerance)
-                {
-                    intersections.push(CurveIntersection {
-                        t_a: clamp_unit(t_a),
-                        t_b: clamp_unit(t_b),
-                    });
-                }
+            ) && parameter_within_segment(t_a, left_length, tolerance)
+                && parameter_within_segment(t_b, right_length, tolerance)
+            {
+                intersections.push(CurveIntersection {
+                    t_a: clamp_unit(t_a),
+                    t_b: clamp_unit(t_b),
+                });
             }
         }
         for point in [left.0, left.1] {
             if let (Some(t_a), Some(t_b)) = (
                 parameter_on_line(left.0, left.1, point),
                 parameter_on_line(right.0, right.1, point),
-            ) {
-                if parameter_within_segment(t_a, left_length, tolerance)
-                    && parameter_within_segment(t_b, right_length, tolerance)
-                {
-                    intersections.push(CurveIntersection {
-                        t_a: clamp_unit(t_a),
-                        t_b: clamp_unit(t_b),
-                    });
-                }
+            ) && parameter_within_segment(t_a, left_length, tolerance)
+                && parameter_within_segment(t_b, right_length, tolerance)
+            {
+                intersections.push(CurveIntersection {
+                    t_a: clamp_unit(t_a),
+                    t_b: clamp_unit(t_b),
+                });
             }
         }
         return intersections;

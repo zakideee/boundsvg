@@ -1,3 +1,5 @@
+//! Shape paragraph spans with resolved fonts and run-specific options.
+
 use std::sync::Arc;
 
 use crate::font::FontContext;
@@ -68,12 +70,16 @@ pub fn collect_notdef_chars(pp: &ShapedParagraph) -> Vec<NotdefInfo> {
 ///
 /// Returns `None` when font resolution fails or the shaper produces `.notdef`
 /// (`glyph_id` == 0) glyphs.
+///
+/// # Errors
+///
+/// Propagates font parsing, variation, shaping, processing-limit, allocation,
+/// and invalid-glyph-output failures.
 // Shaping preparation requires font context, shaping options, and language/wrap parameters
 #[expect(
     clippy::too_many_arguments,
     reason = "text layout pipeline passes font context and layout constraints through stages"
 )]
-#[must_use]
 pub fn shape_paragraph(
     text: &str,
     font_ctx: &FontContext<'_>,
@@ -83,7 +89,7 @@ pub fn shape_paragraph(
     shape_options: &ShapeOptions,
     uax14_breaks: Option<&[usize]>,
     letter_spacing_px: f64,
-) -> Option<ShapedParagraph> {
+) -> Result<Option<ShapedParagraph>, crate::BoundtextError> {
     shape_paragraph_with_options(
         text,
         font_ctx,
@@ -102,6 +108,11 @@ pub fn shape_paragraph(
 /// When `allow_notdef` is true, glyphs with `glyph_id=0` (.notdef) are
 /// passed through instead of rejecting the entire paragraph. This enables
 /// tofu-character fallback for fonts with incomplete coverage.
+///
+/// # Errors
+///
+/// Propagates font parsing, variation, shaping, processing-limit, allocation,
+/// and invalid-glyph-output failures.
 #[expect(
     clippy::too_many_arguments,
     reason = "shaping pipeline parameters — font context, language, wrap, break hints, spacing, notdef flag"
@@ -116,14 +127,14 @@ pub fn shape_paragraph_with_options(
     uax14_breaks: Option<&[usize]>,
     letter_spacing_px: f64,
     allow_notdef: bool,
-) -> Option<ShapedParagraph> {
+) -> Result<Option<ShapedParagraph>, crate::BoundtextError> {
     if text.is_empty() {
-        return Some(build_empty_shaped(
+        return Ok(Some(build_empty_shaped(
             language,
             hanging_punctuation,
             letter_spacing_px,
             shape_options,
-        ));
+        )));
     }
 
     // --- Font resolution (same chain as shape_text_for_layout) ---
@@ -131,40 +142,48 @@ pub fn shape_paragraph_with_options(
     // font-unit glyphs through shape_with_fallback_and_options, so bail out
     // and let the caller fall through to the existing px-based path.
     if font_ctx.families.len() > 1 {
-        return None;
+        return Ok(None);
     }
 
-    let font_entry = font_ctx
+    let Some(font_entry) = font_ctx
         .registry
         .resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style)
         .or_else(|| {
             font_ctx
                 .fallback_registry
                 .and_then(|fb| fb.resolve_chain(font_ctx.families, font_ctx.weight, font_ctx.style))
-        })?;
+        })
+    else {
+        return Ok(None);
+    };
 
     // --- Build backend features/variations and shape ---
+    u32::try_from(text.len()).map_err(|_| crate::BoundtextError::TextShaping {
+        reason: crate::error::FontFailureReason::InputTooLong,
+    })?;
     let features = build_shape_features(shape_options);
     let variations = build_shape_variations(shape_options);
+    crate::font::backend::validate_variations(&variations)?;
     let direction = if is_vertical(shape_options) {
         ShapeDirection::TopToBottom
     } else {
-        ShapeDirection::LeftToRight
+        ShapeDirection::Horizontal
     };
     let language_str = shape_options.language.as_deref();
     let shaper_face = font_entry.shaper_face(font_ctx.registry.shaper())?;
     #[cfg(any(test, feature = "phase-trace"))]
     crate::phase_trace::record_backend_shape();
-    let raw_glyphs = shaper_face.shape(text, direction, language_str, &features, &variations);
+    let raw_glyphs = shaper_face.shape(text, direction, language_str, &features, &variations)?;
+    crate::font::backend::validate_shaped_glyphs(text, font_entry.glyph_count, &raw_glyphs)?;
     #[cfg(any(test, feature = "phase-trace"))]
     crate::phase_trace::record_shaped_glyphs(raw_glyphs.len());
 
     if raw_glyphs.is_empty() {
-        return None;
+        return Ok(None);
     }
     // Check for .notdef — reject unless caller opted in to tofu fallback
     if !allow_notdef && raw_glyphs.iter().any(|g| g.glyph_id == 0) {
-        return None;
+        return Ok(None);
     }
 
     // --- Build char-level mappings ---
@@ -181,56 +200,61 @@ pub fn shape_paragraph_with_options(
         None
     };
     let vertical_font_face = if vertical_upright_by_byte.is_some() {
-        font_entry.font_face(font_ctx.registry.backend(), &variations)
+        Some(font_entry.font_face(font_ctx.registry.backend(), &variations)?)
     } else {
         None
     };
 
     // --- Convert raw glyphs → ShapedGlyph ---
-    let shaped_glyphs: Vec<ShapedGlyph> = raw_glyphs
-        .iter()
-        .map(|raw| {
-            let vertical_inline_advance_funits = vertical_upright_by_byte.as_ref().map(|upright| {
-                let raw_x_advance = i64::from(raw.x_advance).abs();
-                let raw_y_advance = i64::from(raw.y_advance).abs();
+    let mut shaped_glyphs = Vec::new();
+    shaped_glyphs
+        .try_reserve_exact(raw_glyphs.len())
+        .map_err(|_| crate::BoundtextError::TextShaping {
+            reason: crate::error::FontFailureReason::AllocationFailed,
+        })?;
+    for raw in &raw_glyphs {
+        let vertical_inline_advance_funits = if let Some(upright) = &vertical_upright_by_byte {
+            let x_advance = f64::from(raw.x_advance).abs();
+            let y_advance = f64::from(raw.y_advance).abs();
+            Some(
                 if upright.get(raw.cluster as usize).copied().unwrap_or(true) {
-                    if raw_y_advance > 0 {
-                        raw_y_advance
+                    if y_advance > 0.0 {
+                        y_advance
                     } else {
-                        raw_x_advance
+                        x_advance
                     }
-                } else if raw_x_advance == 0 && raw_y_advance == 0 {
-                    0
+                } else if x_advance == 0.0 && y_advance == 0.0 {
+                    0.0
                 } else {
                     vertical_font_face
                         .as_ref()
-                        .and_then(|face| {
-                            u16::try_from(raw.glyph_id)
-                                .ok()
-                                .and_then(|glyph_id| face.glyph_hor_advance(glyph_id))
+                        .map(|face| face.glyph_hor_advance(raw.glyph_id))
+                        .transpose()?
+                        .flatten()
+                        .filter(|advance| *advance > 0.0)
+                        .unwrap_or(if x_advance > 0.0 {
+                            x_advance
+                        } else {
+                            y_advance
                         })
-                        .filter(|advance| *advance > 0)
-                        .map(i64::from)
-                        .or_else(|| (raw_x_advance > 0).then_some(raw_x_advance))
-                        .or_else(|| (raw_y_advance > 0).then_some(raw_y_advance))
-                        .unwrap_or(0)
-                }
-            });
-
-            ShapedGlyph {
-                glyph_id: raw.glyph_id,
-                x_advance_funits: raw.x_advance,
-                y_advance_funits: raw.y_advance,
-                vertical_inline_advance_funits,
-                x_offset_funits: raw.x_offset,
-                y_offset_funits: raw.y_offset,
-                cluster: raw.cluster,
-                font_alias: font_entry.key.alias.clone(),
-                font_weight: font_entry.key.weight,
-                font_style: font_entry.key.style.clone(),
-            }
-        })
-        .collect();
+                },
+            )
+        } else {
+            None
+        };
+        shaped_glyphs.push(ShapedGlyph {
+            glyph_id: raw.glyph_id,
+            x_advance_funits: raw.x_advance,
+            y_advance_funits: raw.y_advance,
+            vertical_inline_advance_funits,
+            x_offset_funits: raw.x_offset,
+            y_offset_funits: raw.y_offset,
+            cluster: raw.cluster,
+            font_alias: font_entry.key.alias.clone(),
+            font_weight: font_entry.key.weight,
+            font_style: font_entry.key.style.clone(),
+        });
+    }
 
     // --- Build per-char advances (font units) and tracking counts ---
     let mut char_advances_funits: Vec<i64> = vec![0; char_count];
@@ -263,7 +287,7 @@ pub fn shape_paragraph_with_options(
     };
     let hanging_chars = get_hanging_chars(hanging_punctuation);
 
-    Some(ShapedParagraph {
+    Ok(Some(ShapedParagraph {
         text: Arc::from(text),
         glyphs: shaped_glyphs,
         units_per_em: font_entry.units_per_em,
@@ -278,7 +302,7 @@ pub fn shape_paragraph_with_options(
         letter_spacing_px,
         font_variation_settings: shape_options.font_variation_settings.clone(),
         font_feature_settings: shape_options.font_feature_settings.clone(),
-    })
+    }))
 }
 
 // ---------------------------------------------------------------------------

@@ -320,19 +320,18 @@ pub(crate) fn avoid_non_breaking_pair_split_by_boundary<'a>(
 #[must_use]
 pub fn is_valid_break_boundary(chars: &[&str], pos: usize, profile: &KinsokuProfile) -> bool {
     // chars[pos] would be the first character of the next line.
-    if let Some(ch) = chars.get(pos).and_then(|t| first_char(t)) {
-        if is_head_prohibit(ch, profile) {
-            return false;
-        }
+    if let Some(ch) = chars.get(pos).and_then(|t| first_char(t))
+        && is_head_prohibit(ch, profile)
+    {
+        return false;
     }
 
     // chars[pos - 1] would be the last character of the current line.
-    if pos > 0 {
-        if let Some(prev) = boundary_tail_char(chars[pos - 1]) {
-            if is_tail_prohibit(prev, profile) {
-                return false;
-            }
-        }
+    if pos > 0
+        && let Some(prev) = boundary_tail_char(chars[pos - 1])
+        && is_tail_prohibit(prev, profile)
+    {
+        return false;
     }
 
     // Non-breaking pair / consecutive-digit protection.
@@ -356,10 +355,10 @@ pub fn is_valid_ellipsis_boundary(chars: &[&str], pos: usize, profile: &KinsokuP
     if pos == 0 {
         return true;
     }
-    if let Some(prev) = first_char(chars[pos - 1]) {
-        if is_tail_prohibit(prev, profile) {
-            return false;
-        }
+    if let Some(prev) = first_char(chars[pos - 1])
+        && is_tail_prohibit(prev, profile)
+    {
+        return false;
     }
     true
 }

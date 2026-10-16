@@ -1,3 +1,6 @@
+//! Injected font decoding and text-engine font contracts used by rendering.
+
+/// Decode supported font containers before text-engine admission.
 pub mod decode;
 
 // Re-export all boundtext font submodules and types

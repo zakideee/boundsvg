@@ -1,3 +1,5 @@
+//! Build text-layout lines and source mappings from completed break results.
+
 use super::char_mapping::{GlyphCharSpan, GlyphRange};
 use super::line_breaking::BreakLineRange;
 use crate::font::shaping::{self, GlyphInfo};
@@ -381,16 +383,16 @@ pub(crate) fn detect_constraint_overflow(
     max_width: Option<f64>,
     max_height: Option<f64>,
 ) -> Option<TextOverflow> {
-    if let Some(max_w) = max_width {
-        if width > max_w + CONSTRAINT_EPSILON {
-            return Some(TextOverflow::overflow("text exceeds maxWidth"));
-        }
+    if let Some(max_w) = max_width
+        && width > max_w + CONSTRAINT_EPSILON
+    {
+        return Some(TextOverflow::overflow("text exceeds maxWidth"));
     }
 
-    if let Some(max_h) = max_height {
-        if height > max_h + CONSTRAINT_EPSILON {
-            return Some(TextOverflow::overflow("text exceeds maxHeight"));
-        }
+    if let Some(max_h) = max_height
+        && height > max_h + CONSTRAINT_EPSILON
+    {
+        return Some(TextOverflow::overflow("text exceeds maxHeight"));
     }
 
     None

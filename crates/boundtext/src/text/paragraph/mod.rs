@@ -1,6 +1,6 @@
 //! Width-independent shaped paragraph for two-phase layout.
 //!
-//! `shape_paragraph()` performs expensive shaping once and stores font-unit
+//! `shape_paragraph()?` performs expensive shaping once and stores font-unit
 //! glyph data. `layout_paragraph()` / `measure_paragraph()` then perform cheap
 //! relayout at any (`font_size`, `max_width`) combination without re-shaping.
 
@@ -40,7 +40,7 @@ pub struct ShapedGlyph {
     pub y_advance_funits: i32,
     /// Orientation-normalized inline advance for vertical layout. Sideways
     /// glyphs use their horizontal metric instead of the raw vertical em cell.
-    pub vertical_inline_advance_funits: Option<i64>,
+    pub vertical_inline_advance_funits: Option<f64>,
     pub x_offset_funits: i32,
     pub y_offset_funits: i32,
     pub cluster: u32,
@@ -77,12 +77,14 @@ pub struct ShapedParagraph {
 }
 
 #[derive(Debug, Clone)]
+/// Half-open glyph indices assigned to one source character position.
 pub struct GlyphRange {
     pub start: usize,
     pub end: usize,
 }
 
 #[derive(Debug, Clone)]
+/// Half-open source character bounds covered by a shaped glyph.
 pub struct GlyphCharSpan {
     pub start: usize,
     pub end: usize,

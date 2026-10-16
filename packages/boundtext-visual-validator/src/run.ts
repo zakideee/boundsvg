@@ -2,7 +2,7 @@
  * boundsvg-runner — Render boundtext spec cases as PNG via boundsvg's WASM pipeline.
  *
  * Unlike the browser-runner (which renders via headless Chromium), this tool
- * renders entirely through boundsvg's WASM pipeline (rustybuzz text shaping +
+ * renders entirely through boundsvg's WASM pipeline (HarfRust text shaping +
  * tiny_skia rasterisation). The resulting PNGs provide a true visual
  * representation of what boundsvg produces, enabling side-by-side comparison
  * with browser-rendered screenshots.
@@ -151,6 +151,7 @@ type BtEntry = {
 // Font alias → filename map (same as browser-runner)
 // ---------------------------------------------------------------------------
 
+/** Map corpus font identifiers to injected fixture filenames. */
 const FONT_FILE_MAP: Record<string, string> = {
   NotoSansJP: "NotoSansJP-Regular.subset.ttf",
   NotoSerifJP: "NotoSerifJP-Regular.subset.ttf",
@@ -539,6 +540,7 @@ function buildSceneNode(spec: SpecCase, canvasWidth: number, canvasHeight: numbe
 // Canvas sizing
 // ---------------------------------------------------------------------------
 
+/** Extra vertical canvas margin in pixels for visual comparisons. */
 const HEIGHT_MARGIN = 8;
 
 function computeCanvasSize(

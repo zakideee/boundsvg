@@ -370,16 +370,15 @@ pub(super) fn resolve_easing(
             }
         }
     };
-    if let ResolvedEasing::Cubic(curve) = resolved {
-        if curve.iter().any(|value| !finite(*value))
+    if let ResolvedEasing::Cubic(curve) = resolved
+        && (curve.iter().any(|value| !finite(*value))
             || !(0.0..=1.0).contains(&curve[0])
-            || !(0.0..=1.0).contains(&curve[2])
-        {
-            return Err(animation_error(
-                node_id,
-                "cubic-bezier x coordinates must be in 0..1 and all values finite",
-            ));
-        }
+            || !(0.0..=1.0).contains(&curve[2]))
+    {
+        return Err(animation_error(
+            node_id,
+            "cubic-bezier x coordinates must be in 0..1 and all values finite",
+        ));
     }
     Ok(resolved)
 }

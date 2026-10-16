@@ -1,23 +1,33 @@
+//! Own injected font bytes and resolve registered faces and immutable backend state.
+
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use crate::error::BoundtextError;
+use crate::error::{BoundtextError, FontFailureReason};
 
-use super::backend::{FontBackend, FontFace, ShapeVariation, Shaper, ShaperFace};
+use super::backend::{FontAdmission, FontBackend, FontFace, ShapeVariation, Shaper, ShaperFace};
 
+/// Recognize the generic CSS family names supported by registry fallback.
 pub(crate) fn is_css_generic_font_family(alias: &str) -> bool {
     matches!(
         alias.trim().to_ascii_lowercase().as_str(),
         "serif" | "sans-serif" | "monospace" | "cursive" | "fantasy"
     )
 }
-#[cfg(feature = "rustybuzz-backend")]
-use super::backend_rustybuzz::RustybuzzShaper;
-#[cfg(feature = "ttfparser-backend")]
-use super::backend_ttfparser::TtfParserBackend;
+#[cfg(feature = "harfrust-backend")]
+use super::backend_harfrust::HarfRustShaper;
+#[cfg(feature = "skrifa-backend")]
+use super::backend_skrifa::SkrifaBackend;
 
-/// Font data organized for rasterization: alias→family-name mapping and Arc-wrapped font bytes.
-pub type RasterizeFontData = (Vec<(String, String)>, Vec<Arc<Vec<u8>>>);
+/// Immutable raster font snapshot with optional proofs aligned to the byte allocations.
+pub struct RasterizeFontData {
+    /// Registered aliases mapped to their decoded font family names.
+    pub aliases: Vec<(String, String)>,
+    /// Retained font allocations; no font bytes are copied.
+    pub fonts: Vec<Arc<Vec<u8>>>,
+    /// Common-admission proofs at the corresponding font index; None requires validation.
+    pub admissions: Vec<Option<FontAdmission>>,
+}
 
 /// Key for font lookup: (alias, weight, style)
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -30,6 +40,7 @@ pub struct FontKey {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
+/// Registered font style used for face lookup and serialized glyph provenance.
 pub enum FontStyle {
     #[default]
     Normal,
@@ -38,34 +49,53 @@ pub enum FontStyle {
 
 /// Stored font data with parsed metrics
 pub struct FontEntry {
+    /// Immutable admitted font bytes shared by shaping, outlines, and rasterization.
     pub data: Arc<Vec<u8>>,
+    /// Registered family alias, weight, and style used for face lookup.
     pub key: FontKey,
+    /// OpenType scale in 16..=16384 font units per em.
     pub units_per_em: u16,
-    pub ascender: i16,
-    pub line_gap: i16,
-    pub typographic_ascender: i16,
-    pub typographic_descender: i16,
-    pub typographic_line_gap: i16,
-    pub descender: i16,
-    pub vertical_ascender: Option<i16>,
-    pub vertical_descender: Option<i16>,
-    pub vertical_line_gap: Option<i16>,
+    /// Number of addressable glyphs, including .notdef.
+    pub glyph_count: u32,
+    /// Selected default-location horizontal ascender in font units, positive upward.
+    pub ascender: f64,
+    /// Selected default-location horizontal line gap in font units.
+    pub line_gap: f64,
+    /// Nonzero OS/2 typo ascender, falling back to the selected ascender, in font units.
+    pub typographic_ascender: f64,
+    /// Nonzero OS/2 typo descender, falling back to the selected descender, in font units.
+    pub typographic_descender: f64,
+    /// Default OS/2 typo gap when present, otherwise the selected gap, in font units.
+    pub typographic_line_gap: f64,
+    /// Selected default-location horizontal descender in font units, normally negative.
+    pub descender: f64,
+    /// Default upward vhea ascender in font units; None means vhea is absent.
+    pub vertical_ascender: Option<f64>,
+    /// Default downward vhea descender in font units; None means vhea is absent.
+    pub vertical_descender: Option<f64>,
+    /// Default vhea line gap in font units; None means vhea is absent.
+    pub vertical_line_gap: Option<f64>,
     /// Whether the font contains a VORG (Vertical Origin) table
     pub has_vorg: bool,
-    /// Default vertical origin Y from VORG table (in font units), if present
-    pub default_vert_origin_y: Option<i16>,
-    pub underline_position: Option<i16>,
-    pub underline_thickness: Option<i16>,
-    pub strikeout_position: Option<i16>,
-    pub strikeout_thickness: Option<i16>,
+    /// Default upward VORG origin in font units; None means VORG is absent.
+    pub default_vert_origin_y: Option<f64>,
+    /// Default post underline position in upward font units; None means post is absent.
+    pub underline_position: Option<f64>,
+    /// Default post underline thickness in font units; None means post is absent.
+    pub underline_thickness: Option<f64>,
+    /// Default OS/2 strikeout position in upward font units; None means OS/2 is absent.
+    pub strikeout_position: Option<f64>,
+    /// Default OS/2 strikeout thickness in font units; None means OS/2 is absent.
+    pub strikeout_thickness: Option<f64>,
     /// Cached font family name extracted from the name table at registration time
     pub family_name: Option<String>,
-    /// Parse-once shaping face. A `FontEntry` lives as long as its registry, so
-    /// the face is parsed lazily on first shape call and reused afterwards.
-    shaper_face: OnceLock<Option<Box<dyn ShaperFace>>>,
+    /// Admission proof tied to the exact immutable bytes; custom backends may omit it.
+    admission: Option<FontAdmission>,
+    /// The registry admits this face before insertion and reuses its result.
+    shaper_face: OnceLock<Result<Box<dyn ShaperFace>, BoundtextError>>,
     /// Parse-once metric/outline face for the unvaried (no variation axes) case.
-    /// Varied faces are created per call because variation axes mutate the face.
-    unvaried_face: OnceLock<Option<Arc<dyn FontFace>>>,
+    /// Varied faces are immutable instances created separately for each call.
+    unvaried_face: OnceLock<Result<Arc<dyn FontFace>, BoundtextError>>,
 }
 
 impl FontEntry {
@@ -81,16 +111,64 @@ impl FontEntry {
         style: FontStyle,
         backend: &dyn FontBackend,
     ) -> Result<Self, BoundtextError> {
-        let metrics = backend.parse_metrics(&data)?;
+        let data = Arc::new(data);
+        let (metrics, admission) = backend.parse_metrics_with_admission(Arc::clone(&data))?;
+        if !(16..=16384).contains(&metrics.units_per_em) {
+            return Err(BoundtextError::FontParse {
+                reason: FontFailureReason::InvalidUnitsPerEm,
+                table: Some("head"),
+                face_index: 0,
+            });
+        }
+        if !(1..=65535).contains(&metrics.glyph_count) {
+            return Err(BoundtextError::FontParse {
+                reason: FontFailureReason::InvalidGlyphCount,
+                table: Some("maxp"),
+                face_index: 0,
+            });
+        }
+        if [
+            metrics.ascender,
+            metrics.descender,
+            metrics.line_gap,
+            metrics.typographic_ascender,
+            metrics.typographic_descender,
+            metrics.typographic_line_gap,
+        ]
+        .iter()
+        .chain(
+            [
+                metrics.vertical_ascender,
+                metrics.vertical_descender,
+                metrics.vertical_line_gap,
+                metrics.default_vert_origin_y,
+                metrics.underline_position,
+                metrics.underline_thickness,
+                metrics.strikeout_position,
+                metrics.strikeout_thickness,
+            ]
+            .iter()
+            .flatten(),
+        )
+        .any(|value| !value.is_finite())
+        {
+            return Err(BoundtextError::FontParse {
+                reason: FontFailureReason::NonFiniteMetric,
+                table: None,
+                face_index: 0,
+            });
+        }
 
         Ok(FontEntry {
-            data: Arc::new(data),
+            data,
+            admission,
             key: FontKey {
                 alias,
                 weight,
                 style,
             },
             units_per_em: metrics.units_per_em,
+            glyph_count: metrics.glyph_count,
             ascender: metrics.ascender,
             line_gap: metrics.line_gap,
             typographic_ascender: metrics.typographic_ascender,
@@ -113,51 +191,68 @@ impl FontEntry {
     }
 
     /// Return the parse-once shaping face for this font, creating it on first use.
-    /// Returns `None` if the shaper cannot parse the font data.
-    pub fn shaper_face(&self, shaper: &dyn Shaper) -> Option<&dyn ShaperFace> {
+    ///
+    /// # Errors
+    ///
+    /// Preserve a failed admission or face construction on subsequent calls.
+    pub fn shaper_face(&self, shaper: &dyn Shaper) -> Result<&dyn ShaperFace, BoundtextError> {
         self.shaper_face
-            .get_or_init(|| shaper.create_face(Arc::clone(&self.data)))
-            .as_deref()
+            .get_or_init(|| {
+                shaper.create_face_with_admission(Arc::clone(&self.data), self.admission.as_ref())
+            })
+            .as_ref()
+            .map(std::convert::AsRef::as_ref)
+            .map_err(Clone::clone)
     }
 
     /// Return a metric/outline face for this font. The unvaried face is parsed
     /// once and shared; a non-empty `variations` slice forces a per-call face
-    /// because variation axes mutate the parsed face.
+    /// at the requested immutable variation location.
+    ///
+    /// # Errors
+    ///
+    /// Preserve parsing and variation failures instead of treating them as absence.
     pub fn font_face(
         &self,
         backend: &dyn FontBackend,
         variations: &[ShapeVariation],
-    ) -> Option<Arc<dyn FontFace>> {
+    ) -> Result<Arc<dyn FontFace>, BoundtextError> {
         if variations.is_empty() {
             self.unvaried_face
                 .get_or_init(|| {
                     backend
-                        .create_face_shared(Arc::clone(&self.data), &[])
-                        .ok()
+                        .create_face_with_admission(
+                            Arc::clone(&self.data),
+                            &[],
+                            self.admission.as_ref(),
+                        )
                         .map(Arc::from)
                 })
                 .clone()
         } else {
             backend
-                .create_face_shared(Arc::clone(&self.data), variations)
-                .ok()
+                .create_face_with_admission(
+                    Arc::clone(&self.data),
+                    variations,
+                    self.admission.as_ref(),
+                )
                 .map(Arc::from)
         }
     }
 
-    /// Create a new `FontEntry` using the default backend (ttf-parser).
+    /// Create a new `FontEntry` using Skrifa.
     ///
     /// # Errors
     ///
     /// Returns `BoundtextError` if the font data is invalid or cannot be parsed.
-    #[cfg(feature = "ttfparser-backend")]
+    #[cfg(feature = "skrifa-backend")]
     pub fn new(
         data: Vec<u8>,
         alias: String,
         weight: u16,
         style: FontStyle,
     ) -> Result<Self, BoundtextError> {
-        let backend = TtfParserBackend;
+        let backend = SkrifaBackend;
         Self::with_backend(data, alias, weight, style, &backend)
     }
 }
@@ -172,7 +267,7 @@ pub struct FontRegistry {
     shaper: Arc<dyn Shaper>,
 }
 
-#[cfg(all(feature = "ttfparser-backend", feature = "rustybuzz-backend"))]
+#[cfg(all(feature = "skrifa-backend", feature = "harfrust-backend"))]
 impl Default for FontRegistry {
     fn default() -> Self {
         Self::new()
@@ -180,14 +275,14 @@ impl Default for FontRegistry {
 }
 
 impl FontRegistry {
-    /// Create a new `FontRegistry` with the default backends (ttf-parser + rustybuzz).
-    #[cfg(all(feature = "ttfparser-backend", feature = "rustybuzz-backend"))]
+    /// Create a new `FontRegistry` with Skrifa and `HarfRust`.
+    #[cfg(all(feature = "skrifa-backend", feature = "harfrust-backend"))]
     #[must_use]
     pub fn new() -> Self {
         FontRegistry {
             fonts: HashMap::new(),
-            backend: Arc::new(TtfParserBackend),
-            shaper: Arc::new(RustybuzzShaper),
+            backend: Arc::new(SkrifaBackend),
+            shaper: Arc::new(HarfRustShaper),
         }
     }
 
@@ -237,11 +332,20 @@ impl FontRegistry {
             });
         }
         let entry = FontEntry::with_backend(data, alias, weight, style, &*self.backend)?;
+        entry.shaper_face(&*self.shaper)?;
+        self.fonts
+            .try_reserve(1)
+            .map_err(|_| BoundtextError::FontParse {
+                reason: FontFailureReason::AllocationFailed,
+                table: None,
+                face_index: 0,
+            })?;
         self.fonts.insert(key, entry);
         Ok(())
     }
 
     #[must_use]
+    /// Resolve an exact face or the closest registered weight, preferring matching style and lower weight on ties.
     pub fn resolve(&self, alias: &str, weight: u16, style: &FontStyle) -> Option<&FontEntry> {
         let key = FontKey {
             alias: alias.to_string(),
@@ -288,28 +392,46 @@ impl FontRegistry {
         None
     }
 
-    /// Collect alias→family-name mapping and Arc-wrapped font data for rasterization.
+    /// Snapshot aliases, font allocations and aligned optional admission proofs for rasterization.
     ///
-    /// Returns `(alias_map, font_arcs)` where:
-    /// - `alias_map`: `(alias, actual_family_name)` pairs for SVG font-family substitution
-    /// - `font_arcs`: `Arc<Vec<u8>>` references for zero-copy fontdb loading
+    /// Only Arc reference counts are incremented. Consumers must check each proof
+    /// against its exact font allocation; missing or mismatched proofs require admission.
     ///
-    /// No font data is cloned — only Arc reference counts are incremented.
-    #[must_use]
-    pub fn rasterize_font_data(&self) -> RasterizeFontData {
-        let mut alias_map = Vec::new();
-        let mut font_arcs = Vec::new();
-
+    /// # Errors
+    ///
+    /// Return a structured allocation failure if the snapshot vectors cannot be reserved.
+    pub fn rasterize_font_data(&self) -> Result<RasterizeFontData, BoundtextError> {
+        let mut aliases = Vec::new();
+        let mut fonts = Vec::new();
+        let mut admissions = Vec::new();
+        let allocation_error = |_| BoundtextError::FontParse {
+            reason: FontFailureReason::AllocationFailed,
+            table: None,
+            face_index: 0,
+        };
+        aliases
+            .try_reserve_exact(self.fonts.len())
+            .map_err(allocation_error)?;
+        fonts
+            .try_reserve_exact(self.fonts.len())
+            .map_err(allocation_error)?;
+        admissions
+            .try_reserve_exact(self.fonts.len())
+            .map_err(allocation_error)?;
         for entry in self.fonts.values() {
-            if let Some(ref family_name) = entry.family_name {
-                if !entry.key.alias.is_empty() {
-                    alias_map.push((entry.key.alias.clone(), family_name.clone()));
-                }
+            if let Some(ref family_name) = entry.family_name
+                && !entry.key.alias.is_empty()
+            {
+                aliases.push((entry.key.alias.clone(), family_name.clone()));
             }
-            font_arcs.push(Arc::clone(&entry.data));
+            fonts.push(Arc::clone(&entry.data));
+            admissions.push(entry.admission.clone());
         }
-
-        (alias_map, font_arcs)
+        Ok(RasterizeFontData {
+            aliases,
+            fonts,
+            admissions,
+        })
     }
 }
 
@@ -431,5 +553,28 @@ mod tests {
             &FontStyle::Normal,
         );
         assert!(result.is_some());
+    }
+    #[test]
+    fn immutable_font_faces_do_not_repeat_common_admission() {
+        let backend = SkrifaBackend;
+        let entry =
+            FontEntry::new(test_font_data(), "Shared".into(), 400, FontStyle::Normal).unwrap();
+        let admitted_count = crate::font::admission::admission_call_count();
+        for weight in [100.0, 400.0, 900.0, 400.0] {
+            entry
+                .font_face(
+                    &backend,
+                    &[ShapeVariation {
+                        tag: *b"wght",
+                        value: weight,
+                    }],
+                )
+                .unwrap();
+        }
+        entry.font_face(&backend, &[]).unwrap();
+        assert_eq!(
+            crate::font::admission::admission_call_count(),
+            admitted_count
+        );
     }
 }

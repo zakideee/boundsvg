@@ -1,3 +1,5 @@
+//! Check paragraph shaping, line breaking, and styled source mapping.
+
 use super::*;
 use crate::font::shaping::ShapeOptions;
 use crate::font::{FontContext, FontRegistry, FontStyle};
@@ -88,6 +90,7 @@ fn shape_paragraph_builds_shaped_paragraph() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("shape");
 
     assert_eq!(&*shaped.text, "Hello");
@@ -176,6 +179,7 @@ fn parity_plain_wrap_japanese() {
             None,
             0.0,
         )
+        .expect("font operation succeeds")
         .expect("prepare should succeed for subset-covered text");
 
         let line_height_px = 16.0 * 1.5;
@@ -270,6 +274,7 @@ fn parity_single_line_no_wrap() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare");
     let line_height_px = 16.0 * 1.5;
     let shaped_result = layout_paragraph(
@@ -320,6 +325,7 @@ fn font_size_scaling() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare");
 
     let line_height_16 = 16.0 * 1.5;
@@ -385,6 +391,7 @@ fn letter_spacing_tracking() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare");
 
     // With letter spacing
@@ -398,6 +405,7 @@ fn letter_spacing_tracking() {
         None,
         2.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare");
 
     let line_height = 16.0 * 1.5;
@@ -461,6 +469,7 @@ fn edge_case_empty_text() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare empty");
 
     assert!(shaped.glyphs.is_empty());
@@ -505,6 +514,7 @@ fn edge_case_single_char() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare single char");
 
     assert_eq!(shaped.glyphs.len(), 1);
@@ -549,6 +559,7 @@ fn edge_case_text_fits_one_line() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare");
 
     let line_height = 16.0 * 1.5;
@@ -604,7 +615,8 @@ fn tracking_parity_with_old_shaping_path() {
             16.0,
             2.0, // letter_spacing_px
             &shape_options,
-        );
+        )
+        .expect("font operation succeeds");
         let kinsoku_profile = get_kinsoku_profile(Some(language_to_str(*lang)));
         let hanging_chars = get_hanging_chars(false);
         let line_height = 16.0 * 1.5;
@@ -638,6 +650,7 @@ fn tracking_parity_with_old_shaping_path() {
             None,
             2.0,
         )
+        .expect("font operation succeeds")
         .unwrap_or_else(|| panic!("prepare failed for '{text}'"));
 
         let shaped_result = layout_paragraph(
@@ -700,6 +713,7 @@ fn measure_paragraph_matches_layout() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare");
 
     let line_height = 16.0 * 1.5;
@@ -764,6 +778,7 @@ fn layout_next_line_matches_layout_paragraph() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare");
 
     let line_height = 16.0 * 1.5;
@@ -827,6 +842,7 @@ fn layout_next_line_variable_width() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare");
 
     let line_height = 16.0 * 1.5;
@@ -897,6 +913,7 @@ fn layout_next_line_exhaustion() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare");
 
     let line_height = 16.0 * 1.5;
@@ -948,6 +965,7 @@ fn prepare_ja(text: &str, registry: &FontRegistry, wrap: WrapMode) -> ShapedPara
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare")
 }
 
@@ -971,6 +989,7 @@ fn prepare_en(text: &str, registry: &FontRegistry, wrap: WrapMode) -> ShapedPara
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("prepare")
 }
 
@@ -1213,6 +1232,7 @@ fn vertical_mixed_sideways_advances_match_positioning_shaper() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("shape vertical paragraph");
     let font_entry = registry
         .resolve("NotoSansJP", 400, &FontStyle::Normal)
@@ -1224,7 +1244,8 @@ fn vertical_mixed_sideways_advances_match_positioning_shaper() {
         20.0,
         0.0,
         &shape_options,
-    );
+    )
+    .expect("font operation succeeds");
     let expected_advances = positioned
         .iter()
         .map(|glyph| glyph.y_advance.abs())
@@ -1292,6 +1313,7 @@ fn vertical_mixed_sideways_preserves_zero_advances_and_tracking() {
             None,
             0.0,
         )
+        .expect("font operation succeeds")
         .expect("shape text with a zero-advance glyph");
         let plain = shape_paragraph(
             plain_text,
@@ -1303,13 +1325,14 @@ fn vertical_mixed_sideways_preserves_zero_advances_and_tracking() {
             None,
             0.0,
         )
+        .expect("font operation succeeds")
         .expect("shape comparison text");
         let scale = 20.0 / f64::from(shaped.units_per_em);
         assert!(
             shaped
                 .glyphs
                 .iter()
-                .any(|glyph| glyph.vertical_inline_advance_funits == Some(0))
+                .any(|glyph| glyph.vertical_inline_advance_funits == Some(0.0))
         );
         assert!(
             (compute_vertical_advances_px(&shaped, scale)
@@ -1333,6 +1356,7 @@ fn vertical_mixed_sideways_preserves_zero_advances_and_tracking() {
         None,
         2.0,
     )
+    .expect("font operation succeeds")
     .expect("shape tracked text");
     let font_entry = registry
         .resolve("Inter", 400, &FontStyle::Normal)
@@ -1344,7 +1368,8 @@ fn vertical_mixed_sideways_preserves_zero_advances_and_tracking() {
         20.0,
         2.0,
         &shape_options,
-    );
+    )
+    .expect("font operation succeeds");
     assert!(
         (compute_vertical_advances_px(&tracked, 20.0 / f64::from(tracked.units_per_em))
             .iter()
@@ -1385,6 +1410,7 @@ fn vertical_last_region_consumes_an_oversized_first_grapheme() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("shape oversized upright grapheme");
     let mut cursor = BreakCursor::new();
     let column = layout_next_flow_column(
@@ -1429,6 +1455,7 @@ fn vertical_char_wrap_prefers_the_latest_uax_boundary() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("shape mixed vertical paragraph");
     let mut cursor = BreakCursor::new();
     let mut column_ranges = Vec::new();
@@ -1482,13 +1509,13 @@ fn flow_line_kinsoku_no_head_prohibit_at_line_start() {
 
     for (line_num, &start) in line_starts.iter().enumerate().skip(1) {
         // skip first line (always valid)
-        if start < chars.len() {
-            if let Some(ch) = chars[start].chars().next() {
-                assert!(
-                    !head_prohibit.contains(&ch),
-                    "visual line {line_num} starts with head-prohibit char '{ch}' (char index {start})",
-                );
-            }
+        if start < chars.len()
+            && let Some(ch) = chars[start].chars().next()
+        {
+            assert!(
+                !head_prohibit.contains(&ch),
+                "visual line {line_num} starts with head-prohibit char '{ch}' (char index {start})",
+            );
         }
     }
 }
@@ -1682,6 +1709,7 @@ fn find_ellipsis_truncation_basic() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .unwrap();
 
     // With font_size=20, each CJK char is ~20px.
@@ -1724,6 +1752,7 @@ fn find_ellipsis_truncation_too_narrow() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .unwrap();
 
     // max_width smaller than ellipsis_width → None
@@ -1757,6 +1786,7 @@ fn find_ellipsis_truncation_at_start() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .unwrap();
 
     // max_width just fits ellipsis alone (no prefix chars)
@@ -1791,6 +1821,7 @@ fn find_ellipsis_truncation_allows_head_prohibit_after_cut() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .unwrap();
 
     // Width for ~1 char + ellipsis. Binary search should return pos=1.
@@ -1830,6 +1861,7 @@ fn find_ellipsis_truncation_avoids_tail_prohibit() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .unwrap();
 
     // Width for ~1 char + ellipsis. Binary search would give pos=1, but
@@ -1869,6 +1901,7 @@ fn collect_notdef_chars_empty_for_supported_text() {
         0.0,
         true,
     )
+    .expect("font operation succeeds")
     .expect("should prepare paragraph");
 
     let infos = collect_notdef_chars(&pp);
@@ -1899,7 +1932,8 @@ fn collect_notdef_chars_detects_unsupported_text() {
         None,
         0.0,
         true,
-    );
+    )
+    .expect("font operation succeeds");
 
     if let Some(pp) = pp {
         let infos = collect_notdef_chars(&pp);
@@ -1935,6 +1969,7 @@ fn layout_paragraph_nowrap_produces_single_line() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("shape should succeed");
 
     // max_width=10 would normally force wrapping, but wrap=None prevents it
@@ -1963,6 +1998,7 @@ fn layout_paragraph_word_wrap_keeps_unbreakable_word_on_one_line() {
         None,
         0.0,
     )
+    .expect("font operation succeeds")
     .expect("shape should succeed");
 
     let result = layout_paragraph(&pp, 24.0, 36.0, 28.0, 80.0, WrapMode::Word, false);
@@ -2021,6 +2057,7 @@ fn layout_paragraph_pre_wrap_breaks_at_newline() {
         0.0,
         true,
     )
+    .expect("font operation succeeds")
     .expect("shape should succeed");
 
     let result = layout_paragraph(&pp, 16.0, 20.0, 16.0, 999.0, WrapMode::Char, true);

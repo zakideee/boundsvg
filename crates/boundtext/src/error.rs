@@ -1,12 +1,126 @@
+//! Structured failures for font operations and text layout.
+
 use thiserror::Error;
 
 use crate::font::FontStyle;
 
-/// Failures owned by font registration, backend construction, or glyph-outline input.
+/// Describe an observed font failure without parsing a dependency's message.
+#[derive(Debug, Clone, Copy, Error, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FontFailureReason {
+    /// The font container or face directory cannot be read.
+    #[error("invalid font data")]
+    InvalidData,
+    /// A table required by this operation is absent.
+    #[error("required table is missing")]
+    MissingTable,
+    /// A present table or one of its required references cannot be read.
+    #[error("invalid table or table reference")]
+    InvalidTable,
+    /// No supported outline container is usable.
+    #[error("no usable glyph outlines")]
+    NoOutlines,
+    /// Units per em are outside the OpenType range.
+    #[error("units per em must be in 16..=16384")]
+    InvalidUnitsPerEm,
+    /// The face's glyph count is outside the OpenType range.
+    #[error("glyph count must be in 1..=65535")]
+    InvalidGlyphCount,
+    /// The requested glyph does not belong to the face.
+    #[error("glyph ID is outside the face")]
+    InvalidGlyphId,
+    /// A metric or outline coordinate is not finite.
+    #[error("font geometry must be finite")]
+    NonFiniteMetric,
+    /// A supplied variation value is not finite.
+    #[error("font variation must be finite")]
+    NonFiniteVariation,
+    /// An axis does not satisfy minimum <= default <= maximum.
+    #[error("invalid font variation axis range")]
+    InvalidVariationAxis,
+    /// An allocation owned by this operation failed.
+    #[error("allocation failed")]
+    AllocationFailed,
+    /// The shaping buffer could not accept the complete input.
+    #[error("shaping buffer preparation failed")]
+    BufferPreparationFailed,
+    /// The shaper reported buffer failure while processing the input.
+    #[error("shaping buffer failed during processing")]
+    BufferFailedDuringShaping,
+    /// The input byte length cannot be represented by UTF-8 clusters.
+    #[error("text byte length exceeds u32")]
+    InputTooLong,
+    /// A buffer already contained shaped output.
+    #[error("buffer already contains shaped glyphs")]
+    AlreadyShaped,
+    /// The shaper had no usable direction.
+    #[error("shaping direction is unset")]
+    DirectionUnset,
+    /// A shaping plan and buffer disagree about direction or script.
+    #[error("shaping plan and buffer disagree")]
+    PlanMismatch,
+    /// The dependency returned a shaping failure unknown to this version.
+    #[error("shaping failed")]
+    ShapingFailed,
+    /// The glyph information and position arrays have different lengths.
+    #[error("shaped glyph arrays have different lengths")]
+    ParallelArrayLengthMismatch,
+    /// A cluster points outside the original text or into a UTF-8 sequence.
+    #[error("shaped cluster is not a source UTF-8 boundary")]
+    InvalidCluster,
+    /// Drawing a valid glyph failed instead of producing an empty outline.
+    #[error("glyph drawing failed")]
+    DrawingFailed,
+}
+
+/// Failures owned by font resolution, registration, backend operations, or glyph-outline input.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum BoundtextError {
-    #[error("Failed to parse font: {0}")]
-    FontParse(String),
+    /// No requested alias resolves to a registered font at the requested weight.
+    #[error("no requested font is available at weight {weight}")]
+    FontUnavailable {
+        /// Requested registered-font weight, in 0..=65535.
+        weight: u16,
+    },
+    /// Admission or metric parsing failed before the font can be used.
+    #[error("failed to parse font face {face_index}, table {table:?}: {reason}")]
+    FontParse {
+        /// The closed cause without retaining input font bytes.
+        reason: FontFailureReason,
+        /// The affected OpenType table; None denotes a container or whole-face failure.
+        table: Option<&'static str>,
+        /// The zero-based face index in the input collection, or zero for a single font.
+        face_index: u32,
+    },
+
+    /// Drawing or transforming an individual glyph failed; discard any partial path.
+    #[error("failed to draw glyph {glyph_id}: {reason}")]
+    FontOutline {
+        /// The closed drawing, coordinate, or allocation failure cause.
+        reason: FontFailureReason,
+        /// The requested OpenType glyph ID, including an invalid out-of-range request.
+        glyph_id: u32,
+    },
+
+    /// Shaping failed before a complete valid glyph sequence was available.
+    #[error("text shaping failed: {reason}")]
+    TextShaping {
+        /// The closed input, allocation, or backend failure cause.
+        reason: FontFailureReason,
+    },
+
+    /// The backend buffer failed during processing; no prefix is a successful result.
+    #[error("text shaping buffer failed during processing")]
+    TextShapingLimitExceeded,
+
+    /// The backend returned a glyph record that violates the output contract.
+    #[error("invalid shaped glyph at index {glyph_index}: {reason}")]
+    InvalidShapedOutput {
+        /// The closed cause, such as an invalid ID, cluster, or parallel array length.
+        reason: FontFailureReason,
+        /// The zero-based output-record index, not an OpenType glyph ID or UTF-8 offset.
+        glyph_index: usize,
+    },
 
     #[error("Font already registered: alias={alias}, weight={weight}, style={style:?}")]
     FontAlreadyRegistered {
@@ -162,6 +276,14 @@ pub enum TextLayoutInvariant {
 /// Fatal failure of the authoritative text-layout operation.
 #[derive(Debug, Clone, Error, PartialEq)]
 pub enum TextLayoutError {
+    /// Preserve the structured font failure through every layout operation.
+    #[error(transparent)]
+    Font(
+        /// The underlying typed font failure; no partial layout accompanies it.
+        #[from]
+        BoundtextError,
+    ),
+
     #[error("invalid text-layout request: {reason}")]
     InvalidRequest { reason: TextRequestError },
 
