@@ -272,6 +272,8 @@ pub struct PositionedGlyphPathInput {
 ///
 /// Returns font parsing, variation, invalid-glyph, drawing, nonfinite-coordinate,
 /// or allocation failures without returning a partial path sequence.
+/// A sequence output-allocation failure identifies the first requested glyph.
+/// Empty sequences require no output allocation.
 pub fn extract_glyph_paths(
     face: &dyn backend::FontFace,
     font_size_px: f64,
@@ -283,12 +285,14 @@ pub fn extract_glyph_paths(
     let scale = font_size_px / units_per_em;
     let mut cursor_x = start_x;
     let mut paths = Vec::new();
-    paths
-        .try_reserve_exact(positions.len())
-        .map_err(|_| BoundtextError::FontOutline {
-            reason: FontFailureReason::AllocationFailed,
-            glyph_id: 0,
-        })?;
+    if let Some(first_position) = positions.first() {
+        paths
+            .try_reserve_exact(positions.len())
+            .map_err(|_| BoundtextError::FontOutline {
+                reason: FontFailureReason::AllocationFailed,
+                glyph_id: first_position.glyph_id,
+            })?;
+    }
 
     for pos in positions {
         let glyph_id = pos.glyph_id;
