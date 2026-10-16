@@ -57,3 +57,8 @@ default = ["resvg-backend"]
 ir-schema = ["dep:schemars", "boundshape/schema", "boundtext/schema"]
 resvg-backend = ["dep:resvg", "dep:usvg", "dep:png", "dep:image-webp", "dep:gif", "dep:crc32fast"]
 unicode-full = ["boundtext/unicode-full"]
+
+[package.metadata.boundsvg-release]
+pending-version = "0.9.0"
+change-kind = "breaking-public-api"
+obligation-id = "font-schema-35"
