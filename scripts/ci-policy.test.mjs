@@ -398,7 +398,7 @@ test("actual workflow wiring keeps required jobs, coverage, and unique acceptanc
     "pnpm bench:smoke",
     "node scripts/pack-e2e.mjs",
     "pnpm knip",
-    "--no-default-features --test lib_exports_test --test renderer_contract --features unicode-full",
+    "--no-default-features --lib --test lib_exports_test --test renderer_contract --test instance_test --features unicode-full",
     "cargo llvm-cov --workspace --lcov",
     "pnpm run test:e2e",
   ]) {

@@ -116,8 +116,10 @@ a lossless RGBA path; no new PNG quality option is required.
 
 ## Raster backend feature
 
-The `resvg-backend` Cargo feature is removed in 0.9.0. The `boundsvg` crate always
-includes its rasterization dependencies. Remove explicit `resvg-backend` feature
-selectors from Cargo manifests. `default-features = false` remains valid and does
-not disable rasterization. The `Renderer` injection API remains available; custom
-renderers do not exclude the standard raster dependencies from the build.
+The `resvg-backend` and explicit `default` Cargo feature names are removed in
+0.9.0. The `boundsvg` crate always includes its rasterization dependencies. Remove
+these selectors from dependency manifests and `--features` arguments, including
+forwarded package selectors. Normal dependency declarations and
+`default-features = false` remain valid and do not disable rasterization. The
+`Renderer` injection API remains available; custom renderers do not exclude the
+standard raster dependencies from the build.
