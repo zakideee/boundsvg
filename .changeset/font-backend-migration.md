@@ -9,3 +9,5 @@ Replace the font parser and shaper with released Fontations and HarfRust depende
 **Output-affecting:** Fractional outlines and variation metrics can change text path coordinates and edge antialiasing. Raw SVG variable fonts now apply optical sizing by default; set `font-optical-sizing: none` or an explicit optical-size axis to retain the previous sizing. SVG and raster bytes can change across versions.
 
 Native `FontRegistry::rasterize_font_data` now returns a fallible `RasterizeFontData` snapshot with aligned optional immutable-allocation admission proofs.
+
+Native Rust: the `resvg-backend` Cargo feature is removed. `boundsvg` always includes its rasterization dependencies; remove explicit `resvg-backend` feature selectors. `default-features = false` remains valid and does not disable rasterization. The `Renderer` injection API remains available and does not exclude the standard raster dependencies.

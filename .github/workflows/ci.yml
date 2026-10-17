@@ -293,10 +293,10 @@ jobs:
         run: cargo test --workspace
         working-directory: crates/boundsvg
 
-      # Feature-unification contract (was preflight's job before --checks-only):
-      # the default-features run above does not cover unicode-full.
-      - name: Export contracts (unicode-full)
-        run: cargo test -p boundsvg --test lib_exports_test --features unicode-full
+      # Compile separately so workspace default features cannot hide missing
+      # native exports or raster dependencies.
+      - name: Native contracts (no default features, unicode-full)
+        run: cargo test -p boundsvg --no-default-features --test lib_exports_test --test renderer_contract --features unicode-full
         working-directory: crates/boundsvg
 
       - name: Install llvm-tools-preview

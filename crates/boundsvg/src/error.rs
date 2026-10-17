@@ -1,7 +1,10 @@
+//! Engine failures shared by native rendering and the WASM boundary.
+
 use thiserror::Error;
 
 use crate::diagnostics::PipelineStage;
 
+/// Rendering failures from layout, fonts, SVG parsing and raster encoding.
 #[derive(Debug, Error)]
 pub enum EngineError {
     #[error("Text/font error: {0}")]
@@ -16,13 +19,8 @@ pub enum EngineError {
     #[error("Invalid color '{color}': {reason}")]
     ColorParse { color: String, reason: String },
 
-    #[cfg(feature = "resvg-backend")]
     #[error("Failed to parse SVG: {0}")]
     SvgParse(#[from] usvg::Error),
-
-    #[cfg(not(feature = "resvg-backend"))]
-    #[error("Failed to parse SVG: {0}")]
-    SvgParse(String),
 
     #[error("{0}")]
     Rasterize(String),

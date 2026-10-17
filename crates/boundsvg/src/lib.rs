@@ -9,15 +9,13 @@
     reason = "layout/style mapping and text measurement encode many independent SVG/CSS compatibility branches"
 )]
 
-#[cfg(all(test, feature = "resvg-backend"))]
+#[cfg(test)]
 mod animation_frame_tests;
-#[cfg(feature = "resvg-backend")]
 pub mod animation_writer;
 pub mod diagnostics;
 pub mod error;
 pub mod flow;
 pub mod font;
-#[cfg(feature = "resvg-backend")]
 pub mod gif_anim;
 pub mod image_url;
 pub mod ir;
@@ -28,25 +26,19 @@ mod layout_transition;
 pub mod output_generator;
 #[cfg(test)]
 mod pipeline_phase_trace;
-#[cfg(feature = "resvg-backend")]
 pub mod raster_anim;
-#[cfg(feature = "resvg-backend")]
 pub mod rasterize;
 pub mod render_backend;
-#[cfg(feature = "resvg-backend")]
 pub mod render_resvg;
 pub mod scene;
 mod shape_diagnostics;
 pub mod svg_emit;
 mod text_diagnostics;
-#[cfg(feature = "resvg-backend")]
 pub mod webp_anim;
-#[cfg(feature = "resvg-backend")]
 pub mod webp_encode;
 mod wire;
 pub use boundtext::text;
 
-#[cfg(feature = "resvg-backend")]
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_name = String)]
@@ -71,7 +63,6 @@ extern "C" {
 /// # Errors
 ///
 /// Return a closed wrongType or invalidUnicode diagnostic without coercion.
-#[cfg(feature = "resvg-backend")]
 fn animation_primitive_json(
     input: &JsValue,
     format: raster_anim::AnimatedRasterFormat,
@@ -132,7 +123,6 @@ fn animation_primitive_json(
 }
 
 /// Incremental animated encoder capability owned by its generated JavaScript class.
-#[cfg(feature = "resvg-backend")]
 #[wasm_bindgen]
 pub struct AnimatedRasterSession {
     format: raster_anim::AnimatedRasterFormat,
@@ -141,7 +131,6 @@ pub struct AnimatedRasterSession {
     session: raster_anim::AnimationSession<animation_writer::StagedWriter>,
 }
 
-#[cfg(feature = "resvg-backend")]
 #[wasm_bindgen]
 impl AnimatedRasterSession {
     /// Return a copied `Uint8Array` of at most 64 KiB, or explicit null after a drain.
@@ -210,7 +199,6 @@ use boundshape::{
 };
 use font::{FontRegistry, FontStyle};
 use render_backend::Renderer;
-#[cfg(feature = "resvg-backend")]
 use render_resvg::ResvgRenderer;
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1333,16 +1321,16 @@ fn emit_prepared_ir(
     options: &RenderSvgOptions,
 ) -> Result<String, error::EngineError> {
     let (sampled_value, timeline_plan) = sample_svg_animation(prepared_ir, options)?;
-    #[cfg(all(test, feature = "resvg-backend"))]
+    #[cfg(test)]
     let sampled_ir = animation_frame_tests::track_allocation(sampled_value, 0);
-    #[cfg(not(all(test, feature = "resvg-backend")))]
+    #[cfg(not(test))]
     let sampled_ir = sampled_value;
     let mut paint_options = to_paint_scene_options(options)?;
     paint_options.timeline_plan = timeline_plan;
     let paint_value = scene::resolve_paint_scene(&sampled_ir, &paint_options)?;
-    #[cfg(all(test, feature = "resvg-backend"))]
+    #[cfg(test)]
     let paint_scene = animation_frame_tests::track_allocation(paint_value, 1);
-    #[cfg(not(all(test, feature = "resvg-backend")))]
+    #[cfg(not(test))]
     let paint_scene = paint_value;
     svg_emit::emitter::emit_svg_scene(&paint_scene, to_svg_emit_options(options))
 }
@@ -2043,7 +2031,6 @@ impl BoundSvgEngine {
     /// # Errors
     ///
     /// Return owner, resolved-state, pending/count, emitter or common codec diagnostics.
-    #[cfg(feature = "resvg-backend")]
     fn push_animation_frame(
         &self,
         session: &mut AnimatedRasterSession,
