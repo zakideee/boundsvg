@@ -24,3 +24,8 @@ schema = ["dep:schemars"]
 [dev-dependencies]
 proptest = "1"
 serde_json = "1"
+
+[package.metadata.boundsvg-release]
+pending-version = "0.5.0"
+change-kind = "breaking-msrv"
+obligation-id = "rust-1-88"

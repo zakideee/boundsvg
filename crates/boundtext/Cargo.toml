@@ -44,3 +44,8 @@ unicode-full = ["unicode-segmentation"]
 name = "text_layout_adversarial"
 harness = false
 required-features = ["phase-trace"]
+
+[package.metadata.boundsvg-release]
+pending-version = "0.6.0"
+change-kind = "breaking-public-api"
+obligation-id = "font-backend-migration"

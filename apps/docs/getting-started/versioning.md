@@ -69,10 +69,18 @@ key. Decode external values with `decodeSceneDocument()` when a detached
 APIs validate the complete recursive structure, and `fromSceneDocument()`
 decodes exactly once.
 
-The current WASM schema is version 34. That internal bridge number is not
+The current WASM schema is version 35. That internal bridge number is not
 a Scene document field and must not be added to `.scene.json` files. Any future
 incompatible Scene format would require a separately documented migration;
 there is no runtime version-dispatch mode today.
+
+### 0.9.0 and WASM schema 35 migration
+
+Upgrade all `@boundsvg/*` packages and the node and web WASM artifacts together.
+The independent MP4 schema remains version 1. Native Rust users need Rust 1.88.0
+or later. See [Font backend migration](/reference/font-backend-migration) for
+backend API and feature changes, finite metrics, failure behavior, and output
+differences between versions.
 
 ### 0.8.0 and WASM schema 34 migration
 
