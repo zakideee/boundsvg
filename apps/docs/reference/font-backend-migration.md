@@ -113,3 +113,13 @@ before upgrading pinned versions.
 PNG encoding explicitly selects fast compression and the Sub filter to retain
 the established encoding-speed policy across dependency upgrades. This remains
 a lossless RGBA path; no new PNG quality option is required.
+
+## Raster backend feature
+
+The `resvg-backend` and explicit `default` Cargo feature names are removed in
+0.9.0. The `boundsvg` crate always includes its rasterization dependencies. Remove
+these selectors from dependency manifests and `--features` arguments, including
+forwarded package selectors. Normal dependency declarations and
+`default-features = false` remain valid and do not disable rasterization. The
+`Renderer` injection API remains available; custom renderers do not exclude the
+standard raster dependencies from the build.

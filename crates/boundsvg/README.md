@@ -12,7 +12,7 @@ VNode → Validate → Build Taffy Tree → Compute Layout → Text Resolve → 
 - **Text** — Delegates to [boundtext](../boundtext/) for shaping, line breaking, kinsoku, and vertical text
 - **IR Build** — Converts the resolved layout tree into a backend-agnostic intermediate representation
 - **SVG Emit** — Serializes IR to standalone SVG with text as glyph outlines (no font file or `@font-face` in the output)
-- **Raster Emit** — Rasterizes IR via resvg and encodes PNG, WebP, animated WebP and GIF (`resvg-backend` feature, on by default)
+- **Raster Emit** — Rasterizes IR via resvg and encodes PNG, WebP, animated WebP and GIF (available in every build)
 - **WOFF2 Decode** — Decompresses WOFF2 fonts to TTF at load time
 
 ## WASM Targets

@@ -298,7 +298,21 @@ if (boundsvgRustBoundaryChanged) {
     ["cargo", ["test", "--workspace", "--test", "lib_exports_test"], { cwd: "crates/boundsvg" }],
     [
       "cargo",
-      ["test", "-p", "boundsvg", "--test", "lib_exports_test", "--features", "unicode-full"],
+      [
+        "test",
+        "-p",
+        "boundsvg",
+        "--no-default-features",
+        "--lib",
+        "--test",
+        "lib_exports_test",
+        "--test",
+        "renderer_contract",
+        "--test",
+        "instance_test",
+        "--features",
+        "unicode-full",
+      ],
       { cwd: "crates/boundsvg" },
     ],
   ]);
