@@ -361,10 +361,11 @@ jobs:
         run: pnpm run test:e2e
 
       - name: Upload E2E test results
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2e-test-results
+          if-no-files-found: ignore
           path: e2e/test-results/
 
   docs-check:
