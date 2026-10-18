@@ -1,5 +1,22 @@
 # @boundsvg/browser
 
+## 0.9.0
+
+### Minor Changes
+
+- [#51](https://github.com/zakideee/boundsvg/pull/51) [`1ecbc1d`](https://github.com/zakideee/boundsvg/commit/1ecbc1d7187e70587111888287e264281dd0c85e) Thanks [@zakideee](https://github.com/zakideee)! - Replace the font parser and shaper with released Fontations and HarfRust dependencies, and update raw SVG rasterization. Support maximum-count fonts without vendored source. Preserve fractional outline/variation metrics and unsigned Win metrics, propagate structured font/shaping failures, and require matching WASM schema 35. Native backend traits use Result and finite f64 metrics, and native outline extraction takes a parsed face; the workspace MSRV is Rust 1.88.0.
+
+  **Output-affecting:** Fractional outlines and variation metrics can change text path coordinates and edge antialiasing. Raw SVG variable fonts now apply optical sizing by default; set `font-optical-sizing: none` or an explicit optical-size axis to retain the previous sizing. SVG and raster bytes can change across versions.
+
+  Native `FontRegistry::rasterize_font_data` now returns a fallible `RasterizeFontData` snapshot with aligned optional immutable-allocation admission proofs.
+
+  Native Rust: the `resvg-backend` and explicit `default` Cargo feature names are removed. `boundsvg` always includes its rasterization dependencies; remove these selectors from dependency manifests and `--features` arguments. Normal dependency declarations and `default-features = false` remain valid and do not disable rasterization. The `Renderer` injection API remains available and does not exclude the standard raster dependencies.
+
+### Patch Changes
+
+- Updated dependencies [[`1ecbc1d`](https://github.com/zakideee/boundsvg/commit/1ecbc1d7187e70587111888287e264281dd0c85e)]:
+  - @boundsvg/core@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes

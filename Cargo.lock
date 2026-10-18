@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "boundshape"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "proptest",
  "schemars",
@@ -160,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "boundsvg"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "boundshape",
  "boundtext",
@@ -188,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "boundtext"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "boundshape",
  "harfrust 0.14.0",

@@ -1,6 +1,6 @@
 [package]
 name = "boundtext"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["zakideee"]
 repository = "https://github.com/zakideee/boundsvg"
 edition.workspace = true
@@ -18,7 +18,7 @@ workspace = true
 crate-type = ["rlib"]
 
 [dependencies]
-boundshape = { path = "../boundshape", version = "0.4.0" }
+boundshape = { path = "../boundshape", version = "0.5.0" }
 schemars = { version = "=1.2.2", optional = true }
 harfrust = { version = "=0.14.0", optional = true }
 skrifa = { version = "=0.48.0", default-features = false, features = ["std"], optional = true }
@@ -44,8 +44,3 @@ unicode-full = ["unicode-segmentation"]
 name = "text_layout_adversarial"
 harness = false
 required-features = ["phase-trace"]
-
-[package.metadata.boundsvg-release]
-pending-version = "0.6.0"
-change-kind = "breaking-public-api"
-obligation-id = "font-backend-migration"

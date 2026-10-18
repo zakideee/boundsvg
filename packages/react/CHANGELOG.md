@@ -1,5 +1,14 @@
 # @boundsvg/react
 
+## 0.9.0
+
+### Patch Changes
+
+- Updated dependencies [[`1ecbc1d`](https://github.com/zakideee/boundsvg/commit/1ecbc1d7187e70587111888287e264281dd0c85e)]:
+  - @boundsvg/core@0.9.0
+  - @boundsvg/browser@0.9.0
+  - @boundsvg/worker@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
