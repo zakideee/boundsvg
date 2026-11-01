@@ -891,6 +891,7 @@
       "additionalProperties": false
     },
     "AnimationSpec": {
+      "description": "Wire animation record decoded before semantic range and target validation.",
       "type": "object",
       "properties": {
         "keyframes": {
@@ -924,6 +925,7 @@
       ]
     },
     "AnimationKeyframe": {
+      "description": "Wire keyframe with explicit omission rules for opacity and transform targets.",
       "type": "object",
       "properties": {
         "at": {
@@ -979,6 +981,7 @@
       "additionalProperties": false
     },
     "AnimationEasing": {
+      "description": "Accepted wire alternatives for named, cubic-bezier, spring, or steps easing.",
       "anyOf": [
         {
           "type": "string"
@@ -1000,6 +1003,7 @@
       ]
     },
     "AnimationSpring": {
+      "description": "Wire spring easing parameters, validated after decoding.",
       "type": "object",
       "properties": {
         "type": {
@@ -1024,6 +1028,7 @@
       ]
     },
     "AnimationSteps": {
+      "description": "Wire steps easing parameters, validated after decoding.",
       "type": "object",
       "properties": {
         "type": {
@@ -1044,6 +1049,7 @@
       ]
     },
     "AnimationIterations": {
+      "description": "Finite iteration count or the validated infinite marker at the IR boundary.",
       "anyOf": [
         {
           "type": "number"
@@ -1829,6 +1835,7 @@
       ]
     },
     "TextPathMetadata": {
+      "description": "Path-text placement metadata retained alongside resolved glyph lines.",
       "type": "object",
       "properties": {
         "d": {
@@ -2134,6 +2141,7 @@
       ]
     },
     "TextUnitAnimationOrder": {
+      "description": "Logical or resolved visual order used to stagger text paint units.",
       "type": "string",
       "enum": [
         "logical",

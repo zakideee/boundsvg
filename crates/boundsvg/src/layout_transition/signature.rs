@@ -25,16 +25,23 @@ pub(super) const LAYOUT_NODE_TRANSPORT_KEYS: &[&str] = &[
 pub(super) const CANVAS_STROKE_SIGNATURE_KEYS: &[&str] =
     &["strokeScaling", "outline", "strokeWidth", "stroke"];
 
+/// Separate content, paint, and animation facts used for semantic transition compatibility.
 pub(super) struct SemanticSourceSignatures {
     pub(super) content: Value,
     pub(super) paint: Value,
     pub(super) animation: Value,
 }
 
+/// Partition the layout transport into content, paint, and animation signatures.
+///
+/// # Errors
+///
+/// Returns a compatibility mismatch for non-object input or unknown top-level transport keys.
 pub(super) fn semantic_source_signatures(
     raw_node: &Value,
     node_id: &str,
 ) -> Result<SemanticSourceSignatures, CompatibilityMismatch> {
+    /// Visual transport fields that change source content rather than paint-only presentation.
     const CONTENT_VISUAL_KEYS: &[&str] = &[
         "src",
         "d",
@@ -47,6 +54,7 @@ pub(super) fn semantic_source_signatures(
         "symbolId",
         "emitPartIds",
     ];
+    /// Visual transport fields that belong to authored animation compatibility.
     const ANIMATION_VISUAL_KEYS: &[&str] = &[
         "animation",
         "unitAnimation",
@@ -101,6 +109,7 @@ pub(super) fn semantic_source_signatures(
     })
 }
 
+/// Detect a non-neutral authored transform recursively, including either skew channel.
 pub(super) fn signature_has_non_identity_transform(signature: &Value) -> bool {
     match signature {
         Value::Array(values) => values.iter().any(signature_has_non_identity_transform),

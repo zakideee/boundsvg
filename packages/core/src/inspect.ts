@@ -16,6 +16,7 @@ import {
   type Point2D,
 } from "./transform.js";
 
+/** Axis-aligned rectangle in the coordinate space named by its inspection field. */
 export type InspectionRect = {
   x: number;
   y: number;
@@ -23,6 +24,10 @@ export type InspectionRect = {
   h: number;
 };
 
+/**
+ * Layout-box corners in canvas coordinates, ordered top-left, top-right, bottom-right, bottom-
+ * left.
+ */
 export type InspectionTransformBox = {
   points: [Point2D, Point2D, Point2D, Point2D];
 };

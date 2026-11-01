@@ -185,6 +185,7 @@ pub(crate) struct AnimationTransform2DOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationKeyframe"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Borrowed wire projection of a keyframe with omitted absent targets.
 pub(crate) struct AnimationKeyframeOutput<'a> {
     pub at: &'a f64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -197,6 +198,7 @@ pub(crate) struct AnimationKeyframeOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpring"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Borrowed wire projection of spring easing parameters.
 pub(crate) struct AnimationSpringOutput<'a> {
     #[cfg_attr(
         feature = "ir-schema",
@@ -218,6 +220,7 @@ pub(crate) struct AnimationSpringOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSteps"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Borrowed wire projection of steps easing parameters.
 pub(crate) struct AnimationStepsOutput<'a> {
     #[cfg_attr(
         feature = "ir-schema",
@@ -242,6 +245,7 @@ pub(crate) struct AnimationStepsOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpec"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Borrowed wire projection of an authored animation retained in structural IR.
 pub(crate) struct AnimationSpecOutput<'a> {
     pub keyframes: Vec<AnimationKeyframeOutput<'a>>,
     pub duration_ms: &'a f64,
@@ -310,6 +314,7 @@ pub(crate) struct IrNodeOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationEasing"))]
 #[derive(Serialize)]
 #[serde(untagged)]
+/// Borrowed wire alternatives for named and structured easing.
 pub(crate) enum AnimationEasingOutput<'a> {
     Named(
         #[cfg_attr(
@@ -1038,6 +1043,10 @@ struct LineProjection<'a> {
 /// Serialize IR text lines the way the TS layout parser projects them:
 /// fragment `style` is omitted when it has no explicit color (the TS side
 /// drops color-less styles when parsing the layout transport).
+///
+/// # Errors
+///
+/// Propagates serializer failures while projecting line, fragment, or glyph fields.
 pub(super) fn serialize_lines_ts_projection<S: Serializer>(
     lines: &[Line],
     serializer: S,

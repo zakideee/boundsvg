@@ -189,6 +189,7 @@ describe("generateJsxSnippet", () => {
 });
 
 describe("vnodeToJsxString compact mode", () => {
+  /** Compact JSX formatting used by the serialization round-trip assertions. */
   const COMPACT: JsxFormatOptions = { compact: true };
 
   it("packs multiple props on one line within max width", () => {

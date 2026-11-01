@@ -11,21 +11,32 @@ use super::types::{
 };
 use crate::error::EngineError;
 
+/// CSS ease control points used when an animation omits its easing.
 const DEFAULT_EASING: [f64; 4] = [0.25, 0.1, 0.25, 1.0];
 
+/// Spring stiffness used when the authored parameter is omitted.
 const SPRING_DEFAULT_STIFFNESS: f64 = 100.0;
+/// Spring damping used when the authored parameter is omitted.
 const SPRING_DEFAULT_DAMPING: f64 = 10.0;
+/// Spring mass used when the authored parameter is omitted.
 const SPRING_DEFAULT_MASS: f64 = 1.0;
+/// Inclusive lower bound on authored spring stiffness.
 const SPRING_STIFFNESS_MIN: f64 = 1.0;
+/// Inclusive upper bound on authored spring stiffness.
 const SPRING_STIFFNESS_MAX: f64 = 1000.0;
+/// Inclusive lower bound on authored spring damping.
 const SPRING_DAMPING_MIN: f64 = 1.0;
+/// Inclusive upper bound on authored spring damping.
 const SPRING_DAMPING_MAX: f64 = 100.0;
+/// Inclusive lower bound on authored spring mass.
 const SPRING_MASS_MIN: f64 = 0.1;
+/// Inclusive upper bound on authored spring mass.
 const SPRING_MASS_MAX: f64 = 10.0;
 /// Damping ratios within this distance of 1 use the critically damped closed form.
 const SPRING_CRITICAL_EPSILON: f64 = 1.0e-9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Validated step discontinuity policy used by the native sampler.
 pub(super) enum AnimationStepPosition {
     Start,
     End,
@@ -34,6 +45,7 @@ pub(super) enum AnimationStepPosition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Validated easing coefficients and parameters shared by sampling and timeline compilation.
 pub(super) enum ResolvedEasing {
     Cubic([f64; 4]),
     Steps {
@@ -332,6 +344,11 @@ pub(crate) fn sample_spring_progress(
     apply_spring_easing(progress, omega0, zeta, segment_duration_ms)
 }
 
+/// Resolve omitted, named, or structured easing into sampler parameters.
+///
+/// # Errors
+///
+/// Returns ANIMATION_INVALID_SPEC for unsupported names or invalid easing parameters.
 pub(super) fn resolve_easing(
     easing: Option<&AnimationEasing>,
     node_id: &str,
@@ -472,6 +489,8 @@ fn apply_step_easing(
     current_step / jumps
 }
 
+/// Sample validated easing at segment progress, using the before-side flag for step
+/// discontinuities.
 pub(super) fn apply_easing(
     progress: f64,
     easing: ResolvedEasing,
@@ -915,6 +934,12 @@ fn validate_node_with_hooks(
     Ok(())
 }
 
+/// Validate text-animation budgets, then visit each node before and after its own animation
+/// validation.
+///
+/// # Errors
+///
+/// Propagates budget, animation-spec, or caller hook failures without sampling or mutating the IR.
 pub(super) fn validate_animations_with_node_hooks(
     ir: &Ir,
     before_node: &mut impl FnMut(&IrNode) -> Result<(), EngineError>,
@@ -952,6 +977,8 @@ pub fn has_animations(ir: &Ir) -> bool {
     node_has_animations(&ir.root)
 }
 
+/// Count animated text units and estimated paint fragments, including per-range stroke and shadow
+/// layers.
 pub(crate) fn text_animation_budget_counts(root: &IrNode) -> (usize, usize) {
     fn text_fragment_count(
         lines: &[crate::text::types::Line],
@@ -1042,6 +1069,11 @@ pub(crate) fn text_animation_budget_counts(root: &IrNode) -> (usize, usize) {
     (unit_count, fragment_count)
 }
 
+/// Reject unit or paint-fragment counts above the scene animation limits.
+///
+/// # Errors
+///
+/// Returns TEXT_ANIMATION_UNIT_LIMIT_EXCEEDED or TEXT_ANIMATION_FRAGMENT_LIMIT_EXCEEDED.
 pub(crate) fn validate_text_animation_budget_counts(
     unit_count: usize,
     fragment_count: usize,
@@ -1069,6 +1101,11 @@ pub(crate) fn validate_text_animation_budget_counts(
     Ok(())
 }
 
+/// Validate the animated text units and estimated paint fragments in an IR subtree.
+///
+/// # Errors
+///
+/// Returns the unit-limit or fragment-limit failure produced by the count validator.
 pub(crate) fn validate_text_animation_budgets(root: &IrNode) -> Result<(), EngineError> {
     let (unit_count, fragment_count) = text_animation_budget_counts(root);
     validate_text_animation_budget_counts(unit_count, fragment_count)

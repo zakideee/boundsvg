@@ -6,6 +6,7 @@ mod measure;
 mod taffy;
 pub mod types;
 
+/// Maximum nested layout transport depth accepted before recursive tree construction.
 pub(crate) const MAX_LAYOUT_TREE_DEPTH: usize = 48;
 
 #[cfg(test)]

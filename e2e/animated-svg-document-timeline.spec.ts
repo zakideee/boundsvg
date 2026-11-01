@@ -9,10 +9,15 @@ import {
 } from "@boundsvg/core";
 import { expect, type Page, test } from "@playwright/test";
 
+/** Document clock period shared by the standalone SVG timeline probes. */
 const DOCUMENT_DURATION_MS = 200;
+/** Distance from a timeline boundary used to compare the poses on its two sides. */
 const PROBE_DISTANCE_MS = Math.max(DOCUMENT_DURATION_MS * 2 ** -20, 0.001);
+/** Absolute opacity difference accepted when comparing browser CSS with sampled output. */
 const OPACITY_TOLERANCE = 1e-5;
+/** Per-coefficient tolerance used for browser-versus-sampler affine comparisons. */
 const MATRIX_TOLERANCE = 5e-4;
+/** Freeze SVG animation clocks so timeline poses can be inspected deterministically. */
 const PAUSED_ANIMATION_CSS = "svg * { animation-play-state: paused !important; }";
 
 type VisualState = {

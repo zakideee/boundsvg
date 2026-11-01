@@ -18,8 +18,10 @@ import {
   multiplyAffineMatrices,
 } from "./transform.js";
 
+/** Whether a layer can split independently or must preserve one compositing subtree. */
 export type LayerMode = "independent" | "atomic";
 
+/** Reason that compositing or clipping prevented the requested layer separation. */
 export type LayerWarning =
   | { code: "CROSSES_COMPOSITING_ISLAND"; nodeId: string; islandRootNodeId: string }
   | { code: "PARENT_OPACITY_PREVENTED_SPLIT"; nodeId: string; parentNodeId: string }
@@ -27,6 +29,7 @@ export type LayerWarning =
   | { code: "BOX_SHADOW_FORCED_ATOMIC"; nodeId: string }
   | { code: "SVG_SUBTREE_FORCED_ATOMIC"; nodeId: string };
 
+/** An addressable shape part and its source node, with canvas-space bounds when available. */
 export type LayerManifestPart = {
   partId: string;
   /** Source Shape/Symbol (or embedded Svg) node this part belongs to. */
@@ -35,6 +38,7 @@ export type LayerManifestPart = {
   bbox?: BBox;
 };
 
+/** One composited layer, its source IDs, canvas bounds, paint order, and separation warnings. */
 export type LayerManifestEntry = {
   id: string;
   bbox: BBox;
@@ -53,16 +57,19 @@ export type LayerManifestEntry = {
   warnings: LayerWarning[];
 };
 
+/** A layer manifest entry together with its self-contained SVG document. */
 export type LayerEntry = LayerManifestEntry & {
   svg: string;
 };
 
+/** Optional pixel-comparison limits for validating the recomposed layers. */
 export type LayeredCompositionValidationOptions = {
   enabled?: boolean;
   maxDifferentPixels?: number;
   maxDifferenceRatio?: number;
 };
 
+/** Outcome and measured differences from comparing recomposed layers with the full render. */
 export type LayeredCompositionValidationResult = {
   status: "passed" | "mismatched" | "skipped";
   differentPixels: number;
@@ -73,6 +80,7 @@ export type LayeredCompositionValidationResult = {
   height: number;
 };
 
+/** Canvas dimensions, SVG layers, and the manifest needed to recompose them in paint order. */
 export type LayeredSvgResult = {
   width: number;
   height: number;
@@ -87,12 +95,15 @@ export type LayeredSvgResult = {
   };
 };
 
+/** Source and compositing metadata for one rasterized layer. */
 export type LayerPngManifestEntry = LayerManifestEntry;
 
+/** A raster layer with its manifest metadata and owned PNG byte buffer. */
 export type LayerPngEntry = LayerPngManifestEntry & {
   png: Uint8Array;
 };
 
+/** Raster layers and logical/pixel canvas dimensions used to recompose their output. */
 export type LayeredPngResult = {
   width: number;
   height: number;
@@ -178,12 +189,19 @@ type TransformAncestor = {
   animation?: NonNullable<IRGroupNode["animation"]>;
 };
 
+/** Reserved background-paint suffix used to recover the source layer owner. */
 const BG_NODE_SUFFIX = ":bg";
+/** Reserved border-paint suffix used to recover the source layer owner. */
 const BORDER_NODE_SUFFIX = ":border";
+/** Generated inline-box fragment IDs whose paint belongs to the source span. */
 const INLINE_DECORATION_PATTERN = /^(.*):ibox\d+$/u;
+/** Generated inline-rectangle fragment IDs whose paint belongs to the source node. */
 const INLINE_RECT_FRAGMENT_PATTERN = /^(.*):inline-rect:\d+(?::rect)?$/u;
+/** Metadata value identifying transparent generated transition wrappers. */
 const GENERATED_LAYOUT_TRANSITION_PROVENANCE = LAYOUT_TRANSITION_WRAPPER_META.generatedValue;
+/** Metadata key used to distinguish generated wrappers from authored source nodes. */
 const GENERATED_PROVENANCE_KEY = LAYOUT_TRANSITION_WRAPPER_META.generatedKey;
+/** Metadata key linking a generated transition wrapper to its source node. */
 const GENERATED_SOURCE_NODE_ID_KEY = LAYOUT_TRANSITION_WRAPPER_META.sourceNodeIdKey;
 
 /**
@@ -228,6 +246,7 @@ function sanitizeLayerFileId(layerId: string): string {
   return sanitized.length > 0 ? sanitized : "layer";
 }
 
+/** Separate an IR into compositing-safe layers and emit each through the supplied SVG emitter. */
 export function renderLayeredSvg(input: RenderLayeredSvgInput): LayeredSvgResult {
   const { ir, sourceNodeMap, options, emitLayerSvg } = input;
   const drawIndexMap = buildDrawIndexMap(ir.drawOrder);
@@ -534,6 +553,7 @@ function collectNodeMeta(node: IRNode, accumulator: Record<string, Record<string
   }
 }
 
+/** Quoted SVG part-ID attributes transcribed into layer manifests. */
 const PART_ID_ATTR_PATTERN = /data-boundsvg-part-id="([^"]*)"/g;
 
 type CollectedPart = { partId: string; bbox?: BBox };
@@ -546,11 +566,16 @@ function transformBBoxToAabb(matrix: AffineMatrix, bbox: BBox): BBox {
     applyAffineMatrixToPoint(matrix, { x: bbox.x, y: bbox.y + bbox.height }),
     applyAffineMatrixToPoint(matrix, { x: bbox.x + bbox.width, y: bbox.y + bbox.height }),
   ];
-  const xs = corners.map((corner) => corner.x);
-  const ys = corners.map((corner) => corner.y);
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-  return { x: minX, y: minY, width: Math.max(...xs) - minX, height: Math.max(...ys) - minY };
+  const xCoordinates = corners.map((corner) => corner.x);
+  const yCoordinates = corners.map((corner) => corner.y);
+  const minX = Math.min(...xCoordinates);
+  const minY = Math.min(...yCoordinates);
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(...xCoordinates) - minX,
+    height: Math.max(...yCoordinates) - minY,
+  };
 }
 
 // Shape nodes carry structural parts; embedded Svg content is still scanned
@@ -790,6 +815,7 @@ function wrapWithTransformAncestors(
   return wrappedNode;
 }
 
+/** Detect node or text-unit animation recursively when constructing layered output metadata. */
 export function hasAnimatedNode(node: IRNode): boolean {
   if (node.type === "text") {
     return node.unitAnimation !== undefined;

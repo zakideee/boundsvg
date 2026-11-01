@@ -76,6 +76,7 @@ pub struct PaintSceneOptions {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Whether scene resolution retains declarative animation or emits a sampled static pose.
 pub enum AnimationMode {
     #[default]
     Declarative,
@@ -189,6 +190,7 @@ pub struct PaintScene {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Resolved CSS class, keyframe name, owner bounds, and playback for a scene animation.
 pub struct AnimationStyle {
     pub class_name: String,
     pub keyframes_name: String,
@@ -197,6 +199,7 @@ pub struct AnimationStyle {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Independent authored playback or a compiled document-timeline track.
 pub enum AnimationPlaybackStyle {
     Independent(AnimationSpec),
     Timeline {
@@ -234,6 +237,7 @@ pub struct SceneDefs {
 
 impl SceneDefs {
     #[must_use]
+    /// Return whether any shared paths, clips, gradients, or filters need a defs element.
     pub fn has_defs(&self) -> bool {
         !self.shared_shape_paths.is_empty()
             || !self.clip_paths.is_empty()
@@ -257,6 +261,7 @@ pub struct ClipPathDef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Namespaced resolved gradient and the paint box used to emit its coordinates.
 pub struct GradientDef {
     pub id: String,
     pub bbox: BBox,
@@ -327,6 +332,7 @@ pub struct RectItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Resolved glyph outline, effective fill, missing-glyph flag, and optional unit pose.
 pub struct TextGlyphItem {
     pub d: String,
     pub fill: String,
@@ -335,6 +341,7 @@ pub struct TextGlyphItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Per-unit animation class and sampled transform/opacity applied around glyph paint.
 pub struct TextUnitPaintItem {
     pub animation_class: Option<String>,
     pub transform: Option<String>,
@@ -381,6 +388,7 @@ pub struct TextEffectItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Glyph indices and ordered shadow/stroke layers sharing one text-effect range.
 pub struct TextEffectRangeItem {
     pub glyph_indices: Vec<usize>,
     pub shadows: Vec<TextShadowLayerItem>,
@@ -397,6 +405,7 @@ pub struct TextDecorationItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Resolved text paint: glyph fills, effect layers, and independent text decorations.
 pub struct TextItem {
     pub node_id: String,
     /// Line texts joined with `\n` (drives `data-boundsvg-text`/`aria-label`).
@@ -417,6 +426,7 @@ pub struct ImageItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Resolved path paint used by Path primitives and owner-generated box outlines.
 pub struct PathItem {
     pub node_id: String,
     pub bbox: BBox,

@@ -313,6 +313,7 @@ export function cloneIRForLayeredTransform(node: IRNode): IRNode {
   }
 }
 
+/** Create a separate warning instance with its serialized fallback, stage, node ID, and context. */
 export function cloneRecoverableError(warning: RecoverableError): RecoverableError {
   const serialized = warning.toJSON();
   return new RecoverableError(serialized.code, serialized.message, {

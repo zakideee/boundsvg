@@ -14,6 +14,7 @@ export type CollectedNodeIdSource =
   | "outline"
   | "content";
 
+/** One authored, automatic, or generated ID with its source-tree position and optional owner. */
 export type CollectedNodeId = {
   id: string;
   source: CollectedNodeIdSource;
@@ -22,11 +23,13 @@ export type CollectedNodeId = {
   baseNodeId?: string;
 };
 
+/** All source entries that claim the same render identifier. */
 export type NodeIdDuplicate = {
   id: string;
   entries: CollectedNodeId[];
 };
 
+/** Collected identifiers partitioned by source, with every collision retained for diagnostics. */
 export type NodeIdValidationResult = {
   valid: boolean;
   ids: CollectedNodeId[];
@@ -38,6 +41,7 @@ export type NodeIdValidationResult = {
 
 type NodeIdInput = VNode | SceneNode;
 
+/** Collect source IDs and reserved box-paint/clip IDs without rendering the input. */
 export function collectNodeIds(input: NodeIdInput): CollectedNodeId[] {
   const vnode = resolveSceneOrVNodeInput(input);
   const ids: CollectedNodeId[] = [];
@@ -99,6 +103,7 @@ export function validateNodeIds(input: NodeIdInput): NodeIdValidationResult {
   };
 }
 
+/** Throw NODE_ID_COLLISION when source and reserved generated IDs overlap. */
 export function assertUniqueNodeIds(input: NodeIdInput): void {
   const result = validateNodeIds(input);
   if (result.valid) {

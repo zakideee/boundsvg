@@ -721,6 +721,7 @@
       "additionalProperties": false
     },
     "AnimationSpec": {
+      "description": "Borrowed wire projection of an authored animation retained in structural IR.",
       "type": "object",
       "properties": {
         "keyframes": {
@@ -763,6 +764,7 @@
       ]
     },
     "AnimationKeyframe": {
+      "description": "Borrowed wire projection of a keyframe with omitted absent targets.",
       "type": "object",
       "properties": {
         "at": {
@@ -813,6 +815,7 @@
       }
     },
     "AnimationEasing": {
+      "description": "Borrowed wire alternatives for named and structured easing.",
       "anyOf": [
         {
           "type": "string",
@@ -843,6 +846,7 @@
       ]
     },
     "AnimationSpring": {
+      "description": "Borrowed wire projection of spring easing parameters.",
       "type": "object",
       "properties": {
         "type": {
@@ -867,6 +871,7 @@
       ]
     },
     "AnimationSteps": {
+      "description": "Borrowed wire projection of steps easing parameters.",
       "type": "object",
       "properties": {
         "type": {
@@ -895,6 +900,7 @@
       ]
     },
     "AnimationIterations": {
+      "description": "Finite iteration count or the validated infinite marker at the IR boundary.",
       "anyOf": [
         {
           "type": "number"
@@ -1594,6 +1600,7 @@
       ]
     },
     "TextPathMetadata": {
+      "description": "Path-text placement metadata retained alongside resolved glyph lines.",
       "type": "object",
       "properties": {
         "d": {
@@ -1930,6 +1937,7 @@
       ]
     },
     "TextUnitAnimationOrder": {
+      "description": "Logical or resolved visual order used to stagger text paint units.",
       "type": "string",
       "enum": [
         "logical",

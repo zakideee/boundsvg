@@ -30,6 +30,7 @@ export type Spacing = number | [number, number, number, number];
 /** Post-layout transform channels supported by declarative animation. */
 export type AnimationTransform2D = Omit<Transform2D, "originX" | "originY">;
 
+/** One normalized animation stop with opacity or post-layout transform channels. */
 export type AnimationKeyframe = {
   /** Normalized offset in the inclusive range 0..1. */
   at: number;
@@ -37,6 +38,7 @@ export type AnimationKeyframe = {
   transform?: AnimationTransform2D;
 };
 
+/** CSS step discontinuity policy for a steps easing function. */
 export type AnimationStepPosition = "jump-start" | "jump-end" | "jump-none" | "jump-both";
 
 type AnimationSteps = {
@@ -61,6 +63,7 @@ export type AnimationSpring = {
   mass?: number;
 };
 
+/** Named, cubic-bezier, spring, or steps easing accepted by declarative animation. */
 export type AnimationEasing =
   | "linear"
   | "ease"
@@ -1102,9 +1105,12 @@ export type PropsMap = {
 type ChildlessVNodeType = "InlineRect" | "Image" | "Path" | "Svg" | "Shape" | "Symbol";
 type VNodeKey = string | number;
 
+/** Authoring props associated with a specific component tag. */
 export type PropsFor<T extends VNodeType> = PropsMap[T];
+/** Stored VNode props after children have been separated from the props object. */
 export type NormalizedPropsFor<T extends VNodeType> = Omit<PropsMap[T], "children">;
 
+/** Normalized child grammar for the selected component tag. */
 export type ChildFor<T extends VNodeType> = T extends "Text"
   ? TextChild
   : T extends "TextOnPath"
@@ -1119,10 +1125,12 @@ export type ChildFor<T extends VNodeType> = T extends "Text"
             ? RtChild
             : VNode | string;
 
+/** Stored children for a component, with an empty tuple for childless primitives. */
 export type ChildrenFor<T extends VNodeType> = T extends ChildlessVNodeType
   ? []
   : Array<ChildFor<T>>;
 
+/** Function-API child inputs, including flattenable arrays and permitted scalar placeholders. */
 export type VNodeInputChildFor<T extends VNodeType> = T extends "TextOnPath"
   ? TextOnPathChild | VNodeInputChildFor<T>[]
   : ChildFor<T> | number | boolean | null | undefined | VNodeInputChildFor<T>[];
@@ -1139,10 +1147,12 @@ export type VNodeJsxChildFor<T extends VNodeType> =
   | VNode
   | VNodeJsxChildFor<T>[];
 
+/** createElement rest arguments constrained by the selected component child grammar. */
 export type VNodeChildrenArgs<T extends VNodeType> = T extends ChildlessVNodeType
   ? []
   : Array<VNodeInputChildFor<T>>;
 
+/** Component-tagged props and normalized children stored in the virtual tree. */
 export type VNodeFor<T extends VNodeType> = {
   type: T;
   props: NormalizedPropsFor<T>;
@@ -1150,21 +1160,37 @@ export type VNodeFor<T extends VNodeType> = {
   key?: VNodeKey;
 };
 
+/** A Canvas virtual node with its component-specific props and child grammar. */
 export type CanvasVNode = VNodeFor<"Canvas">;
+/** A Flex virtual node with its component-specific props and child grammar. */
 export type FlexVNode = VNodeFor<"Flex">;
+/** A Grid virtual node with its component-specific props and child grammar. */
 export type GridVNode = VNodeFor<"Grid">;
+/** A Box virtual node with its component-specific props and child grammar. */
 export type BoxVNode = VNodeFor<"Box">;
+/** A Text virtual node with its component-specific props and child grammar. */
 export type TextVNode = VNodeFor<"Text">;
+/** A TextOnPath virtual node with its component-specific props and child grammar. */
 export type TextOnPathVNode = VNodeFor<"TextOnPath">;
+/** A Inline virtual node with its component-specific props and child grammar. */
 export type InlineVNode = VNodeFor<"Inline">;
+/** A InlineBox virtual node with its component-specific props and child grammar. */
 export type InlineBoxVNode = VNodeFor<"InlineBox">;
+/** A InlineRect virtual node with its component-specific props and child grammar. */
 export type InlineRectVNode = VNodeFor<"InlineRect">;
+/** A Ruby virtual node with its component-specific props and child grammar. */
 export type RubyVNode = VNodeFor<"Ruby">;
+/** A Rt virtual node with its component-specific props and child grammar. */
 export type RtVNode = VNodeFor<"Rt">;
+/** A Image virtual node with its component-specific props and child grammar. */
 export type ImageVNode = VNodeFor<"Image">;
+/** A Path virtual node with its component-specific props and child grammar. */
 export type PathVNode = VNodeFor<"Path">;
+/** A Svg virtual node with its component-specific props and child grammar. */
 export type SvgVNode = VNodeFor<"Svg">;
+/** A Shape virtual node with its component-specific props and child grammar. */
 export type ShapeVNode = VNodeFor<"Shape">;
+/** A Symbol virtual node with its component-specific props and child grammar. */
 export type SymbolVNode = VNodeFor<"Symbol">;
 
 /** Virtual node representing a component in the render tree */
@@ -1186,13 +1212,20 @@ export type VNode =
   | ShapeVNode
   | SymbolVNode;
 
+/** A VNode of any supported component tag. */
 export type AnyVNode = VNode;
 
+/** Normalized text content, styled spans, inline boxes/rectangles, or ruby. */
 export type TextChild = string | InlineVNode | InlineBoxVNode | InlineRectVNode | RubyVNode;
+/** Normalized path-text content: strings and Inline spans only. */
 export type TextOnPathChild = string | InlineVNode;
+/** Normalized Inline content: strings, nested Inline, InlineRect, or Ruby. */
 export type InlineChild = string | InlineVNode | InlineRectVNode | RubyVNode;
+/** Normalized rich content accepted by an InlineBox. */
 export type InlineBoxChild = string | InlineVNode | InlineBoxVNode | InlineRectVNode | RubyVNode;
+/** Normalized ruby base text, styled spans, and annotation containers. */
 export type RubyChild = string | InlineVNode | RtVNode;
+/** Normalized annotation text and styled Inline spans. */
 export type RtChild = string | InlineVNode;
 
 /** Allowed raw children in JSX/createElement input */

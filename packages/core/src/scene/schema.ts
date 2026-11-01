@@ -21,6 +21,7 @@ import type {
 } from "../vnode/types.js";
 import type { SceneNode, TextOnPathInlineSceneNode } from "./types.js";
 
+/** Stable expectation labels reported when scene input fails structural decoding. */
 export type SceneDecodeExpected =
   | "scene-node"
   | "record"
@@ -53,6 +54,7 @@ export type SceneDecodeExpected =
   | "symbol-definition"
   | "part-paint";
 
+/** Container-specific child grammars shared by scene decoding and VNode construction. */
 export type SceneChildGrammar =
   | "scene"
   | "text"
@@ -62,6 +64,7 @@ export type SceneChildGrammar =
   | "ruby"
   | "rt";
 
+/** Structural scene-input rules; semantic layout and paint validation follows decoding. */
 export type SceneSchema =
   | { readonly kind: "string" }
   | { readonly kind: "boolean" }
@@ -80,12 +83,14 @@ export type SceneSchema =
   | { readonly kind: "scene-node" }
   | { readonly kind: "scene-child"; readonly grammar: SceneChildGrammar };
 
+/** One record field with its schema and explicit omission policy. */
 export type SceneFieldSchema = {
   readonly name: string;
   readonly schema: SceneSchema;
   readonly required: boolean;
 };
 
+/** Ordered record fields and their accepted-key set for rejecting unknown input. */
 export type SceneRecordSchema = {
   readonly fields: readonly SceneFieldSchema[];
   readonly fieldNames: ReadonlySet<string>;
@@ -306,6 +311,7 @@ const shapePaintFields = [
   optional("strokeMiterlimit", numberSchema),
 ] as const;
 
+/** Complete component vocabulary accepted by the scene decoder. */
 const SCENE_NODE_TYPES = [
   "Canvas",
   "Flex",
@@ -344,6 +350,7 @@ const sceneNodeTypeName = {
   symbol: SCENE_NODE_TYPES[15],
 } as const satisfies Record<string, SceneNodeType>;
 
+/** Lookup set for recognizing component tags before selecting their record schema. */
 const SCENE_NODE_TYPE_SET: ReadonlySet<string> = new Set(SCENE_NODE_TYPES);
 const reflectApply = Reflect.apply;
 const setPrototypeHas = Set.prototype.has;
@@ -761,6 +768,7 @@ type NodeCatalogCheck<Type extends SceneNodeType> =
       : never
     : never;
 
+/** Compile-time witness that every SceneNode tag has a record schema. */
 const NODE_CATALOG_COMPLETENESS: { readonly [Type in SceneNodeType]: NodeCatalogCheck<Type> } = {
   [sceneNodeTypeName.canvas]: true,
   [sceneNodeTypeName.flex]: true,
@@ -1126,6 +1134,7 @@ export const RECORD_SCHEMAS: Readonly<Record<RecordSchemaName, SceneRecordSchema
   partPaint: catalogRecord(nestedFields.partPaint),
 };
 
+/** Named unions whose branch is selected by a type or kind discriminator. */
 export type DiscriminatedSchemaName = "animationEasing" | "flowExclusion" | "geometryNode";
 
 type DiscriminatedSchema = {
@@ -1134,6 +1143,7 @@ type DiscriminatedSchema = {
   readonly variants: Readonly<Record<string, RecordSchemaName>>;
 };
 
+/** Branch tables for decoding easing, flow-exclusion, and geometry union records. */
 export const DISCRIMINATED_SCHEMAS: Readonly<Record<DiscriminatedSchemaName, DiscriminatedSchema>> =
   {
     animationEasing: {
@@ -1158,12 +1168,15 @@ export const DISCRIMINATED_SCHEMAS: Readonly<Record<DiscriminatedSchemaName, Dis
     },
   };
 
+/** Entry schema for recursively decoding a scene node. */
 export const SCENE_NODE_SCHEMA = { kind: "scene-node" } as const satisfies SceneSchema;
 
+/** Test whether a string names a component in the scene catalog. */
 export function isSceneNodeType(value: string): value is SceneNodeType {
   return reflectApply(setPrototypeHas, SCENE_NODE_TYPE_SET, [value]) as boolean;
 }
 
+/** Return the structural-error expectation associated with a child grammar. */
 export function childExpected(grammar: SceneChildGrammar): SceneDecodeExpected {
   switch (grammar) {
     case "scene":
@@ -1183,6 +1196,7 @@ export function childExpected(grammar: SceneChildGrammar): SceneDecodeExpected {
   }
 }
 
+/** Select the record allowed for a child tag, or undefined when that grammar rejects it. */
 export function childRecordName(
   grammar: SceneChildGrammar,
   type: SceneNodeType,

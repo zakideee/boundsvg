@@ -308,9 +308,9 @@ fn parses_gradient_backgrounds() {
         vec![output("root", 0.0, 0.0, 100.0, 100.0)],
     );
 
-    let bg = &ir["root"]["children"][0];
-    assert_eq!(bg["gradient"]["type"], json!("linear"));
-    assert!(bg.get("fill").is_none());
+    let background_rect = &ir["root"]["children"][0];
+    assert_eq!(background_rect["gradient"]["type"], json!("linear"));
+    assert!(background_rect.get("fill").is_none());
 }
 
 #[test]

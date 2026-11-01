@@ -29,6 +29,10 @@ export type ShapingOptions = {
   language?: "ja" | "en" | "auto";
 };
 
+/**
+ * Resolved glyph placement and per-glyph paint overrides consumed by text emission and
+ * inspection.
+ */
 export type PositionedGlyph = {
   glyphId: number;
   text: string;
@@ -66,8 +70,10 @@ export type PositionedGlyph = {
   absolutePosition?: boolean;
 };
 
+/** Granularity used to group glyphs into independently animated paint units. */
 export type TextUnitKind = "cluster" | "line";
 
+/** Whether ruby annotations follow their base unit or form separate paint units. */
 export type TextUnitRubyMode = "with-base" | "separate";
 
 type TextUnitSourceRole = "content" | "rubyBase" | "rubyAnnotation";
@@ -95,12 +101,17 @@ export type TextUnitMapEntry = {
   members: TextUnitGlyphMember[];
 };
 
+/**
+ * Ordered text paint units and their glyph membership for the chosen granularity and ruby
+ * policy.
+ */
 export type TextUnitMap = {
   kind: TextUnitKind;
   ruby: TextUnitRubyMode;
   units: TextUnitMapEntry[];
 };
 
+/** Whether path text is emitted as merged outlines or individual positioned glyphs. */
 export type TextPathMode = "merged" | "glyphs";
 
 export type TextDecorationLine = "underline" | "overline" | "line-through";
@@ -251,6 +262,7 @@ export type TextRun = {
   style: TextRunStyle;
 };
 
+/** Resolved inherited typography and paint carried by rich-text runs across the layout bridge. */
 export type RichTextStyle = {
   font: string;
   fallback?: string[];
@@ -270,17 +282,20 @@ export type RichTextStyle = {
   textDecoration?: TextDecoration;
 };
 
+/** Unstyled text inheriting the surrounding rich-text style. */
 export type RichTextTextNode = {
   kind: "text";
   text: string;
 };
 
+/** Text with an explicit resolved typography and paint style. */
 export type RichTextSpanNode = {
   kind: "span";
   text: string;
   style: RichTextStyle;
 };
 
+/** Text shaped as one combined unit while retaining paint-only source runs. */
 export type RichTextCombineNode = {
   kind: "combine";
   text: string;
@@ -289,6 +304,7 @@ export type RichTextCombineNode = {
   decorationRuns?: TextRun[];
 };
 
+/** Ruby base and annotation content with their shared placement policy. */
 export type RichTextRubyNode = {
   kind: "ruby";
   rubyPosition?: "over" | "under" | "alternate" | "inter-character";
@@ -304,6 +320,7 @@ export type RichTextRubyNode = {
   rtLevels?: RichTextNode[][];
 };
 
+/** Inline layout box carrying rich-text children and its own decoration paint. */
 export type RichTextInlineBoxNode = {
   kind: "inlineBox";
   style: RichTextStyle;
@@ -317,6 +334,7 @@ export type RichTextInlineBoxNode = {
   spanKey?: string;
 };
 
+/** Sized inline paint primitive with a stable fragment identifier. */
 export type RichTextInlineRectNode = {
   kind: "inlineRect";
   fragmentId: string;
@@ -330,6 +348,7 @@ export type RichTextInlineRectNode = {
   paintOrder?: "behind" | "front";
 };
 
+/** Styled inline content whose decoration may be split across line fragments. */
 export type RichTextDecoratedSpanNode = {
   kind: "decoratedSpan";
   style: RichTextStyle;
@@ -343,6 +362,7 @@ export type RichTextDecoratedSpanNode = {
   spanKey?: string;
 };
 
+/** Discriminated rich-text transport nodes consumed by the text layout engine. */
 export type RichTextNode =
   | RichTextTextNode
   | RichTextSpanNode
@@ -357,6 +377,7 @@ export type IntrinsicInlineSizes = {
   maxContentInlineSize: number;
 };
 
+/** Flattened text and styled runs, with structural rich-text nodes retained when required. */
 export type FlattenedRichText = {
   text: string;
   runs: TextRun[];

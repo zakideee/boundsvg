@@ -22,19 +22,30 @@ use super::types::{
 use crate::error::EngineError;
 use crate::svg_emit::num_format::format_js_number;
 
+/// Maximum document-timeline duration in milliseconds.
 pub const MAX_TIMELINE_DURATION_MS: f64 = 4_294_967_296.0;
+/// Maximum finite document-timeline iteration count.
 pub const MAX_TIMELINE_ITERATIONS: f64 = 1_048_576.0;
+/// Maximum document elapsed time accepted for timeline sampling, in milliseconds.
 pub const MAX_TIMELINE_TIME_MS: f64 = 4_503_599_627_370_496.0;
+/// Maximum elapsed-time/duration ratio preserving the supported timeline precision.
 pub const MAX_TIMELINE_TIME_RATIO: f64 = 2_147_483_648.0;
+/// Maximum compiled document keyframe stops, counted across all tracks.
 pub const MAX_TIMELINE_KEYFRAME_STOPS: usize = 16_384;
+/// Maximum emitted document-timeline CSS bytes, including every compiled track.
 pub const MAX_TIMELINE_CSS_BYTES: usize = 16_777_216;
 
+/// Minimum authored track duration allowed in document-timeline mode, in milliseconds.
 const MIN_AUTHORED_TIMELINE_DURATION_MS: f64 = 1.0;
+/// Maximum absolute authored track delay in document-timeline mode, in milliseconds.
 const MAX_AUTHORED_TIMELINE_DELAY_MS: f64 = MAX_TIMELINE_DURATION_MS;
+/// Minimum finite authored iteration count allowed in document-timeline mode.
 const MIN_AUTHORED_TIMELINE_ITERATIONS: f64 = 1.0 / 4_294_967_296.0;
+/// Remedy reported when authored track values cannot be represented in timeline mode.
 const AUTHORED_TIMELINE_DOMAIN_MIGRATION: &str =
     "Use playback mode independent or change the authored value to the supported timeline range.";
 
+/// Divisor of the document period used to reserve boundary-discontinuity windows.
 const CARVE_OUT_SCALE: f64 = 1_048_576.0;
 
 #[cfg(test)]
@@ -46,24 +57,28 @@ static PREFLIGHT_WINDOW_TRACE: LazyLock<Mutex<HashMap<ThreadId, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Finite or infinite repetition of the document timeline.
 pub enum DocumentIterationCount {
     Finite(f64),
     Infinite,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Document period and repetition policy checked before mapping elapsed time onto authored tracks.
 pub struct DocumentPlayback {
     pub duration_ms: f64,
     pub iterations: DocumentIterationCount,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Finite or infinite repetition count emitted in document-level CSS playback.
 pub enum CssIterationCount {
     Finite(f64),
     Infinite,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// CSS delay, remaining repetitions, and final-hold state derived from document elapsed time.
 pub struct DocumentCssTiming {
     pub delay_ms: f64,
     pub iterations: CssIterationCount,
@@ -71,6 +86,7 @@ pub struct DocumentCssTiming {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Whether a compiled timeline track belongs to a node or one text paint unit.
 pub enum TimelineOwnerKind {
     Node,
     TextUnit,
@@ -78,6 +94,7 @@ pub enum TimelineOwnerKind {
 
 impl TimelineOwnerKind {
     #[must_use]
+    /// Return the stable owner-kind label used by timeline diagnostics.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Node => "node",
@@ -87,6 +104,7 @@ impl TimelineOwnerKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Finite easing vocabulary emitted between compiled document keyframes.
 pub enum CompiledCssEasing {
     Linear,
     OutputScaledLinear(f64),
@@ -95,6 +113,7 @@ pub enum CompiledCssEasing {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Sampled keyframe in document time with easing for the following segment.
 pub struct DocumentKeyframe {
     pub time_ms: f64,
     pub value: AnimationKeyframe,
@@ -102,6 +121,7 @@ pub struct DocumentKeyframe {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Compiled node or text-unit track, retaining owner identity and local reference bounds.
 pub struct DocumentTrackPlan {
     pub owner_kind: TimelineOwnerKind,
     pub owner_id: String,
@@ -113,6 +133,7 @@ pub struct DocumentTrackPlan {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Resolved document playback and bounded CSS tracks ready for SVG emission.
 pub struct DocumentAnimationPlan {
     pub duration_ms: f64,
     pub css_iteration_count: CssIterationCount,
@@ -205,6 +226,7 @@ pub fn validate_document_playback(
 
 impl DocumentPlayback {
     #[must_use]
+    /// Return the document-period fraction reserved for discontinuity carve-out windows.
     pub fn delta_ms(self) -> f64 {
         self.duration_ms / CARVE_OUT_SCALE
     }
@@ -914,6 +936,7 @@ impl LocalBoundaryPattern {
     }
 
     fn first_nonincrementing_step_progress(&self, lower: f64, upper: f64) -> Option<f64> {
+        /// First nonnegative binary64 integer for which adding one no longer advances the value.
         const FIRST_NONINCREMENTING_INTEGER: f64 = 9_007_199_254_740_992.0;
         self.step_segments.iter().find_map(|segment| {
             let segment_span = segment.end_progress - segment.start_progress;

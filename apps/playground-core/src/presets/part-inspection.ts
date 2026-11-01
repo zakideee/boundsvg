@@ -142,6 +142,7 @@ function buildPartInspectionCanvas(): VNode {
   );
 }
 
+/** Shape-part inspection sample with a container outline and addressable badge geometry. */
 export const partInspectionPreset: Preset = {
   title: "Part Inspection",
   description:

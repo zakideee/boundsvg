@@ -31,21 +31,27 @@ export type Spacing = number | [number, number, number, number];
 /** Border radius: uniform number or [topLeft, topRight, bottomRight, bottomLeft] */
 type BorderRadius = number | [number, number, number, number];
 
+/** Plain text or rich inline content accepted by a Text scene node. */
 export type TextSceneChild =
   | string
   | InlineSceneNode
   | InlineBoxSceneNode
   | InlineRectSceneNode
   | RubySceneNode;
+/** Plain text, nested Inline, InlineRect, or Ruby content accepted inside Inline. */
 export type InlineSceneChild = string | InlineSceneNode | InlineRectSceneNode | RubySceneNode;
+/** Rich inline content accepted inside a layout-bearing inline box. */
 export type InlineBoxSceneChild =
   | string
   | InlineSceneNode
   | InlineBoxSceneNode
   | InlineRectSceneNode
   | RubySceneNode;
+/** Ruby base text and annotation containers accepted inside Ruby. */
 export type RubySceneChild = string | InlineSceneNode | RtSceneNode;
+/** Annotation text or styled Inline content accepted inside Rt. */
 export type RtSceneChild = string | InlineSceneNode;
+/** Path text content; only strings and restricted Inline spans are accepted. */
 export type TextOnPathSceneChild = string | TextOnPathInlineSceneNode;
 
 // ---------------------------------------------------------------------------
@@ -136,6 +142,7 @@ type EventHandlerProps = {
 // Scene node types
 // ---------------------------------------------------------------------------
 
+/** JSON scene root defining the output canvas and its child layout tree. */
 export type CanvasSceneNode = EventHandlerProps & {
   type: "Canvas";
   id?: string;
@@ -148,6 +155,7 @@ export type CanvasSceneNode = EventHandlerProps & {
   children: SceneNode[];
 };
 
+/** JSON flex container with layout-reserving borders and optional paint-only outline. */
 export type FlexSceneNode = PositionProps &
   BoxModelProps &
   VisualBoxProps &
@@ -170,6 +178,7 @@ export type FlexSceneNode = PositionProps &
     children: SceneNode[];
   };
 
+/** JSON grid container with layout-reserving borders and optional paint-only outline. */
 export type GridSceneNode = PositionProps &
   BoxModelProps &
   VisualBoxProps &
@@ -192,6 +201,7 @@ export type GridSceneNode = PositionProps &
     children: SceneNode[];
   };
 
+/** JSON box container with layout-reserving borders and optional paint-only outline. */
 export type BoxSceneNode = PositionProps &
   BoxModelProps &
   VisualBoxProps &
@@ -206,6 +216,7 @@ export type BoxSceneNode = PositionProps &
     children: SceneNode[];
   };
 
+/** JSON text block with typography, inherited paint, and rich inline children. */
 export type TextSceneNode = PositionProps &
   BoxModelProps &
   FlexItemProps &
@@ -280,6 +291,7 @@ export type TextSceneNode = PositionProps &
     children: TextSceneChild[];
   };
 
+/** JSON text node laid out along a path using the restricted path-text child grammar. */
 export type TextOnPathSceneNode = PositionProps &
   AnimationProps &
   LayerProps &
@@ -342,6 +354,7 @@ export type TextOnPathInlineSceneNode = {
   children: TextOnPathSceneChild[];
 };
 
+/** JSON styled inline span whose text paint inherits through its parent. */
 export type InlineSceneNode = {
   type: "Inline";
   font?: string;
@@ -369,6 +382,7 @@ export type InlineSceneNode = {
   children: InlineSceneChild[];
 };
 
+/** JSON inline layout box with its own rich-text children and box decoration. */
 export type InlineBoxSceneNode = {
   type: "InlineBox";
   font?: string;
@@ -390,6 +404,7 @@ export type InlineBoxSceneNode = {
   children: InlineBoxSceneChild[];
 };
 
+/** JSON childless inline rectangle contributing size and paint to a text line. */
 export type InlineRectSceneNode = {
   type: "InlineRect";
   inlineSizePx: number;
@@ -403,6 +418,7 @@ export type InlineRectSceneNode = {
   animate?: AnimationSpec;
 };
 
+/** JSON ruby container separating base content from annotation levels. */
 export type RubySceneNode = {
   type: "Ruby";
   rubyPosition?: "over" | "under" | "alternate" | "inter-character";
@@ -413,6 +429,7 @@ export type RubySceneNode = {
   children: RubySceneChild[];
 };
 
+/** JSON ruby annotation container with its own inline typography. */
 export type RtSceneNode = {
   type: "Rt";
   font?: string;
@@ -432,6 +449,7 @@ export type RtSceneNode = {
   children: RtSceneChild[];
 };
 
+/** JSON childless image node whose source is a string suitable for serialization. */
 export type ImageSceneNode = PositionProps &
   FlexItemProps &
   GridItemProps &
@@ -455,6 +473,7 @@ export type ImageSceneNode = PositionProps &
     margin?: Spacing;
   };
 
+/** JSON SVG-path primitive with explicit dimensions and independent fill/stroke paint. */
 export type PathSceneNode = PositionProps &
   FlexItemProps &
   GridItemProps &
@@ -482,6 +501,7 @@ export type PathSceneNode = PositionProps &
     margin?: Spacing;
   };
 
+/** JSON embedded SVG document with explicit dimensions and outer node transforms. */
 export type SvgSceneNode = PositionProps &
   FlexItemProps &
   GridItemProps &
@@ -533,12 +553,14 @@ type ShapeSceneBase = PositionProps &
     margin?: Spacing;
   };
 
+/** JSON geometry node using an inline or registered geometry document. */
 export type ShapeSceneNode = ShapeSceneBase & {
   type: "Shape";
   geometry?: GeometryDoc;
   geometryId?: string;
 };
 
+/** JSON symbol node using an inline or registered elastic symbol definition. */
 export type SymbolSceneNode = ShapeSceneBase & {
   type: "Symbol";
   symbol?: SymbolDefinition;
@@ -549,6 +571,7 @@ export type SymbolSceneNode = ShapeSceneBase & {
 // Union type
 // ---------------------------------------------------------------------------
 
+/** Discriminated JSON scene-node union used by structural decoding and VNode conversion. */
 export type SceneNode =
   | CanvasSceneNode
   | FlexSceneNode

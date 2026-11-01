@@ -18,9 +18,13 @@ use crate::diagnostics::SerializedRecoverableError;
 use crate::text::types::Line;
 pub use crate::text::types::{TextShadowLayer, TextStrokeLayer};
 
+/// Maximum animated text paint units accepted in one scene.
 pub const MAX_TEXT_ANIMATION_UNITS: usize = 4_096;
+/// Maximum estimated animated text paint fragments accepted in one scene.
 pub const MAX_TEXT_ANIMATION_FRAGMENTS: usize = 8_192;
+/// Unit count above which text-animation resource usage produces a warning.
 pub const TEXT_ANIMATION_UNIT_WARNING_THRESHOLD: usize = 1_024;
+/// Estimated paint-fragment count above which text animation produces a warning.
 pub const TEXT_ANIMATION_FRAGMENT_WARNING_THRESHOLD: usize = 2_048;
 
 // ---------------------------------------------------------------------------
@@ -275,6 +279,7 @@ pub struct HandlersRef {
 
 impl HandlersRef {
     #[must_use]
+    /// Return whether this node has no registered event-handler references.
     pub fn is_empty(&self) -> bool {
         self.on_click.is_none()
             && self.on_double_click.is_none()
@@ -422,11 +427,14 @@ pub struct AnimationTransform2D {
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema vocabulary for named easing functions accepted by animation input.
 pub(super) struct NamedAnimationEasingSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for NamedAnimationEasingSchema {
+    /// Stable definition name for the NamedAnimationEasingSchema string vocabulary.
     const NAME: &'static str = "NamedAnimationEasingSchema";
+    /// Accepted wire strings for the NamedAnimationEasingSchema vocabulary.
     const VALUES: &'static [&'static str] = &[
         "linear",
         "ease",
@@ -439,29 +447,38 @@ impl boundtext::schema::StringEnumSchemaDomain for NamedAnimationEasingSchema {
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema discriminator for a spring easing record.
 pub(super) struct AnimationSpringKindSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationSpringKindSchema {
+    /// Stable definition name for the AnimationSpringKindSchema string vocabulary.
     const NAME: &'static str = "AnimationSpringKindSchema";
+    /// Accepted wire strings for the AnimationSpringKindSchema vocabulary.
     const VALUES: &'static [&'static str] = &["spring"];
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema discriminator for a steps easing record.
 pub(super) struct AnimationStepsKindSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationStepsKindSchema {
+    /// Stable definition name for the AnimationStepsKindSchema string vocabulary.
     const NAME: &'static str = "AnimationStepsKindSchema";
+    /// Accepted wire strings for the AnimationStepsKindSchema vocabulary.
     const VALUES: &'static [&'static str] = &["steps"];
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema vocabulary for authored step discontinuity positions.
 pub(super) struct AnimationStepPositionSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationStepPositionSchema {
+    /// Stable definition name for the AnimationStepPositionSchema string vocabulary.
     const NAME: &'static str = "AnimationStepPositionSchema";
+    /// Accepted wire strings for the AnimationStepPositionSchema vocabulary.
     const VALUES: &'static [&'static str] = &["jump-start", "jump-end", "jump-none", "jump-both"];
 }
 
@@ -470,29 +487,38 @@ struct AnimationInfiniteSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationInfiniteSchema {
+    /// Stable definition name for the AnimationInfiniteSchema string vocabulary.
     const NAME: &'static str = "AnimationInfiniteSchema";
+    /// Accepted wire strings for the AnimationInfiniteSchema vocabulary.
     const VALUES: &'static [&'static str] = &["infinite"];
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema vocabulary for animation fill behavior.
 pub(super) struct AnimationFillSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationFillSchema {
+    /// Stable definition name for the AnimationFillSchema string vocabulary.
     const NAME: &'static str = "AnimationFillSchema";
+    /// Accepted wire strings for the AnimationFillSchema vocabulary.
     const VALUES: &'static [&'static str] = &["none", "both"];
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema discriminator for text laid out on a path.
 pub(super) struct TextLayoutKindSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for TextLayoutKindSchema {
+    /// Stable definition name for the TextLayoutKindSchema string vocabulary.
     const NAME: &'static str = "TextLayoutKindSchema";
+    /// Accepted wire strings for the TextLayoutKindSchema vocabulary.
     const VALUES: &'static [&'static str] = &["path"];
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// One normalized animation stop carrying opacity or post-layout transform channels.
 pub struct AnimationKeyframe {
     pub at: f64,
     pub opacity: Option<f64>,
@@ -500,6 +526,7 @@ pub struct AnimationKeyframe {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Authored named, cubic-bezier, spring, or steps easing before validation.
 pub enum AnimationEasing {
     Named(String),
     CubicBezier([f64; 4]),
@@ -512,6 +539,7 @@ pub enum AnimationEasing {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Authored damped-spring parameters; omitted values use sampler defaults.
 pub struct AnimationSpring {
     pub kind: String,
     pub stiffness: Option<f64>,
@@ -520,6 +548,7 @@ pub struct AnimationSpring {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Authored step easing count and optional discontinuity position.
 pub struct AnimationSteps {
     pub kind: String,
     pub count: f64,
@@ -529,6 +558,7 @@ pub struct AnimationSteps {
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+/// Finite iteration count or the validated infinite marker at the IR boundary.
 pub enum AnimationIterations {
     Count(f64),
     Infinite(
@@ -543,6 +573,7 @@ pub enum AnimationIterations {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Authored node or text-unit animation retained until validation and sampling.
 pub struct AnimationSpec {
     pub keyframes: Vec<AnimationKeyframe>,
     pub duration_ms: f64,
@@ -555,6 +586,7 @@ pub struct AnimationSpec {
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// Logical or resolved visual order used to stagger text paint units.
 pub enum TextUnitAnimationOrder {
     Logical,
     Visual,
@@ -582,6 +614,7 @@ pub struct TextUnitAnimationSample {
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Path-text placement metadata retained alongside resolved glyph lines.
 pub struct TextPathMetadata {
     pub d: String,
     pub start_offset_px: f64,
@@ -811,6 +844,7 @@ pub struct StructuralIr<'a> {
 
 impl Ir {
     #[must_use]
+    /// Borrow the public structural IR fields without diagnostics or cloning the node tree.
     pub fn structural(&self) -> StructuralIr<'_> {
         StructuralIr {
             root: &self.root,
@@ -840,6 +874,7 @@ impl Serialize for Ir {
 
 impl BBox {
     #[must_use]
+    /// Construct a bounding box from caller-provided coordinates and extents without normalization.
     pub fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
         Self { x, y, w, h }
     }

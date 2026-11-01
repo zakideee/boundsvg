@@ -10,12 +10,17 @@ use super::plan::LayoutTransitionPlanInput;
 use super::signature::{signature_has_non_identity_transform, signature_has_painted_canvas_stroke};
 use super::{CompatibilityCategory, CompatibilityMismatch};
 
+/// Reserved namespace for generated layout-transition wrapper identifiers.
 pub(super) const GENERATED_WRAPPER_ID_PREFIX: &str = "__boundsvg:layout-transition-wrapper:";
+/// Metadata key marking an engine-generated transition wrapper.
 pub(super) const GENERATED_PROVENANCE_KEY: &str = "boundsvg.generated";
+/// Metadata value distinguishing transition wrappers from authored nodes.
 pub(super) const GENERATED_PROVENANCE_VALUE: &str = "layout-transition-wrapper";
+/// Metadata key linking a generated wrapper to its semantic source node.
 pub(super) const GENERATED_SOURCE_NODE_ID_KEY: &str = "boundsvg.sourceNodeId";
 
 #[derive(Debug)]
+/// Wrapper identity, source owner, reference box, and generated animation for one semantic node.
 pub(super) struct GeneratedWrapperSpec {
     wrapper_id: String,
     pub(super) source_node_id: String,
@@ -31,6 +36,12 @@ struct NonUniformGeneratedScale {
 }
 
 impl SemanticManifest {
+    /// Derive non-neutral local wrappers from corresponding semantic layout states.
+    ///
+    /// # Errors
+    ///
+    /// Returns ID, geometry, paint, or animation mismatches when correspondence or generated-scale
+    /// contracts fail.
     pub(super) fn generated_wrapper_specs(
         &self,
         target: &Self,
@@ -174,6 +185,11 @@ fn validate_generated_scale_contract(
     Ok(())
 }
 
+/// Reject pre-existing nodes that claim the generated transition wrapper namespace.
+///
+/// # Errors
+///
+/// Returns an ID compatibility mismatch at the first conflicting node.
 pub(super) fn validate_reserved_wrapper_namespace(
     root: &IrNode,
 ) -> Result<(), CompatibilityMismatch> {

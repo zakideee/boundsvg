@@ -11,12 +11,17 @@ use wasm_bindgen::JsValue;
 use crate::diagnostics::{PipelineStage, SerializedFatalError};
 use crate::error::EngineError;
 
+/// Maximum UTF-8 prefix bytes retained from an authored part ID in a diagnostic.
 const MAX_PART_ID_PREFIX_BYTES: usize = 256;
+/// Maximum serialized shape diagnostic context size before bounded fallback.
 const MAX_SHAPE_CONTEXT_BYTES: usize = 4096;
+/// Maximum serialized shape failure envelope size before bounded fallback.
 const MAX_SHAPE_ENVELOPE_BYTES: usize = 8192;
+/// Closed compile-shape failure envelope used if diagnostic serialization cannot succeed.
 const COMPILE_SHAPE_FALLBACK: &str = r#"{"severity":"fatal","code":"SHAPE_WASM_FAILED","message":"Shape operation WASM transport failed.","stage":"wasm","context":{"operation":"compileShapeSvg"}}"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Closed operation vocabulary carried by shape boundary diagnostics.
 pub(crate) enum ShapeOperation {
     CompileShapeSvg,
     HitTestShapeParts,
@@ -32,6 +37,7 @@ pub(crate) enum ShapeOperation {
 }
 
 impl ShapeOperation {
+    /// Return the stable operation name used in shape failure envelopes.
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::CompileShapeSvg => "compileShapeSvg",
@@ -81,6 +87,7 @@ impl ShapeOperation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Operand attribution for a failure in a two-input shape operation.
 pub(crate) enum ShapeOperand {
     Lhs,
     Rhs,
@@ -95,12 +102,14 @@ impl ShapeOperand {
     }
 }
 
+/// Kernel error with optional operand attribution, before diagnostic projection.
 pub(crate) struct ShapeOperationFailure {
     error: ShapeError,
     operand: Option<ShapeOperand>,
 }
 
 impl ShapeOperationFailure {
+    /// Attach the failing operand to a kernel error without retaining the operand input.
     pub(crate) fn for_operand(error: ShapeError, operand: ShapeOperand) -> Self {
         Self {
             error,
@@ -118,6 +127,7 @@ impl From<ShapeError> for ShapeOperationFailure {
     }
 }
 
+/// Successful standalone shape payload variants checked before serialization.
 pub(crate) enum ShapeOperationOutput {
     RawSvg(String),
     Hits(Vec<PartHit>),
@@ -130,6 +140,7 @@ pub(crate) enum ShapeOperationOutput {
 }
 
 #[derive(Debug)]
+/// Bounded, closed error information safe to send across the shape boundary.
 pub(crate) struct ShapeDiagnostic {
     code: &'static str,
     message: &'static str,
@@ -149,6 +160,7 @@ impl ShapeDiagnostic {
     }
 }
 
+/// Attach a node ID to the closed diagnostic projection of a shape-kernel error.
 pub(crate) fn shape_error_to_engine_error(
     error: &ShapeError,
     operation: ShapeOperation,
@@ -546,6 +558,17 @@ impl ShapeOperationOutput {
     }
 }
 
+/// Decode, execute, and serialize a standalone shape operation with closed failure envelopes.
+///
+/// # Errors
+///
+/// Returns a serialized fatal JsValue for invalid input, kernel failures, invalid output, or a
+/// caught panic.
+///
+/// # Panics
+///
+/// Panics if called with a render-only operation; only operations with a standalone fallback may
+/// use this runner.
 pub(crate) fn run_shape_wasm_operation<Input, Run>(
     operation: ShapeOperation,
     json_input: &str,

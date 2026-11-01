@@ -562,6 +562,7 @@ function convertChildren(children: Array<VNode | string>): SceneNode[] {
   return children.filter((child): child is VNode => typeof child !== "string").map(vnodeToScene);
 }
 
+/** TextOnPath inline style keys preserved when serializing its restricted child grammar. */
 const TEXT_PATH_INLINE_SHAPING_PROPS: ReadonlySet<string> = new Set([
   "font",
   "fallback",

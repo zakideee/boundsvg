@@ -816,6 +816,7 @@ function buildVNode(state: ShapesPageState): VNode {
 type ViewTab = "preview" | "svg" | "jsx" | "component";
 type CodeLayout = "tab" | "panel";
 
+/** Interactive shape composition and part inspection with live source and output views. */
 export function ShapesPage() {
   const { engine, status } = useBoundSvg();
   const [state, setState] = useState(INITIAL_STATE);

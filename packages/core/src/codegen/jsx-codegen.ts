@@ -15,6 +15,7 @@ export type JsxFormatOptions = {
   maxLineWidth?: number;
 };
 
+/** Default line-length budget used when formatting generated JSX. */
 const DEFAULT_MAX_LINE_WIDTH = 80;
 
 /**

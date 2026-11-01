@@ -250,6 +250,7 @@ function validateNode(
   }
 }
 
+/** Containers whose child grammar permits direct string content. */
 const TEXT_BEARING_TYPES = new Set<VNodeType>([
   "Text",
   "TextOnPath",

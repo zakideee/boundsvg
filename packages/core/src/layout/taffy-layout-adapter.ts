@@ -1109,6 +1109,7 @@ function buildWasmTextPathInput(
   };
 }
 
+/** Inline style keys permitted across the TextOnPath layout transport boundary. */
 const TEXT_PATH_INLINE_TRANSPORT_PROPS: ReadonlySet<string> = new Set([
   "font",
   "fallback",
@@ -1663,6 +1664,10 @@ export function buildLayoutTransportJson(
   return JSON.stringify(input);
 }
 
+/**
+ * Build the layout transport and decode the injected layout engine response for a validated
+ * VNode tree.
+ */
 export function computeLayout(rootVNode: VNode, options: ComputeLayoutOptions): LayoutResult {
   const inputJson = buildLayoutTransportJson(rootVNode, options);
   const outputJson = options.computeLayoutFn(inputJson);

@@ -362,6 +362,7 @@ pub(crate) struct AnimationTransform2DInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationKeyframe"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Wire keyframe with explicit omission rules for opacity and transform targets.
 pub(crate) struct AnimationKeyframeInput {
     pub at: f64,
     #[serde(
@@ -382,6 +383,7 @@ pub(crate) struct AnimationKeyframeInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpring"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Wire spring easing parameters, validated after decoding.
 pub(crate) struct AnimationSpringInput {
     #[serde(rename = "type")]
     pub kind: String,
@@ -409,6 +411,7 @@ pub(crate) struct AnimationSpringInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSteps"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Wire steps easing parameters, validated after decoding.
 pub(crate) struct AnimationStepsInput {
     #[serde(rename = "type")]
     pub kind: String,
@@ -426,6 +429,7 @@ pub(crate) struct AnimationStepsInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpec"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Wire animation record decoded before semantic range and target validation.
 pub(crate) struct AnimationSpecInput {
     pub keyframes: Vec<AnimationKeyframeInput>,
     pub duration_ms: f64,
@@ -531,6 +535,7 @@ pub(crate) struct IrNodeInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationEasing"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
+/// Accepted wire alternatives for named, cubic-bezier, spring, or steps easing.
 pub(crate) enum AnimationEasingInput {
     Named(String),
     CubicBezier([f64; 4]),

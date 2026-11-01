@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Boolean composition applied to the child regions of a geometry node.
 pub enum BooleanOp {
     Union,
     Subtract,
@@ -37,6 +38,7 @@ pub struct DivideRegions {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Logical coordinate rectangle used to place and validate a geometry document.
 pub struct GeometryViewBox {
     #[serde(default)]
     pub x: f64,
@@ -146,6 +148,7 @@ fn deserialize_skew<'de, D: serde::Deserializer<'de>>(
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
+/// Authored path, group, affine-transform, or boolean-composition node in a geometry tree.
 pub enum GeometryNode {
     Path {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -175,6 +178,7 @@ pub enum GeometryNode {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Geometry tree and its logical viewBox, before viewport placement or symbol resolution.
 pub struct GeometryDoc {
     pub view_box: GeometryViewBox,
     pub root: GeometryNode,
@@ -182,6 +186,7 @@ pub struct GeometryDoc {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+/// Whether a symbol segment stays fixed or stretches along its elastic axis.
 pub enum ElasticSegmentRole {
     FixedStart,
     Stretch,
@@ -190,6 +195,7 @@ pub enum ElasticSegmentRole {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Source-coordinate rectangle used to position or stretch one elastic symbol segment.
 pub struct ElasticFrame {
     pub x: f64,
     pub y: f64,
@@ -199,6 +205,7 @@ pub struct ElasticFrame {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Named fixed or stretchable segment of an elastic symbol definition.
 pub struct ElasticSegment {
     pub node_id: String,
     pub axis: String,
@@ -208,6 +215,7 @@ pub struct ElasticSegment {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Reusable geometry with optional elastic segments for size-dependent resolution.
 pub struct SymbolDefinition {
     pub geometry: GeometryDoc,
     #[serde(default)]
@@ -216,6 +224,7 @@ pub struct SymbolDefinition {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Fill and stroke defaults applied when compiling geometry parts.
 pub struct GeometryPaint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<String>,
@@ -241,6 +250,7 @@ pub struct GeometryPaint {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Destination rectangle used when placing a geometry document for compilation.
 pub struct GeometryViewport {
     pub width: f64,
     pub height: f64,
@@ -248,6 +258,7 @@ pub struct GeometryViewport {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// Stretch, meet, or slice policy for fitting a geometry viewBox into a viewport.
 pub enum GeometryPreserveAspectRatio {
     #[default]
     None,
@@ -257,6 +268,7 @@ pub enum GeometryPreserveAspectRatio {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Viewport fitting, paint defaults, and part-ID emission options for geometry compilation.
 pub struct CompileGeometryOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paint: Option<GeometryPaint>,
@@ -274,6 +286,7 @@ pub struct CompileGeometryOptions {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Requested width and height used when resolving elastic symbol geometry.
 pub struct SymbolResolutionOptions {
     pub width: f64,
     pub height: f64,

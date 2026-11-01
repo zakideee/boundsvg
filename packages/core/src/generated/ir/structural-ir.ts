@@ -150,11 +150,17 @@ export type BoxClip =
       corners: [CornerRadius, CornerRadius, CornerRadius, CornerRadius];
       kind: "boxContour";
     };
+/**
+ * Borrowed wire alternatives for named and structured easing.
+ */
 export type AnimationEasing =
   | ("linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | "step-start" | "step-end")
   | [number, number, number, number]
   | AnimationSpring
   | AnimationSteps;
+/**
+ * Finite iteration count or the validated infinite marker at the IR boundary.
+ */
 export type AnimationIterations = number | "infinite";
 /**
  * Resolved gradient paint; geometry is the only drawing authority.
@@ -211,6 +217,9 @@ export type TextPaint =
 export type TextUnitKind = "cluster" | "line";
 export type TextUnitRubyMode = "with-base" | "separate";
 export type TextUnitSourceRole = "content" | "rubyBase" | "rubyAnnotation";
+/**
+ * Logical or resolved visual order used to stagger text paint units.
+ */
 export type TextUnitAnimationOrder = "logical" | "visual";
 /**
  * Select an underline, overline, or line through the text.
@@ -296,6 +305,9 @@ export interface Transform2D {
   originX?: number;
   originY?: number;
 }
+/**
+ * Borrowed wire projection of an authored animation retained in structural IR.
+ */
 export interface AnimationSpec {
   keyframes: AnimationKeyframe[];
   durationMs: number;
@@ -304,6 +316,9 @@ export interface AnimationSpec {
   iterations?: AnimationIterations;
   fill?: "none" | "both";
 }
+/**
+ * Borrowed wire projection of a keyframe with omitted absent targets.
+ */
 export interface AnimationKeyframe {
   at: number;
   opacity?: number;
@@ -328,12 +343,18 @@ export interface AnimationTransform2D {
    */
   skewYDeg?: number;
 }
+/**
+ * Borrowed wire projection of spring easing parameters.
+ */
 export interface AnimationSpring {
   type: "spring";
   stiffness?: number;
   damping?: number;
   mass?: number;
 }
+/**
+ * Borrowed wire projection of steps easing parameters.
+ */
 export interface AnimationSteps {
   type: "steps";
   count: number;
@@ -564,6 +585,9 @@ export interface BBox2 {
   w: number;
   h: number;
 }
+/**
+ * Path-text placement metadata retained alongside resolved glyph lines.
+ */
 export interface TextPathMetadata {
   d: string;
   startOffsetPx: number;
