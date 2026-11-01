@@ -13,6 +13,8 @@ import {
 } from "@boundsvg/core/inspect";
 import type { IR, IRGroupNode, IRNode } from "@boundsvg/core/scene";
 
+import { DEFAULT_INSPECTION_FRAME_MODE } from "./inspection-frame.js";
+
 type OverlayPoint = {
   x: number;
   y: number;
@@ -347,8 +349,8 @@ export class EventEffectOverlay {
   private readonly width: number;
   private readonly height: number;
   private readonly tooltipEl: HTMLDivElement;
-  private readonly overlayMode: OverlayDisplayMode;
-  private readonly showOrigin: boolean;
+  private overlayMode: OverlayDisplayMode;
+  private showOrigin: boolean;
   private readonly resizeObserver: ResizeObserver | null;
   /** True when this instance created the wrapper `<div>` around the SVG. */
   private readonly createdWrapper: boolean;
@@ -367,7 +369,7 @@ export class EventEffectOverlay {
     this.width = options.width;
     this.height = options.height;
     this.bboxMap = options.bboxMap;
-    this.overlayMode = options.display?.mode ?? "transform";
+    this.overlayMode = options.display?.mode ?? DEFAULT_INSPECTION_FRAME_MODE;
     this.showOrigin = options.display?.showOrigin ?? false;
 
     // Determine the wrapper element for the overlay.
@@ -558,6 +560,14 @@ export class EventEffectOverlay {
     this.showTooltip(bbox);
   }
 
+  /** Change inspection display in place, preserving the source SVG and active node. */
+  updateDisplay(display?: EventEffectOverlayDisplayOptions): void {
+    this.overlayMode = display?.mode ?? DEFAULT_INSPECTION_FRAME_MODE;
+    this.showOrigin = display?.showOrigin ?? false;
+    this.renderPersistentOrigins();
+    this.setInspectHighlight(this.inspectNodeId);
+  }
+
   /** Update the bbox map (e.g. after IR re-render). Preserves active effects. */
   updateBBoxMap(bboxMap: Map<string, NodeBBox>): void {
     this.bboxMap = bboxMap;
@@ -667,7 +677,11 @@ export class EventEffectOverlay {
       } else if (part === "handles") {
         group.appendChild(this.createHandleGroup(bbox));
       } else if (part === "visual") {
-        group.appendChild(this.createVisualCorners(bbox));
+        group.appendChild(
+          this.overlayMode === "visual"
+            ? this.createModeRect(bbox.visualBBox, VISUAL_COLOR, false, "8 3")
+            : this.createVisualCorners(bbox),
+        );
       } else if (part === "origin" && bbox.origin) {
         group.appendChild(this.createOriginMarker(bbox.origin));
       }
@@ -705,7 +719,8 @@ export class EventEffectOverlay {
 
   private showTooltip(bbox: NodeBBox): void {
     const activeRect = this.getInteractiveRect(bbox);
-    const sizeLabel = `${formatTooltipNumber(activeRect.w)} x ${formatTooltipNumber(activeRect.h)} px`;
+    const geometryLabel = this.overlayMode === "layout" ? "Layout" : "AABB";
+    const sizeLabel = `${geometryLabel}: ${formatTooltipNumber(activeRect.w)} x ${formatTooltipNumber(activeRect.h)} px`;
     const semantics = bbox.semantics;
     const lines: string[] = [];
     const kind = semantics?.kind ?? "Node";

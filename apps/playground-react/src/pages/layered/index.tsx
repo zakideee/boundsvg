@@ -23,6 +23,7 @@ import "prismjs/components/prism-tsx";
 import "prismjs/components/prism-json";
 import { useCallback, useMemo, useState, useTransition } from "react";
 import type { EventEffectOverlayDisplayOptions } from "../../../../playground-shared/inspect-hover.js";
+import { INSPECTION_FRAME_OPTIONS } from "../../../../playground-shared/inspection-frame.js";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
 import { BBoxOverlayField } from "../../components/fields";
 import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
@@ -33,14 +34,6 @@ import { resolveDebugOverlayConfig } from "../../lib/debug-overlay";
 import { buildLayeredFixtures } from "./fixtures";
 
 type OverlayMode = NonNullable<EventEffectOverlayDisplayOptions["mode"]>;
-
-const OVERLAY_MODE_OPTIONS: Array<{ value: OverlayMode; label: string }> = [
-  { value: "off", label: "Off" },
-  { value: "layout", label: "Layout bbox" },
-  { value: "transform", label: "Transform box" },
-  { value: "visual", label: "Visual bounds" },
-  { value: "all", label: "All" },
-];
 
 // ---------------------------------------------------------------------------
 // Worker-enabled config (separate from the main app's non-Worker provider)
@@ -66,12 +59,14 @@ type Format = "svg" | "png";
 type ViewTab = "preview" | "rendered" | "jsx" | "manifest";
 type CodeLayout = "tab" | "panel";
 
+/** Labels for the layered preview code tabs. */
 const CODE_TAB_LABELS: Record<Exclude<ViewTab, "preview">, string> = {
   rendered: "Rendered SVG",
   jsx: "Generated JSX",
   manifest: "Manifest JSON",
 };
 
+/** Depth spacing between tilted preview layers. */
 const LAYER_GAP_PX = 60;
 
 function layerKey(layer: { id: string; paintOrder: number }): string {
@@ -577,8 +572,8 @@ function LayeredContent() {
                 value={overlayMode}
                 onChange={(event) => setOverlayMode(event.target.value as OverlayMode)}
               >
-                {OVERLAY_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
+                {Object.entries(INSPECTION_FRAME_OPTIONS).map(([mode, option]) => (
+                  <option key={mode} value={mode}>
                     {option.label}
                   </option>
                 ))}
@@ -988,6 +983,7 @@ function describeWarning(warning: LayerWarning): string {
 // Page — wraps content in a Worker-enabled provider
 // ---------------------------------------------------------------------------
 
+/** Show layered exports with the Worker-enabled rendering provider. */
 export function LayeredPage() {
   return (
     <BoundSvgProvider

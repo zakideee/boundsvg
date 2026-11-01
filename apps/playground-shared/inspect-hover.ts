@@ -38,6 +38,8 @@ export type InspectHoverHandle = {
   cleanup: () => void;
   /** Programmatically highlight a node (or clear with `null`). */
   highlight: (nodeId: string | null) => void;
+  /** Change display without replacing the SVG or resetting the selected node. */
+  updateDisplay: (display?: EventEffectOverlayDisplayOptions) => void;
 };
 
 /**
@@ -59,6 +61,7 @@ export function setupInspectHover(
   const noop: InspectHoverHandle = {
     cleanup: () => {},
     highlight: () => {},
+    updateDisplay: () => {},
   };
   const svgEl = container.querySelector("svg") as SVGSVGElement | null;
   if (!svgEl) {
@@ -99,6 +102,7 @@ export function setupInspectHover(
   svgEl.addEventListener("mouseleave", onMouseLeave);
 
   return {
+    updateDisplay: (nextDisplay) => overlay.updateDisplay(nextDisplay),
     cleanup: () => {
       overlay.destroy();
       svgEl.removeEventListener("mousemove", onMouseMove);

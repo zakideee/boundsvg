@@ -20,6 +20,11 @@ import {
   FLASH_EVENTS,
 } from "../../playground-shared/event-effects.js";
 
+import type {
+  EventEffectOverlayDisplayOptions,
+  InspectHoverHandle,
+} from "../../playground-shared/inspect-hover.js";
+
 function addEventLogEntry(event: string, nodeId: string, x: number, y: number): void {
   const logEl = getElement("event-log-entries");
   const date = new Date();
@@ -158,7 +163,9 @@ function showCopyMenu(
   menuEl.style.display = "block";
 }
 
+/** Spacing between copy feedback and the pointer. */
 const TOAST_OFFSET_PX = 12;
+/** Time copy feedback remains visible. */
 const TOAST_DURATION_MS = 1200;
 
 function showToast(state: CopyMenuState, clientX: number, clientY: number, message: string): void {
@@ -218,15 +225,18 @@ function destroyCopyMenuState(state: CopyMenuState): void {
 // Main setup
 // ---------------------------------------------------------------------------
 
+/** Connect event effects and inspection to the mouse sample SVG. */
 export function setupMouseEvents(
   svgContainer: HTMLElement,
   ir: IR,
   index: SpatialIndex,
   handlerMap: Map<string, HandlersRef>,
-): () => void {
+  display: EventEffectOverlayDisplayOptions,
+  onInspectChange: (nodeId: string | null) => void,
+): InspectHoverHandle {
   const svgEl = svgContainer.querySelector("svg") as SVGSVGElement | null;
   if (!svgEl) {
-    return () => {};
+    return { cleanup: () => {}, highlight: () => {}, updateDisplay: () => {} };
   }
 
   const nodeTypeMap = buildNodeTypeMap(ir);
@@ -241,6 +251,7 @@ export function setupMouseEvents(
     width: ir.width,
     height: ir.height,
     bboxMap,
+    display,
   });
 
   // Text copy menu state
@@ -423,6 +434,8 @@ export function setupMouseEvents(
         fireIfHandler(nodeId, "onMouseOver", "mouseOver", x, y);
       }
       overlay.setHoverGlow(nodeId);
+      overlay.setInspectHighlight(nodeId);
+      onInspectChange(nodeId);
       hoverEl.textContent = nodeId ?? "none";
     }
 
@@ -453,6 +466,8 @@ export function setupMouseEvents(
       fireIfHandler(lastHovered, "onMouseOut", "mouseOut", 0, 0);
       lastHovered = null;
       overlay.setHoverGlow(null);
+      overlay.setInspectHighlight(null);
+      onInspectChange(null);
       hoverEl.textContent = "none";
     }
   };
@@ -472,7 +487,7 @@ export function setupMouseEvents(
   svgEl.style.userSelect = "none";
   svgEl.style.setProperty("-webkit-user-select", "none");
 
-  return () => {
+  const cleanup = (): void => {
     overlay.destroy();
     destroyCopyMenuState(copyMenuState);
     svgEl.removeEventListener("click", onClick);
@@ -489,5 +504,10 @@ export function setupMouseEvents(
     svgEl.style.touchAction = "";
     svgEl.style.userSelect = "";
     svgEl.style.setProperty("-webkit-user-select", "");
+  };
+  return {
+    cleanup,
+    highlight: (nodeId) => overlay.setInspectHighlight(nodeId),
+    updateDisplay: (nextDisplay) => overlay.updateDisplay(nextDisplay),
   };
 }

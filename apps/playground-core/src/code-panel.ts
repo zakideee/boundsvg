@@ -45,16 +45,16 @@ function setupCodeLineHover(codeOutput: HTMLElement): () => void {
     if (nodeId) {
       const range = cachedLineMap.get(nodeId) ?? null;
       highlightCodeLines(codeOutput, range);
-      coreState.inspectHighlight?.(nodeId);
+      coreState.inspectHandle?.highlight(nodeId);
     } else {
       highlightCodeLines(codeOutput, null);
-      coreState.inspectHighlight?.(null);
+      coreState.inspectHandle?.highlight(null);
     }
   };
 
   const onMouseLeave = (): void => {
     highlightCodeLines(codeOutput, null);
-    coreState.inspectHighlight?.(null);
+    coreState.inspectHandle?.highlight(null);
   };
 
   codeOutput.addEventListener("mouseover", onMouseOver);
@@ -66,6 +66,7 @@ function setupCodeLineHover(codeOutput: HTMLElement): () => void {
   };
 }
 
+/** Update source or SVG code and bind inspection to the current line map. */
 export function updateCodePanel(): void {
   // Clean up previous code hover listeners
   if (codeHoverCleanup) {

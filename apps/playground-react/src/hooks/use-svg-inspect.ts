@@ -27,6 +27,7 @@ import { formatSvgCode } from "../../../playground-shared/html-utils.js";
 import {
   type EventEffectOverlayDisplayOptions,
   type InspectHitTestFn,
+  type InspectHoverHandle,
   setupInspectHover,
 } from "../../../playground-shared/inspect-hover.js";
 import { getPrismGrammar } from "../../../playground-shared/prism.js";
@@ -109,7 +110,12 @@ function useInspectHover(
 ): InspectHoverResult {
   const [previewEl, setPreviewEl] = useState<HTMLDivElement | null>(null);
   const [codeEl, setCodeEl] = useState<HTMLDivElement | null>(null);
-  const inspectHighlightRef = useRef<((nodeId: string | null) => void) | null>(null);
+  const inspectHandleRef = useRef<InspectHoverHandle | null>(null);
+  const displayRef = useRef(overlayDisplay);
+  useEffect(() => {
+    displayRef.current = overlayDisplay;
+    inspectHandleRef.current?.updateDisplay(overlayDisplay);
+  }, [overlayDisplay]);
 
   // Track the current IR so the MutationObserver can detect stale closures.
   const currentIrRef = useRef<IR | null>(null);
@@ -118,7 +124,7 @@ function useInspectHover(
   // ---- Inspect hover on preview container (SVG → code direction) ----
   useEffect(() => {
     if (!previewEl || !data.ir) {
-      inspectHighlightRef.current = null;
+      inspectHandleRef.current = null;
       return;
     }
 
@@ -134,8 +140,8 @@ function useInspectHover(
       highlightCodeLines(codeEl, range);
     };
 
-    let currentHandle = setupInspectHover(previewEl, ir, hitTester, onHover, overlayDisplay);
-    inspectHighlightRef.current = currentHandle.highlight;
+    let currentHandle = setupInspectHover(previewEl, ir, hitTester, onHover, displayRef.current);
+    inspectHandleRef.current = currentHandle;
 
     // React may replace the SVG element inside the container (e.g. when
     // dangerouslySetInnerHTML re-commits during reconciliation). Watch
@@ -161,10 +167,17 @@ function useInspectHover(
           return;
         }
         const svg = previewEl.querySelector("svg");
-        if (svg && !svg.dataset.effectWrapper) {
+        if (!svg) {
+          if (inspectHandleRef.current) {
+            currentHandle.cleanup();
+            inspectHandleRef.current = null;
+          }
+          return;
+        }
+        if (!svg.dataset.effectWrapper) {
           currentHandle.cleanup();
-          currentHandle = setupInspectHover(previewEl, ir, hitTester, onHover, overlayDisplay);
-          inspectHighlightRef.current = currentHandle.highlight;
+          currentHandle = setupInspectHover(previewEl, ir, hitTester, onHover, displayRef.current);
+          inspectHandleRef.current = currentHandle;
         }
       });
     });
@@ -176,9 +189,9 @@ function useInspectHover(
       }
       observer.disconnect();
       currentHandle.cleanup();
-      inspectHighlightRef.current = null;
+      inspectHandleRef.current = null;
     };
-  }, [previewEl, codeEl, data.ir, data.nodeLineMap, overlayDisplay]);
+  }, [previewEl, codeEl, data.ir, data.nodeLineMap]);
 
   // ---- Code-line hover on code block (code → SVG direction) ----
   useEffect(() => {
@@ -198,16 +211,16 @@ function useInspectHover(
       if (nodeId) {
         const range = nodeLineMap.get(nodeId) ?? null;
         highlightCodeLines(codeEl, range);
-        inspectHighlightRef.current?.(nodeId);
+        inspectHandleRef.current?.highlight(nodeId);
       } else {
         highlightCodeLines(codeEl, null);
-        inspectHighlightRef.current?.(null);
+        inspectHandleRef.current?.highlight(null);
       }
     };
 
     const onMouseLeave = (): void => {
       highlightCodeLines(codeEl, null);
-      inspectHighlightRef.current?.(null);
+      inspectHandleRef.current?.highlight(null);
     };
 
     codeEl.addEventListener("mouseover", onMouseOver);

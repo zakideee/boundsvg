@@ -24,11 +24,8 @@ import { presets } from "./presets/index";
 import { coreState, resolveDebugOverlayConfig } from "./state";
 import type { Preset } from "./types";
 
-function resolveOverlayDisplay(key: string): EventEffectOverlayDisplayOptions {
-  if (key === "transform") {
-    return { mode: "all", showOrigin: true };
-  }
-  return {};
+function resolveOverlayDisplay(): EventEffectOverlayDisplayOptions {
+  return { mode: coreState.inspectionMode, showOrigin: coreState.showInspectionOrigin };
 }
 
 function createHitTester(ir: IR): InspectHitTestFn {
@@ -49,21 +46,26 @@ function setupFlowDragWithInspect(
   presetKey: string,
   engine: Engine,
   initialIr: IR,
-  display: EventEffectOverlayDisplayOptions,
 ): () => void {
   let handle = setupInspectHover(
     container,
     initialIr,
     createHitTester(initialIr),
     highlightSvgSourceLine,
-    display,
+    resolveOverlayDisplay(),
   );
-  coreState.inspectHighlight = handle.highlight;
+  coreState.inspectHandle = handle;
 
   const onPostRender = (ir: IR): void => {
-    // Old overlay/listeners were destroyed by innerHTML; set up fresh ones.
-    handle = setupInspectHover(container, ir, createHitTester(ir), highlightSvgSourceLine, display);
-    coreState.inspectHighlight = handle.highlight;
+    handle.cleanup();
+    handle = setupInspectHover(
+      container,
+      ir,
+      createHitTester(ir),
+      highlightSvgSourceLine,
+      resolveOverlayDisplay(),
+    );
+    coreState.inspectHandle = handle;
   };
 
   const dragCleanup = setupFlowDrag(container, presetKey, engine, onPostRender);
@@ -71,7 +73,7 @@ function setupFlowDragWithInspect(
   return () => {
     handle.cleanup();
     dragCleanup();
-    coreState.inspectHighlight = null;
+    coreState.inspectHandle = null;
   };
 }
 
@@ -121,7 +123,19 @@ export function renderPreset(engine: Engine, key: string): void {
     const handlerMap = buildHandlerMap(ir);
 
     // Setup event listeners (includes its own overlay + hover glow)
-    coreState.activeMouseCleanup = setupMouseEvents(svgOutput, ir, index, handlerMap);
+    const mouseHandle = setupMouseEvents(
+      svgOutput,
+      ir,
+      index,
+      handlerMap,
+      resolveOverlayDisplay(),
+      highlightSvgSourceLine,
+    );
+    coreState.inspectHandle = mouseHandle;
+    coreState.activeMouseCleanup = () => {
+      mouseHandle.cleanup();
+      coreState.inspectHandle = null;
+    };
 
     // Show event log panel
     eventLogPanel.style.display = "block";
@@ -129,10 +143,9 @@ export function renderPreset(engine: Engine, key: string): void {
     // Hide event log panel
     eventLogPanel.style.display = "none";
 
-    const display = resolveOverlayDisplay(key);
     if (key === "text-flow" || key === "flow-rich") {
       // Flow presets: drag + inspect hover with drag-aware reconstruction
-      coreState.activeMouseCleanup = setupFlowDragWithInspect(svgOutput, key, engine, ir, display);
+      coreState.activeMouseCleanup = setupFlowDragWithInspect(svgOutput, key, engine, ir);
     } else {
       // All other presets: inspect hover with SVG source sync
       const handle = setupInspectHover(
@@ -140,12 +153,12 @@ export function renderPreset(engine: Engine, key: string): void {
         ir,
         createHitTester(ir),
         highlightSvgSourceLine,
-        display,
+        resolveOverlayDisplay(),
       );
-      coreState.inspectHighlight = handle.highlight;
+      coreState.inspectHandle = handle;
       coreState.activeMouseCleanup = () => {
         handle.cleanup();
-        coreState.inspectHighlight = null;
+        coreState.inspectHandle = null;
       };
     }
   }
@@ -181,7 +194,7 @@ export function renderPreset(engine: Engine, key: string): void {
 
 function renderLayeredPreset(engine: Engine, preset: Preset): void {
   coreState.currentPresetKey = "layered";
-  coreState.inspectHighlight = null;
+  coreState.inspectHandle = null;
 
   const vnode = preset.build(engine);
   const options = {
@@ -227,7 +240,7 @@ function renderLayeredPreset(engine: Engine, preset: Preset): void {
       </div>
     </div>`;
 
-  // Inspect hover on the Single SVG cell (layout bbox). Stacked SVG keeps
+  // Inspect hover on the Single SVG cell. Stacked SVG keeps
   // its own CSS-only diagonal shift interaction.
   const singleCell = getElement("layered-single-svg");
   const inspectHandle = setupInspectHover(
@@ -235,12 +248,12 @@ function renderLayeredPreset(engine: Engine, preset: Preset): void {
     singleIr,
     createHitTester(singleIr),
     highlightSvgSourceLine,
-    resolveOverlayDisplay("layered"),
+    resolveOverlayDisplay(),
   );
-  coreState.inspectHighlight = inspectHandle.highlight;
+  coreState.inspectHandle = inspectHandle;
   coreState.activeMouseCleanup = () => {
     inspectHandle.cleanup();
-    coreState.inspectHighlight = null;
+    coreState.inspectHandle = null;
   };
 
   const pngOutput = getElement("png-output");

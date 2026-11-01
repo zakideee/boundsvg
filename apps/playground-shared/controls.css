@@ -136,3 +136,23 @@
   font-size: 12px;
   cursor: pointer;
 }
+
+.inspection-frame-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 340px;
+}
+
+.inspection-frame-help {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.inspection-origin-control {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
