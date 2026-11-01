@@ -93,3 +93,32 @@ describe("buildNodeLineMap", () => {
     expect(rootRange.end).toBeGreaterThan(panelRange.end);
   });
 });
+
+describe("anonymous SVG wrappers", () => {
+  it("keeps anonymous defs and clip groups from closing source node ranges", () => {
+    const lines = [
+      '<svg data-boundsvg-node-id="root">',
+      "  <defs>",
+      '    <clipPath id="clip"><path d="M0 0H20V20Z"/></clipPath>',
+      "  </defs>",
+      '  <g data-boundsvg-node-id="card">',
+      '    <g clip-path="url(#clip)">',
+      '      <g data-boundsvg-node-id="title">',
+      '        <g data-boundsvg-node-id="title">',
+      '          <path d="M2 3H8V10Z"/>',
+      "        </g>",
+      "      </g>",
+      "    </g>",
+      '    <svg x="1" y="2">',
+      '      <path d="M0 0H20V20Z"/>',
+      "    </svg>",
+      "  </g>",
+      "</svg>",
+    ];
+    expect([...buildNodeLineMap(lines.join("\n"))]).toEqual([
+      ["title", { start: 6, end: 10 }],
+      ["card", { start: 4, end: 15 }],
+      ["root", { start: 0, end: 16 }],
+    ]);
+  });
+});

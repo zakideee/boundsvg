@@ -1124,6 +1124,7 @@ type TemplateGroupDef = {
   templateKeys: string[];
 };
 
+/** Template selected before a user chooses a scene. */
 export const DEFAULT_TEMPLATE_KEY = "terminal";
 
 /** Navigation groups for the selectable template scenes. */
@@ -1131,12 +1132,17 @@ export const TEMPLATE_GROUPS: TemplateGroupDef[] = [
   {
     key: "featured",
     label: "Featured",
-    templateKeys: ["terminal", "design-expressions"],
+    templateKeys: ["terminal"],
   },
   {
     key: "layout-basics",
     label: "Layout Basics",
-    templateKeys: ["fit", "grid", "media"],
+    templateKeys: ["fit", "grid"],
+  },
+  {
+    key: "composition",
+    label: "Composition",
+    templateKeys: ["media", "design-expressions"],
   },
   {
     key: "text-basics",

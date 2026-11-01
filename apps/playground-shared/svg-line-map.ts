@@ -5,11 +5,15 @@
  * and tracks opening/closing tag pairs to determine the line range of each node.
  */
 
+/** Inclusive line indices in the formatted SVG code panel. */
 export type NodeLineRange = { start: number; end: number };
 
+/** Source-node attribute emitted by the renderer. */
 const NODE_ID_RE = /data-boundsvg-node-id="([^"]+)"/;
-const OPEN_TAG_RE = /^\s*<(\w+)/;
-const CLOSE_TAG_RE = /<\/(\w+)>\s*$/;
+/** Opening XML element name, including namespace prefixes. */
+const OPEN_TAG_RE = /^\s*<([\w:-]+)/;
+/** Closing XML element name at the end of a formatted line. */
+const CLOSE_TAG_RE = /<\/([\w:-]+)>\s*$/;
 
 /**
  * Build a map from nodeId → { start, end } line indices (0-based).
@@ -18,39 +22,43 @@ const CLOSE_TAG_RE = /<\/(\w+)>\s*$/;
 export function buildNodeLineMap(formattedSvg: string): Map<string, NodeLineRange> {
   const lines = formattedSvg.split("\n");
   const map = new Map<string, NodeLineRange>();
-  const stack: Array<{ nodeId: string; line: number; tagName: string }> = [];
+  const stack: Array<{ nodeId?: string; line: number; tagName: string }> = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] as string;
 
-    const nodeIdMatch = line.match(NODE_ID_RE);
-    if (nodeIdMatch) {
-      const nodeId = nodeIdMatch[1] as string;
-      const tagMatch = line.match(OPEN_TAG_RE);
-      const tagName = tagMatch?.[1] ?? "";
+    const tagMatch = line.match(OPEN_TAG_RE);
+    if (tagMatch) {
+      const nodeId = line.match(NODE_ID_RE)?.[1];
+      const tagName = tagMatch[1] as string;
       const trimmed = line.trimEnd();
 
-      // Self-closing or single-line element (e.g. <rect ... /> or <g ...>...</g>)
       if (trimmed.endsWith("/>") || trimmed.includes(`</${tagName}>`)) {
-        map.set(nodeId, { start: i, end: i });
+        if (nodeId) {
+          map.set(nodeId, { start: i, end: i });
+        }
       } else {
+        // Anonymous paint and clip wrappers still own their closing tags.
         stack.push({ nodeId, line: i, tagName });
       }
       continue;
     }
 
-    // Check for closing tags that match an open node
     const closeMatch = line.match(CLOSE_TAG_RE);
-    if (closeMatch && stack.length > 0) {
-      const closingTag = closeMatch[1] as string;
-      for (let j = stack.length - 1; j >= 0; j--) {
-        const entry = stack[j];
-        if (entry && entry.tagName === closingTag) {
-          stack.splice(j, 1);
-          map.set(entry.nodeId, { start: entry.line, end: i });
-          break;
-        }
+    if (!closeMatch) {
+      continue;
+    }
+    const closingTag = closeMatch[1] as string;
+    for (let j = stack.length - 1; j >= 0; j--) {
+      const entry = stack[j];
+      if (!entry || entry.tagName !== closingTag) {
+        continue;
       }
+      stack.splice(j, 1);
+      if (entry.nodeId) {
+        map.set(entry.nodeId, { start: entry.line, end: i });
+      }
+      break;
     }
   }
 

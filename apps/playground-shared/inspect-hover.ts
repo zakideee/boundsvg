@@ -2,8 +2,8 @@
  * Shared inspect-on-hover setup for playground apps.
  *
  * Attaches mousemove/mouseleave listeners to a rendered SVG container and
- * shows a DevTools-style highlight (semi-transparent blue fill + outline)
- * on the element under the cursor via EventEffectOverlay.setInspectHighlight().
+ * shows the transformed inspection quad for the element under the cursor via
+ * EventEffectOverlay.setInspectHighlight(). Callers can select other geometry.
  *
  * Hit-test logic is injected by the caller to avoid runtime imports from
  * `@boundsvg/browser` and `@boundsvg/core/scene` (playground-shared is not
@@ -41,7 +41,7 @@ export type InspectHoverHandle = {
 };
 
 /**
- * Set up DevTools-style inspect-on-hover for any rendered SVG.
+ * Set up inspect-on-hover with transformed quads by default.
  *
  * @param container - The DOM element containing the rendered `<svg>`.
  * @param ir - The IR tree returned by `engine.renderToSvgAndIR()`.

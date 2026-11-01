@@ -72,6 +72,7 @@ type SvgRenderData = {
   lineToNodeMap: Map<number, string> | null;
 };
 
+/** Empty inspection state while render artifacts are unavailable. */
 const EMPTY_DATA: SvgRenderData = {
   highlightedSvg: "",
   ir: null,
@@ -115,7 +116,6 @@ function useInspectHover(
   currentIrRef.current = data.ir;
 
   // ---- Inspect hover on preview container (SVG → code direction) ----
-  // biome-ignore lint/correctness/useExhaustiveDependencies: codeEl intentionally read from closure so the overlay doesn't tear down/rebuild when only the code panel mounts.
   useEffect(() => {
     if (!previewEl || !data.ir) {
       inspectHighlightRef.current = null;
@@ -178,7 +178,7 @@ function useInspectHover(
       currentHandle.cleanup();
       inspectHighlightRef.current = null;
     };
-  }, [previewEl, data.ir, data.nodeLineMap, overlayDisplay]);
+  }, [previewEl, codeEl, data.ir, data.nodeLineMap, overlayDisplay]);
 
   // ---- Code-line hover on code block (code → SVG direction) ----
   useEffect(() => {

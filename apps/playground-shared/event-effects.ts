@@ -55,10 +55,15 @@ export const EVENT_COLORS: Record<string, string> = {
  * corners, and amber crosshair at the origin.
  */
 const LAYOUT_COLOR = "#94a3b8";
+/** Stroke color for transformed inspection quads. */
 const TRANSFORM_COLOR = "#22d3ee";
+/** Stroke color for visual AABB corner markers. */
 const VISUAL_COLOR = "#f472b6";
+/** Stroke color for transform origin markers. */
 const ORIGIN_COLOR = "#f59e0b";
+/** Background halo behind transform origin markers. */
 const ORIGIN_HALO_COLOR = "#0f172a";
+/** Fill color for transformed quad corner handles. */
 const HANDLE_FILL = "#0f172a";
 
 /** Events that trigger a brief flash effect (discrete events only). */
@@ -78,6 +83,7 @@ export const FLASH_EVENTS = new Set([
 // BBox map builder
 // ---------------------------------------------------------------------------
 
+/** Inspection geometry and tooltip metadata for one rendered node. */
 export type NodeBBox = {
   x: number;
   y: number;
@@ -93,6 +99,7 @@ export type NodeBBox = {
   semantics?: NodeSemantics;
 };
 
+/** Source element details shown by the inspection tooltip. */
 export type NodeSemantics = {
   /** Human element kind derived from the IR children: Text / Shape / Image / ... */
   kind: string;
@@ -106,13 +113,16 @@ export type NodeSemantics = {
   meta?: Array<[string, string]>;
 };
 
+/** Select the inspection geometry to display. */
 export type OverlayDisplayMode = "off" | "layout" | "transform" | "visual" | "all";
 
+/** Inspection display overrides; transformed quads are shown by default. */
 export type EventEffectOverlayDisplayOptions = {
   mode?: OverlayDisplayMode;
   showOrigin?: boolean;
 };
 
+/** Drawable parts of an inspection highlight. */
 export type InspectOverlayPart = "layout" | "transform" | "handles" | "visual" | "origin";
 
 /**
@@ -123,32 +133,29 @@ export type InspectOverlayPart = "layout" | "transform" | "handles" | "visual" |
  *
  * `all` mode additionally suppresses redundant parts to keep the composite
  * readable:
- * - When the node has no own transform (`hasOwnTransform=false`), the
- *   transform quad, handles, and visual corners all coincide with layout, so
- *   only `layout` is drawn.
- * - When the transform quad is axis-aligned (pure translate/scale),
- *   `visualBBox` equals the quad, so visual corners are suppressed to avoid
- *   doubled outlines.
+ * - When the resolved transform quad coincides with layout, only layout is drawn.
+ * - When the quad is axis-aligned, visual corners coincide with it and are omitted.
+ * Ancestor transforms are already included in the supplied inspection geometry.
  */
 export function resolveInspectOverlayParts(options: {
   mode: OverlayDisplayMode;
   showOrigin: boolean;
   hasOrigin: boolean;
-  hasOwnTransform?: boolean;
-  isTransformAxisAligned?: boolean;
+  layoutBBox: InspectionRect;
+  transformBox: InspectionTransformBox;
 }): InspectOverlayPart[] {
   const parts: InspectOverlayPart[] = [];
   const inAll = options.mode === "all";
-  const hasOwnTransform = options.hasOwnTransform ?? true;
-  const isAxisAligned = options.isTransformAxisAligned ?? false;
+  const isLayoutMatch = isTransformBoxEqualToLayout(options.transformBox, options.layoutBBox);
+  const isAxisAligned = isTransformBoxAxisAligned(options.transformBox);
 
   if (options.mode === "layout" || inAll) {
     parts.push("layout");
   }
-  if (options.mode === "transform" || (inAll && hasOwnTransform)) {
+  if (options.mode === "transform" || (inAll && !isLayoutMatch)) {
     parts.push("transform", "handles");
   }
-  if (options.mode === "visual" || (inAll && hasOwnTransform && !isAxisAligned)) {
+  if (options.mode === "visual" || (inAll && !isAxisAligned)) {
     parts.push("visual");
   }
   if (options.showOrigin && options.hasOrigin && options.mode !== "off") {
@@ -158,10 +165,32 @@ export function resolveInspectOverlayParts(options: {
   return parts;
 }
 
+function isTransformBoxEqualToLayout(
+  transformBox: InspectionTransformBox,
+  layoutBBox: InspectionRect,
+): boolean {
+  const { x, y, w, h } = layoutBBox;
+  const layoutPoints = [
+    { x, y },
+    { x: x + w, y },
+    { x: x + w, y: y + h },
+    { x, y: y + h },
+  ];
+  // Compare corner sets so a mirror or reordered quad can still describe the same box.
+  return (
+    layoutPoints.every((corner) =>
+      transformBox.points.some((point) => point.x === corner.x && point.y === corner.y),
+    ) &&
+    transformBox.points.every((point) =>
+      layoutPoints.some((corner) => corner.x === point.x && corner.y === point.y),
+    )
+  );
+}
+
 /**
  * Build a flat map of nodeId → bounding box from the IR tree.
- * Replicates the `collectBboxes` pattern in `@boundsvg/core/ir/hit-test.ts`
- * and additionally extracts borderRadius for overlay rendering.
+ * Uses resolved inspection geometry and adds corner radii and tooltip semantics
+ * without recomputing transforms.
  */
 export function buildNodeBBoxMap(ir: IR): Map<string, NodeBBox> {
   const inspectionBBoxes = collectInspectionBBoxes(ir);
@@ -295,8 +324,10 @@ function collectNodeSemantics(root: IRNode): Map<string, NodeSemantics> {
 // Overlay manager
 // ---------------------------------------------------------------------------
 
+/** Namespace used for overlay elements. */
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+/** Host, scene dimensions, and inspection geometry for an overlay. */
 export type EventEffectOverlayOptions = {
   /** Container element wrapping the main SVG output. Must have position:relative. */
   container: HTMLElement;
@@ -309,6 +340,7 @@ export type EventEffectOverlayOptions = {
   display?: EventEffectOverlayDisplayOptions;
 };
 
+/** Manage inspection and event highlights without rerendering the scene. */
 export class EventEffectOverlay {
   private readonly overlaySvg: SVGSVGElement;
   private readonly wrapper: HTMLElement;
@@ -317,6 +349,7 @@ export class EventEffectOverlay {
   private readonly tooltipEl: HTMLDivElement;
   private readonly overlayMode: OverlayDisplayMode;
   private readonly showOrigin: boolean;
+  private readonly resizeObserver: ResizeObserver | null;
   /** True when this instance created the wrapper `<div>` around the SVG. */
   private readonly createdWrapper: boolean;
   private bboxMap: Map<string, NodeBBox>;
@@ -329,11 +362,12 @@ export class EventEffectOverlay {
   private pendingTimeouts: number[] = [];
   private originLayer: SVGElement | null = null;
 
+  /** Attach the overlay to its host; destroy it when the host is released. */
   constructor(options: EventEffectOverlayOptions) {
     this.width = options.width;
     this.height = options.height;
     this.bboxMap = options.bboxMap;
-    this.overlayMode = options.display?.mode ?? "layout";
+    this.overlayMode = options.display?.mode ?? "transform";
     this.showOrigin = options.display?.showOrigin ?? false;
 
     // Determine the wrapper element for the overlay.
@@ -341,12 +375,12 @@ export class EventEffectOverlay {
     // use it directly. Otherwise, wrap the inner <svg> in a tight
     // position:relative container so the overlay aligns with the SVG,
     // not the (possibly larger/flex-centered) outer container.
+    const mainSvg = options.container.querySelector("svg");
     let wrapper: HTMLElement;
     let didCreateWrapper = false;
     if (options.container.style.position === "relative") {
       wrapper = options.container;
     } else {
-      const mainSvg = options.container.querySelector("svg");
       if (mainSvg && !mainSvg.dataset.effectWrapper) {
         wrapper = document.createElement("div");
         wrapper.style.cssText = "position:relative;display:inline-block";
@@ -370,6 +404,23 @@ export class EventEffectOverlay {
     wrapper.appendChild(svg);
     this.wrapper = wrapper;
     this.overlaySvg = svg;
+    if (mainSvg) {
+      const alignViewport = (): void => {
+        const sourceBounds = mainSvg.getBoundingClientRect();
+        const wrapperBounds = wrapper.getBoundingClientRect();
+        svg.style.left = `${sourceBounds.left - wrapperBounds.left - wrapper.clientLeft}px`;
+        svg.style.top = `${sourceBounds.top - wrapperBounds.top - wrapper.clientTop}px`;
+        svg.style.width = `${sourceBounds.width}px`;
+        svg.style.height = `${sourceBounds.height}px`;
+      };
+      // A wrapper can include baseline spacing or differ from the SVG by a CSS layout unit.
+      // Match the rendered viewport instead of stretching inspection geometry to the wrapper.
+      alignViewport();
+      this.resizeObserver = new ResizeObserver(alignViewport);
+      this.resizeObserver.observe(mainSvg);
+    } else {
+      this.resizeObserver = null;
+    }
     this.tooltipEl = this.createTooltipElement();
     wrapper.appendChild(this.tooltipEl);
     this.renderPersistentOrigins();
@@ -475,8 +526,8 @@ export class EventEffectOverlay {
   }
 
   /**
-   * DevTools-style inspect highlight: semi-transparent blue fill + solid outline.
-   * No animation. Pass `null` to clear.
+   * Highlight the selected inspection geometry without animation.
+   * Pass `null` to clear.
    */
   setInspectHighlight(nodeId: string | null): void {
     if (this.inspectRect) {
@@ -521,6 +572,7 @@ export class EventEffectOverlay {
 
   /** Remove the overlay SVG, unwrap the main SVG if we wrapped it, and clean up timers. */
   destroy(): void {
+    this.resizeObserver?.disconnect();
     for (const tid of this.pendingTimeouts) {
       clearTimeout(tid);
     }
@@ -603,8 +655,8 @@ export class EventEffectOverlay {
       mode: this.overlayMode,
       showOrigin: this.showOrigin,
       hasOrigin: bbox.origin != null,
-      hasOwnTransform: bbox.hasOwnTransform,
-      isTransformAxisAligned: isTransformBoxAxisAligned(bbox.transformBox),
+      layoutBBox: bbox.layoutBBox,
+      transformBox: bbox.transformBox,
     });
 
     for (const part of parts) {
@@ -880,8 +932,8 @@ export class EventEffectOverlay {
 
 /**
  * True when the four corners of a transform box coincide with the corners of
- * their own axis-aligned bounding box (i.e. pure translate / scale or 90°
- * rotation — no skew and no off-axis rotation). In those cases the transform
+ * their own axis-aligned bounding box. The comparison uses resolved coordinates
+ * exactly, retaining any residual skew or rotation. In those cases the transform
  * quad and the visual AABB are identical, so the `all`-mode overlay
  * suppresses the visual corner markers to avoid doubled outlines.
  */
@@ -892,10 +944,9 @@ export function isTransformBoxAxisAligned(box: InspectionTransformBox): boolean 
   const maxX = Math.max(...xCoordinates);
   const minY = Math.min(...yCoordinates);
   const maxY = Math.max(...yCoordinates);
-  const EPS = 1e-6;
   for (const point of box.points) {
-    const atCornerX = Math.abs(point.x - minX) < EPS || Math.abs(point.x - maxX) < EPS;
-    const atCornerY = Math.abs(point.y - minY) < EPS || Math.abs(point.y - maxY) < EPS;
+    const atCornerX = point.x === minX || point.x === maxX;
+    const atCornerY = point.y === minY || point.y === maxY;
     if (!atCornerX || !atCornerY) {
       return false;
     }

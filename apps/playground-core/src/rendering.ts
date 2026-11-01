@@ -28,7 +28,7 @@ function resolveOverlayDisplay(key: string): EventEffectOverlayDisplayOptions {
   if (key === "transform") {
     return { mode: "all", showOrigin: true };
   }
-  return { mode: "layout", showOrigin: false };
+  return {};
 }
 
 function createHitTester(ir: IR): InspectHitTestFn {
@@ -75,6 +75,7 @@ function setupFlowDragWithInspect(
   };
 }
 
+/** Render the selected preset and connect inspection to its current IR. */
 export function renderPreset(engine: Engine, key: string): void {
   const preset = presets[key];
   if (!preset) {
