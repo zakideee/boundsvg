@@ -4,6 +4,7 @@ import {
   type Engine,
   Inline,
   InlineRect,
+  type InlineRectVNode,
   type IRNode,
   Text,
   type VNode,
@@ -25,6 +26,7 @@ type FrameStats = {
   svgBytes: number;
 };
 
+/** Shared stepped opacity animation for inline carets. */
 const CARET_BLINK = {
   keyframes: [
     { at: 0, opacity: 1 },
@@ -36,6 +38,7 @@ const CARET_BLINK = {
   fill: "both",
 } as const;
 
+/** Terminal text snapshots at four explicit timeline positions. */
 const TERMINAL_FRAMES: readonly TimelineFrame[] = [
   { mode: "terminal", timeMs: 0, committed: "$ ", composing: "" },
   { mode: "terminal", timeMs: 240, committed: "$ pnpm", composing: "" },
@@ -53,6 +56,7 @@ const TERMINAL_FRAMES: readonly TimelineFrame[] = [
   },
 ];
 
+/** Input-method snapshots with composing text and optional candidates. */
 const IME_FRAMES: readonly TimelineFrame[] = [
   { mode: "ime", timeMs: 0, committed: "入力: ", composing: "" },
   { mode: "ime", timeMs: 240, committed: "入力: ", composing: "きょう" },
@@ -66,7 +70,7 @@ const IME_FRAMES: readonly TimelineFrame[] = [
   { mode: "ime", timeMs: 720, committed: "入力: 今日", composing: "" },
 ];
 
-function caret(): VNode {
+function caret(): InlineRectVNode {
   return InlineRect({
     inlineSizePx: 2,
     blockSizePx: 22,
@@ -165,7 +169,7 @@ function collectStats(node: IRNode): Omit<FrameStats, "svgBytes"> {
       0,
     );
   }
-  for (const child of node.children ?? []) {
+  for (const child of node.type === "group" ? (node.children ?? []) : []) {
     const childStats = collectStats(child);
     lineCount += childStats.lineCount;
     glyphCount += childStats.glyphCount;
@@ -290,6 +294,7 @@ function buildTimeline(engine?: Engine): VNode {
   );
 }
 
+/** Show terminal and input-method snapshots with animated inline carets. */
 export const typingImeTimelinePreset: Preset = {
   // Two full 560 ms caret-blink cycles, so the animated loop has no seam.
   animationDurationMs: 1120,

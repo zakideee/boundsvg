@@ -1,4 +1,13 @@
-import { Box, Canvas, Inline, Path, Text, TextOnPath, type VNode } from "@boundsvg/core";
+import {
+  Box,
+  Canvas,
+  Inline,
+  Path,
+  Text,
+  TextOnPath,
+  type TextOnPathChild,
+  type VNode,
+} from "@boundsvg/core";
 import { FONT_ALIAS as FA, JETBRAINS_ALIAS } from "../config";
 import type { Preset } from "../types";
 
@@ -12,9 +21,10 @@ type A2Frame = {
   normal: "left" | "right";
   fit: "none" | "spacing" | "shrink";
   color: string;
-  children: Array<string | VNode>;
+  children: TextOnPathChild[];
 };
 
+/** Shared cluster motion used by the materialized text-path frames. */
 const UNIT_ANIMATION = {
   by: "cluster",
   animation: {
@@ -30,8 +40,10 @@ const UNIT_ANIMATION = {
   order: "logical",
 } as const;
 
+/** Mixed-script shaping sample shown in the motion identity comparisons. */
 const IDENTITY_TEXT = "Shaping fidelity 日本語";
 
+/** Rich-text checkpoints for the materialized text-path examples. */
 const A2_FRAMES: readonly A2Frame[] = [
   {
     id: "0",
@@ -404,6 +416,7 @@ function buildTextMotionV3(): VNode {
   );
 }
 
+/** Compare rich text motion, path decoration, and materialized path geometry. */
 export const textMotionV3Preset: Preset = {
   animationDurationMs: 1200,
   title: "Rich Text on Path",
