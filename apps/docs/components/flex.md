@@ -44,7 +44,11 @@ the background radius does not clip child paint or hits.
 | `gridColumn` | `string` | Grid column placement (e.g. `"1 / 3"`) |
 | `gridRow`    | `string` | Grid row placement (e.g. `"1 / 2"`)    |
 
-Also accepts [common box props](/components/box#props) (`width`, `height`, `minWidth`, `maxWidth`, `minHeight`, `maxHeight`, `aspectRatio`, `padding`, `margin`, `background`, `boxShadow`, `border*`, `stroke*`, `strokeScaling`, `overflow`, `opacity`, `zIndex`, `meta`, `transform`, `animate`, `position`, `top`, `right`, `bottom`, `left`). `strokeScaling?: "transform" | "canvas"` controls whether a solid border scales with post-layout transforms or keeps its canvas-space width; the default is `"transform"`. `animate?: AnimationSpec` attaches a declarative opacity/transform track; see [Animation](/guides/animation).
+Also accepts [common box props](/components/box#props), including four-sided
+`borderWidth`, `borderColor`, and layout-independent `outline`. The outline
+follows the Flex's resolved size and supports the Path stroke vocabulary.
+`animate?: AnimationSpec` attaches a declarative opacity/transform track; see
+[Animation](/guides/animation).
 
 ### Event / Identity
 

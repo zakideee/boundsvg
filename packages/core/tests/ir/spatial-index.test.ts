@@ -23,10 +23,12 @@ describe("SpatialIndex", () => {
     expect(index.queryTopmost(12, 12)).toBe("bottom");
   });
 
-  it("skips :bg and :border nodes", () => {
+  it("skips generated box paint and clip nodes", () => {
     const index = createSpatialIndex({ x: 0, y: 0, w: 100, h: 100 });
     index.insert("node1:bg", { x: 0, y: 0, w: 100, h: 100 }, 0);
     index.insert("node1:border", { x: 0, y: 0, w: 100, h: 100 }, 1);
+    index.insert("node1:outline", { x: 0, y: 0, w: 100, h: 100 }, 10);
+    index.insert("node1:content", { x: 0, y: 0, w: 100, h: 100 }, 11);
     index.insert("node1", { x: 10, y: 10, w: 80, h: 80 }, 2);
 
     expect(index.queryTopmost(50, 50)).toBe("node1");
@@ -186,10 +188,12 @@ describe("SpatialIndex.queryCandidates", () => {
     expect(result).toEqual(["top", "middle", "bottom"]);
   });
 
-  it("filters :bg and :border nodes", () => {
+  it("filters generated box paint and clip nodes", () => {
     const index = createSpatialIndex({ x: 0, y: 0, w: 100, h: 100 });
     index.insert("node1:bg", { x: 0, y: 0, w: 100, h: 100 }, 0);
     index.insert("node1:border", { x: 0, y: 0, w: 100, h: 100 }, 1);
+    index.insert("node1:outline", { x: 0, y: 0, w: 100, h: 100 }, 10);
+    index.insert("node1:content", { x: 0, y: 0, w: 100, h: 100 }, 11);
     index.insert("node1", { x: 10, y: 10, w: 80, h: 80 }, 2);
 
     const result = index.queryCandidates(50, 50);

@@ -32,8 +32,8 @@ use crate::error::EngineError;
 use crate::ir::animation_timeline::{CssIterationCount, DocumentAnimationPlan, DocumentKeyframe};
 use crate::ir::types::{
     AnimationSpec, BBox, BorderRadius, BoxShadow, Gradient, Ir, IrNode, IrNodeKind, IrTextAlign,
-    ShapePathPart, StrokeLinecap, StrokeLinejoin, StrokeScaling, TextOutlinePath, TextShadowLayer,
-    TextStrokeLayer,
+    ShapePathPart, StrokeLinecap, StrokeLinejoin, StrokeScaling, TextOutlinePath, TextPaint,
+    TextShadowLayer, TextStrokeLayer,
 };
 use crate::svg_emit::identifier_namespace::{SvgIdentifierNamespace, SvgIdentifierRole};
 use crate::svg_emit::paint::{
@@ -250,10 +250,10 @@ pub struct SharedShapePathDef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// One namespaced empty or elliptical box clip shared by scene paint items.
 pub struct ClipPathDef {
     pub id: String,
-    pub bbox: BBox,
-    pub border_radius: Option<BorderRadius>,
+    pub clip: crate::ir::types::BoxClip,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -306,6 +306,7 @@ pub struct GroupOpenItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// A rectangle paint primitive with resolved fill and stroke geometry.
 pub struct RectItem {
     pub node_id: String,
     /// Internal `:bg` / `:border` rects omit the node-id attribute.
@@ -317,6 +318,7 @@ pub struct RectItem {
     pub fill: Option<String>,
     pub stroke: Option<String>,
     pub stroke_width: Option<f64>,
+    /// Namespaced non-scaling stroke rule shared with Path paint items.
     pub canvas_stroke_class: Option<String>,
     pub stroke_linecap: Option<StrokeLinecap>,
     pub stroke_linejoin: Option<StrokeLinejoin>,
@@ -514,6 +516,7 @@ pub fn resolve_paint_scene(
     ir: &Ir,
     options: &PaintSceneOptions,
 ) -> Result<PaintScene, EngineError> {
+    crate::ir::numeric_envelope::validate(ir)?;
     let identifier_namespace = SvgIdentifierNamespace::new(&options.resource_id_prefix);
 
     let mut defs = SceneDefs::default();
@@ -524,9 +527,9 @@ pub fn resolve_paint_scene(
     let mut animations = Vec::new();
     if declarative_animation {
         if let Some(timeline_plan) = &options.timeline_plan {
-            collect_timeline_animations(timeline_plan, &identifier_namespace, &mut animations);
+            collect_timeline_animations(timeline_plan, &identifier_namespace, &mut animations)?;
         } else {
-            collect_animations(&ir.root, &identifier_namespace, &mut animations);
+            collect_animations(&ir.root, &identifier_namespace, &mut animations)?;
         }
     }
 
@@ -545,7 +548,6 @@ pub fn resolve_paint_scene(
                 &resolve_options,
                 AffineMatrix::identity(),
                 false,
-                &ir.root.node_id,
                 &mut items,
                 &mut canvas_stroke_state,
             )?;
@@ -604,7 +606,7 @@ fn collect_animations(
     node: &IrNode,
     identifier_namespace: &SvgIdentifierNamespace,
     animations: &mut Vec<AnimationStyle>,
-) {
+) -> Result<(), EngineError> {
     match &node.kind {
         IrNodeKind::Group {
             children,
@@ -612,6 +614,7 @@ fn collect_animations(
             ..
         } => {
             if let Some(spec) = animation {
+                crate::ir::numeric_envelope::validate_independent_css_skew(spec, &node.node_id)?;
                 let (class_name, keyframes_name) =
                     animation_names(&node.node_id, identifier_namespace);
                 animations.push(AnimationStyle {
@@ -622,7 +625,7 @@ fn collect_animations(
                 });
             }
             for child in children {
-                collect_animations(child, identifier_namespace, animations);
+                collect_animations(child, identifier_namespace, animations)?;
             }
         }
         IrNodeKind::Text {
@@ -659,6 +662,10 @@ fn collect_animations(
                 } else {
                     logical_order
                 };
+                crate::ir::numeric_envelope::validate_independent_css_skew(
+                    &unit_animation.animation,
+                    &node.node_id,
+                )?;
                 let mut spec = unit_animation.animation.clone();
                 spec.delay_ms = Some(
                     spec.delay_ms.unwrap_or(0.0)
@@ -676,14 +683,16 @@ fn collect_animations(
         }
         _ => {}
     }
+    Ok(())
 }
 
 fn collect_timeline_animations(
     plan: &DocumentAnimationPlan,
     identifier_namespace: &SvgIdentifierNamespace,
     animations: &mut Vec<AnimationStyle>,
-) {
+) -> Result<(), EngineError> {
     for track in &plan.tracks {
+        crate::ir::numeric_envelope::validate_timeline_css_skew(&track.keyframes, &track.owner_id)?;
         let (class_name, keyframes_name) =
             animation_names(&track.animation_name_owner, identifier_namespace);
         animations.push(AnimationStyle {
@@ -698,6 +707,7 @@ fn collect_timeline_animations(
             },
         });
     }
+    Ok(())
 }
 
 fn unit_animation_names(
@@ -777,17 +787,15 @@ fn collect_defs(
     match &node.kind {
         IrNodeKind::Group {
             children,
-            clip_path,
-            clip_border_radius,
+            clip,
             box_shadow,
             ..
         } => {
-            if let Some(clip_bbox) = clip_path {
+            if let Some(clip) = clip {
                 defs.clip_paths.push(ClipPathDef {
                     id: identifier_namespace
                         .identifier(SvgIdentifierRole::ClipPathId, &node.node_id),
-                    bbox: *clip_bbox,
-                    border_radius: *clip_border_radius,
+                    clip: clip.clone(),
                 });
             }
             if let Some(shadow) = box_shadow {
@@ -809,9 +817,17 @@ fn collect_defs(
         }
         IrNodeKind::Text {
             glyph_paths,
+            gradients,
             shadows,
             ..
         } => {
+            for (index, resource) in gradients.iter().flatten().enumerate() {
+                defs.gradients.push(GradientDef {
+                    id: text_gradient_id(&node.node_id, index, identifier_namespace),
+                    bbox: resource.bbox,
+                    gradient: resource.gradient.clone(),
+                });
+            }
             let glyph_paths = glyph_paths.as_deref().unwrap_or_default();
             let glyph_ranges = glyph_effect_range_specs(glyph_paths);
             if glyph_ranges.is_empty() {
@@ -1011,6 +1027,8 @@ fn transform_uses_unsupported_canvas_scale(transform: Option<&boundshape::Transf
         return false;
     };
     transform.scale_x.unwrap_or(1.0) != transform.scale_y.unwrap_or(1.0)
+        || transform.skew_x_deg.unwrap_or(0.0) != 0.0
+        || transform.skew_y_deg.unwrap_or(0.0) != 0.0
 }
 
 fn animation_uses_unsupported_canvas_scale(animation: Option<&AnimationSpec>) -> bool {
@@ -1018,6 +1036,8 @@ fn animation_uses_unsupported_canvas_scale(animation: Option<&AnimationSpec>) ->
         spec.keyframes.iter().any(|keyframe| {
             keyframe.transform.as_ref().is_some_and(|transform| {
                 transform.scale_x.unwrap_or(1.0) != transform.scale_y.unwrap_or(1.0)
+                    || transform.skew_x_deg.unwrap_or(0.0) != 0.0
+                    || transform.skew_y_deg.unwrap_or(0.0) != 0.0
             })
         })
     })
@@ -1059,41 +1079,21 @@ fn canvas_stroke_class_name(
     }
 }
 
-#[derive(Clone, Copy)]
-enum CanvasStrokeOwner {
-    BoxBorder,
-    Path,
-}
-
-fn canvas_stroke_transform_error(owner_node_id: &str, owner: CanvasStrokeOwner) -> EngineError {
-    let message = match owner {
-        CanvasStrokeOwner::BoxBorder => format!(
-            "Canvas-stable border for node \"{owner_node_id}\" requires similarity transforms without axis mirroring on every ancestor"
-        ),
-        CanvasStrokeOwner::Path => format!(
-            "Canvas-stable Path stroke for node \"{owner_node_id}\" requires similarity transforms without axis mirroring on every ancestor"
-        ),
-    };
+fn canvas_stroke_transform_error(owner_node_id: &str) -> EngineError {
     EngineError::Structured {
         code: "CANVAS_STROKE_UNSUPPORTED_TRANSFORM".to_string(),
-        message,
+        message: format!(
+            "Canvas-stable stroke for node \"{owner_node_id}\" requires similarity transforms without axis mirroring on every ancestor"
+        ),
         stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: Some(owner_node_id.to_string()),
     }
 }
 
-fn canvas_stroke_dash_error(owner_node_id: &str, owner: CanvasStrokeOwner) -> EngineError {
-    let message = match owner {
-        CanvasStrokeOwner::BoxBorder => {
-            "Canvas-stable box borders do not support strokeDasharray".to_string()
-        }
-        CanvasStrokeOwner::Path => {
-            "Canvas-stable Path strokes do not support strokeDasharray".to_string()
-        }
-    };
+fn canvas_stroke_dash_error(owner_node_id: &str) -> EngineError {
     EngineError::Structured {
         code: "CANVAS_STROKE_DASH_UNSUPPORTED".to_string(),
-        message,
+        message: "Canvas-stable strokes do not support strokeDasharray".to_string(),
         stage: Some(crate::diagnostics::PipelineStage::Emit),
         node_id: Some(owner_node_id.to_string()),
     }
@@ -1105,7 +1105,6 @@ struct ResolvedCanvasStroke {
 }
 
 struct CanvasStrokeRequest<'a> {
-    owner: CanvasStrokeOwner,
     stroke_scaling: Option<StrokeScaling>,
     stroke: Option<&'a str>,
     stroke_width: Option<f64>,
@@ -1131,26 +1130,15 @@ fn resolve_canvas_stroke(
         .stroke_dasharray
         .is_some_and(|dash| !dash.is_empty())
     {
-        return Err(canvas_stroke_dash_error(
-            request.owner_node_id,
-            request.owner,
-        ));
+        return Err(canvas_stroke_dash_error(request.owner_node_id));
     }
     if request.ancestor_has_unsupported_transform {
-        return Err(canvas_stroke_transform_error(
-            request.owner_node_id,
-            request.owner,
-        ));
+        return Err(canvas_stroke_transform_error(request.owner_node_id));
     }
     let Some(effective_scale) = canvas_stroke_effective_scale(request.ancestor_matrix) else {
-        return Err(canvas_stroke_transform_error(
-            request.owner_node_id,
-            request.owner,
-        ));
+        return Err(canvas_stroke_transform_error(request.owner_node_id));
     };
-    // SVG defaults an omitted stroke width to 1. Builder-produced box borders
-    // carry an explicit width, while paths may intentionally rely on the SVG
-    // default.
+    // Generated outlines carry explicit widths; drawing primitives may use the SVG default of 1.
     let authored_width = request.stroke_width.unwrap_or(1.0);
     let fallback_width = if effective_scale == 0.0 {
         0.0
@@ -1158,16 +1146,10 @@ fn resolve_canvas_stroke(
         authored_width / effective_scale
     };
     if !fallback_width.is_finite() {
-        let message = match request.owner {
-            CanvasStrokeOwner::BoxBorder => format!(
-                "Canvas-stable border width for node \"{}\" is not finite",
-                request.owner_node_id
-            ),
-            CanvasStrokeOwner::Path => format!(
-                "Canvas-stable Path stroke width for node \"{}\" is not finite",
-                request.owner_node_id
-            ),
-        };
+        let message = format!(
+            "Canvas-stable stroke width for node \"{}\" is not finite",
+            request.owner_node_id
+        );
         return Err(EngineError::Structured {
             code: "INVALID_NUMBER".to_string(),
             message,
@@ -1196,14 +1178,13 @@ fn resolve_node(
     options: &ResolveNodeOptions,
     ancestor_matrix: AffineMatrix,
     ancestor_has_unsupported_transform: bool,
-    parent_group_node_id: &str,
     items: &mut Vec<PaintItem>,
     canvas_stroke_state: &mut CanvasStrokeState,
 ) -> Result<(), EngineError> {
     match &node.kind {
         IrNodeKind::Group {
             children,
-            clip_path,
+            clip,
             opacity,
             box_shadow,
             meta,
@@ -1218,7 +1199,7 @@ fn resolve_node(
                 node_id: Some(node.node_id.clone()),
                 meta: meta.clone(),
                 transform: node_transform_attr(transform.as_ref(), node.bbox),
-                clip_ref: clip_path.is_some().then(|| {
+                clip_ref: clip.is_some().then(|| {
                     options
                         .identifier_namespace
                         .identifier(SvgIdentifierRole::ClipPathId, &node.node_id)
@@ -1237,7 +1218,7 @@ fn resolve_node(
             items.push(PaintItem::GroupOpen(open));
             if has_body {
                 let descendant_matrix =
-                    ancestor_matrix.multiply(node_transform_matrix(transform.as_ref(), node.bbox));
+                    ancestor_matrix.multiply(node_transform_matrix(transform.as_ref(), node.bbox)?);
                 let descendant_has_unsupported_transform = ancestor_has_unsupported_transform
                     || transform_uses_unsupported_canvas_scale(transform.as_ref())
                     || animation_uses_unsupported_canvas_scale(animation.as_ref());
@@ -1247,7 +1228,6 @@ fn resolve_node(
                         options,
                         descendant_matrix,
                         descendant_has_unsupported_transform,
-                        &node.node_id,
                         items,
                         canvas_stroke_state,
                     )?;
@@ -1256,20 +1236,15 @@ fn resolve_node(
             }
             Ok(())
         }
-        IrNodeKind::Rect {
-            stroke_scaling,
-            stroke_dasharray,
-            ..
-        } => {
+        IrNodeKind::Rect { stroke_scaling, .. } => {
             if let Some(mut rect_item) = resolve_rect_item(node, options.identifier_namespace) {
                 if let Some(resolved_stroke) = resolve_canvas_stroke(
                     &CanvasStrokeRequest {
-                        owner: CanvasStrokeOwner::BoxBorder,
                         stroke_scaling: *stroke_scaling,
                         stroke: rect_item.stroke.as_deref(),
                         stroke_width: rect_item.stroke_width,
-                        stroke_dasharray: stroke_dasharray.as_deref(),
-                        owner_node_id: parent_group_node_id,
+                        stroke_dasharray: rect_item.stroke_dasharray.as_deref(),
+                        owner_node_id: &node.node_id,
                         ancestor_matrix,
                         ancestor_has_unsupported_transform,
                     },
@@ -1341,12 +1316,14 @@ fn resolve_node(
                 };
                 if let Some(resolved_stroke) = resolve_canvas_stroke(
                     &CanvasStrokeRequest {
-                        owner: CanvasStrokeOwner::Path,
                         stroke_scaling: *stroke_scaling,
                         stroke: path_item.stroke.as_deref(),
                         stroke_width: path_item.stroke_width,
                         stroke_dasharray: stroke_dasharray.as_deref(),
-                        owner_node_id: &node.node_id,
+                        owner_node_id: node
+                            .node_id
+                            .strip_suffix(":outline")
+                            .unwrap_or(&node.node_id),
                         ancestor_matrix,
                         ancestor_has_unsupported_transform,
                     },
@@ -1387,7 +1364,10 @@ fn resolve_node(
 }
 
 fn is_internal_render_node_id(node_id: &str) -> bool {
-    node_id.ends_with(":bg") || node_id.ends_with(":border")
+    node_id.ends_with(":bg")
+        || node_id.ends_with(":border")
+        || node_id.ends_with(":outline")
+        || node_id.ends_with(":content")
 }
 
 fn resolve_rect_item(
@@ -1399,12 +1379,12 @@ fn resolve_rect_item(
         gradient,
         stroke,
         stroke_width,
-        stroke_scaling: _,
         border_radius,
         stroke_linecap,
         stroke_linejoin,
         stroke_dasharray,
         stroke_miterlimit,
+        ..
     } = &node.kind
     else {
         return None;
@@ -1481,6 +1461,13 @@ fn resolve_ir_text_stroke_layer_items(layers: &[TextStrokeLayer]) -> Vec<TextStr
         .collect()
 }
 
+fn text_gradient_id(node_id: &str, index: usize, namespace: &SvgIdentifierNamespace) -> String {
+    namespace.identifier(
+        SvgIdentifierRole::GradientId,
+        &format!("{node_id}:paint:{index}"),
+    )
+}
+
 fn text_glyph_items(
     node_id: &str,
     glyph_paths: &[TextOutlinePath],
@@ -1500,7 +1487,13 @@ fn text_glyph_items(
         .iter()
         .map(|glyph| TextGlyphItem {
             d: glyph.d.clone(),
-            fill: glyph.fill.clone(),
+            fill: match &glyph.fill {
+                TextPaint::Solid(color) => color.clone(),
+                TextPaint::Gradient { gradient_index } => format!(
+                    "url(#{})",
+                    text_gradient_id(node_id, *gradient_index as usize, identifier_namespace)
+                ),
+            },
             missing: glyph.missing_glyph.unwrap_or(false),
             unit_paint: glyph.unit_id.as_deref().and_then(|unit_id| {
                 let (unit_index, sample) = sample_by_unit_id.get(unit_id).copied()?;
@@ -1525,6 +1518,7 @@ fn resolve_text_item(
         lines,
         font_size_px,
         glyph_paths,
+        gradients,
         stroke,
         stroke_width,
         stroke_linecap,
@@ -1543,6 +1537,20 @@ fn resolve_text_item(
     };
 
     let glyph_paths = glyph_paths.as_deref().unwrap_or_default();
+    let paint_by_color: HashMap<&str, String> = gradients
+        .iter()
+        .flatten()
+        .enumerate()
+        .map(|(index, resource)| {
+            (
+                resource.color.as_str(),
+                format!(
+                    "url(#{})",
+                    text_gradient_id(&node.node_id, index, identifier_namespace)
+                ),
+            )
+        })
+        .collect();
     if text_layout_kind.as_deref() != Some("path")
         && glyph_paths.is_empty()
         && text_decorations
@@ -1693,7 +1701,10 @@ fn resolve_text_item(
                                 d: path.d.clone(),
                                 origin_x: path.origin_x,
                                 origin_y: path.origin_y,
-                                color: fragment.color.clone(),
+                                color: paint_by_color
+                                    .get(fragment.color.as_str())
+                                    .cloned()
+                                    .unwrap_or_else(|| fragment.color.clone()),
                             });
                         }
                     }
@@ -1707,7 +1718,10 @@ fn resolve_text_item(
                             d: path.d.clone(),
                             origin_x: path.origin_x,
                             origin_y: path.origin_y,
-                            color: fragment.color.clone(),
+                            color: paint_by_color
+                                .get(fragment.color.as_str())
+                                .cloned()
+                                .unwrap_or_else(|| fragment.color.clone()),
                         })
                         .collect()
                 }
@@ -1842,17 +1856,15 @@ fn resolve_debug_overlays(
     parts: DebugParts,
     items: &mut Vec<PaintItem>,
 ) {
-    let (transform, clip_path) = match &node.kind {
+    let (transform, clip) = match &node.kind {
         IrNodeKind::Group {
-            transform,
-            clip_path,
-            ..
-        } => (transform.as_ref(), clip_path.as_ref()),
+            transform, clip, ..
+        } => (transform.as_ref(), clip.as_ref()),
         _ => (None, None),
     };
 
     let transform_attr = node_transform_attr(transform, node.bbox);
-    let clip_ref = clip_path
+    let clip_ref = clip
         .is_some()
         .then(|| identifier_namespace.identifier(SvgIdentifierRole::ClipPathId, &node.node_id));
 

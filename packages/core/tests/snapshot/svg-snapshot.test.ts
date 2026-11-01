@@ -58,7 +58,8 @@ describe("SVG Snapshot Tests", () => {
     const normalized = normalizeSvg(svg);
 
     expect(normalized).toContain('fill="#ff0000"');
-    expect(normalized).toContain('stroke="#000000"');
+    expect(normalized).toContain('fill="#000000"');
+    expect(normalized).toContain('fill-rule="evenodd"');
     expect(normalized).toContain('rx="8"');
     expect(normalized).toMatchSnapshot();
   });

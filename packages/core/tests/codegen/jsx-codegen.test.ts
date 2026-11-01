@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import type { JsxFormatOptions } from "../../src/codegen/jsx-codegen.js";
 import {
@@ -62,6 +64,45 @@ describe("vnodeToJsxString", () => {
     const vnode = createElement("Box", { padding });
     const jsx = vnodeToJsxString(vnode);
     expect(jsx).toContain("padding={[10, 20, 10, 20]}");
+  });
+
+  it("round-trips string and object arrays through generated JSX", () => {
+    const vnode = createElement(
+      "Text",
+      {
+        font: "Inter",
+        fontSizePx: 24,
+        fallback: ["Noto Sans", 'A "quoted" \\ font'],
+        textStrokes: [{ color: "#101827", widthPx: 2 }],
+        textShadows: [{ dx: 2, dy: 3, blurPx: 2, color: "#00000099" }],
+        animate: {
+          durationMs: 200,
+          easing: [0.2, 0.1, 0.7, 0.9],
+          keyframes: [
+            { at: 0, transform: { skewXDeg: -6 } },
+            { at: 1, transform: { skewXDeg: 6 } },
+          ],
+        },
+      },
+      "Copyable",
+    );
+    const jsx = vnodeToJsxString(vnode);
+    expect(jsx).not.toContain("[object Object]");
+    const compiled = ts.transpileModule(`(${jsx})`, {
+      fileName: "scene.tsx",
+      reportDiagnostics: true,
+      compilerOptions: {
+        jsx: ts.JsxEmit.React,
+        jsxFactory: "capture",
+        target: ts.ScriptTarget.ES2022,
+      },
+    });
+    expect(compiled.diagnostics).toEqual([]);
+    const props: unknown = runInNewContext(compiled.outputText, {
+      Text: "Text",
+      capture: (_component: unknown, attributes: unknown) => attributes,
+    });
+    expect(props).toEqual(vnode.props);
   });
 
   it("truncates long data URLs", () => {

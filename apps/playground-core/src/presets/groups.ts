@@ -6,6 +6,7 @@ export type PresetGroupDef = {
 
 export const DEFAULT_PRESET_KEY = "fit";
 
+/** Visible preset navigation groups; entries reference the shared preset registry. */
 export const PRESET_GROUPS: PresetGroupDef[] = [
   {
     key: "basics",
@@ -48,7 +49,7 @@ export const PRESET_GROUPS: PresetGroupDef[] = [
   {
     key: "composition",
     label: "Composition",
-    presetKeys: ["transform", "z-index", "layered"],
+    presetKeys: ["design-expressions", "transform", "z-index", "layered"],
   },
   {
     key: "interaction",

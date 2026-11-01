@@ -17,8 +17,7 @@ fn group(node_id: &str, children: Vec<IrNode>) -> IrNode {
         },
         kind: IrNodeKind::Group {
             children,
-            clip_path: None,
-            clip_border_radius: None,
+            clip: None,
             opacity: None,
             box_shadow: None,
             meta: None,
@@ -268,9 +267,7 @@ fn near_identity_generated_affine_is_not_omitted() {
 #[test]
 fn canvas_stroke_signature_requires_an_actually_painted_stroke() {
     assert!(signature_has_painted_canvas_stroke(&json!({
-        "strokeScaling": "canvas",
-        "borderWidth": 2,
-        "borderColor": "#ffffff"
+        "outline": {"strokeScaling": "canvas", "strokeWidth": 2, "stroke": "#ffffff"}
     })));
     assert!(signature_has_painted_canvas_stroke(&json!({
         "strokeScaling": "canvas",
@@ -282,9 +279,7 @@ fn canvas_stroke_signature_requires_an_actually_painted_stroke() {
         "stroke": "#ffffff"
     })));
     assert!(!signature_has_painted_canvas_stroke(&json!({
-        "strokeScaling": "canvas",
-        "borderWidth": 0,
-        "borderColor": "#ffffff"
+        "outline": {"strokeScaling": "canvas", "strokeWidth": 0, "stroke": "#ffffff"}
     })));
     assert!(signature_has_painted_canvas_stroke(&json!({
         "strokeScaling": "canvas",
@@ -292,9 +287,7 @@ fn canvas_stroke_signature_requires_an_actually_painted_stroke() {
         "stroke": "#ffffff"
     })));
     assert!(!signature_has_painted_canvas_stroke(&json!({
-        "strokeScaling": "transform",
-        "borderWidth": 2,
-        "borderColor": "#ffffff"
+        "outline": {"strokeScaling": "transform", "strokeWidth": 2, "stroke": "#ffffff"}
     })));
 }
 
@@ -314,9 +307,7 @@ fn canvas_stroke_rejects_non_uniform_generated_wrapper_ancestor_before_emit() {
                     "nodeType": "box",
                     "authoredId": true,
                     "visual": {
-                        "strokeScaling": "canvas",
-                        "borderWidth": 2,
-                        "borderColor": "#ffffff"
+                        "outline": {"strokeScaling": "canvas", "strokeWidth": 2, "stroke": "#ffffff"}
                     },
                     "children": []
                 }]

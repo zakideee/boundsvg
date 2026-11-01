@@ -52,24 +52,20 @@ CSS Grid layout container.
 
 ### Visual
 
-| Prop               | Type                                         | Description                                                                                                                                     |
-| ------------------ | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `background`       | `string`                                     | Background color                                                                                                                                |
-| `boxShadow`        | `string`                                     | Box shadow (e.g. `"0 4 8 0 rgba(0,0,0,0.2)"`)                                                                                                   |
-| `borderWidth`      | `number`                                     | Border width                                                                                                                                    |
-| `borderColor`      | `string`                                     | Border color                                                                                                                                    |
-| `strokeScaling`    | `"transform" \| "canvas"`                    | Border width space. `"transform"` (default) scales with post-layout transforms; `"canvas"` keeps the width stable in canvas space               |
-| `borderRadius`     | `number \| [number, number, number, number]` | Border radius                                                                                                                                   |
-| `strokeLinecap`    | `"butt" \| "round" \| "square"`              | Border stroke line cap                                                                                                                          |
-| `strokeLinejoin`   | `"miter" \| "round" \| "bevel"`              | Border stroke line join                                                                                                                         |
-| `strokeDasharray`  | `string`                                     | Border stroke dash pattern (e.g. `"5,5"`)                                                                                                       |
-| `strokeMiterlimit` | `number`                                     | Border stroke miter limit                                                                                                                       |
-| `overflow`         | `"visible" \| "clip"`                        | Child paint: "clip" uses the layout box and resolved borderRadius; "visible" leaves children unclipped                                          |
-| `opacity`          | `number`                                     | Opacity (0–1)                                                                                                                                   |
-| `zIndex`           | `number`                                     | Sibling-local paint order (integer; higher paints later)                                                                                        |
-| `meta`             | `Record<string, string>`                     | Metadata emitted as `data-boundsvg-meta-*` attributes and into the layered manifest (max 16 keys, `[a-z][a-z0-9-]{0,31}` keys, 256-char values) |
-| `transform`        | `Transform2D`                                | Static post-layout paint transform                                                                                                              |
-| `animate`          | `AnimationSpec`                              | Declarative opacity/transform track; see [Animation](/guides/animation)                                                                         |
+| Prop           | Type                                         | Description                                                                                                                                     |
+| -------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `background`   | `string`                                     | Background color                                                                                                                                |
+| `boxShadow`    | `string`                                     | Box shadow (e.g. `"0 4 8 0 rgba(0,0,0,0.2)"`)                                                                                                   |
+| `borderWidth`  | `number \| [T, R, B, L]`                     | Layout-reserving border widths (px)                                                                                                             |
+| `outline`      | `BoxOutlineStyle`                            | Line decoration following the resolved outer contour; reserves no layout space                                                                  |
+| `borderColor`  | `string`                                     | Border color                                                                                                                                    |
+| `borderRadius` | `number \| [number, number, number, number]` | Border radius                                                                                                                                   |
+| `overflow`     | `"visible" \| "clip"`                        | Child paint: "clip" uses the layout box and resolved borderRadius; "visible" leaves children unclipped                                          |
+| `opacity`      | `number`                                     | Opacity (0–1)                                                                                                                                   |
+| `zIndex`       | `number`                                     | Sibling-local paint order (integer; higher paints later)                                                                                        |
+| `meta`         | `Record<string, string>`                     | Metadata emitted as `data-boundsvg-meta-*` attributes and into the layered manifest (max 16 keys, `[a-z][a-z0-9-]{0,31}` keys, 256-char values) |
+| `transform`    | `Transform2D`                                | Static post-layout paint transform                                                                                                              |
+| `animate`      | `AnimationSpec`                              | Declarative opacity/transform track; see [Animation](/guides/animation)                                                                         |
 
 With `overflow="clip"`, the clipping boundary also cuts the Grid's own border
 and shadow at its rounded corners.

@@ -40,6 +40,7 @@ import {
 import type {
   AnimationSpec,
   BorderRadius,
+  BoxOutlineStyle,
   PartPaintOverride,
   StrokeScaling,
   TextFlowExclusion,
@@ -88,8 +89,9 @@ type WasmNodeInput = {
 type WasmVisualInput = {
   // Box visuals
   background?: string;
-  borderWidth?: number;
+  borderWidth?: number | [number, number, number, number];
   borderColor?: string;
+  outline?: BoxOutlineStyle;
   /** Raw prop value: uniform number or [tl, tr, br, bl]. */
   borderRadius?: BorderRadius;
   overflow?: string;
@@ -810,14 +812,10 @@ function buildVisualInput(
       visual.background = props.background;
       visual.borderWidth = props.borderWidth;
       visual.borderColor = props.borderColor;
-      visual.strokeScaling = toWasmStrokeScaling(props.strokeScaling);
+      visual.outline = props.outline;
       visual.borderRadius = props.borderRadius;
       visual.overflow = props.overflow;
       visual.boxShadow = props.boxShadow;
-      visual.strokeLinecap = props.strokeLinecap;
-      visual.strokeLinejoin = props.strokeLinejoin;
-      visual.strokeDasharray = props.strokeDasharray;
-      visual.strokeMiterlimit = props.strokeMiterlimit;
       break;
     }
     case "Text": {

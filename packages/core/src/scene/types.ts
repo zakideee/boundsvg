@@ -2,6 +2,7 @@ import type { GeometryDoc, SymbolDefinition, Transform2D } from "../shape/types.
 import type { TextDecoration, TextShadowLayer, TextStrokeLayer } from "../text/types.js";
 import type {
   AnimationSpec,
+  BoxOutlineStyle,
   PartPaintOverride,
   StrokeScaling,
   TextFlowExclusion,
@@ -75,13 +76,9 @@ type VisualBoxProps = {
   background?: string;
   boxShadow?: string;
   borderRadius?: BorderRadius;
-  borderWidth?: number;
+  borderWidth?: Spacing;
   borderColor?: string;
-  strokeScaling?: StrokeScaling;
-  strokeLinecap?: "butt" | "round" | "square";
-  strokeLinejoin?: "miter" | "round" | "bevel";
-  strokeDasharray?: string;
-  strokeMiterlimit?: number;
+  outline?: BoxOutlineStyle;
   overflow?: "visible" | "clip";
   opacity?: number;
   zIndex?: number;

@@ -9,20 +9,19 @@ import { assertValidTransform2D } from "../transform.js";
 import type { VNode, VNodeFor, VNodeType } from "../vnode/types.js";
 import { layoutContractError, validateFiniteNumberProp } from "./layout-props.js";
 
-const STROKE_SCALING_SUPPORTED_TYPES: ReadonlySet<VNodeType> = new Set([
-  "Flex",
-  "Grid",
-  "Box",
-  "Path",
-]);
-
+/**
+ * Validate canvas-stable Path and container-outline stroke restrictions.
+ * @throws {FatalError} For unsupported owners, invalid scaling tokens, or painted dash patterns.
+ */
 export function validateStrokeScalingProp(node: VNode, nid: string): void {
-  const props = node.props as Record<string, unknown>;
+  const fields = node.props as Record<string, unknown>;
+  const isContainer = node.type === "Box" || node.type === "Flex" || node.type === "Grid";
+  const props = isContainer ? ((fields.outline ?? {}) as Record<string, unknown>) : fields;
   const strokeScaling = props.strokeScaling;
   if (strokeScaling === undefined) {
     return;
   }
-  if (!STROKE_SCALING_SUPPORTED_TYPES.has(node.type)) {
+  if (!isContainer && node.type !== "Path") {
     throw new FatalError(
       "VALIDATION",
       `Validation error: ${node.type} does not support prop "strokeScaling"`,
@@ -36,10 +35,8 @@ export function validateStrokeScalingProp(node: VNode, nid: string): void {
       { stage: "validate", nodeId: nid },
     );
   }
-  const normalizedPathStroke = node.type === "Path" ? String(props.stroke ?? "").trim() : null;
-  const hasPaintedStroke =
-    normalizedPathStroke === null ||
-    (normalizedPathStroke.length > 0 && normalizedPathStroke.toLowerCase() !== "none");
+  const normalizedStroke = String(props.stroke ?? "").trim();
+  const hasPaintedStroke = normalizedStroke.length > 0 && normalizedStroke.toLowerCase() !== "none";
   if (
     strokeScaling === "canvas" &&
     hasPaintedStroke &&
@@ -58,7 +55,6 @@ export function validateStrokeScalingProp(node: VNode, nid: string): void {
  *  the JSON transport (turning `NaN`/`Infinity` into null → "unspecified"). */
 const VISUAL_FINITE_NUMBER_PROPS = [
   "opacity",
-  "borderWidth",
   "strokeWidth",
   "strokeMiterlimit",
   "textStrokeWidth",

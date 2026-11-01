@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { acceptsHitClips } from "../../src/ir/hit-geometry.js";
 import {
   buildHitTestIndex,
   hitTest,
@@ -6,6 +7,7 @@ import {
   hitTestWithIndex,
 } from "../../src/ir/hit-test.js";
 import type { IR, IRNode } from "../../src/ir/types.js";
+import { circularClip } from "../helpers/box-clip.js";
 
 /**
  * Regressions: hitTest ignored transforms (a translated node hit at
@@ -125,11 +127,11 @@ describe("hitTest with clipping", () => {
                 type: "group",
                 nodeId: "clipper",
                 bbox: clip,
-                clipPath: clip,
                 children: [
                   { type: "rect", nodeId: "visible", bbox: clip },
                   { type: "rect", nodeId: "clipped", bbox: adjacent },
                 ],
+                clip: circularClip(clip, 0),
               },
             ],
           },
@@ -157,7 +159,6 @@ describe("hitTest with clipping", () => {
           type: "group",
           nodeId: "clipper",
           bbox: { x: 0, y: 0, w: 50, h: 30 },
-          clipPath: { x: 0, y: 0, w: 50, h: 30 },
           children: [
             {
               type: "path",
@@ -171,6 +172,7 @@ describe("hitTest with clipping", () => {
               bbox: { x: 0, y: 0, w: 120, h: 30 },
             },
           ],
+          clip: circularClip({ x: 0, y: 0, w: 50, h: 30 }, 0),
         },
       ],
     };
@@ -191,7 +193,6 @@ describe("hitTest with clipping", () => {
           type: "group",
           nodeId: "clipper",
           bbox: { x: 0, y: 0, w: 50, h: 30 },
-          clipPath: { x: 0, y: 0, w: 50, h: 30 },
           transform: { translateX: 100 },
           children: [
             {
@@ -206,6 +207,7 @@ describe("hitTest with clipping", () => {
               bbox: { x: 0, y: 0, w: 120, h: 30 },
             },
           ],
+          clip: circularClip({ x: 0, y: 0, w: 50, h: 30 }, 0),
         },
       ],
     };
@@ -232,7 +234,6 @@ describe("hitTest with clipping", () => {
           type: "group",
           nodeId: "indexed-clipper",
           bbox: { x: 0, y: 0, w: 50, h: 30 },
-          clipPath: { x: 0, y: 0, w: 50, h: 30 },
           transform: { translateX: 100 },
           children: [
             {
@@ -247,6 +248,7 @@ describe("hitTest with clipping", () => {
               bbox: { x: 0, y: 0, w: 120, h: 30 },
             },
           ],
+          clip: circularClip({ x: 0, y: 0, w: 50, h: 30 }, 0),
         },
       ],
     };
@@ -257,5 +259,56 @@ describe("hitTest with clipping", () => {
     expect(hitTest(tree, 125, 15)).toBe("indexed-path");
     expect(hitTest(tree, 25, 15)).toBeNull();
     expect(hitTest(tree, 180, 15)).toBeNull();
+  });
+});
+
+describe("resolved clip corner admission", () => {
+  it.each([
+    { w: 0, h: 100 },
+    { w: 100, h: 0 },
+  ])("treats a zero-area contour %j as empty", ({ w, h }) => {
+    expect(
+      acceptsHitClips(
+        {
+          parent: null,
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          geometry: {
+            kind: "boxContour",
+            bbox: { x: 0, y: 0, w, h },
+            corners: [
+              { rx: 0, ry: 0 },
+              { rx: 0, ry: 0 },
+              { rx: 0, ry: 0 },
+              { rx: 0, ry: 0 },
+            ],
+          },
+        },
+        { x: 0, y: 0 },
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    -1, 50.00000000000001, 80,
+  ])("rejects unresolved radius %s through hit geometry", (radius) => {
+    expect(() =>
+      acceptsHitClips(
+        {
+          parent: null,
+          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          geometry: {
+            kind: "boxContour",
+            bbox: { x: 0, y: 0, w: 100, h: 100 },
+            corners: [
+              { rx: radius, ry: radius },
+              { rx: radius, ry: radius },
+              { rx: radius, ry: radius },
+              { rx: radius, ry: radius },
+            ],
+          },
+        },
+        { x: 50, y: 50 },
+      ),
+    ).toThrow(/resolved box clip/);
   });
 });

@@ -560,7 +560,7 @@ pub struct VisualInput {
         default,
         deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
     )]
-    pub border_width: Option<f64>,
+    pub border_width: Option<super::box_style::BorderWidths>,
     #[serde(
         default,
         deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
@@ -571,6 +571,12 @@ pub struct VisualInput {
         deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
     )]
     pub border_radius: Option<BorderRadiusInputValue>,
+    /// Outer-contour line; independent of layout border widths.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
+    pub outline: Option<super::box_style::BoxOutlineStyle>,
     #[serde(
         default,
         deserialize_with = "crate::wire::presence::deserialize_optional_non_null"

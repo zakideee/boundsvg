@@ -13,17 +13,19 @@ import { CONFORMANCE_SCENES } from "../conformance/scenes/index.js";
 import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 
 /**
- * Literal-byte oracle for version-pinned render output. The fixture was
- * captured from REFERENCE_COMMIT; normal test runs compare all SVG, IR,
- * raster, diagnostic, and export bytes without outline exceptions.
+ * Literal-byte oracle seeded from REFERENCE_COMMIT and updated for the
+ * resolved paint and box-surface contract. Normal runs compare complete SVG,
+ * IR, raster, diagnostic, and export bytes.
  *
- * When deliberately selecting a new clean reference commit:
+ * After reviewing an intentional output-contract change:
  *   REFACTOR_PARITY_UPDATE=1 pnpm --filter @boundsvg/core exec vitest run \
  *     tests/regression/refactor-output-parity.test.ts
  */
 const REFERENCE_COMMIT = "d2245a816d1b372c8b2ca374db182bc06f39d8d2";
 /** Version of the preserved literal-byte parity fixture manifest. */
-const REFERENCE_FORMAT_VERSION = 1;
+const REFERENCE_FORMAT_VERSION = 2;
+/** Output contract applied to the original reference corpus. */
+const REFERENCE_CONTRACT = "resolved-paint-box-surfaces";
 /** Root of preserved byte fixtures used to compare output behavior. */
 const referenceRoot = path.resolve(__dirname, "fixtures/refactor-output-parity-base");
 /** Manifest that identifies the preserved output fixtures. */
@@ -35,6 +37,7 @@ const utf8Encoder = new TextEncoder();
 type ReferenceManifest = {
   formatVersion: number;
   referenceCommit: string;
+  contract: string;
   artifacts: string[];
 };
 
@@ -92,6 +95,7 @@ async function writeReference(corpus: CapturedCorpus): Promise<void> {
   const manifest: ReferenceManifest = {
     formatVersion: REFERENCE_FORMAT_VERSION,
     referenceCommit: REFERENCE_COMMIT,
+    contract: REFERENCE_CONTRACT,
     artifacts: artifactNames,
   };
   writeFileSync(referenceManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -304,6 +308,7 @@ describe("refactor output parity", () => {
     expect(manifest).toMatchObject({
       formatVersion: REFERENCE_FORMAT_VERSION,
       referenceCommit: REFERENCE_COMMIT,
+      contract: REFERENCE_CONTRACT,
     });
     expect(manifest.artifacts).toEqual([...corpus.artifacts.keys()].sort());
     expect(listReferenceArtifacts(referenceRoot)).toEqual(manifest.artifacts);

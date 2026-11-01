@@ -84,13 +84,12 @@ structured failure codes, and output differences across versions.
 - `boxShadow` accepts a single shadow with unitless px numbers
   (`"0 4 8 rgba(0,0,0,0.3)"`) — no `inset`, no comma-separated multiple
   shadows, no `px` suffixes.
-- Borders are uniform (single `borderWidth`/`borderColor`); no per-side
-  borders.
+- Border widths accept a number or four edges; line decoration uses `outline`.
 - Canvas-stable stroke scaling is limited to solid `Flex`, `Grid`, and `Box`
   borders and solid `Path` strokes. It does not apply to `Shape`, `Symbol`, text
   outlines, `Inline`, `InlineBox`, embedded SVG, or arbitrary SVG attributes.
 - A `strokeScaling: "canvas"` stroke supports ancestor translation, rotation,
-  and uniform scale only. A non-uniform scale or axis reflection fails with
+  and uniform scale only. A non-uniform scale, skew, or axis reflection fails with
   `CANVAS_STROKE_UNSUPPORTED_TRANSFORM`; combining it with
   `strokeDasharray` fails with `CANVAS_STROKE_DASH_UNSUPPORTED`. The renderer
   does not silently approximate either case.
@@ -98,14 +97,13 @@ structured failure codes, and output differences across versions.
   every keyframe in an ancestor `animate` track, even when the sampled
   `timeMs` pose is uniform. Non-uniform scales that cancel only after ancestor
   composition are still rejected.
-- In a browser, the non-scaling width is pinned to the authored `borderWidth`
-  or `strokeWidth` multiplied by the format-specific render option `scale` in CSS pixels. SVG and raster widths agree
+- In a browser, the non-scaling width is pinned to the authored `strokeWidth` multiplied by the format-specific render option `scale` in CSS pixels. SVG and raster widths agree
   at the emitted SVG's intrinsic `width` and `height`; resizing that SVG with
   CSS does not scale its canvas-stable strokes.
 - Canvas-stable width reduces scale-driven stroke pulsing, but a translated
   subpixel edge can still redistribute antialiasing coverage between adjacent
   pixels.
-- Gradients: `linear` and `radial` only, and only on `background` — no
+- Gradients: `linear` and `radial` only, and on box `background` and Text/Inline `color` — no
   `conic`.
 - Layout is flexbox + CSS Grid via Taffy. There is no block/inline flow
   layout; `Box` is a flex column internally.

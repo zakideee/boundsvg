@@ -456,6 +456,8 @@ fn randomized_nested_transforms_match_whole_and_part_evaluation() {
                     rotate_deg: Some(next() * 180.0),
                     origin_x: Some(next() * 100.0),
                     origin_y: Some(next() * 100.0),
+                    skew_x_deg: None,
+                    skew_y_deg: None,
                 },
                 child: Box::new(root),
             };

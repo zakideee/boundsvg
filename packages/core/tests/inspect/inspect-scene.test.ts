@@ -123,8 +123,7 @@ describe("inspectScene", () => {
           id: "bordered",
           width: 40,
           height: 20,
-          border: { width: 2, color: "#111827" },
-          strokeScaling,
+          outline: { strokeWidth: 2, stroke: "#111827", strokeScaling },
           transform: { scaleX: 1.6, scaleY: 1.6 },
         }),
         Path({

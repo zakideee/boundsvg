@@ -16,6 +16,7 @@ import {
   decodeTextFlowWithExclusionsResult,
 } from "../../src/wasm/protocol-decoders.js";
 import type { RenderToIrEnvelope, WasmEngineInstance } from "../../src/wasm/types.js";
+import { circularClip } from "../helpers/box-clip.js";
 
 const bbox = { x: 0, y: 0, w: 100, h: 40 };
 
@@ -42,8 +43,6 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
         },
         meta: { role: "fixture" },
         boxShadow: { dx: 1, dy: 2, blur: 3, spread: 4, color: "#0008" },
-        clipPath: bbox,
-        clipBorderRadius: { tl: 1, tr: 2, br: 3, bl: 4 },
         on: { onClick: "click", onPointerCancel: "cancel" },
         children: [
           {
@@ -66,7 +65,6 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
               ],
             },
             borderRadius: 4,
-            strokeScaling: "canvas",
           },
           {
             type: "text",
@@ -326,6 +324,7 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
             on: { onPointerUp: "up" },
           },
         ],
+        clip: circularClip(bbox, { tl: 1, tr: 2, br: 3, bl: 4 }),
       },
       drawOrder: ["rect", "text", "image", "path", "svg", "shape", "root"],
       width: 100,

@@ -1,5 +1,6 @@
 //! Layout request integration and result projection.
 
+pub(crate) mod box_style;
 mod compute;
 mod measure;
 mod taffy;

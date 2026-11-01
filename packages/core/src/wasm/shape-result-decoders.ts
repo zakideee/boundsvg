@@ -210,6 +210,8 @@ function validateTransform(
     "scaleX",
     "scaleY",
     "rotateDeg",
+    "skewXDeg",
+    "skewYDeg",
     "originX",
     "originY",
   ] as const) {

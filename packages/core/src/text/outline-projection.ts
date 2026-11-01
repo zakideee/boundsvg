@@ -31,6 +31,7 @@ function projectTextNode(node: IRTextNode, worldMatrix: AffineMatrix): TextOutli
     bbox: node.bbox,
     writingMode: node.writingMode,
     paths: node.glyphPaths ?? [],
+    ...(node.gradients ? { gradients: node.gradients } : {}),
     ...(worldTransform ? { worldTransform } : {}),
   };
 }

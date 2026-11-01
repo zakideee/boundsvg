@@ -202,6 +202,7 @@ fn finish_shape_diagnostic(
     }
 }
 
+/// Project a kernel failure into a closed diagnostic without retaining arbitrary source text.
 pub(crate) fn classify_shape_error(
     error: &ShapeError,
     operation: ShapeOperation,
@@ -295,6 +296,11 @@ pub(crate) fn classify_shape_error(
         ShapeError::RegionClipNonMonotonic => (
             "SHAPE_REGION_CLIP_NON_MONOTONIC",
             "Shape region clipping requires axis-monotonic contour segments.",
+            PipelineStage::Validate,
+        ),
+        ShapeError::InvalidTransform => (
+            "VALIDATION",
+            "Shape transform or geometry is outside the supported skew domain.",
             PipelineStage::Validate,
         ),
         ShapeError::NonFiniteOutput => {
@@ -446,6 +452,8 @@ fn validate_geometry(geometry: &GeometryDoc) -> Result<(), ShapeError> {
                         transform.scale_x,
                         transform.scale_y,
                         transform.rotate_deg,
+                        transform.skew_x_deg,
+                        transform.skew_y_deg,
                         transform.origin_x,
                         transform.origin_y,
                     ]

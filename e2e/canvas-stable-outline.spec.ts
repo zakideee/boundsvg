@@ -1,4 +1,5 @@
 import { createElement, createEngineAsync } from "@boundsvg/core";
+import { createWasmEngineInstance } from "@boundsvg/core/wasm";
 import { expect, type Page, test } from "@playwright/test";
 
 function scene(scale: number, animated = false) {
@@ -31,9 +32,7 @@ function scene(scale: number, animated = false) {
         top: 8,
         width: 40,
         height: 20,
-        borderWidth: 1,
-        borderColor: "#ffffff",
-        strokeScaling: "canvas",
+        outline: { stroke: "#ffffff", strokeWidth: 1, strokeScaling: "canvas" },
       }),
     ),
   );
@@ -237,6 +236,64 @@ test("canvas-stable Path stroke stays 1px under static and animated camera trans
     ).toBeLessThanOrEqual(8);
     expect(shrunkEdgeCoverage.coverageWidth).toBe(unitEdgeCoverage.coverageWidth);
   } finally {
+    engine.dispose();
+  }
+});
+
+test("generic IR Rect and Path canvas strokes share browser non-scaling paint", async ({
+  page,
+}) => {
+  const engine = await createEngineAsync({});
+  const handle = createWasmEngineInstance();
+  try {
+    const camera = {
+      width: 96,
+      height: 64,
+      root: {
+        type: "group",
+        nodeId: "camera",
+        bbox: { x: 0, y: 0, w: 96, h: 64 },
+        transform: { scaleX: 1.6, scaleY: 1.6, originX: 0, originY: 0 },
+        children: [
+          {
+            type: "rect",
+            nodeId: "rectangle",
+            bbox: { x: 8, y: 8, w: 40, h: 20 },
+            stroke: "#fff",
+            strokeWidth: 1,
+            strokeScaling: "canvas",
+          },
+          {
+            type: "path",
+            nodeId: "path",
+            bbox: { x: 8, y: 8, w: 40, h: 20 },
+            pathData: "M0 0H40V20H0Z",
+            stroke: "#fff",
+            strokeWidth: 1,
+            strokeScaling: "canvas",
+          },
+        ],
+      },
+    };
+    const ir = {
+      ...camera,
+      root: {
+        type: "group",
+        nodeId: "root",
+        bbox: { x: 0, y: 0, w: 96, h: 64 },
+        children: [camera.root],
+      },
+    };
+    const svg = handle.emitSvgFromIr(JSON.stringify(ir), "{}");
+    expect(svg.match(/stroke-width="0.625"/g)).toHaveLength(2);
+    for (const selector of [".bsvg-vstroke-rectangle", ".bsvg-vstroke-path"]) {
+      expect(await readStrokeStyle(page, svg, selector)).toEqual({
+        strokeWidth: "1px",
+        vectorEffect: "non-scaling-stroke",
+      });
+    }
+  } finally {
+    handle.dispose();
     engine.dispose();
   }
 });

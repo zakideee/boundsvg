@@ -193,7 +193,7 @@ fn animation_transform2_d_keeps_directional_presence_and_round_trip() {
     );
     let mut unknown = fixture;
     unknown["unknownOption"] = json!(true);
-    assert!(serde_json::from_value::<AnimationTransform2DInput>(unknown).is_ok());
+    assert!(serde_json::from_value::<AnimationTransform2DInput>(unknown).is_err());
 }
 
 #[test]

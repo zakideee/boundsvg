@@ -13,6 +13,7 @@ export type {
   AnimationTransform2D,
   AnyVNode,
   BooleanOp,
+  BoxOutlineStyle,
   BoxProps,
   BoxVNode,
   CanvasProps,

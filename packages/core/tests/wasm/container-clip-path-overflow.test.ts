@@ -179,8 +179,18 @@ describe("container clip and Path paint through WASM", () => {
             : borderRadius,
         });
         const card = engine.renderToIR(scene).root.children?.[1];
-        expect(card?.clipPath).toEqual({ x: 10, y: 10, w: 100, h: 100 });
-        expect(card?.clipBorderRadius).toEqual(card?.children?.[0]?.borderRadius);
+        expect(card?.clip?.kind).toBe("boxContour");
+        if (card?.clip?.kind !== "boxContour") {
+          throw new TypeError("A resolved box contour is required");
+        }
+        expect(card.clip.bbox).toEqual({ x: 10, y: 10, w: 100, h: 100 });
+        const radii =
+          typeof borderRadius === "number"
+            ? [borderRadius, borderRadius, borderRadius, borderRadius]
+            : (borderRadius ?? [0, 0, 0, 0]);
+        expect(card.clip.corners).toEqual(
+          radii.map((radius) => ({ rx: Math.min(50, radius), ry: Math.min(50, radius) })),
+        );
         expect(pixelAt(engine.renderToPng(scene), 12, 12)).toEqual(
           borderRadius === undefined || borderRadius === 0
             ? [255, 0, 0, 255]
@@ -195,8 +205,7 @@ describe("container clip and Path paint through WASM", () => {
     it(`${container} keeps children visible when overflow is visible`, () => {
       const scene = roundedScene({ container, borderRadius: 50, overflow: "visible" });
       const card = engine.renderToIR(scene).root.children?.[1];
-      expect(card?.clipPath).toBeUndefined();
-      expect(card?.clipBorderRadius).toBeUndefined();
+      expect(card?.clip).toBeUndefined();
       expect(pixelAt(engine.renderToPng(scene), 12, 12)).toEqual([255, 0, 0, 255]);
     });
   }

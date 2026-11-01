@@ -477,3 +477,50 @@ test("keeps node and text-unit tracks on the same document clock", async ({ page
     expectNear(animated.opacity, fixture.expected, OPACITY_TOLERANCE);
   }
 });
+
+test("keeps both skew function channels aligned with native samples", async ({ page }) => {
+  const scene = createElement(
+    "Canvas",
+    { width: 120, height: 80 },
+    createElement("Box", {
+      id: "skew-card",
+      width: 80,
+      height: 40,
+      background: "#2563eb",
+      borderWidth: [4, 2, 6, 2],
+      borderColor: "#fff",
+      outline: { stroke: "#f97316" },
+      animate: {
+        durationMs: DOCUMENT_DURATION_MS,
+        easing: "linear",
+        fill: "both",
+        keyframes: [
+          { at: 0, transform: { skewXDeg: 0, skewYDeg: -6, scaleX: 1, scaleY: 1 } },
+          { at: 1, transform: { skewXDeg: 18, skewYDeg: 0, scaleX: 1.2, scaleY: 0.9 } },
+        ],
+      },
+    }),
+  );
+  for (const timeMs of [0, 50, 100, 200]) {
+    const staticSvg = engine.renderToSvg(scene, { timeMs });
+    const sampled = await readUnpausedVisualState(
+      page,
+      staticSvg,
+      '[data-boundsvg-node-id="skew-card"]',
+    );
+    for (const options of [
+      { playback: { mode: "independent" }, timeMs } as const,
+      timelineOptions(timeMs, 1),
+    ]) {
+      const svg = engine.renderToAnimatedSvg(scene, options);
+      const animated = await readVisualState(page, svg, '[data-boundsvg-node-id="skew-card"]');
+      for (let index = 0; index < 6; index += 1) {
+        expectNear(
+          animated.matrix[index] ?? Number.NaN,
+          sampled.matrix[index] ?? Number.NaN,
+          MATRIX_TOLERANCE,
+        );
+      }
+    }
+  }
+});

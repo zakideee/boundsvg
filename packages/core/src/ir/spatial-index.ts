@@ -1,3 +1,5 @@
+import { isGeneratedBoxNodeId } from "./node-id.js";
+
 /**
  * Quadtree spatial index for O(log N) point queries on bounding boxes.
  *
@@ -161,7 +163,7 @@ function wrapSpatialIndex(root: QuadNode): SpatialIndex {
 
       let best: Entry | null = null;
       for (const entry of results) {
-        if (entry.nodeId.endsWith(":bg") || entry.nodeId.endsWith(":border")) {
+        if (isGeneratedBoxNodeId(entry.nodeId)) {
           continue;
         }
         if (best === null || entry.drawIndex > best.drawIndex) {
@@ -181,7 +183,7 @@ function wrapSpatialIndex(root: QuadNode): SpatialIndex {
       }
 
       return results
-        .filter((entry) => !entry.nodeId.endsWith(":bg") && !entry.nodeId.endsWith(":border"))
+        .filter((entry) => !isGeneratedBoxNodeId(entry.nodeId))
         .sort((a, b) => b.drawIndex - a.drawIndex)
         .map((entry) => entry.nodeId);
     },

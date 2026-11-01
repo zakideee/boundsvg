@@ -74,10 +74,25 @@ pub struct GradientStop {
     pub offset: f64,
 }
 
+/// Resolved linear-gradient endpoints in local gradient-box coordinates.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinearGradientGeometry {
+    /// Horizontal start coordinate in px.
+    pub start_x: f64,
+    /// Vertical start coordinate in px.
+    pub start_y: f64,
+    /// Horizontal end coordinate in px.
+    pub end_x: f64,
+    /// Vertical end coordinate in px.
+    pub end_y: f64,
+}
+
 /// Resolved radial-gradient geometry in local gradient-box coordinates.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RadialGradientGeometry {
     pub center_x: f64,
     pub center_y: f64,
@@ -85,22 +100,19 @@ pub struct RadialGradientGeometry {
     pub radius_y: f64,
 }
 
-/// Parsed CSS gradient.
-/// Serializes as the TS gradient union (`{ type: "linear" | "radial", ... }`).
+/// Resolved gradient paint; geometry is the only drawing authority.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Gradient {
+    /// Linear paint with resolved endpoints relative to its gradient box.
     Linear {
-        /// Angle in degrees (CSS convention: 0 = to top, 90 = to right).
-        angle: f64,
+        geometry: LinearGradientGeometry,
         stops: Vec<GradientStop>,
     },
+    /// Radial paint with resolved center and ellipse radii relative to its gradient box.
     Radial {
-        /// Present for gradients produced by the layout pipeline. Optional so
-        /// previously-authored IR keeps the CSS default geometry at emission.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        geometry: Option<RadialGradientGeometry>,
+        geometry: RadialGradientGeometry,
         stops: Vec<GradientStop>,
     },
 }
@@ -132,6 +144,41 @@ pub enum StrokeLinecap {
     Butt,
     Round,
     Square,
+}
+
+/// Physical radii of one resolved elliptical box corner.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CornerRadius {
+    /// Resolved horizontal radius in px, from zero through half the contour width.
+    #[cfg_attr(feature = "ir-schema", schemars(range(min = 0.0)))]
+    pub rx: f64,
+    /// Resolved vertical radius in px, from zero through half the contour height.
+    #[cfg_attr(feature = "ir-schema", schemars(range(min = 0.0)))]
+    pub ry: f64,
+}
+
+/// Resolved rectangle and clockwise corners, beginning at the top left.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BoxContour {
+    /// Rectangle in the owning group's coordinate system.
+    pub bbox: BBox,
+    /// Top-left, top-right, bottom-right, and bottom-left radii.
+    pub corners: [CornerRadius; 4],
+}
+
+/// Explicit box clipping geometry; omission on a group means unclipped.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum BoxClip {
+    /// Pass no paint or hit candidates.
+    Empty,
+    /// Clip to a resolved box contour.
+    BoxContour(BoxContour),
 }
 
 /// Stroke line join.
@@ -257,13 +304,40 @@ impl HandlersRef {
 // Glyph outline path (textPathMode: "glyphs")
 // ---------------------------------------------------------------------------
 
+/// Mutually exclusive solid color or index into the owning Text's gradient table.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, rename_all = "camelCase", deny_unknown_fields)]
+pub enum TextPaint {
+    /// Solid color string.
+    Solid(String),
+    /// A resolved gradient resource belonging to the parent Text.
+    Gradient {
+        #[serde(rename = "gradientIndex")]
+        gradient_index: u32,
+    },
+}
+
+/// One parsed text gradient in the parent Text's physical block coordinates.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextGradient {
+    /// Authored color identifying this resource within the Text.
+    pub color: String,
+    /// Shared final Text block, before node or unit animation transforms.
+    pub bbox: BBox,
+    /// Parsed gradient geometry and stops.
+    pub gradient: Gradient,
+}
+
 /// A text run resolved to glyph outline paths.
 /// Mirrors TS `TextOutlinePath` (`packages/core/src/text/types.ts`).
 #[derive(Debug, Clone)]
 pub struct TextOutlinePath {
     pub node_id: String,
     pub d: String,
-    pub fill: String,
+    pub fill: TextPaint,
     pub glyph_ids: Vec<u32>,
     pub text: String,
     pub bbox: BBox,
@@ -341,6 +415,10 @@ pub struct AnimationTransform2D {
     pub scale_x: Option<f64>,
     pub scale_y: Option<f64>,
     pub rotate_deg: Option<f64>,
+    /// Horizontal shear angle in degrees.
+    pub skew_x_deg: Option<f64>,
+    /// Vertical shear angle in degrees.
+    pub skew_y_deg: Option<f64>,
 }
 
 #[cfg(feature = "ir-schema")]
@@ -570,8 +648,7 @@ pub enum IrNodeKind {
     /// Container group (may clip children).
     Group {
         children: Vec<IrNode>,
-        clip_path: Option<BBox>,
-        clip_border_radius: Option<BorderRadius>,
+        clip: Option<BoxClip>,
         opacity: Option<f64>,
         box_shadow: Option<BoxShadow>,
         meta: Option<std::collections::BTreeMap<String, String>>,
@@ -585,6 +662,7 @@ pub enum IrNodeKind {
         gradient: Option<Gradient>,
         stroke: Option<String>,
         stroke_width: Option<f64>,
+        /// Width scaling for this paint primitive, independent of layout.
         stroke_scaling: Option<StrokeScaling>,
         border_radius: Option<BorderRadius>,
         stroke_linecap: Option<StrokeLinecap>,
@@ -615,6 +693,8 @@ pub enum IrNodeKind {
         display_text: Option<String>,
         text_path: Option<Box<TextPathMetadata>>,
         glyph_paths: Option<Vec<TextOutlinePath>>,
+        /// Distinct gradient resources sharing the parent Text coordinate frame.
+        gradients: Option<Vec<TextGradient>>,
         /// Stable paint-unit metadata generated by boundtext for opt-in text.
         unit_map: Option<crate::text::unit_map::TextUnitMap>,
         /// Raw unit animation semantic retained across frame sampling.
@@ -1271,10 +1351,11 @@ mod tests {
                 source_text: None,
                 display_text: None,
                 text_path: None,
+                gradients: None,
                 glyph_paths: Some(vec![TextOutlinePath {
                     node_id: "t1".to_string(),
                     d: "M0,0L1,1".to_string(),
-                    fill: "#111111".to_string(),
+                    fill: TextPaint::Solid("#111111".to_string()),
                     strokes: None,
                     shadows: None,
                     paint_range_index: None,
@@ -1342,8 +1423,10 @@ mod tests {
                     },
                     text_node,
                 ],
-                clip_path: Some(BBox::new(0.0, 0.0, 100.0, 50.0)),
-                clip_border_radius: None,
+                clip: Some(BoxClip::BoxContour(crate::ir::box_geometry::outer_contour(
+                    BBox::new(0.0, 0.0, 100.0, 50.0),
+                    None,
+                ))),
                 opacity: None,
                 box_shadow: None,
                 meta: None,

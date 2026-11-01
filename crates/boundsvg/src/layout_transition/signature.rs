@@ -22,13 +22,8 @@ pub(super) const LAYOUT_NODE_TRANSPORT_KEYS: &[&str] = &[
 ];
 
 /// Reviewed visual keys used by canvas-stable stroke preflight.
-pub(super) const CANVAS_STROKE_SIGNATURE_KEYS: &[&str] = &[
-    "strokeScaling",
-    "borderWidth",
-    "borderColor",
-    "strokeWidth",
-    "stroke",
-];
+pub(super) const CANVAS_STROKE_SIGNATURE_KEYS: &[&str] =
+    &["strokeScaling", "outline", "strokeWidth", "stroke"];
 
 pub(super) struct SemanticSourceSignatures {
     pub(super) content: Value,
@@ -128,49 +123,36 @@ fn transform_value_is_non_identity(value: &Value) -> bool {
             return false;
         };
         match key.as_str() {
-            "translateX" | "translateY" | "rotateDeg" => number != 0.0,
+            "translateX" | "translateY" | "rotateDeg" | "skewXDeg" | "skewYDeg" => number != 0.0,
             "scaleX" | "scaleY" => number != 1.0,
             _ => false,
         }
     })
 }
 
+/// Detect Path or owner-outline paint that requires similarity-only transition wrappers.
 pub(super) fn signature_has_painted_canvas_stroke(signature: &Value) -> bool {
-    let Some(paint) = signature.as_object() else {
+    let [scaling_key, outline_key, _width_key, stroke_key] = CANVAS_STROKE_SIGNATURE_KEYS else {
         return false;
     };
-    let [
-        stroke_scaling,
-        border_width,
-        border_color,
-        _stroke_width,
-        stroke,
-    ] = CANVAS_STROKE_SIGNATURE_KEYS
-    else {
-        return false;
+    let painted_line = |paint: &Value| {
+        paint.get(*scaling_key).and_then(Value::as_str) == Some("canvas")
+            && paint
+                .get(*stroke_key)
+                .and_then(Value::as_str)
+                .is_some_and(|color| {
+                    !color.trim().is_empty() && !color.trim().eq_ignore_ascii_case("none")
+                })
     };
-    if paint.get(*stroke_scaling).and_then(Value::as_str) != Some("canvas") {
-        return false;
-    }
-    let border_is_painted = paint
-        .get(*border_width)
-        .and_then(Value::as_f64)
-        .is_some_and(|width| width > 0.0)
-        && paint
-            .get(*border_color)
-            .and_then(Value::as_str)
-            .is_some_and(|color| color != "none");
-    // Keep this in lockstep with scene::resolve_canvas_stroke: Path paint is
-    // selected by its stroke color, while every finite authored width
-    // (including zero) still enters canvas-stroke transform validation.
-    let path_is_painted = paint
-        .get(*stroke)
-        .and_then(Value::as_str)
-        .is_some_and(|color| {
-            let normalized_color = color.trim();
-            !normalized_color.is_empty() && !normalized_color.eq_ignore_ascii_case("none")
-        });
-    border_is_painted || path_is_painted
+    painted_line(signature)
+        || signature.get(*outline_key).is_some_and(|outline| {
+            outline
+                .get("strokeWidth")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                > 0.0
+                && painted_line(outline)
+        })
 }
 
 pub(super) fn text_flow_signature(

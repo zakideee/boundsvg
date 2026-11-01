@@ -82,6 +82,8 @@ export { inspectScene } from "./inspect.js";
 export { validateSerializedIR } from "./ir/output-validator.js";
 // IR (type-only — query functions are in @boundsvg/core/scene)
 export type {
+  BoxClip,
+  BoxContour,
   IR,
   IRGroupNode,
   IRImageNode,
@@ -223,6 +225,7 @@ export type {
   TextDecorationFragment,
   TextDecorationLine,
   TextDecorationPaintPath,
+  TextGradient,
   TextOutlineNode,
   TextOutlinePath,
   TextPathMode,
@@ -282,6 +285,7 @@ export type {
   AnimationTransform2D,
   AnyVNode,
   BorderRadius,
+  BoxOutlineStyle,
   BoxProps,
   BoxVNode,
   CanvasProps,

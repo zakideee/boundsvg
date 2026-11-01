@@ -1,10 +1,18 @@
 import { FatalError } from "./errors.js";
 import { generateNodeId } from "./ir/node-id.js";
+import { resolveBorderWidths } from "./layout/box-style.js";
 import { resolveSceneOrVNodeInput } from "./scene/from-vnode.js";
 import type { SceneNode } from "./scene/types.js";
 import type { VNode, VNodeType } from "./vnode/types.js";
 
-export type CollectedNodeIdSource = "explicit" | "auto" | "background" | "border";
+/** Source of an explicit, automatic, or owner-generated identifier. */
+export type CollectedNodeIdSource =
+  | "explicit"
+  | "auto"
+  | "background"
+  | "border"
+  | "outline"
+  | "content";
 
 export type CollectedNodeId = {
   id: string;
@@ -42,6 +50,7 @@ export function collectNodeIds(input: NodeIdInput): CollectedNodeId[] {
   return ids;
 }
 
+/** Find collisions across authored nodes and their reserved generated identifiers. */
 export function validateNodeIds(input: NodeIdInput): NodeIdValidationResult {
   const ids = collectNodeIds(input);
   const byId = new Map<string, CollectedNodeId[]>();
@@ -66,6 +75,8 @@ export function validateNodeIds(input: NodeIdInput): NodeIdValidationResult {
         break;
       case "background":
       case "border":
+      case "outline":
+      case "content":
         generatedIds.push(entry.id);
         break;
     }
@@ -148,6 +159,28 @@ function collectVNodeNodeIds(
     });
   }
 
+  if (vnode.type === "Box" || vnode.type === "Flex" || vnode.type === "Grid") {
+    const hasWidth = resolveBorderWidths(vnode.props.borderWidth).some((width) => width > 0);
+    if (hasWidth && vnode.props.overflow === "clip" && vnode.children.length > 0) {
+      ids.push({
+        id: `${nodeId}:content`,
+        source: "content",
+        nodeType: vnode.type,
+        path: position.path,
+        baseNodeId: nodeId,
+      });
+    }
+    const outline = vnode.props.outline;
+    if (outline && outline.stroke.length > 0 && (outline.strokeWidth ?? 1) > 0) {
+      ids.push({
+        id: `${nodeId}:outline`,
+        source: "outline",
+        nodeType: vnode.type,
+        path: position.path,
+        baseNodeId: nodeId,
+      });
+    }
+  }
   for (const [index, child] of vnode.children.entries()) {
     if (typeof child === "string") {
       continue;
@@ -178,7 +211,10 @@ function hasBorderRenderNode(vnode: VNode): boolean {
     case "Flex":
     case "Grid":
     case "Box":
-      return Boolean(vnode.props.borderWidth && vnode.props.borderColor);
+      return (
+        Boolean(vnode.props.borderColor) &&
+        resolveBorderWidths(vnode.props.borderWidth).some((width) => width > 0)
+      );
     default:
       return false;
   }

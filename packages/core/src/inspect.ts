@@ -119,6 +119,7 @@ export function inspectScene(
   };
 }
 
+/** Collect source and paint geometry while keeping generated clip wrappers transparent. */
 export function collectInspectionBBoxes(ir: IR): InspectionBBox[] {
   const bboxes: InspectionBBox[] = [];
   const drawIndexByNodeId = new Map(ir.drawOrder.map((nodeId, drawIndex) => [nodeId, drawIndex]));
@@ -145,25 +146,29 @@ export function collectInspectionBBoxes(ir: IR): InspectionBBox[] {
         : null;
     const handlers = node.type === "rect" ? undefined : node.on;
 
-    bboxes.push({
-      nodeId: node.nodeId,
-      type: node.type,
-      x: layoutBBox.x,
-      y: layoutBBox.y,
-      w: layoutBBox.w,
-      h: layoutBBox.h,
-      depth,
-      drawIndex: drawIndexByNodeId.get(node.nodeId) ?? null,
-      hasHandlers: handlers != null && Object.keys(handlers).length > 0,
-      layoutBBox,
-      transformBox,
-      visualBBox: buildVisualBBox(transformBox),
-      origin,
-      hasOwnTransform,
-    });
-
+    const isGeneratedClipGroup =
+      node.type === "group" &&
+      (node.nodeId.endsWith(":content") || node.nodeId.endsWith(":border"));
+    if (!isGeneratedClipGroup) {
+      bboxes.push({
+        nodeId: node.nodeId,
+        type: node.type,
+        x: layoutBBox.x,
+        y: layoutBBox.y,
+        w: layoutBBox.w,
+        h: layoutBBox.h,
+        depth,
+        drawIndex: drawIndexByNodeId.get(node.nodeId) ?? null,
+        hasHandlers: handlers != null && Object.keys(handlers).length > 0,
+        layoutBBox,
+        transformBox,
+        visualBBox: buildVisualBBox(transformBox),
+        origin,
+        hasOwnTransform,
+      });
+    }
     for (const child of node.type === "group" ? (node.children ?? []) : []) {
-      walk(child, depth + 1, effectiveMatrix);
+      walk(child, depth + (isGeneratedClipGroup ? 0 : 1), effectiveMatrix);
     }
   }
 

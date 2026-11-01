@@ -22,7 +22,7 @@ Layout nodes such as `Box`, `Flex`, and `Image` are not allowed in text flow.
 | `fontVariationSettings` | `string`               |          | —           | Variable font settings (e.g. `"'wght' 700, 'wdth' 125"`) |
 | `fontFeatureSettings`   | `string`               |          | —           | OpenType feature settings (e.g. `"'liga' 0, 'smcp' 1"`)  |
 | `fallback`              | `string[]`             |          | —           | Fallback font alias chain                                |
-| `color`                 | `string`               |          | `"#000000"` | Text color (CSS color string)                            |
+| `color`                 | `string`               |          | `"#000000"` | Solid color or linear/radial gradient                    |
 
 ### Line
 
@@ -369,3 +369,30 @@ base (`ruby: "with-base"`, the default) or as separate units.
 ### Text Stroke
 
 <!--@include: ../_generated/text-stroke.md-->
+
+## Gradient text
+
+`Text.color` and its `Inline.color` overrides accept the same `linear-gradient`
+and `radial-gradient` syntax as box backgrounds. All paints use the parent
+Text's final measured block, after alignment, fitting, and ellipsis. A gradient
+does not restart on each line or Inline. Use separate Text nodes when each span
+needs its own gradient frame.
+
+```tsx
+<Text
+  font="Inter"
+  fontSizePx={44}
+  width={360}
+  color="linear-gradient(90deg, #7c5cff, #00c2ff)"
+>
+  A shared{" "}
+  <Inline color="radial-gradient(#ffffff, #ff75b5)">paint frame</Inline>
+</Text>
+```
+
+Inherited paint also colors ruby and static text decoration. Explicit Rt,
+InlineBox, stroke, and shadow colors retain their solid-color contract.
+TextOnPath and its Inline children do not accept gradients. Node and text-unit
+transforms move the glyphs and their fixed paint frame together; reveal and
+opacity do not resize that frame. Text decoration combined with animateUnits
+retains its existing restriction.

@@ -2,9 +2,18 @@
 
 exports[`SVG Snapshot Tests > Box with background and border 1`] = `
 "<svg data-boundsvg-node-id="auto:0" height="300" viewBox="0 0 400 300" width="400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="clip-styled-box:border">
+      <path d="M8,0 H192 A8,8 0 0 1 200,8 V92 A8,8 0 0 1 192,100 H8 A8,8 0 0 1 0,92 V8 A8,8 0 0 1 8,0 Z" />
+    </clipPath>
+  </defs>
   <g data-boundsvg-node-id="styled-box">
     <rect fill="#ff0000" height="100" rx="8" ry="8" width="200" x="0" y="0" />
-    <rect fill="none" height="100" rx="8" ry="8" stroke-width="2" stroke="#000000" width="200" x="0" y="0" />
+    <g clip-path="url(#clip-styled-box:border)">
+      <svg height="100" overflow="visible" width="200" x="0" y="0">
+  <path d="M8,0 H192 A8,8 0 0 1 200,8 V92 A8,8 0 0 1 192,100 H8 A8,8 0 0 1 0,92 V8 A8,8 0 0 1 8,0 Z M8,2 H192 A6,6 0 0 1 198,8 V92 A6,6 0 0 1 192,98 H8 A6,6 0 0 1 2,92 V8 A6,6 0 0 1 8,2 Z" fill-rule="evenodd" fill="#000000" />
+</svg>
+    </g>
   </g>
 </svg>"
 `;
@@ -40,7 +49,7 @@ exports[`SVG Snapshot Tests > overflow=clip with clipPath 1`] = `
 "<svg data-boundsvg-node-id="auto:0" height="300" viewBox="0 0 400 300" width="400" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <clipPath id="clip-clipped">
-      <rect height="100" width="200" x="0" y="0" />
+      <path d="M0,0 H200 L200,0 V100 L200,100 H0 L0,100 V0 L0,0 Z" />
     </clipPath>
   </defs>
   <g clip-path="url(#clip-clipped)" data-boundsvg-node-id="clipped">

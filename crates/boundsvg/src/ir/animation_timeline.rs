@@ -284,6 +284,8 @@ impl TrackValue {
                     scale_x: Some(transform.scale_x.unwrap_or(1.0)),
                     scale_y: Some(transform.scale_y.unwrap_or(1.0)),
                     rotate_deg: Some(transform.rotate_deg.unwrap_or(0.0)),
+                    skew_x_deg: transform.skew_x_deg,
+                    skew_y_deg: transform.skew_y_deg,
                 }),
         }
     }
@@ -308,6 +310,8 @@ impl TrackValue {
                 transform.scale_x.unwrap_or(1.0),
                 transform.scale_y.unwrap_or(1.0),
                 transform.rotate_deg.unwrap_or(0.0),
+                transform.skew_x_deg.unwrap_or(0.0),
+                transform.skew_y_deg.unwrap_or(0.0),
             ]);
         }
         values
@@ -517,12 +521,17 @@ fn identity_animation_transform() -> AnimationTransform2D {
         scale_x: Some(1.0),
         scale_y: Some(1.0),
         rotate_deg: Some(0.0),
+        skew_x_deg: None,
+        skew_y_deg: None,
     }
 }
 
-fn base_transform_value(transform: Option<&Transform2D>, bbox: BBox) -> AnimationTransform2D {
+fn base_transform_value(
+    transform: Option<&Transform2D>,
+    bbox: BBox,
+) -> Result<AnimationTransform2D, EngineError> {
     let Some(transform) = transform else {
-        return identity_animation_transform();
+        return Ok(identity_animation_transform());
     };
     let translate_x = transform.translate_x.unwrap_or(0.0);
     let translate_y = transform.translate_y.unwrap_or(0.0);
@@ -533,24 +542,25 @@ fn base_transform_value(transform: Option<&Transform2D>, bbox: BBox) -> Animatio
     let origin_y = transform.origin_y.unwrap_or(0.0);
     let center_x = bbox.w / 2.0;
     let center_y = bbox.h / 2.0;
-    let radians = rotate_deg.to_radians();
-    let (sin, cos) = radians.sin_cos();
-    let matrix_a = cos * scale_x;
-    let matrix_b = sin * scale_x;
-    let matrix_c = -sin * scale_y;
-    let matrix_d = cos * scale_y;
+    let [matrix_a, matrix_b, matrix_c, matrix_d, _, _] = boundshape::transform_to_affine(transform)
+        .map_err(|error| EngineError::Validation(error.to_string()))?;
     let offset_x = origin_x - center_x;
     let offset_y = origin_y - center_y;
-    AnimationTransform2D {
+    Ok(AnimationTransform2D {
         translate_x: Some(translate_x + offset_x - (matrix_a * offset_x + matrix_c * offset_y)),
         translate_y: Some(translate_y + offset_y - (matrix_b * offset_x + matrix_d * offset_y)),
         scale_x: Some(scale_x),
         scale_y: Some(scale_y),
         rotate_deg: Some(rotate_deg),
-    }
+        skew_x_deg: transform.skew_x_deg,
+        skew_y_deg: transform.skew_y_deg,
+    })
 }
 
-fn collect_track_sources_at_node(node: &IrNode, sources: &mut Vec<TrackSource>) {
+fn collect_track_sources_at_node(
+    node: &IrNode,
+    sources: &mut Vec<TrackSource>,
+) -> Result<(), EngineError> {
     match &node.kind {
         IrNodeKind::Group {
             opacity,
@@ -569,7 +579,8 @@ fn collect_track_sources_at_node(node: &IrNode, sources: &mut Vec<TrackSource>) 
                 base_value: TrackValue {
                     opacity: animates_opacity.then_some(opacity.unwrap_or(1.0)),
                     transform: animates_transform
-                        .then(|| base_transform_value(transform.as_ref(), node.bbox)),
+                        .then(|| base_transform_value(transform.as_ref(), node.bbox))
+                        .transpose()?,
                 },
             });
         }
@@ -628,11 +639,12 @@ fn collect_track_sources_at_node(node: &IrNode, sources: &mut Vec<TrackSource>) 
         }
         _ => {}
     }
+    Ok(())
 }
 
 #[cfg(test)]
 fn collect_track_sources(node: &IrNode, sources: &mut Vec<TrackSource>) {
-    collect_track_sources_at_node(node, sources);
+    collect_track_sources_at_node(node, sources).expect("valid test track sources");
     if let IrNodeKind::Group { children, .. } = &node.kind {
         for child in children {
             collect_track_sources(child, sources);
@@ -1390,6 +1402,10 @@ fn interpolate_transform(
         scale_x: interpolate(start.scale_x, end.scale_x, 1.0),
         scale_y: interpolate(start.scale_y, end.scale_y, 1.0),
         rotate_deg: interpolate(start.rotate_deg, end.rotate_deg, 0.0),
+        skew_x_deg: interpolate(start.skew_x_deg, end.skew_x_deg, 0.0)
+            .filter(|angle| *angle != 0.0),
+        skew_y_deg: interpolate(start.skew_y_deg, end.skew_y_deg, 0.0)
+            .filter(|angle| *angle != 0.0),
     }
 }
 
@@ -1439,6 +1455,8 @@ fn transform_interpolation_is_constant(
         && start.scale_x.unwrap_or(1.0) == end.scale_x.unwrap_or(1.0)
         && start.scale_y.unwrap_or(1.0) == end.scale_y.unwrap_or(1.0)
         && start.rotate_deg.unwrap_or(0.0) == end.rotate_deg.unwrap_or(0.0)
+        && start.skew_x_deg.unwrap_or(0.0) == end.skew_x_deg.unwrap_or(0.0)
+        && start.skew_y_deg.unwrap_or(0.0) == end.skew_y_deg.unwrap_or(0.0)
 }
 
 fn segment_interpolation_is_constant(spec: &AnimationSpec, segment_index: usize) -> bool {
@@ -2266,6 +2284,8 @@ fn base_transition_failure(
                 transform.scale_x,
                 transform.scale_y,
                 transform.rotate_deg,
+                transform.skew_x_deg,
+                transform.skew_y_deg,
             ]
             .into_iter()
             .flatten()
@@ -2807,10 +2827,7 @@ pub fn compile_document_animation_plan_with_prefix(
     animation::validate_animations_with_node_hooks(
         ir,
         &mut validate_authored_timeline_node,
-        &mut |node| {
-            collect_track_sources_at_node(node, &mut sources);
-            Ok(())
-        },
+        &mut |node| collect_track_sources_at_node(node, &mut sources),
     )?;
     let timing = playback.css_timing(time_ms);
     let (analyses, preflight_stop_count) = preflight_document_tracks(&sources, playback)?;
@@ -2861,8 +2878,7 @@ mod tests {
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
                     children: Vec::new(),
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: Some(0.25),
                     box_shadow: None,
                     meta: None,
@@ -2885,8 +2901,7 @@ mod tests {
             bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
             kind: IrNodeKind::Group {
                 children: Vec::new(),
-                clip_path: None,
-                clip_border_radius: None,
+                clip: None,
                 opacity: Some(0.25),
                 box_shadow: None,
                 meta: None,
@@ -3515,6 +3530,8 @@ mod tests {
                         scale_x: Some(1.0),
                         scale_y: Some(1.0),
                         rotate_deg: Some(0.0),
+                        skew_x_deg: None,
+                        skew_y_deg: None,
                     }),
                 },
                 AnimationKeyframe {
@@ -4587,9 +4604,11 @@ mod tests {
             rotate_deg: Some(30.0),
             origin_x: Some(10.0),
             origin_y: Some(12.0),
+            skew_x_deg: None,
+            skew_y_deg: None,
         };
         let bbox = BBox::new(20.0, 30.0, 100.0, 50.0);
-        let rebased = base_transform_value(Some(&base_transform), bbox);
+        let rebased = base_transform_value(Some(&base_transform), bbox).expect("valid base");
         let spec = AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
@@ -4681,8 +4700,7 @@ mod tests {
                         animated_group("precision-first", precision_spec),
                         animated_group("spring-second", spring_spec),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
                     meta: None,
@@ -4769,8 +4787,7 @@ mod tests {
                             animated_group(early_owner_id, early_spec),
                             animated_text_unit("copy", "unit-a", &spring_spec),
                         ],
-                        clip_path: None,
-                        clip_border_radius: None,
+                        clip: None,
                         opacity: None,
                         box_shadow: None,
                         meta: None,
@@ -4988,8 +5005,7 @@ mod tests {
                         animated_group(first.0, first.1),
                         animated_group(second.0, second.1),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
                     meta: None,
@@ -5926,8 +5942,7 @@ mod tests {
                             })),
                         ),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
                     meta: None,
@@ -5973,8 +5988,7 @@ mod tests {
                             opacity_spec(AnimationEasing::Named("ease-in".to_string())),
                         ),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
                     meta: None,
@@ -6280,8 +6294,7 @@ mod tests {
                         animated_group("linear-first", make_spec()),
                         animated_group("linear-second", make_spec()),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
                     meta: None,
@@ -6350,8 +6363,7 @@ mod tests {
                         .enumerate()
                         .map(|(index, spec)| animated_group(&format!("owner-{index}"), spec))
                         .collect(),
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
                     meta: None,
@@ -6518,8 +6530,7 @@ mod tests {
                         animated_group("steps-second", near_limit_steps()),
                         animated_group("steps-third", near_limit_steps()),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
                     meta: None,
@@ -6625,8 +6636,7 @@ mod tests {
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
                     children,
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
                     meta: None,
@@ -6727,8 +6737,7 @@ mod tests {
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
                     children,
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
                     meta: None,

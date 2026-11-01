@@ -2,6 +2,7 @@ import { Canvas, Flex, Text } from "@boundsvg/core";
 import { FONT_ALIAS as FA } from "../config";
 import type { Preset } from "../types";
 
+/** Shrinking text inside an automatically sized dashed outline. */
 export const fitPreset: Preset = {
   title: "Fit + Stroke",
   description: "Auto-shrinking text with ellipsis and text stroke outline.",
@@ -14,8 +15,8 @@ const vnode = Canvas(
     Flex(
       { direction: "column", justifyContent: "center", alignItems: "center",
         flexGrow: 1, padding: 24, background: "#252526",
-        borderWidth: 1, borderColor: "#474747", borderRadius: 16,
-        strokeDasharray: "8,4", strokeLinecap: "round",
+        borderRadius: 16,
+        outline: { stroke: "#474747", strokeWidth: 1, strokeDasharray: "8,4", strokeLinecap: "round" },
         overflow: "clip" },
       Text(
         { font: "${FA}", fontSizePx: 64, minFontSizePx: 18,
@@ -42,11 +43,13 @@ const svg = engine.renderToSvg(vnode);`,
             flexGrow: 1,
             padding: 24,
             background: "#252526",
-            borderWidth: 1,
-            borderColor: "#474747",
+            outline: {
+              stroke: "#474747",
+              strokeWidth: 1,
+              strokeDasharray: "8,4",
+              strokeLinecap: "round",
+            },
             borderRadius: 16,
-            strokeDasharray: "8,4",
-            strokeLinecap: "round",
             overflow: "clip",
           },
           Text(

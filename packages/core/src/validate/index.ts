@@ -2,6 +2,7 @@ import type { TimelineAuthoredDomainOwner } from "../engine/timeline-domain-tran
 import { FatalError } from "../errors.js";
 import type { NodePosition } from "../ir/internal.js";
 import { assertNodeIdIsWellFormedUnicode, generateNodeId } from "../ir/node-id.js";
+import { validateContainerVisualProps } from "../layout/box-style.js";
 import { assertLayoutTreeDepth } from "../layout/limits.js";
 import { assertUniqueNodeIds } from "../node-ids.js";
 import type { VNode, VNodeType } from "../vnode/types.js";
@@ -153,7 +154,10 @@ function validateNode(
   validateColorProp(node, "background", { allowGradient: true, nodeId: nid });
   validateColorProp(node, "borderColor", { nodeId: nid });
   if (node.type !== "InlineRect") {
-    validateColorProp(node, "color", { nodeId: nid });
+    validateColorProp(node, "color", {
+      allowGradient: node.type === "Text" || node.type === "Inline",
+      nodeId: nid,
+    });
   }
   validateColorProp(node, "fill", {
     allowNone: node.type === "Path" || node.type === "Shape" || node.type === "Symbol",
@@ -174,6 +178,9 @@ function validateNode(
   validateMetaProp(node, nid);
   validateLayoutNumberProps(node, nid);
   const props = node.props as Record<string, unknown>;
+  if (node.type === "Box" || node.type === "Flex" || node.type === "Grid") {
+    validateContainerVisualProps(props, nid);
+  }
   validateVisualNumberProps(props, nid);
   validateLayoutEnumAndGridProps(node, nid);
   validateBoxShadowProp(props, nid);

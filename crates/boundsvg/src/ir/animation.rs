@@ -184,6 +184,8 @@ fn validate_transform(
         transform.scale_x,
         transform.scale_y,
         transform.rotate_deg,
+        transform.skew_x_deg,
+        transform.skew_y_deg,
     ]
     .into_iter()
     .flatten()
@@ -194,6 +196,16 @@ fn validate_transform(
                 &format!("keyframe {index} transform values must be finite"),
             ));
         }
+    }
+    if [transform.skew_x_deg, transform.skew_y_deg]
+        .into_iter()
+        .flatten()
+        .any(|angle| angle.abs() > 60.0)
+    {
+        return Err(animation_error(
+            node_id,
+            "skew angles must be in -60..60 degrees",
+        ));
     }
     Ok(())
 }
@@ -582,9 +594,26 @@ fn sample_transform(
         )),
         origin_x: Some(bbox_width / 2.0),
         origin_y: Some(bbox_height / 2.0),
+        skew_x_deg: Some(lerp(
+            from.skew_x_deg.unwrap_or(0.0),
+            to.skew_x_deg.unwrap_or(0.0),
+            progress,
+        ))
+        .filter(|angle| *angle != 0.0),
+        skew_y_deg: Some(lerp(
+            from.skew_y_deg.unwrap_or(0.0),
+            to.skew_y_deg.unwrap_or(0.0),
+            progress,
+        ))
+        .filter(|angle| *angle != 0.0),
     }
 }
 
+/// Sample one validated track, resolving its transform origin to the node center.
+///
+/// # Errors
+///
+/// Returns a structured animation error for invalid easing, keyframes, or unsafe sampled skew.
 pub(super) fn sample_spec(
     spec: &AnimationSpec,
     node_id: &str,
@@ -636,6 +665,17 @@ pub(super) fn sample_spec(
         )),
         _ => None,
     };
+    if transform.as_ref().is_some_and(|transform| {
+        [transform.skew_x_deg, transform.skew_y_deg]
+            .into_iter()
+            .flatten()
+            .any(|angle| !angle.is_finite() || angle.abs() >= 70.0)
+    }) {
+        return Err(animation_error(
+            node_id,
+            "sampled skew angle exceeds the execution envelope",
+        ));
+    }
     Ok((opacity, transform))
 }
 
@@ -1067,32 +1107,23 @@ pub struct AffineMatrixDto {
 /// inspector would disagree with what is drawn. The origin must already be
 /// rebased onto the node's bbox: `sample_transform` stores a node-local centre
 /// (`w / 2`, `h / 2`), while the emitter paints about the absolute centre.
-fn transform_to_affine(transform: &Transform2D) -> AffineMatrixDto {
-    let translate_x = transform.translate_x.unwrap_or(0.0);
-    let translate_y = transform.translate_y.unwrap_or(0.0);
-    let scale_x = transform.scale_x.unwrap_or(1.0);
-    let scale_y = transform.scale_y.unwrap_or(1.0);
-    let origin_x = transform.origin_x.unwrap_or(0.0);
-    let origin_y = transform.origin_y.unwrap_or(0.0);
-    let radians = transform.rotate_deg.unwrap_or(0.0).to_radians();
-    let (sin, cos) = radians.sin_cos();
-
-    // Linear part is rotate * scale.
-    let matrix_a = cos * scale_x;
-    let matrix_b = sin * scale_x;
-    let matrix_c = -sin * scale_y;
-    let matrix_d = cos * scale_y;
-    AffineMatrixDto {
-        a: matrix_a,
-        b: matrix_b,
-        c: matrix_c,
-        d: matrix_d,
-        e: translate_x + origin_x - (matrix_a * origin_x + matrix_c * origin_y),
-        f: translate_y + origin_y - (matrix_b * origin_x + matrix_d * origin_y),
-    }
+fn transform_to_affine(transform: &Transform2D) -> Result<AffineMatrixDto, EngineError> {
+    let coefficients = boundshape::transform_to_affine(transform)
+        .map_err(|error| EngineError::Validation(error.to_string()))?;
+    Ok(AffineMatrixDto {
+        a: coefficients[0],
+        b: coefficients[1],
+        c: coefficients[2],
+        d: coefficients[3],
+        e: coefficients[4],
+        f: coefficients[5],
+    })
 }
 
-fn collect_animation_state(node: &IrNode, samples: &mut Vec<AnimationStateSample>) {
+fn collect_animation_state(
+    node: &IrNode,
+    samples: &mut Vec<AnimationStateSample>,
+) -> Result<(), EngineError> {
     if let IrNodeKind::Group {
         children,
         opacity,
@@ -1105,18 +1136,24 @@ fn collect_animation_state(node: &IrNode, samples: &mut Vec<AnimationStateSample
             samples.push(AnimationStateSample {
                 node_id: node.node_id.clone(),
                 opacity: *opacity,
-                transform: transform.as_ref().map(|sampled| {
-                    // Same rebase the emitter applies before painting.
-                    transform_to_affine(&crate::svg_emit::transform::resolve_node_local_transform(
-                        sampled, node.bbox,
-                    ))
-                }),
+                transform: transform
+                    .as_ref()
+                    .map(|sampled| {
+                        // Same rebase the emitter applies before painting.
+                        transform_to_affine(
+                            &crate::svg_emit::transform::resolve_node_local_transform(
+                                sampled, node.bbox,
+                            ),
+                        )
+                    })
+                    .transpose()?,
             });
         }
         for child in children {
-            collect_animation_state(child, samples);
+            collect_animation_state(child, samples)?;
         }
     }
+    Ok(())
 }
 
 /// Sample every animated node's resolved opacity and transform at `time_ms`.
@@ -1135,7 +1172,7 @@ pub fn sample_animation_state(
 ) -> Result<Vec<AnimationStateSample>, EngineError> {
     let sampled = sample_animation(ir, time_ms)?;
     let mut samples = Vec::new();
-    collect_animation_state(&sampled.root, &mut samples);
+    collect_animation_state(&sampled.root, &mut samples)?;
     crate::wire::finite::FiniteOutput::try_new(&samples)
         .map_err(|error| error.into_engine_error("sample_animation_state"))?;
     Ok(samples)
@@ -1157,6 +1194,7 @@ pub fn sample_animation(ir: &Ir, time_ms: f64) -> Result<Ir, EngineError> {
         });
     }
     validate_animations(ir)?;
+    super::numeric_envelope::validate(ir)?;
     let mut sampled = ir.clone();
     sample_node(&mut sampled.root, time_ms)?;
     Ok(sampled)
@@ -1202,8 +1240,7 @@ mod tests {
                 bbox: BBox::new(10.0, 20.0, 80.0, 40.0),
                 kind: IrNodeKind::Group {
                     children: Vec::new(),
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: Some(0.75),
                     box_shadow: None,
                     meta: None,
@@ -1856,8 +1893,10 @@ mod tests {
             rotate_deg: Some(90.0),
             origin_x: Some(50.0),
             origin_y: Some(20.0),
+            skew_x_deg: None,
+            skew_y_deg: None,
         };
-        let matrix = transform_to_affine(&transform);
+        let matrix = transform_to_affine(&transform).expect("valid transform");
 
         // The origin itself only moves by the user translation.
         let origin_x = matrix.a * 50.0 + matrix.c * 20.0 + matrix.e;
@@ -1874,7 +1913,7 @@ mod tests {
 
     #[test]
     fn affine_matrix_is_identity_for_an_untouched_transform() {
-        let matrix = transform_to_affine(&Transform2D::default());
+        let matrix = transform_to_affine(&Transform2D::default()).expect("identity");
 
         assert_eq!(
             matrix,

@@ -183,10 +183,8 @@ function createCanvasStrokeTransition(
             id: "stroke-box",
             width,
             height,
-            borderWidth: 2,
-            borderColor: "#ffffff",
-            strokeScaling: "canvas",
             children: [],
+            outline: { stroke: "#ffffff", strokeWidth: 2, strokeScaling: "canvas" },
           }
         : {
             type: "Path",
@@ -248,7 +246,7 @@ function createNestedResidualTransition(options: {
             width: childWidth,
             height: childHeight,
             ...(options.canvasStroke
-              ? { borderWidth: 2, borderColor: "#ffffff", strokeScaling: "canvas" as const }
+              ? { outline: { stroke: "#ffffff", strokeWidth: 2, strokeScaling: "canvas" as const } }
               : { background: "#ffffff" }),
             ...(options.authoredTransform ? { transform: { translateX: 3 } } : {}),
             children: [],

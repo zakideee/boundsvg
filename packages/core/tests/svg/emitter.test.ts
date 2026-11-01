@@ -1,3 +1,4 @@
+import { circularClip } from "../helpers/box-clip.js";
 /**
  * WASM emitter contract: hand-built IRs driven through the `emit_svg_from_ir`
  * export must produce the pinned SVG markup (attributes, escaping, debug
@@ -60,7 +61,6 @@ function makeIdentifierNamespaceIR(): IR {
         type: "group",
         nodeId: "panel",
         bbox: { x: 10, y: 10, w: 120, h: 80 },
-        clipPath: { x: 10, y: 10, w: 120, h: 80 },
         boxShadow: { dx: 1, dy: 2, blur: 4, spread: 0, color: "#0008" },
         meta: { scope: "raw-resourceIdPrefix-doc-clip-" },
         animation,
@@ -71,7 +71,7 @@ function makeIdentifierNamespaceIR(): IR {
             bbox: { x: 10, y: 10, w: 120, h: 80 },
             gradient: {
               type: "linear",
-              angle: 90,
+              geometry: { startX: 0, startY: 40, endX: 120, endY: 40 },
               stops: [
                 { color: "#000000", offset: 0 },
                 { color: "#ffffff", offset: 1 },
@@ -79,13 +79,14 @@ function makeIdentifierNamespaceIR(): IR {
             },
           },
           {
-            type: "rect",
-            nodeId: "panel:border",
-            bbox: { x: 12, y: 12, w: 116, h: 76 },
+            type: "path",
+            nodeId: "panel:outline",
+            bbox: { x: 10, y: 10, w: 120, h: 80 },
+            pathData: "M0 0H120V80H0Z",
+            strokeScaling: "canvas",
             fill: "none",
             stroke: "#ffffff",
             strokeWidth: 1,
-            strokeScaling: "canvas",
           },
           {
             type: "path",
@@ -98,6 +99,7 @@ function makeIdentifierNamespaceIR(): IR {
             strokeScaling: "canvas",
           },
         ],
+        clip: circularClip({ x: 10, y: 10, w: 120, h: 80 }, 0),
       },
       {
         type: "text",
@@ -175,7 +177,7 @@ function makeIdentifierNamespaceIR(): IR {
     ],
     [
       "panel:bg",
-      "panel:border",
+      "panel:outline",
       "hairline-path",
       "unit-text",
       "shape-left",
@@ -370,6 +372,37 @@ describe("emit_svg_from_ir", () => {
     expect(JSON.stringify(ir)).toBe(irBefore);
   });
 
+  it.each([
+    -1, 50.00000000000001, 80,
+  ])("rejects unresolved BoxContour radius %s before drawing", (radius) => {
+    const ir = makeIR(
+      [
+        {
+          type: "group",
+          nodeId: "clipped",
+          bbox: { x: 0, y: 0, w: 100, h: 100 },
+          clip: {
+            kind: "boxContour",
+            bbox: { x: 0, y: 0, w: 100, h: 100 },
+            corners: [
+              { rx: radius, ry: radius },
+              { rx: radius, ry: radius },
+              { rx: radius, ry: radius },
+              { rx: radius, ry: radius },
+            ],
+          },
+          children: [
+            { type: "rect", nodeId: "paint", bbox: { x: 0, y: 0, w: 100, h: 100 }, fill: "red" },
+          ],
+        },
+      ],
+      ["paint"],
+      100,
+      100,
+    );
+    expect(() => emitSvgFromIrViaHandle(handle, ir)).toThrow(/invalid resolved box clip/);
+  });
+
   it("emits rect with fill", () => {
     const ir = makeIR(
       [
@@ -422,17 +455,18 @@ describe("emit_svg_from_ir", () => {
           transform: { scaleX: 1.6, scaleY: 1.6, originX: 0, originY: 0 },
           children: [
             {
-              type: "rect",
-              nodeId: "camera:border",
+              type: "path",
+              nodeId: "camera:outline",
               bbox: { x: 8, y: 8, w: 40, h: 20 },
+              pathData: "M0 0H40V20H0Z",
+              strokeScaling: "canvas",
               stroke: "#fff",
               strokeWidth: 1,
-              strokeScaling: "canvas",
             },
           ],
         },
       ],
-      ["camera:border"],
+      ["camera:outline"],
       96,
       64,
     );
@@ -443,6 +477,59 @@ describe("emit_svg_from_ir", () => {
     expect(svg).toContain("@supports (vector-effect: non-scaling-stroke)");
     expect(svg).toContain("stroke-width: 2;");
     expect(svg).toContain("vector-effect: non-scaling-stroke;");
+  });
+
+  it("resolves mixed raw Rect and Path strokes with collision-free namespaced rules", () => {
+    const paints: IRNode[] = [
+      {
+        type: "rect",
+        nodeId: "line",
+        bbox: { x: 5, y: 5, w: 30, h: 20 },
+        stroke: "red",
+        strokeWidth: 2,
+        strokeScaling: "canvas",
+        borderRadius: { tl: 4, tr: 0, br: 2, bl: 0 },
+      },
+      {
+        type: "path",
+        nodeId: "line",
+        bbox: { x: 5, y: 30, w: 30, h: 20 },
+        pathData: "M0 0H30V20H0Z",
+        stroke: "blue",
+        strokeWidth: 2,
+        strokeScaling: "canvas",
+      },
+      {
+        type: "rect",
+        nodeId: "line-2",
+        bbox: { x: 40, y: 5, w: 20, h: 20 },
+        stroke: "green",
+        strokeScaling: "canvas",
+      },
+    ];
+    const ir = makeIR(
+      [
+        {
+          type: "group",
+          nodeId: "camera",
+          bbox: { x: 0, y: 0, w: 100, h: 100 },
+          transform: { scaleX: 1.5, scaleY: 1.5, originX: 0, originY: 0 },
+          children: paints,
+        },
+      ],
+      [],
+      100,
+      100,
+    );
+    const prefix = createResourceIdPrefix("mixed strokes");
+    const svg = emitSvgFromIrViaHandle(handle, ir, { resourceIdPrefix: prefix });
+    const classes = [...svg.matchAll(/class="([^"]*vstroke-[^"]+)"/g)].map((match) => match[1]);
+    expect(new Set(classes).size).toBe(3);
+    expect(classes.every((name) => name?.startsWith(`bsvg-${prefix}`))).toBe(true);
+    expect(svg.match(/stroke-width="1.333333"/g)).toHaveLength(2);
+    expect(svg).toContain('stroke-width="0.666667"');
+    const raster = handle.createSvgToPngFn()(svg);
+    expect(raster.subarray(0, 8)).toEqual(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]));
   });
 
   it("emits canvas-stable rules on the inner Path element", () => {
@@ -480,18 +567,18 @@ describe("emit_svg_from_ir", () => {
     expect(svg).toContain("vector-effect: non-scaling-stroke;");
   });
 
-  it("keeps omitted and explicit transform stroke scaling byte-identical", () => {
-    const rect: IRNode = {
+  it("keeps omitted and explicit Rect transform stroke scaling byte-identical", () => {
+    const path: IRNode = {
       type: "rect",
-      nodeId: "border",
+      nodeId: "outline",
       bbox: { x: 0, y: 0, w: 10, h: 10 },
       stroke: "#fff",
       strokeWidth: 1,
     };
-    const omitted = emitSvgFromIrViaHandle(handle, makeIR([rect], ["border"], 10, 10));
+    const omitted = emitSvgFromIrViaHandle(handle, makeIR([path], ["outline"], 10, 10));
     const explicit = emitSvgFromIrViaHandle(
       handle,
-      makeIR([{ ...rect, strokeScaling: "transform" }], ["border"], 10, 10),
+      makeIR([{ ...path, strokeScaling: "transform" }], ["outline"], 10, 10),
     );
     expect(explicit).toBe(omitted);
   });
@@ -513,17 +600,18 @@ describe("emit_svg_from_ir", () => {
           },
           children: [
             {
-              type: "rect",
-              nodeId: "camera:border",
+              type: "path",
+              nodeId: "camera:outline",
               bbox: { x: 2, y: 2, w: 10, h: 10 },
+              pathData: "M0 0H10V10H0Z",
+              strokeScaling: "canvas",
               stroke: "#fff",
               strokeWidth: 1,
-              strokeScaling: "canvas",
             },
           ],
         },
       ],
-      ["camera:border"],
+      ["camera:outline"],
       20,
       20,
     );
@@ -548,17 +636,18 @@ describe("emit_svg_from_ir", () => {
           bbox: { x: 0, y: 0, w: 10, h: 10 },
           children: [
             {
-              type: "rect",
-              nodeId: "card one:border",
+              type: "path",
+              nodeId: "card one:outline",
               bbox: { x: 0, y: 0, w: 10, h: 10 },
+              pathData: "M0 0H10V10H0Z",
+              strokeScaling: "canvas",
               stroke: "#fff",
               strokeWidth: 1,
-              strokeScaling: "canvas",
             },
           ],
         },
       ],
-      ["card one:border"],
+      ["card one:outline"],
       10,
       10,
     );
@@ -570,7 +659,7 @@ describe("emit_svg_from_ir", () => {
     expect(svg).toContain(`.${className?.replaceAll(":", "\\:")}`);
   });
 
-  it("rejects unknown hand-authored strokeScaling values", () => {
+  it("rejects unknown hand-authored Rect strokeScaling values", () => {
     const ir = makeIR(
       [
         {
@@ -579,7 +668,6 @@ describe("emit_svg_from_ir", () => {
           bbox: { x: 0, y: 0, w: 10, h: 10 },
           stroke: "#fff",
           strokeWidth: 1,
-          strokeScaling: "canvas" as unknown as "transform",
         },
       ],
       ["border"],
@@ -899,7 +987,6 @@ describe("emit_svg_from_ir", () => {
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 800, h: 600 },
-        clipPath: { x: 0, y: 0, w: 800, h: 600 },
         children: [
           {
             type: "rect",
@@ -908,6 +995,7 @@ describe("emit_svg_from_ir", () => {
             fill: "#ff0000",
           },
         ],
+        clip: circularClip({ x: 0, y: 0, w: 800, h: 600 }, 0),
       },
       drawOrder: ["bg"],
       width: 800,
@@ -934,7 +1022,6 @@ describe("emit_svg_from_ir", () => {
             type: "group",
             nodeId: "panel",
             bbox: { x: 10, y: 10, w: 120, h: 80 },
-            clipPath: { x: 10, y: 10, w: 120, h: 80 },
             boxShadow: { dx: 1, dy: 2, blur: 4, spread: 0, color: "rgba(0,0,0,0.3)" },
             children: [
               {
@@ -943,7 +1030,7 @@ describe("emit_svg_from_ir", () => {
                 bbox: { x: 10, y: 10, w: 120, h: 80 },
                 gradient: {
                   type: "linear",
-                  angle: 90,
+                  geometry: { startX: 0, startY: 40, endX: 120, endY: 40 },
                   stops: [
                     { color: "#000000", offset: 0 },
                     { color: "#ffffff", offset: 1 },
@@ -951,6 +1038,7 @@ describe("emit_svg_from_ir", () => {
                 },
               },
             ],
+            clip: circularClip({ x: 10, y: 10, w: 120, h: 80 }, 0),
           },
         ],
       },
@@ -1072,7 +1160,6 @@ describe("emit_svg_from_ir", () => {
             type: "group",
             nodeId: "clipper",
             bbox: { x: 20, y: 20, w: 80, h: 80 },
-            clipPath: { x: 20, y: 20, w: 80, h: 80 },
             children: [
               {
                 type: "text",
@@ -1097,6 +1184,7 @@ describe("emit_svg_from_ir", () => {
                 ],
               },
             ],
+            clip: circularClip({ x: 20, y: 20, w: 80, h: 80 }, 0),
           },
         ],
       },

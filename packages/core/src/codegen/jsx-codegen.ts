@@ -46,6 +46,7 @@ function packPropLines(propStrings: string[], indentWidth: number, maxWidth: num
 
 /**
  * Convert a VNode tree to a formatted JSX string.
+ * Array props preserve quoted strings, object literals, and nested JSON values.
  */
 export function vnodeToJsxString(
   vnode: VNode,
@@ -75,7 +76,7 @@ export function vnodeToJsxString(
       return `${key}={${JSON.stringify(value)}}`;
     }
     if (Array.isArray(value)) {
-      return `${key}={[${(value as (string | number)[]).join(", ")}]}`;
+      return `${key}={[${value.map((entry: unknown) => JSON.stringify(entry)).join(", ")}]}`;
     }
     return `${key}={${JSON.stringify(value)}}`;
   });

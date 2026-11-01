@@ -67,9 +67,6 @@ function scaleScene() {
       id: "canvas-stroke-box",
       width: 24,
       height: 16,
-      borderWidth: 1,
-      borderColor: "#0f172a",
-      strokeScaling: "canvas",
       animate: {
         keyframes: [
           { at: 0, opacity: 1 },
@@ -78,6 +75,7 @@ function scaleScene() {
         durationMs: 400,
         easing: "linear",
       },
+      outline: { stroke: "#0f172a", strokeWidth: 1, strokeScaling: "canvas" },
     }),
     createElement("Path", {
       id: "ordinary-stroke-path",

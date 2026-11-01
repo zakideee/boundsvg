@@ -15,6 +15,7 @@ import {
   pointInHitBBox,
   worldHitBounds,
 } from "./hit-geometry.js";
+import { isGeneratedBoxNodeId } from "./node-id.js";
 import { buildFilteredSpatialIndex, type SpatialIndex } from "./spatial-index.js";
 import type { BBox, IR, IRNode } from "./types.js";
 
@@ -118,9 +119,7 @@ function collectHitEntries(ir: IR): HitEntry[] {
   });
   return ir.drawOrder.flatMap((nodeId, drawIndex) => {
     const candidate = lookup.get(nodeId);
-    return candidate && !nodeId.endsWith(":bg") && !nodeId.endsWith(":border")
-      ? [{ ...candidate, drawIndex }]
-      : [];
+    return candidate && !isGeneratedBoxNodeId(nodeId) ? [{ ...candidate, drawIndex }] : [];
   });
 }
 
@@ -140,11 +139,12 @@ function collectNode(
   );
   let clip = context.clip;
   let visible: HitBounds | null = context.visible;
-  if (node.type === "group" && node.clipPath) {
-    clip = { parent: clip, matrix, bbox: node.clipPath, radii: node.clipBorderRadius };
-    visible = visible
-      ? intersectHitBounds(visible, worldHitBounds(matrix, bboxHitBounds(node.clipPath)))
-      : null;
+  if (node.type === "group" && node.clip) {
+    clip = { parent: clip, matrix, geometry: node.clip };
+    visible =
+      visible && node.clip.kind === "boxContour"
+        ? intersectHitBounds(visible, worldHitBounds(matrix, bboxHitBounds(node.clip.bbox)))
+        : null;
   }
   const local = node.type === "path" ? null : localHitBounds(node);
   const world =

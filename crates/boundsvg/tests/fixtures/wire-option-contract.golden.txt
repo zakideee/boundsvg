@@ -27,6 +27,8 @@ boundshape	crates/boundshape/src/lib.rs	Transform2D	origin_y	originY	omit-none
 boundshape	crates/boundshape/src/lib.rs	Transform2D	rotate_deg	rotateDeg	omit-none
 boundshape	crates/boundshape/src/lib.rs	Transform2D	scale_x	scaleX	omit-none
 boundshape	crates/boundshape/src/lib.rs	Transform2D	scale_y	scaleY	omit-none
+boundshape	crates/boundshape/src/lib.rs	Transform2D	skew_x_deg	skewXDeg	omit-none
+boundshape	crates/boundshape/src/lib.rs	Transform2D	skew_y_deg	skewYDeg	omit-none
 boundshape	crates/boundshape/src/lib.rs	Transform2D	translate_x	translateX	omit-none
 boundshape	crates/boundshape/src/lib.rs	Transform2D	translate_y	translateY	omit-none
 boundsvg	crates/boundsvg/src/diagnostics.rs	SerializedFatalError	context	context	omit-none
@@ -50,7 +52,6 @@ boundsvg	crates/boundsvg/src/flow/types.rs	TextFlowWithExclusionsResult	chosen_f
 boundsvg	crates/boundsvg/src/flow/types.rs	TextFlowWithExclusionsResult	overflow_reason	overflowReason	omit-none
 boundsvg	crates/boundsvg/src/ir/animation.rs	AnimationStateSample	opacity	opacity	omit-none
 boundsvg	crates/boundsvg/src/ir/animation.rs	AnimationStateSample	transform	transform	omit-none
-boundsvg	crates/boundsvg/src/ir/types.rs	Gradient::Radial	geometry	geometry	omit-none
 boundsvg	crates/boundsvg/src/ir/types.rs	PathGeometry	bounds	bounds	null
 boundsvg	crates/boundsvg/src/ir/types.rs	StructuralIr	debug	debug	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationKeyframeOutput	opacity	opacity	omit-none
@@ -66,6 +67,8 @@ boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationStepsOutput	position	pos
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationTransform2DOutput	rotate_deg	rotateDeg	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationTransform2DOutput	scale_x	scaleX	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationTransform2DOutput	scale_y	scaleY	omit-none
+boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationTransform2DOutput	skew_x_deg	skewXDeg	omit-none
+boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationTransform2DOutput	skew_y_deg	skewYDeg	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationTransform2DOutput	translate_x	translateX	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	AnimationTransform2DOutput	translate_y	translateY	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	FragmentProjection	style	style	omit-none
@@ -92,8 +95,7 @@ boundsvg	crates/boundsvg/src/ir/wire_output.rs	HandlersRefOutput	on_touch_move	o
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	HandlersRefOutput	on_touch_start	onTouchStart	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	animation	animation	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	box_shadow	boxShadow	omit-none
-boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	clip_border_radius	clipBorderRadius	omit-none
-boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	clip_path	clipPath	omit-none
+boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	clip	clip	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	meta	meta	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	on	on	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	opacity	opacity	omit-none
@@ -137,6 +139,7 @@ boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	font_style
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	font_variation_settings	fontVariationSettings	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	font_weight	fontWeight	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	glyph_paths	glyphPaths	omit-none
+boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	gradients	gradients	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	language	language	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	letter_spacing_px	letterSpacingPx	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	on	on	omit-none

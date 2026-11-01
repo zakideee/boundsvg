@@ -61,6 +61,11 @@ impl AxisAlignedAffine {
         })
     }
 
+    /// Express this generated affine as center-origin animation channels.
+    ///
+    /// # Errors
+    ///
+    /// Returns a geometry mismatch if origin rebasing produces a non-finite translation.
     pub(super) fn to_animation_transform(
         self,
         reference_bbox: BBox,
@@ -83,6 +88,8 @@ impl AxisAlignedAffine {
             scale_x: Some(self.scale_x),
             scale_y: Some(self.scale_y),
             rotate_deg: None,
+            skew_x_deg: None,
+            skew_y_deg: None,
         })
     }
 }

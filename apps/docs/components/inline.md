@@ -33,7 +33,7 @@ radii retained at the start and end of the span.
 | `textCombineUpright`    | `"none" \| "all"`                        | `"none"`    | Tate-chu-yoko                                                     |
 | `fontSizePx`            | `number`                                 | inherited   | Override font size in px                                          |
 | `letterSpacingPx`       | `number`                                 | inherited   | Override letter spacing in px                                     |
-| `color`                 | `string`                                 | inherited   | Override text color                                               |
+| `color`                 | `string`                                 | inherited   | Solid color or parent-Text-frame gradient                         |
 | `textStrokes`           | `readonly TextStrokeLayer[]`             | inherited   | Replace inherited stroke layers; `[]` clears them                 |
 | `textShadows`           | `readonly TextShadowLayer[]`             | inherited   | Replace inherited shadow layers; `[]` clears them                 |
 | `textDecoration`        | `TextDecoration`                         | inherited   | Replace inherited decoration, or use `"none"` to stop it          |

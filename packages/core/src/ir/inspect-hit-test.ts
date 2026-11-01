@@ -1,3 +1,4 @@
+import { isGeneratedBoxNodeId } from "./node-id.js";
 import { buildSpatialIndex, type SpatialIndex } from "./spatial-index.js";
 import type { IR, IRNode } from "./types.js";
 
@@ -27,7 +28,7 @@ function collectInspectEntries(
   bboxMap: Map<string, { x: number; y: number; w: number; h: number }>,
   inspectOrder: string[],
 ): void {
-  if (!isInternalRenderNodeId(node.nodeId)) {
+  if (!isGeneratedBoxNodeId(node.nodeId)) {
     bboxMap.set(node.nodeId, node.bbox);
     inspectOrder.push(node.nodeId);
   }
@@ -37,8 +38,4 @@ function collectInspectEntries(
       collectInspectEntries(child, bboxMap, inspectOrder);
     }
   }
-}
-
-function isInternalRenderNodeId(nodeId: string): boolean {
-  return nodeId.endsWith(":bg") || nodeId.endsWith(":border");
 }

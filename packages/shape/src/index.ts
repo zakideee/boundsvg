@@ -7,12 +7,18 @@ export type GeometryViewBox = {
   height: number;
 };
 
+/** Post-layout transform composed as translate, origin-relative rotate, skew X, skew Y, then scale. */
 export type Transform2D = {
   translateX?: number;
   translateY?: number;
   scaleX?: number;
   scaleY?: number;
+  /** Rotation in degrees, before the shear channels. */
   rotateDeg?: number;
+  /** Horizontal shear angle in the inclusive range -60..60 degrees. */
+  skewXDeg?: number;
+  /** Vertical shear angle in the inclusive range -60..60 degrees. */
+  skewYDeg?: number;
   originX?: number;
   originY?: number;
 };

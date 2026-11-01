@@ -176,6 +176,24 @@ export type BorderRadius = number | [number, number, number, number];
 /** Whether a supported stroke scales with post-layout transforms or stays stable in canvas space. */
 export type StrokeScaling = "transform" | "canvas";
 
+/** A line decoration following the resolved outer contour without reserving layout space. */
+export type BoxOutlineStyle = {
+  /** Solid stroke paint. */
+  stroke: string;
+  /** Nonnegative width in px, at most 1048576. Defaults to 1. */
+  strokeWidth?: number;
+  /** Canvas mode supports the same transforms and solid strokes as Path. */
+  strokeScaling?: StrokeScaling;
+  /** Dash lengths in the same syntax as Path strokes. */
+  strokeDasharray?: string;
+  /** Shape of dash endpoints. */
+  strokeLinecap?: "butt" | "round" | "square";
+  /** Shape of joins along the outer contour. */
+  strokeLinejoin?: "miter" | "round" | "bevel";
+  /** Miter ratio from 1 to 1048576. Defaults to 4. */
+  strokeMiterlimit?: number;
+};
+
 /** Flex — flex container */
 export type FlexProps = {
   // Container
@@ -217,19 +235,13 @@ export type FlexProps = {
   boxShadow?: string;
   /** Background and border radius; also rounds child clipping when overflow is "clip". */
   borderRadius?: BorderRadius;
-  borderWidth?: number;
+  /** Layout border widths in px: uniform or [top, right, bottom, left]. */
+  borderWidth?: Spacing;
+  /** Solid paint for the border surface; width reserves space even without paint. */
   borderColor?: string;
-  /** Border width behavior under post-layout transforms. Defaults to "transform". */
-  strokeScaling?: StrokeScaling;
-  /** Stroke line cap for border */
-  strokeLinecap?: "butt" | "round" | "square";
-  /** Stroke line join for border */
-  strokeLinejoin?: "miter" | "round" | "bevel";
-  /** Stroke dash pattern for border (e.g. "5,5") */
-  strokeDasharray?: string;
-  /** Stroke miter limit for border */
-  strokeMiterlimit?: number;
-  /** Child paint visibility. "clip" uses the layout box and its resolved borderRadius. */
+  /** Outer-contour line painted after content; does not reserve layout space. */
+  outline?: BoxOutlineStyle;
+  /** Child paint visibility. "clip" intersects the outer and inset border contours. */
   overflow?: "visible" | "clip";
   /** Opacity (0-1) */
   opacity?: number;
@@ -309,19 +321,13 @@ export type GridProps = {
   boxShadow?: string;
   /** Background and border radius; also rounds child clipping when overflow is "clip". */
   borderRadius?: BorderRadius;
-  borderWidth?: number;
+  /** Layout border widths in px: uniform or [top, right, bottom, left]. */
+  borderWidth?: Spacing;
+  /** Solid paint for the border surface; width reserves space even without paint. */
   borderColor?: string;
-  /** Border width behavior under post-layout transforms. Defaults to "transform". */
-  strokeScaling?: StrokeScaling;
-  /** Stroke line cap for border */
-  strokeLinecap?: "butt" | "round" | "square";
-  /** Stroke line join for border */
-  strokeLinejoin?: "miter" | "round" | "bevel";
-  /** Stroke dash pattern for border (e.g. "5,5") */
-  strokeDasharray?: string;
-  /** Stroke miter limit for border */
-  strokeMiterlimit?: number;
-  /** Child paint visibility. "clip" uses the layout box and its resolved borderRadius. */
+  /** Outer-contour line painted after content; does not reserve layout space. */
+  outline?: BoxOutlineStyle;
+  /** Child paint visibility. "clip" intersects the outer and inset border contours. */
   overflow?: "visible" | "clip";
   /** Opacity (0-1) */
   opacity?: number;
@@ -385,19 +391,13 @@ export type BoxProps = {
   boxShadow?: string;
   /** Background and border radius; also rounds child clipping when overflow is "clip". */
   borderRadius?: BorderRadius;
-  borderWidth?: number;
+  /** Layout border widths in px: uniform or [top, right, bottom, left]. */
+  borderWidth?: Spacing;
+  /** Solid paint for the border surface; width reserves space even without paint. */
   borderColor?: string;
-  /** Border width behavior under post-layout transforms. Defaults to "transform". */
-  strokeScaling?: StrokeScaling;
-  /** Stroke line cap for border */
-  strokeLinecap?: "butt" | "round" | "square";
-  /** Stroke line join for border */
-  strokeLinejoin?: "miter" | "round" | "bevel";
-  /** Stroke dash pattern for border (e.g. "5,5") */
-  strokeDasharray?: string;
-  /** Stroke miter limit for border */
-  strokeMiterlimit?: number;
-  /** Child paint visibility. "clip" uses the layout box and its resolved borderRadius. */
+  /** Outer-contour line painted after content; does not reserve layout space. */
+  outline?: BoxOutlineStyle;
+  /** Child paint visibility. "clip" intersects the outer and inset border contours. */
   overflow?: "visible" | "clip";
   /** Opacity (0-1) */
   opacity?: number;

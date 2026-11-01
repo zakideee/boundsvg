@@ -8,6 +8,8 @@ const TRANSFORM_KEYS = [
   "scaleX",
   "scaleY",
   "rotateDeg",
+  "skewXDeg",
+  "skewYDeg",
   "originX",
   "originY",
 ] as const;
@@ -99,7 +101,11 @@ export function assertValidTransform2D(
     if (value === undefined) {
       continue;
     }
-    if (typeof value !== "number" || !Number.isFinite(value)) {
+    if (
+      typeof value !== "number" ||
+      !Number.isFinite(value) ||
+      ((key === "skewXDeg" || key === "skewYDeg") && Math.abs(value) > 60)
+    ) {
       throw new FatalError(
         options.code,
         `${describeTransformOwner(options.ownerName)} transform "${key}" must be a finite number`,
@@ -116,15 +122,33 @@ export function assertValidTransform2D(
   }
 }
 
-/** Serialize translate, origin-relative rotation, and scale in SVG composition order. */
-export function transformToSvg(transform: Transform2D): string {
+/** Serialize the ordered linear commands inside the shared origin pair. */
+function skewAndScaleCommands(transform: Transform2D): string[] {
   const commands: string[] = [];
-  if ((transform.translateX ?? 0) !== 0 || (transform.translateY ?? 0) !== 0) {
+  const skewX = transform.skewXDeg ?? 0;
+  const skewY = transform.skewYDeg ?? 0;
+  if (skewX !== 0) {
+    commands.push(`skewX(${formatSvgNumber(skewX)})`);
+  }
+  if (skewY !== 0) {
+    commands.push(`skewY(${formatSvgNumber(skewY)})`);
+  }
+  if (transform.scaleX !== undefined || transform.scaleY !== undefined) {
     commands.push(
-      `translate(${formatSvgNumber(transform.translateX ?? 0)} ${formatSvgNumber(transform.translateY ?? 0)})`,
+      `scale(${formatSvgNumber(transform.scaleX ?? 1)} ${formatSvgNumber(transform.scaleY ?? 1)})`,
     );
   }
+  return commands;
+}
 
+/** Serialize translate, origin-relative rotation, sequential skews, and scale. */
+export function transformToSvg(transform: Transform2D): string {
+  const commands: string[] = [];
+  const translateX = transform.translateX ?? 0;
+  const translateY = transform.translateY ?? 0;
+  if (translateX !== 0 || translateY !== 0) {
+    commands.push(`translate(${formatSvgNumber(translateX)} ${formatSvgNumber(translateY)})`);
+  }
   const originX = transform.originX ?? 0;
   const originY = transform.originY ?? 0;
   if (transform.rotateDeg !== undefined) {
@@ -132,15 +156,15 @@ export function transformToSvg(transform: Transform2D): string {
       `rotate(${formatSvgNumber(transform.rotateDeg)} ${formatSvgNumber(originX)} ${formatSvgNumber(originY)})`,
     );
   }
-  if (transform.scaleX !== undefined || transform.scaleY !== undefined) {
-    const scaleX = transform.scaleX ?? 1;
-    const scaleY = transform.scaleY ?? 1;
-    if (originX !== 0 || originY !== 0) {
+  const linearCommands = skewAndScaleCommands(transform);
+  if (linearCommands.length > 0) {
+    const hasOrigin = originX !== 0 || originY !== 0;
+    if (hasOrigin) {
       commands.push(`translate(${formatSvgNumber(originX)} ${formatSvgNumber(originY)})`);
-      commands.push(`scale(${formatSvgNumber(scaleX)} ${formatSvgNumber(scaleY)})`);
+    }
+    commands.push(...linearCommands);
+    if (hasOrigin) {
       commands.push(`translate(${formatSvgNumber(-originX)} ${formatSvgNumber(-originY)})`);
-    } else {
-      commands.push(`scale(${formatSvgNumber(scaleX)} ${formatSvgNumber(scaleY)})`);
     }
   }
   return commands.join(" ");
@@ -217,6 +241,33 @@ export function applyInverseAffineMatrixToPoint(
   return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
 }
 
+/** Append each shear around the resolved origin without changing multiplication order. */
+function appendSkewMatrix(matrix: AffineMatrix, transform: Transform2D): AffineMatrix {
+  const originX = transform.originX ?? 0;
+  const originY = transform.originY ?? 0;
+  const tangentX = Math.tan(((transform.skewXDeg ?? 0) * Math.PI) / 180);
+  const tangentY = Math.tan(((transform.skewYDeg ?? 0) * Math.PI) / 180);
+  let skewedMatrix = multiplyAffineMatrices(matrix, createTranslateMatrix(originX, originY));
+  skewedMatrix = multiplyAffineMatrices(skewedMatrix, {
+    a: 1,
+    b: 0,
+    c: tangentX,
+    d: 1,
+    e: 0,
+    f: 0,
+  });
+  skewedMatrix = multiplyAffineMatrices(skewedMatrix, {
+    a: 1,
+    b: tangentY,
+    c: 0,
+    d: 1,
+    e: 0,
+    f: 0,
+  });
+  skewedMatrix = multiplyAffineMatrices(skewedMatrix, createTranslateMatrix(-originX, -originY));
+  return skewedMatrix;
+}
+
 /** Compose a node transform in the same order and layout-relative origin as SVG emission. */
 export function createResolvedTransformMatrix(
   transform: Transform2D | undefined,
@@ -229,11 +280,10 @@ export function createResolvedTransformMatrix(
   const resolvedTransform = resolveNodeLocalTransform(transform, bbox);
   let matrix = createIdentityAffineMatrix();
 
-  if ((resolvedTransform.translateX ?? 0) !== 0 || (resolvedTransform.translateY ?? 0) !== 0) {
-    matrix = multiplyAffineMatrices(
-      matrix,
-      createTranslateMatrix(resolvedTransform.translateX ?? 0, resolvedTransform.translateY ?? 0),
-    );
+  const translateX = resolvedTransform.translateX ?? 0;
+  const translateY = resolvedTransform.translateY ?? 0;
+  if (translateX !== 0 || translateY !== 0) {
+    matrix = multiplyAffineMatrices(matrix, createTranslateMatrix(translateX, translateY));
   }
 
   if (resolvedTransform.rotateDeg !== undefined) {
@@ -245,6 +295,10 @@ export function createResolvedTransformMatrix(
         resolvedTransform.originY ?? 0,
       ),
     );
+  }
+
+  if ((resolvedTransform.skewXDeg ?? 0) !== 0 || (resolvedTransform.skewYDeg ?? 0) !== 0) {
+    matrix = appendSkewMatrix(matrix, resolvedTransform);
   }
 
   if (resolvedTransform.scaleX !== undefined || resolvedTransform.scaleY !== undefined) {

@@ -37,6 +37,10 @@ pub(super) fn compute_layout_core(
     #[cfg(test)]
     crate::pipeline_phase_trace::record_layout();
     validate_layout_tree_depth(&input.root)?;
+    let checks_boxes = super::box_style::uses_box_geometry(&input.root);
+    if checks_boxes {
+        super::box_style::validate_layout_operands(&input.root)?;
+    }
 
     let mut tree: TaffyTree<String> = TaffyTree::new();
 
@@ -139,6 +143,9 @@ pub(super) fn compute_layout_core(
         &mut nodes,
     )?;
 
+    if checks_boxes {
+        super::box_style::validate_layout_results(&input.root, &nodes)?;
+    }
     Ok(LayoutOutput {
         nodes,
         measure_call_count: context.measure_call_count,
@@ -155,6 +162,7 @@ fn validate_layout_tree_depth(root: &LayoutNodeInput) -> Result<(), EngineError>
                 node.node_id
             )));
         }
+        super::box_style::validate_box_style(node)?;
         if let Some(text) = &node.text
             && let Some(actual_depth) = text
                 .rich_text
@@ -898,7 +906,11 @@ fn validate_text_decoration_value(
             "textDecoration.offsetPx must be a finite number.",
         ));
     }
-    if !crate::ir::gradient::is_valid_color(&decoration.color) {
+    // The transport has already resolved an omitted decoration color from its Text.
+    // Gradient syntax is parsed once per distinct Text paint during IR resolution.
+    if !crate::ir::gradient::is_valid_color(&decoration.color)
+        && !crate::ir::gradient::is_supported_gradient_function(&decoration.color)
+    {
         return Err(text_decoration_error(
             node_id,
             "textDecoration.color must be a valid color.",
@@ -915,7 +927,18 @@ fn build_taffy_node(
     context: &mut MeasureContext,
     node_id_map: &mut HashMap<NodeId, String>,
 ) -> Result<NodeId, EngineError> {
-    let style = map_style(&input.style);
+    let mut style = map_style(&input.style);
+    if matches!(input.node_type.as_str(), "box" | "flex" | "grid")
+        && let Some(widths) = input.visual.as_ref().and_then(|visual| visual.border_width)
+    {
+        let [top, right, bottom, left] = widths.widths();
+        style.border = Rect {
+            top: LengthPercentage::length(top),
+            right: LengthPercentage::length(right),
+            bottom: LengthPercentage::length(bottom),
+            left: LengthPercentage::length(left),
+        };
+    }
     let is_leaf = input.text.is_some() || input.text_path.is_some() || input.image.is_some();
 
     let node_id = if is_leaf {

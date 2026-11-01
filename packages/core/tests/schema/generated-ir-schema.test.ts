@@ -404,7 +404,7 @@ describe("generated directional IR schemas", () => {
     visit(sourceFile);
 
     expect(sourceFile.parseDiagnostics).toEqual([]);
-    expect(knownFieldCount).toBe(330);
+    expect(knownFieldCount).toBe(362);
     expect(forbiddenFields).toEqual([]);
   });
 

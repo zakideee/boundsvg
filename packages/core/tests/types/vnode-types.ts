@@ -22,12 +22,14 @@ void flexFromArgs;
 
 const canvasStrokeScaling: StrokeScaling = "canvas";
 void createElement("Flex", {
-  borderWidth: 1,
-  borderColor: "#000",
-  strokeScaling: canvasStrokeScaling,
+  outline: { stroke: "#000", strokeWidth: 1, strokeScaling: canvasStrokeScaling },
 });
-void createElement("Grid", { borderWidth: 1, borderColor: "#000", strokeScaling: "canvas" });
-void createElement("Box", { borderWidth: 1, borderColor: "#000", strokeScaling: "transform" });
+void createElement("Grid", {
+  outline: { stroke: "#000", strokeWidth: 1, strokeScaling: "canvas" },
+});
+void createElement("Box", {
+  outline: { stroke: "#000", strokeWidth: 1, strokeScaling: "transform" },
+});
 
 void createElement("Path", {
   d: "M0 0L1 1",

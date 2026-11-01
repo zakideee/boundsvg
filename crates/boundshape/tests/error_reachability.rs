@@ -277,3 +277,17 @@ fn retired_rejections_are_supported_or_non_fatal() {
         );
     }
 }
+
+#[test]
+fn skew_transform_domain_has_a_runtime_origin() {
+    let mut doc = path_doc("M0 0H10V10H0Z");
+    doc.root = GeometryNode::Transform {
+        node_id: None,
+        transform: boundshape::Transform2D {
+            skew_x_deg: Some(60.000_000_1),
+            ..Default::default()
+        },
+        child: Box::new(doc.root),
+    };
+    assert_eq!(evaluate_geometry(&doc), Err(ShapeError::InvalidTransform));
+}

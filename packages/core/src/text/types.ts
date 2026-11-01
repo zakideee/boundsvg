@@ -183,10 +183,11 @@ export type TextShadowLayer = {
   color: string;
 };
 
+/** A resolved glyph path with either a solid fill or a parent Text gradient reference. */
 export type TextOutlinePath = {
   nodeId: string;
   d: string;
-  fill: string;
+  fill: string | { gradientIndex: number };
   glyphIds: number[];
   text: string;
   bbox: BBox;
@@ -203,12 +204,18 @@ export type TextOutlinePath = {
   missingGlyph?: boolean;
 };
 
+/** Resolved text gradient in the same coordinates as its glyph outline paths. */
+export type TextGradient = NonNullable<import("../ir/types.js").IRTextNode["gradients"]>[number];
+
+/** Physical glyph paths and shared paints for a parent Text block. */
 export type TextOutlineNode = {
   nodeId: string;
   text: string;
   bbox: BBox;
   writingMode?: "horizontal-tb" | "vertical-rl";
   paths: TextOutlinePath[];
+  /** Shared parent-block gradient definitions referenced by the outline fills. */
+  gradients?: TextGradient[];
   /**
    * Composed node + ancestor transform mapping the path coordinates (and
    * `bbox`) into canvas space. The SVG output wraps the same paths in a

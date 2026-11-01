@@ -12,7 +12,9 @@ import type {
   IRSvgNode,
   IRTextNode,
 } from "../../src/ir/types.js";
+import { circularClip } from "../helpers/box-clip.js";
 
+/** Exhaustive mutable group fields covered by the clone fixture. */
 const GROUP_FIELDS = {
   type: true,
   nodeId: true,
@@ -23,11 +25,11 @@ const GROUP_FIELDS = {
   animation: true,
   meta: true,
   boxShadow: true,
-  clipPath: true,
-  clipBorderRadius: true,
   on: true,
+  clip: true,
 } satisfies Record<keyof IRGroupNode, true>;
 
+/** Exhaustive rectangle fields covered by the clone fixture. */
 const RECT_FIELDS = {
   type: true,
   nodeId: true,
@@ -35,15 +37,16 @@ const RECT_FIELDS = {
   fill: true,
   stroke: true,
   strokeWidth: true,
+  strokeScaling: true,
   strokeLinecap: true,
   strokeLinejoin: true,
   strokeDasharray: true,
   strokeMiterlimit: true,
   gradient: true,
   borderRadius: true,
-  strokeScaling: true,
 } satisfies Record<keyof IRRectNode, true>;
 
+/** Exhaustive text fields, including resolved paint resources, covered by the clone fixture. */
 const TEXT_FIELDS = {
   type: true,
   nodeId: true,
@@ -68,6 +71,7 @@ const TEXT_FIELDS = {
   sourceText: true,
   displayText: true,
   glyphPaths: true,
+  gradients: true,
   unitMap: true,
   unitAnimation: true,
   unitAnimationSamples: true,
@@ -157,6 +161,7 @@ const radialRect: IRRectNode = {
   fill: "#fff",
   stroke: "#000",
   strokeWidth: 2,
+  strokeScaling: "transform",
   strokeLinecap: "round",
   strokeLinejoin: "bevel",
   strokeDasharray: "2 1",
@@ -170,10 +175,23 @@ const radialRect: IRRectNode = {
     ],
   },
   borderRadius: { tl: 1, tr: 2, br: 3, bl: 4 },
-  strokeScaling: "canvas",
 };
 
 const textNode: IRTextNode = {
+  gradients: [
+    {
+      color: "linear-gradient(90deg, red, blue)",
+      bbox: { x: 0, y: 0, w: 80, h: 24 },
+      gradient: {
+        type: "linear",
+        geometry: { startX: 0, startY: 12, endX: 80, endY: 12 },
+        stops: [
+          { color: "red", offset: 0 },
+          { color: "blue", offset: 1 },
+        ],
+      },
+    },
+  ],
   type: "text",
   nodeId: "text",
   bbox: { x: 0, y: 0, w: 80, h: 24 },
@@ -381,9 +399,8 @@ const groupNode: IRGroupNode = {
   animation,
   meta: { label: "group" },
   boxShadow: { dx: 1, dy: 2, blur: 3, spread: 4, color: "#000" },
-  clipPath: { x: 0, y: 0, w: 90, h: 90 },
-  clipBorderRadius: { tl: 1, tr: 2, br: 3, bl: 4 },
   on: handlers,
+  clip: circularClip({ x: 0, y: 0, w: 90, h: 90 }, { tl: 1, tr: 2, br: 3, bl: 4 }),
 };
 
 const imageNode: IRImageNode = {
@@ -523,7 +540,7 @@ describe("cloneIRForLayeredTransform", () => {
       ...radialRect,
       gradient: {
         type: "linear",
-        angle: 45,
+        geometry: { startX: -2.5, startY: 37.5, endX: 32.5, endY: 2.5 },
         stops: [
           { color: "red", offset: 0 },
           { color: "blue", offset: 1 },

@@ -9,6 +9,7 @@ import {
 } from "../../src/ir/hit-test.js";
 import type { IR, IRGroupNode, IRNode, IRPathNode } from "../../src/ir/types.js";
 import { applyAffineMatrixToPoint, createResolvedTransformMatrix } from "../../src/transform.js";
+import { circularClip } from "../helpers/box-clip.js";
 
 /** A narrow placement frame deliberately excludes the authored painted rectangle. */
 function overflowPath(negative = false): IRPathNode {
@@ -98,10 +99,9 @@ describe("Path paint candidates and exact clip gates", () => {
       type: "group",
       nodeId: "card",
       bbox: { x: 10, y: 10, w: 100, h: 100 },
-      clipPath: { x: 10, y: 10, w: 100, h: 100 },
-      clipBorderRadius: radius,
       on: { onClick: "card-click" },
       children: [{ type: "rect", nodeId: "content", bbox: { x: 0, y: 0, w: 200, h: 120 } }],
+      clip: circularClip({ x: 10, y: 10, w: 100, h: 100 }, radius),
     };
     const scene = makeHitScene([card], ["content", "card"]);
     expectHitQueries(scene, { x: 60, y: 60 }, ["card", "content"]);
@@ -124,18 +124,16 @@ describe("Path paint candidates and exact clip gates", () => {
       nodeId: "outer",
       bbox: { x: 0, y: 0, w: 100, h: 100 },
       transform: { translateX: 100, rotateDeg: 45 },
-      clipPath: { x: 0, y: 0, w: 100, h: 100 },
-      clipBorderRadius: 50,
       children: [
         {
           type: "group",
           nodeId: "inner",
           bbox: { x: 20, y: 20, w: 60, h: 60 },
-          clipPath: { x: 20, y: 20, w: 60, h: 60 },
-          clipBorderRadius: 30,
           children: [{ type: "rect", nodeId: "content", bbox: { x: 0, y: 0, w: 100, h: 100 } }],
+          clip: circularClip({ x: 20, y: 20, w: 60, h: 60 }, 30),
         },
       ],
+      clip: circularClip({ x: 0, y: 0, w: 100, h: 100 }, 50),
     };
     const scene = makeHitScene([outer], ["content"]);
     const matrix = createResolvedTransformMatrix(outer.transform, outer.bbox);

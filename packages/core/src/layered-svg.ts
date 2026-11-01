@@ -381,11 +381,7 @@ function isAtomicNode(node: IRNode, sourceNode: SourceNodeInfo): boolean {
 
   return (
     node.type === "group" &&
-    (node.opacity != null ||
-      targetsOpacity(node) ||
-      node.clipPath != null ||
-      node.clipBorderRadius != null ||
-      node.boxShadow != null)
+    (node.opacity != null || targetsOpacity(node) || node.clip != null || node.boxShadow != null)
   );
 }
 
@@ -413,7 +409,7 @@ function createAtomicFragment(options: {
     warnings.push({ code: "SVG_SUBTREE_FORCED_ATOMIC", nodeId: sourceNode.nodeId });
   }
   if (node.type === "group") {
-    if (node.clipPath != null || node.clipBorderRadius != null) {
+    if (node.clip != null) {
       warnings.push({ code: "CLIP_FORCED_ATOMIC", nodeId: sourceNode.nodeId });
     }
     if (node.boxShadow != null) {
@@ -711,6 +707,12 @@ function getSourceNodeId(node: IRNode, sourceNodeMap: ReadonlyMap<string, Source
     }
   }
   const nodeId = node.nodeId;
+  if (nodeId.endsWith(":content")) {
+    return nodeId.slice(0, -":content".length);
+  }
+  if (nodeId.endsWith(":outline")) {
+    return nodeId.slice(0, -":outline".length);
+  }
   if (nodeId.endsWith(BG_NODE_SUFFIX)) {
     return nodeId.slice(0, -BG_NODE_SUFFIX.length);
   }

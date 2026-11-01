@@ -1,6 +1,6 @@
 import { FatalError } from "../errors.js";
 import { type AffineMatrix, applyInverseAffineMatrixToPoint, type Point2D } from "../transform.js";
-import type { BBox, BorderRadii, IRPathNode } from "./types.js";
+import type { BBox, BoxClip, IRPathNode } from "./types.js";
 
 /** Extrema may be infinite only during conservative internal interval arithmetic. */
 export type HitBounds = { minX: number; minY: number; maxX: number; maxY: number };
@@ -9,8 +9,7 @@ export type HitBounds = { minX: number; minY: number; maxX: number; maxY: number
 export type HitClip = {
   parent: HitClip | null;
   matrix: AffineMatrix;
-  bbox: BBox;
-  radii?: number | BorderRadii;
+  geometry: BoxClip;
 };
 
 /** Convert layout bounds without interpreting them as Path paint geometry. */
@@ -166,33 +165,63 @@ export function pointInHitBBox(point: Point2D, bbox: BBox): boolean {
   );
 }
 
-/** Reject the circular cutout of a corner, using normalized distances to avoid squares overflowing. */
-function cornerContains(point: Point2D, center: Point2D, radius: number): boolean {
-  return Math.hypot((point.x - center.x) / radius, (point.y - center.y) / radius) <= 1;
+/** Reject unresolved clip corners before geometric hit membership can disagree with paint. */
+function assertResolvedBoxClip(clip: Extract<BoxClip, { kind: "boxContour" }>): void {
+  const { bbox, corners } = clip;
+  if (
+    ![bbox.x, bbox.y, bbox.w, bbox.h, bbox.x + bbox.w, bbox.y + bbox.h].every(Number.isFinite) ||
+    bbox.w < 0 ||
+    bbox.h < 0 ||
+    corners.some(
+      (corner) =>
+        !Number.isFinite(corner.rx) ||
+        !Number.isFinite(corner.ry) ||
+        corner.rx < 0 ||
+        corner.ry < 0 ||
+        corner.rx > bbox.w / 2 ||
+        corner.ry > bbox.h / 2,
+    )
+  ) {
+    throw new FatalError("VALIDATION", "Hit testing requires a resolved box clip.", {
+      stage: "ir",
+    });
+  }
 }
 
-/** Test the resolved rectangle/radii in original clip coordinates. */
-function pointInRoundedClip(point: Point2D, bbox: BBox, radii?: number | BorderRadii): boolean {
-  if (!pointInHitBBox(point, bbox)) {
+/** Test the exact resolved elliptical corners used by the native clip emitter. */
+function pointInBoxClip(point: Point2D, clip: BoxClip): boolean {
+  if (clip.kind === "empty") {
     return false;
   }
-  const uniform =
-    typeof radii === "number" ? Math.max(0, Math.min(radii, bbox.w / 2, bbox.h / 2)) : 0;
-  const corners =
-    typeof radii === "object" ? radii : { tl: uniform, tr: uniform, br: uniform, bl: uniform };
+  assertResolvedBoxClip(clip);
+  if (clip.bbox.w === 0 || clip.bbox.h === 0 || !pointInHitBBox(point, clip.bbox)) {
+    return false;
+  }
+  const { bbox, corners } = clip;
   const right = bbox.x + bbox.w;
   const bottom = bbox.y + bbox.h;
-  if (corners.tl > 0 && point.x < bbox.x + corners.tl && point.y < bbox.y + corners.tl) {
-    return cornerContains(point, { x: bbox.x + corners.tl, y: bbox.y + corners.tl }, corners.tl);
-  }
-  if (corners.tr > 0 && point.x > right - corners.tr && point.y < bbox.y + corners.tr) {
-    return cornerContains(point, { x: right - corners.tr, y: bbox.y + corners.tr }, corners.tr);
-  }
-  if (corners.br > 0 && point.x > right - corners.br && point.y > bottom - corners.br) {
-    return cornerContains(point, { x: right - corners.br, y: bottom - corners.br }, corners.br);
-  }
-  if (corners.bl > 0 && point.x < bbox.x + corners.bl && point.y > bottom - corners.bl) {
-    return cornerContains(point, { x: bbox.x + corners.bl, y: bottom - corners.bl }, corners.bl);
+  const centers = [
+    { x: bbox.x + corners[0].rx, y: bbox.y + corners[0].ry },
+    { x: right - corners[1].rx, y: bbox.y + corners[1].ry },
+    { x: right - corners[2].rx, y: bottom - corners[2].ry },
+    { x: bbox.x + corners[3].rx, y: bottom - corners[3].ry },
+  ];
+  for (const [index, radius] of corners.entries()) {
+    if (radius.rx <= 0 || radius.ry <= 0) {
+      continue;
+    }
+    const center = centers[index];
+    if (!center) {
+      continue;
+    }
+    const isLeft = index === 0 || index === 3;
+    const isTop = index < 2;
+    if (
+      (isLeft ? point.x < center.x : point.x > center.x) &&
+      (isTop ? point.y < center.y : point.y > center.y)
+    ) {
+      return Math.hypot((point.x - center.x) / radius.rx, (point.y - center.y) / radius.ry) <= 1;
+    }
   }
   return true;
 }
@@ -201,7 +230,7 @@ function pointInRoundedClip(point: Point2D, bbox: BBox, radii?: number | BorderR
 export function acceptsHitClips(clip: HitClip | null, point: Point2D): boolean {
   for (let current = clip; current; current = current.parent) {
     const local = applyInverseAffineMatrixToPoint(current.matrix, point);
-    if (!local || !pointInRoundedClip(local, current.bbox, current.radii)) {
+    if (!local || !pointInBoxClip(local, current.geometry)) {
       return false;
     }
   }

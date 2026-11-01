@@ -219,9 +219,7 @@ function scene(text: string, animate = false): EngineInput {
         top: 4,
         width: 40,
         height: 20,
-        borderWidth: 1,
-        borderColor: "#2563eb",
-        strokeScaling: "canvas",
+        outline: { stroke: "#2563eb", strokeWidth: 1, strokeScaling: "canvas" },
       }),
       createElement("Path", {
         id: "video-path-hairline",

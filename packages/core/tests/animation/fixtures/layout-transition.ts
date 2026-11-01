@@ -415,7 +415,13 @@ export function createLayoutTransitionNegativeFixtures(): LayoutTransitionNegati
       const slot = requireBox(state, "slot");
       slot.borderWidth = 1;
       slot.borderColor = "#93c5fd";
-      slot.strokeScaling = "canvas";
+      slot.outline = {
+        stroke: slot.borderColor ?? "#ffffff",
+        strokeWidth: typeof slot.borderWidth === "number" ? slot.borderWidth : 2,
+        strokeScaling: "canvas",
+      };
+      delete slot.borderWidth;
+      delete slot.borderColor;
     }
     return inputFromStates(states);
   })();

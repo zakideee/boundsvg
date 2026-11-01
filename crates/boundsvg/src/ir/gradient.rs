@@ -1,19 +1,34 @@
-//! CSS gradient parser.
+//! Shared CSS gradient parsing and box-aware paint resolution.
 //!
 //! Parses `linear-gradient(...)` and `radial-gradient(...)` CSS strings
-//! into structured `Gradient` types for SVG emission.
+//! through a private syntax stage into one resolved `Gradient` contract.
 
-use super::types::{Gradient, GradientStop, RadialGradientGeometry};
+use super::types::{Gradient, GradientStop, LinearGradientGeometry, RadialGradientGeometry};
 
-/// Try to parse a CSS gradient string.
-/// Returns `None` if the string is not a gradient (i.e., a solid color).
-///
-/// Supports:
-/// - `linear-gradient(angle, color stop, ...)`
-/// - `radial-gradient(color stop, ...)`
+/// Parse and resolve a CSS gradient in a unit-sized gradient box.
+/// Returns `None` for a solid color, malformed syntax, or non-finite resolved geometry.
 #[must_use]
 pub fn parse_gradient(value: &str) -> Option<Gradient> {
-    parse_gradient_for_box(value, 1.0, 1.0)
+    resolve_gradient_for_box(value, 1.0, 1.0)
+}
+
+// Authored syntax is never serialized as an alternative drawing contract.
+enum GradientSyntax {
+    Linear {
+        angle: f64,
+        stops: Vec<GradientStop>,
+    },
+    Radial {
+        prelude: RadialPrelude,
+        stops: Vec<GradientStop>,
+    },
+}
+
+struct RadialPrelude {
+    shape: RadialShape,
+    extent: RadialExtent,
+    center_x_fraction: f64,
+    center_y_fraction: f64,
 }
 
 /// Whether the value claims to use one of the gradient functions implemented
@@ -24,22 +39,63 @@ pub(crate) fn is_supported_gradient_function(value: &str) -> bool {
     lower.starts_with("linear-gradient(") || lower.starts_with("radial-gradient(")
 }
 
-/// Parse a gradient after layout has resolved its gradient box.
+/// Resolve Box and Text paints through the same final-box geometry calculations.
+/// Invalid syntax and non-finite geometry return `None`; callers distinguish a claimed gradient from a solid color.
 #[must_use]
-pub(crate) fn parse_gradient_for_box(value: &str, width: f64, height: f64) -> Option<Gradient> {
-    let trimmed = value.trim();
+pub(crate) fn resolve_gradient_for_box(value: &str, width: f64, height: f64) -> Option<Gradient> {
+    let parsed = parse_gradient_syntax(value, width, height)?;
+    let (gradient, coordinates) = match parsed {
+        GradientSyntax::Linear { angle, stops } => {
+            let (start_x, start_y, end_x, end_y) = angle_to_svg_coords(angle, width, height);
+            (
+                Gradient::Linear {
+                    geometry: LinearGradientGeometry {
+                        start_x,
+                        start_y,
+                        end_x,
+                        end_y,
+                    },
+                    stops,
+                },
+                [start_x, start_y, end_x, end_y],
+            )
+        }
+        GradientSyntax::Radial { prelude, stops } => {
+            let geometry = resolve_radial_geometry(
+                width,
+                height,
+                prelude.shape,
+                prelude.extent,
+                prelude.center_x_fraction,
+                prelude.center_y_fraction,
+            );
+            let coordinates = [
+                geometry.center_x,
+                geometry.center_y,
+                geometry.radius_x,
+                geometry.radius_y,
+            ];
+            (Gradient::Radial { geometry, stops }, coordinates)
+        }
+    };
+    coordinates
+        .into_iter()
+        .all(f64::is_finite)
+        .then_some(gradient)
+}
 
+fn parse_gradient_syntax(value: &str, width: f64, height: f64) -> Option<GradientSyntax> {
+    let trimmed = value.trim();
     if function_content(trimmed, "linear-gradient").is_some() {
         return parse_linear_gradient(trimmed, width, height);
     }
     if function_content(trimmed, "radial-gradient").is_some() {
-        return parse_radial_gradient(trimmed, width, height);
+        return parse_radial_gradient(trimmed);
     }
-
     None
 }
 
-fn parse_linear_gradient(value: &str, width: f64, height: f64) -> Option<Gradient> {
+fn parse_linear_gradient(value: &str, width: f64, height: f64) -> Option<GradientSyntax> {
     let inner = function_content(value, "linear-gradient")?;
     let parts = split_gradient_args(inner);
     if parts.len() < 2 {
@@ -65,42 +121,34 @@ fn parse_linear_gradient(value: &str, width: f64, height: f64) -> Option<Gradien
         return None;
     }
 
-    Some(Gradient::Linear { angle, stops })
+    Some(GradientSyntax::Linear { angle, stops })
 }
 
-fn parse_radial_gradient(value: &str, width: f64, height: f64) -> Option<Gradient> {
+fn parse_radial_gradient(value: &str) -> Option<GradientSyntax> {
     let inner = function_content(value, "radial-gradient")?;
     let parts = split_gradient_args(inner);
     if parts.len() < 2 {
         return None;
     }
-
     let first_part = parts[0].trim();
-    let (geometry, stops_start) = if parse_color_stop(first_part).is_some() {
+    let (prelude, stops_start) = if parse_color_stop(first_part).is_some() {
         (
-            resolve_radial_geometry(
-                width,
-                height,
-                RadialShape::Ellipse,
-                RadialExtent::FarthestCorner,
-                0.5,
-                0.5,
-            ),
+            RadialPrelude {
+                shape: RadialShape::Ellipse,
+                extent: RadialExtent::FarthestCorner,
+                center_x_fraction: 0.5,
+                center_y_fraction: 0.5,
+            },
             0,
         )
     } else {
-        (parse_radial_prelude(first_part, width, height)?, 1)
+        (parse_radial_prelude(first_part)?, 1)
     };
-
     let stops = parse_stops(&parts[stops_start..])?;
     if stops.len() < 2 {
         return None;
     }
-
-    Some(Gradient::Radial {
-        geometry: Some(geometry),
-        stops,
-    })
+    Some(GradientSyntax::Radial { prelude, stops })
 }
 
 fn function_content<'a>(value: &'a str, expected_name: &str) -> Option<&'a str> {
@@ -340,7 +388,7 @@ enum RadialExtent {
     FarthestCorner,
 }
 
-fn parse_radial_prelude(prelude: &str, width: f64, height: f64) -> Option<RadialGradientGeometry> {
+fn parse_radial_prelude(prelude: &str) -> Option<RadialPrelude> {
     let lower = prelude.to_ascii_lowercase();
     let tokens: Vec<&str> = lower.split_ascii_whitespace().collect();
     let at_index = tokens.iter().position(|token| *token == "at");
@@ -375,14 +423,12 @@ fn parse_radial_prelude(prelude: &str, width: f64, height: f64) -> Option<Radial
     } else {
         parse_radial_position(position_tokens)?
     };
-    Some(resolve_radial_geometry(
-        width,
-        height,
-        shape.unwrap_or(RadialShape::Ellipse),
-        extent.unwrap_or(RadialExtent::FarthestCorner),
-        center_x,
-        center_y,
-    ))
+    Some(RadialPrelude {
+        shape: shape.unwrap_or(RadialShape::Ellipse),
+        extent: extent.unwrap_or(RadialExtent::FarthestCorner),
+        center_x_fraction: center_x,
+        center_y_fraction: center_y,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -878,7 +924,7 @@ mod tests {
     #[test]
     fn angle_accepts_css_number_syntax() {
         assert!(parse_gradient("linear-gradient(.5deg, red, blue)").is_some());
-        let Some(Gradient::Linear { angle, stops }) =
+        let Some(GradientSyntax::Linear { angle, stops, .. }) =
             parse_gradient("linear-gradient(.5deg, red, blue)")
         else {
             panic!("expected linear gradient");
@@ -887,21 +933,21 @@ mod tests {
         assert_eq!(stops.len(), 2);
 
         // Case-insensitive suffix, like the TS /i flag
-        let Some(Gradient::Linear { angle, .. }) =
+        let Some(GradientSyntax::Linear { angle, .. }) =
             parse_gradient("linear-gradient(45DEG, red, blue)")
         else {
             panic!("expected linear gradient");
         };
         assert_eq!(angle, 45.0);
 
-        let Some(Gradient::Linear { angle, .. }) =
+        let Some(GradientSyntax::Linear { angle, .. }) =
             parse_gradient("linear-gradient(+45deg, red, blue)")
         else {
             panic!("expected linear gradient");
         };
         assert_eq!(angle, 45.0);
 
-        let Some(Gradient::Linear { angle, .. }) =
+        let Some(GradientSyntax::Linear { angle, .. }) =
             parse_gradient("linear-gradient(1e2deg, red, blue)")
         else {
             panic!("expected linear gradient");
@@ -911,11 +957,15 @@ mod tests {
 
     use super::*;
 
+    fn parse_gradient(value: &str) -> Option<GradientSyntax> {
+        parse_gradient_syntax(value, 1.0, 1.0)
+    }
+
     #[test]
     fn test_parse_linear_gradient_basic() {
         let g = parse_gradient("linear-gradient(red, blue)").unwrap();
         match g {
-            Gradient::Linear { angle, stops } => {
+            GradientSyntax::Linear { angle, stops, .. } => {
                 assert_eq!(angle, 180.0); // default: to bottom
                 assert_eq!(stops.len(), 2);
                 assert_eq!(stops[0].color, "red");
@@ -923,7 +973,7 @@ mod tests {
                 assert_eq!(stops[1].color, "blue");
                 assert!((stops[1].offset - 1.0).abs() < f64::EPSILON);
             }
-            Gradient::Radial { .. } => panic!("expected linear gradient"),
+            GradientSyntax::Radial { .. } => panic!("expected linear gradient"),
         }
     }
 
@@ -931,13 +981,13 @@ mod tests {
     fn test_parse_linear_gradient_with_angle() {
         let g = parse_gradient("linear-gradient(45deg, #ff0000, #0000ff)").unwrap();
         match g {
-            Gradient::Linear { angle, stops } => {
+            GradientSyntax::Linear { angle, stops, .. } => {
                 assert_eq!(angle, 45.0);
                 assert_eq!(stops.len(), 2);
                 assert_eq!(stops[0].color, "#ff0000");
                 assert_eq!(stops[1].color, "#0000ff");
             }
-            Gradient::Radial { .. } => panic!("expected linear gradient"),
+            GradientSyntax::Radial { .. } => panic!("expected linear gradient"),
         }
     }
 
@@ -945,10 +995,10 @@ mod tests {
     fn test_parse_linear_gradient_with_direction() {
         let g = parse_gradient("linear-gradient(to right, red, blue)").unwrap();
         match g {
-            Gradient::Linear { angle, .. } => {
+            GradientSyntax::Linear { angle, .. } => {
                 assert_eq!(angle, 90.0);
             }
-            Gradient::Radial { .. } => panic!("expected linear gradient"),
+            GradientSyntax::Radial { .. } => panic!("expected linear gradient"),
         }
     }
 
@@ -956,7 +1006,7 @@ mod tests {
     fn test_parse_linear_gradient_with_stops() {
         let g = parse_gradient("linear-gradient(90deg, red 0%, green 50%, blue 100%)").unwrap();
         match g {
-            Gradient::Linear { stops, .. } => {
+            GradientSyntax::Linear { stops, .. } => {
                 assert_eq!(stops.len(), 3);
                 assert_eq!(stops[0].color, "red");
                 assert!((stops[0].offset - 0.0).abs() < f64::EPSILON);
@@ -965,7 +1015,7 @@ mod tests {
                 assert_eq!(stops[2].color, "blue");
                 assert!((stops[2].offset - 1.0).abs() < f64::EPSILON);
             }
-            Gradient::Radial { .. } => panic!("expected linear gradient"),
+            GradientSyntax::Radial { .. } => panic!("expected linear gradient"),
         }
     }
 
@@ -973,30 +1023,24 @@ mod tests {
     fn test_parse_linear_gradient_rgba() {
         let g = parse_gradient("linear-gradient(rgba(255,0,0,0.5), rgba(0,0,255,1))").unwrap();
         match g {
-            Gradient::Linear { stops, .. } => {
+            GradientSyntax::Linear { stops, .. } => {
                 assert_eq!(stops.len(), 2);
                 assert_eq!(stops[0].color, "rgba(255,0,0,0.5)");
             }
-            Gradient::Radial { .. } => panic!("expected linear gradient"),
+            GradientSyntax::Radial { .. } => panic!("expected linear gradient"),
         }
     }
 
     #[test]
     fn test_parse_radial_gradient() {
-        let g = parse_gradient("radial-gradient(red, blue)").unwrap();
-        match g {
-            Gradient::Radial { geometry, stops } => {
-                assert_eq!(stops.len(), 2);
-                assert_eq!(stops[0].color, "red");
-                assert_eq!(stops[1].color, "blue");
-                let geometry = geometry.expect("resolved radial geometry");
-                assert!((geometry.center_x - 0.5).abs() < 1e-10);
-                assert!((geometry.center_y - 0.5).abs() < 1e-10);
-                assert!((geometry.radius_x - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-10);
-                assert!((geometry.radius_y - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-10);
-            }
-            Gradient::Linear { .. } => panic!("expected radial gradient"),
-        }
+        let Some(Gradient::Radial { geometry, stops }) =
+            resolve_gradient_for_box("radial-gradient(red, blue)", 1.0, 1.0)
+        else {
+            panic!("expected radial paint");
+        };
+        assert_eq!(geometry.center_x, 0.5);
+        assert_eq!(geometry.center_y, 0.5);
+        assert_eq!(stops.len(), 2);
     }
 
     #[test]
@@ -1108,15 +1152,11 @@ mod tests {
 
     #[test]
     fn radial_circle_position_and_extent_are_resolved_from_the_box() {
-        let Some(Gradient::Radial {
-            geometry: Some(geometry),
-            ..
-        }) = parse_gradient_for_box(
+        let Some(Gradient::Radial { geometry, .. }) = resolve_gradient_for_box(
             "radial-gradient(circle at 100% 100%, red, blue)",
             200.0,
             100.0,
-        )
-        else {
+        ) else {
             panic!("expected radial gradient geometry");
         };
         assert!((geometry.center_x - 200.0).abs() < 1e-10);
@@ -1133,7 +1173,7 @@ mod tests {
 
     #[test]
     fn omitted_stops_are_distributed_between_explicit_neighbors() {
-        let Some(Gradient::Linear { stops, .. }) =
+        let Some(GradientSyntax::Linear { stops, .. }) =
             parse_gradient("linear-gradient(red 20%, yellow, green, blue 80%)")
         else {
             panic!("expected linear gradient");
@@ -1207,5 +1247,36 @@ mod tests {
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].trim(), "rgba(255,0,0,0.5)");
         assert_eq!(parts[1].trim(), "rgba(0,0,255,1)");
+    }
+    #[test]
+    fn resolved_gradient_wire_has_one_geometry_authority() {
+        let stops = serde_json::json!([{"color":"red","offset":0},{"color":"blue","offset":1}]);
+        let geometry = serde_json::json!({"startX":0,"startY":25,"endX":100,"endY":25});
+        for malformed in [
+            serde_json::json!({"type":"linear","angle":90,"stops":stops}),
+            serde_json::json!({"type":"linear","angle":90,"geometry":geometry,"stops":stops}),
+            serde_json::json!({"type":"linear","geometry":null,"stops":stops}),
+            serde_json::json!({"type":"radial","stops":stops}),
+            serde_json::json!({"type":"radial","geometry":null,"stops":stops}),
+        ] {
+            assert!(serde_json::from_value::<Gradient>(malformed).is_err());
+        }
+        for paint in [
+            "linear-gradient(90deg, red, blue)",
+            "radial-gradient(circle at right bottom, red, blue)",
+        ] {
+            let resolved = resolve_gradient_for_box(paint, 100.0, 50.0).expect("resolved paint");
+            let encoded = serde_json::to_value(&resolved).expect("encode");
+            assert!(encoded.get("angle").is_none());
+            assert!(
+                encoded
+                    .get("geometry")
+                    .is_some_and(serde_json::Value::is_object)
+            );
+            assert_eq!(
+                serde_json::from_value::<Gradient>(encoded).expect("decode"),
+                resolved
+            );
+        }
     }
 }

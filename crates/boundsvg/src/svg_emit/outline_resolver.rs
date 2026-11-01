@@ -20,8 +20,8 @@ use boundshape::{
 use crate::error::EngineError;
 use crate::font::{FontRegistry, FontStyle};
 use crate::ir::types::{
-    BBox, IrNode, IrNodeKind, IrTextAlign, TextOutlinePath, TextShadowLayer, TextStrokeLayer,
-    TextUnitAnimationSample,
+    BBox, IrNode, IrNodeKind, IrTextAlign, TextOutlinePath, TextPaint, TextShadowLayer,
+    TextStrokeLayer, TextUnitAnimationSample,
 };
 use crate::svg_emit::num_format::format_js_number;
 use crate::svg_emit::path_bbox::parse_path_bbox;
@@ -209,7 +209,8 @@ pub fn resolve_text_outlines(
     registry: &FontRegistry,
     options: &OutlineResolveOptions,
 ) -> Result<(), EngineError> {
-    resolve_text_outlines_inner(root, registry, *options, false)
+    resolve_text_outlines_inner(root, registry, *options, false)?;
+    crate::ir::numeric_envelope::validate_resolved_root(root)
 }
 
 /// Resolve only Text nodes that opt into paint-unit animation.
@@ -225,7 +226,8 @@ pub fn resolve_animated_text_outlines(
     registry: &FontRegistry,
     options: &OutlineResolveOptions,
 ) -> Result<(), EngineError> {
-    resolve_text_outlines_inner(root, registry, *options, true)
+    resolve_text_outlines_inner(root, registry, *options, true)?;
+    crate::ir::numeric_envelope::validate_resolved_root(root)
 }
 
 fn resolve_text_outlines_inner(
@@ -269,6 +271,7 @@ fn resolve_text_outlines_inner(
     let requests = build_node_outline_requests(&root.kind, node_bbox, &node_id, None)?;
     let IrNodeKind::Text {
         glyph_paths,
+        gradients,
         unit_map,
         unit_animation,
         unit_animation_samples,
@@ -277,6 +280,18 @@ fn resolve_text_outlines_inner(
     else {
         return Ok(());
     };
+    let paint_indices: HashMap<&str, u32> = gradients
+        .iter()
+        .flatten()
+        .enumerate()
+        .map(|(index, gradient)| {
+            u32::try_from(index)
+                .map(|index| (gradient.color.as_str(), index))
+                .map_err(|_| {
+                    EngineError::Validation("Text gradient resource index exceeds u32".to_string())
+                })
+        })
+        .collect::<Result<_, _>>()?;
     if requests.is_empty() {
         *glyph_paths = Some(Vec::new());
         if unit_animation.is_some() {
@@ -309,8 +324,10 @@ fn resolve_text_outlines_inner(
         else {
             continue;
         };
-        let outline_path =
+        let mut outline_path =
             create_resolved_outline_path(&node_id, request, path_data, options.show_missing_glyphs);
+        outline_path.fill =
+            crate::ir::text_paint::resolve_outline_paint(&request.fill, &paint_indices);
         append_resolved_outline_path(&mut resolved_paths, outline_path, options.text_path_mode);
     }
 
@@ -571,7 +588,7 @@ fn create_resolved_outline_path(
             h: 0.0,
         }),
         d: path_data,
-        fill: request.fill.clone(),
+        fill: TextPaint::Solid(request.fill.clone()),
         glyph_ids: vec![request.glyph_id],
         text: request.text.clone(),
         unit_id: request.unit_id.clone(),
@@ -1183,7 +1200,7 @@ mod tests {
         let make = |fill: &str, d: &str| TextOutlinePath {
             node_id: "t".to_string(),
             d: d.to_string(),
-            fill: fill.to_string(),
+            fill: TextPaint::Solid(fill.to_string()),
             strokes: None,
             shadows: None,
             paint_range_index: None,

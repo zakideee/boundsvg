@@ -108,9 +108,7 @@ describe("Rust serde / TypeScript bridge round-trip", () => {
           width: 40,
           height: 20,
           background: "#111",
-          borderWidth: 1,
-          borderColor: "#fff",
-          strokeScaling: "canvas",
+          outline: { stroke: "#fff", strokeWidth: 1, strokeScaling: "canvas" },
         }),
         createElement("Path", {
           id: "path-hairline",
@@ -128,8 +126,8 @@ describe("Rust serde / TypeScript bridge round-trip", () => {
     expect(owner?.children?.find((node) => node.nodeId === "hairline:bg")).not.toHaveProperty(
       "strokeScaling",
     );
-    expect(owner?.children?.find((node) => node.nodeId === "hairline:border")).toMatchObject({
-      type: "rect",
+    expect(owner?.children?.find((node) => node.nodeId === "hairline:outline")).toMatchObject({
+      type: "path",
       strokeScaling: "canvas",
     });
     const pathOwner = ir.root.children?.find((node) => node.nodeId === "path-hairline");

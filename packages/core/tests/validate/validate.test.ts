@@ -31,9 +31,13 @@ describe("validate", () => {
     const tree = createElement(
       "Canvas",
       { width: 100, height: 100 },
-      createElement("Flex", { strokeScaling: "canvas" }),
-      createElement("Grid", { borderWidth: 1, borderColor: "#fff", strokeScaling: "canvas" }),
-      createElement("Box", { borderWidth: 1, borderColor: "#fff", strokeScaling: "transform" }),
+      createElement("Flex", { outline: { stroke: "none", strokeScaling: "canvas" } }),
+      createElement("Grid", {
+        outline: { stroke: "#fff", strokeWidth: 1, strokeScaling: "canvas" },
+      }),
+      createElement("Box", {
+        outline: { stroke: "#fff", strokeWidth: 1, strokeScaling: "transform" },
+      }),
       createElement("Path", {
         d: "M0 0L10 10",
         width: 10,
@@ -93,24 +97,23 @@ describe("validate", () => {
     const tree = createElement(
       "Canvas",
       { width: 100, height: 100 },
-      createElement("Box", { strokeScaling: "viewport" as unknown as "canvas" }),
+      createElement("Box", {
+        outline: { stroke: "none", strokeScaling: "viewport" as unknown as "canvas" },
+      }),
     );
     expect(() => validate(tree)).toThrowError(
       expect.objectContaining({ code: "VALIDATION", stage: "validate", nodeId: "<Box>" }),
     );
   });
 
-  it("rejects dashed canvas-stable borders with the dedicated fatal code", () => {
+  it("rejects dashed canvas-stable outlines with the dedicated fatal code", () => {
     for (const strokeDasharray of ["5,5", "   "]) {
       const tree = createElement(
         "Canvas",
         { width: 100, height: 100 },
         createElement("Box", {
           id: "hairline",
-          borderWidth: 1,
-          borderColor: "#fff",
-          strokeScaling: "canvas",
-          strokeDasharray,
+          outline: { stroke: "#fff", strokeWidth: 1, strokeScaling: "canvas", strokeDasharray },
         }),
       );
       expect(() => validate(tree)).toThrowError(

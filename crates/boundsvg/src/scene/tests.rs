@@ -16,8 +16,7 @@ fn group_node(node_id: &str, children: Vec<IrNode>) -> IrNode {
         bbox: bbox(0.0, 0.0, 100.0, 100.0),
         kind: IrNodeKind::Group {
             children,
-            clip_path: None,
-            clip_border_radius: None,
+            clip: None,
             opacity: None,
             box_shadow: None,
             meta: None,
@@ -42,25 +41,6 @@ fn rect_node(node_id: &str, fill: &str) -> IrNode {
             stroke_linecap: None,
             stroke_linejoin: None,
             stroke_dasharray: None,
-            stroke_miterlimit: None,
-        },
-    }
-}
-
-fn canvas_border_node(node_id: &str, dasharray: Option<&str>) -> IrNode {
-    IrNode {
-        node_id: node_id.to_string(),
-        bbox: bbox(8.0, 8.0, 40.0, 20.0),
-        kind: IrNodeKind::Rect {
-            fill: None,
-            gradient: None,
-            stroke: Some("#fff".to_string()),
-            stroke_width: Some(1.0),
-            stroke_scaling: Some(crate::ir::types::StrokeScaling::Canvas),
-            border_radius: None,
-            stroke_linecap: None,
-            stroke_linejoin: None,
-            stroke_dasharray: dasharray.map(str::to_string),
             stroke_miterlimit: None,
         },
     }
@@ -228,207 +208,96 @@ fn resolution_is_pure() {
     assert_eq!(first, second);
 }
 
-#[test]
-fn canvas_stroke_uses_sampled_nested_similarity_scale_but_not_output_scale() {
-    let mut child = group_node(
-        "hairline",
-        vec![canvas_border_node("hairline:border", None)],
-    );
-    set_group_transform(&mut child, 1.5, 1.5);
-    let mut camera = group_node("camera", vec![child]);
-    set_group_transform(&mut camera, 2.0, 2.0);
-    let ir = ir_with_root(
-        group_node("canvas", vec![camera]),
-        vec!["hairline:border".to_string()],
-    );
-
-    let paint_scene = resolve_paint_scene(
-        &ir,
-        &PaintSceneOptions {
-            scale: 2.0,
-            ..PaintSceneOptions::default()
-        },
-    )
-    .expect("scene resolves");
-    let border = paint_scene
-        .items
-        .iter()
-        .find_map(|item| match item {
-            PaintItem::Rect(rect) => Some(rect),
-            _ => None,
-        })
-        .expect("border rect");
-    assert!((border.stroke_width.unwrap_or_default() - (1.0 / 3.0)).abs() < 1e-12);
-    assert_eq!(
-        border.canvas_stroke_class.as_deref(),
-        Some("bsvg-vstroke-hairline")
-    );
-    assert_eq!(paint_scene.canvas_strokes[0].authored_width, 2.0);
-}
-
-#[test]
-fn canvas_stroke_zero_scale_uses_zero_fallback_width() {
-    let mut owner = group_node(
-        "hairline",
-        vec![canvas_border_node("hairline:border", None)],
-    );
-    set_group_transform(&mut owner, 0.0, 0.0);
-    let ir = ir_with_root(
-        group_node("canvas", vec![owner]),
-        vec!["hairline:border".to_string()],
-    );
-    let paint_scene = resolve_paint_scene(&ir, &PaintSceneOptions::default())
-        .expect("zero scale remains a valid degenerate pose");
-    let width = paint_scene.items.iter().find_map(|item| match item {
-        PaintItem::Rect(rect) => rect.stroke_width,
-        _ => None,
-    });
-    assert_eq!(width, Some(0.0));
-}
-
-#[test]
-fn canvas_stroke_uses_the_svg_default_for_an_omitted_raw_ir_width() {
-    let mut border = canvas_border_node("hairline:border", None);
-    if let IrNodeKind::Rect { stroke_width, .. } = &mut border.kind {
-        *stroke_width = None;
-    }
-    let mut owner = group_node("hairline", vec![border]);
-    set_group_transform(&mut owner, 0.5, 0.5);
-    let ir = ir_with_root(
-        group_node("canvas", vec![owner]),
-        vec!["hairline:border".to_string()],
-    );
-
-    let paint_scene = resolve_paint_scene(&ir, &PaintSceneOptions::default())
-        .expect("the SVG default width remains canvas-stable");
-    let border = paint_scene
-        .items
-        .iter()
-        .find_map(|item| match item {
-            PaintItem::Rect(rect) => Some(rect),
-            _ => None,
-        })
-        .expect("border rect");
-    assert_eq!(border.stroke_width, Some(2.0));
-    assert_eq!(paint_scene.canvas_strokes[0].authored_width, 1.0);
-}
-
-#[test]
-fn canvas_stroke_disambiguates_multiple_raw_ir_rects_in_one_group() {
-    let first = canvas_border_node("card:first-border", None);
-    let mut second = canvas_border_node("card:second-border", None);
-    if let IrNodeKind::Rect { stroke_width, .. } = &mut second.kind {
+fn canvas_rect_node(node_id: &str, dash: Option<&str>) -> IrNode {
+    let mut node = rect_node(node_id, "none");
+    if let IrNodeKind::Rect {
+        stroke,
+        stroke_width,
+        stroke_scaling,
+        stroke_dasharray,
+        ..
+    } = &mut node.kind
+    {
+        *stroke = Some("#fff".into());
         *stroke_width = Some(2.0);
+        *stroke_scaling = Some(StrokeScaling::Canvas);
+        *stroke_dasharray = dash.map(str::to_string);
     }
-    let mut third = canvas_border_node("card-2:border", None);
-    if let IrNodeKind::Rect { stroke_width, .. } = &mut third.kind {
-        *stroke_width = Some(3.0);
+    node
+}
+
+#[test]
+fn rect_and_path_strokes_share_scaling_errors_and_class_allocation() {
+    for primitive in [
+        canvas_rect_node("primitive", None),
+        canvas_path_node("primitive", None),
+    ] {
+        for (scale_x, scale_y, is_supported) in [
+            (2.0, 2.0, true),
+            (2.0, 1.0, false),
+            (-1.0, 1.0, false),
+            (0.0, 0.0, true),
+        ] {
+            let mut owner = group_node("owner", vec![primitive.clone()]);
+            set_group_transform(&mut owner, scale_x, scale_y);
+            let ir = ir_with_root(group_node("canvas", vec![owner]), vec!["primitive".into()]);
+            let result = resolve_paint_scene(&ir, &PaintSceneOptions::default());
+            if is_supported {
+                let scene = result.expect("uniform scale");
+                assert_eq!(scene.canvas_strokes.len(), 1);
+                for item in scene.items {
+                    match item {
+                        PaintItem::Rect(rect) => assert_eq!(
+                            rect.stroke_width,
+                            Some(if scale_x == 0.0 { 0.0 } else { 1.0 })
+                        ),
+                        PaintItem::Path(path) => assert_eq!(
+                            path.stroke_width,
+                            Some(if scale_x == 0.0 { 0.0 } else { 0.5 })
+                        ),
+                        _ => {}
+                    }
+                }
+            } else {
+                assert!(
+                    matches!(result, Err(EngineError::Structured { code, node_id, .. })
+                    if code == "CANVAS_STROKE_UNSUPPORTED_TRANSFORM" && node_id.as_deref() == Some("primitive"))
+                );
+            }
+        }
     }
-    let ir = ir_with_root(
+    for primitive in [
+        canvas_rect_node("primitive", Some("4,2")),
+        canvas_path_node("primitive", Some("4,2")),
+    ] {
+        let ir = ir_with_root(
+            group_node("owner", vec![primitive]),
+            vec!["primitive".into()],
+        );
+        assert!(
+            matches!(resolve_paint_scene(&ir, &PaintSceneOptions::default()),
+            Err(EngineError::Structured { code, node_id, .. }) if code == "CANVAS_STROKE_DASH_UNSUPPORTED" && node_id.as_deref() == Some("primitive"))
+        );
+    }
+    let mixed = ir_with_root(
         group_node(
-            "canvas",
+            "owner",
             vec![
-                group_node("card", vec![first, second]),
-                group_node("card-2", vec![third]),
+                canvas_rect_node("primitive", None),
+                canvas_path_node("primitive", None),
+                canvas_rect_node("primitive-2", None),
             ],
         ),
-        vec![
-            "card:first-border".to_string(),
-            "card:second-border".to_string(),
-            "card-2:border".to_string(),
-        ],
+        vec![],
     );
-
-    let paint_scene = resolve_paint_scene(&ir, &PaintSceneOptions::default())
-        .expect("raw IR borders resolve without selector collisions");
-    let class_names: Vec<&str> = paint_scene
-        .items
+    let scene =
+        resolve_paint_scene(&mixed, &PaintSceneOptions::default()).expect("mixed primitives");
+    let classes: std::collections::HashSet<_> = scene
+        .canvas_strokes
         .iter()
-        .filter_map(|item| match item {
-            PaintItem::Rect(rect) => rect.canvas_stroke_class.as_deref(),
-            _ => None,
-        })
+        .map(|style| &style.class_name)
         .collect();
-    assert_eq!(
-        class_names,
-        vec![
-            "bsvg-vstroke-card",
-            "bsvg-vstroke-card-2",
-            "bsvg-vstroke-card-2-2"
-        ]
-    );
-    assert_eq!(
-        paint_scene
-            .canvas_strokes
-            .iter()
-            .map(|style| style.authored_width)
-            .collect::<Vec<_>>(),
-        vec![1.0, 2.0, 3.0]
-    );
-}
-
-#[test]
-fn canvas_stroke_resolves_mixed_rects_and_paths_with_one_deterministic_allocator() {
-    let mut owner = group_node(
-        "card",
-        vec![
-            canvas_border_node("card:border", None),
-            canvas_path_node("card", None),
-        ],
-    );
-    set_group_transform(&mut owner, 2.0, 2.0);
-    let ir = ir_with_root(
-        group_node("canvas", vec![owner, canvas_path_node("card-2", None)]),
-        vec![
-            "card:border".to_string(),
-            "card".to_string(),
-            "card-2".to_string(),
-        ],
-    );
-
-    let paint_scene = resolve_paint_scene(
-        &ir,
-        &PaintSceneOptions {
-            scale: 3.0,
-            ..PaintSceneOptions::default()
-        },
-    )
-    .expect("mixed canvas-stable strokes resolve");
-    let class_names: Vec<&str> = paint_scene
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            PaintItem::Rect(rect) => rect.canvas_stroke_class.as_deref(),
-            PaintItem::Path(path) => path.canvas_stroke_class.as_deref(),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        class_names,
-        vec![
-            "bsvg-vstroke-card",
-            "bsvg-vstroke-card-2",
-            "bsvg-vstroke-card-2-2"
-        ]
-    );
-    let fallback_widths: Vec<f64> = paint_scene
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            PaintItem::Rect(rect) => rect.stroke_width,
-            PaintItem::Path(path) => path.stroke_width,
-            _ => None,
-        })
-        .collect();
-    assert_eq!(fallback_widths, vec![0.5, 0.5, 1.0]);
-    assert_eq!(
-        paint_scene
-            .canvas_strokes
-            .iter()
-            .map(|style| style.authored_width)
-            .collect::<Vec<_>>(),
-        vec![3.0, 3.0, 3.0]
-    );
+    assert_eq!(classes.len(), 3);
 }
 
 #[test]
@@ -469,41 +338,6 @@ fn canvas_path_rejects_unsupported_transform_and_dash_with_path_owner_id() {
 }
 
 #[test]
-fn canvas_stroke_ignores_unpainted_raw_ir_rects() {
-    for raw_stroke in [
-        None,
-        Some(String::new()),
-        Some("none".to_string()),
-        Some(" NONE ".to_string()),
-    ] {
-        let mut border = canvas_border_node("owner:border", None);
-        if let IrNodeKind::Rect {
-            stroke,
-            stroke_width,
-            ..
-        } = &mut border.kind
-        {
-            *stroke = raw_stroke;
-            *stroke_width = None;
-        }
-        let mut owner = group_node("owner", vec![border]);
-        set_group_transform(&mut owner, 2.0, 1.0);
-        let ir = ir_with_root(
-            group_node("canvas", vec![owner]),
-            vec!["owner:border".to_string()],
-        );
-
-        let paint_scene = resolve_paint_scene(&ir, &PaintSceneOptions::default())
-            .expect("an unpainted rect does not impose canvas-stroke constraints");
-        assert!(paint_scene.canvas_strokes.is_empty());
-        assert!(paint_scene.items.iter().all(|item| match item {
-            PaintItem::Rect(rect) => rect.canvas_stroke_class.is_none(),
-            _ => true,
-        }));
-    }
-}
-
-#[test]
 fn canvas_stroke_ignores_unpainted_raw_ir_paths() {
     for raw_stroke in [
         None,
@@ -533,121 +367,6 @@ fn canvas_stroke_ignores_unpainted_raw_ir_paths() {
             _ => true,
         }));
     }
-}
-
-#[test]
-fn canvas_stroke_rejects_non_uniform_and_mirrored_ancestors() {
-    for (scale_x, scale_y) in [(2.0, 1.0), (-1.0, 1.0)] {
-        let mut owner = group_node(
-            "hairline",
-            vec![canvas_border_node("hairline:border", None)],
-        );
-        set_group_transform(&mut owner, scale_x, scale_y);
-        let ir = ir_with_root(
-            group_node("canvas", vec![owner]),
-            vec!["hairline:border".to_string()],
-        );
-        let error = resolve_paint_scene(&ir, &PaintSceneOptions::default())
-            .expect_err("unsupported transform must fail");
-        assert!(matches!(
-            error,
-            EngineError::Structured {
-                ref code,
-                ref message,
-                ref stage,
-                ref node_id,
-                ..
-            } if code == "CANVAS_STROKE_UNSUPPORTED_TRANSFORM"
-                && message == "Canvas-stable border for node \"hairline\" requires similarity transforms without axis mirroring on every ancestor"
-                && stage.as_ref() == Some(&crate::diagnostics::PipelineStage::Emit)
-                && node_id.as_deref() == Some("hairline")
-        ));
-    }
-}
-
-#[test]
-fn canvas_stroke_rejects_an_unsafe_unsampled_animation_keyframe() {
-    let mut owner = group_node(
-        "hairline",
-        vec![canvas_border_node("hairline:border", None)],
-    );
-    if let IrNodeKind::Group {
-        transform,
-        animation,
-        ..
-    } = &mut owner.kind
-    {
-        *transform = Some(boundshape::Transform2D {
-            scale_x: Some(1.0),
-            scale_y: Some(1.0),
-            ..boundshape::Transform2D::default()
-        });
-        *animation = Some(crate::ir::types::AnimationSpec {
-            keyframes: vec![
-                crate::ir::types::AnimationKeyframe {
-                    at: 0.0,
-                    opacity: None,
-                    transform: Some(crate::ir::types::AnimationTransform2D {
-                        scale_x: Some(1.0),
-                        scale_y: Some(1.0),
-                        ..crate::ir::types::AnimationTransform2D::default()
-                    }),
-                },
-                crate::ir::types::AnimationKeyframe {
-                    at: 1.0,
-                    opacity: None,
-                    transform: Some(crate::ir::types::AnimationTransform2D {
-                        scale_x: Some(2.0),
-                        scale_y: Some(1.0),
-                        ..crate::ir::types::AnimationTransform2D::default()
-                    }),
-                },
-            ],
-            duration_ms: 100.0,
-            delay_ms: None,
-            easing: None,
-            iterations: None,
-            fill: None,
-        });
-    }
-    let ir = ir_with_root(
-        group_node("canvas", vec![owner]),
-        vec!["hairline:border".to_string()],
-    );
-    let error = resolve_paint_scene(&ir, &PaintSceneOptions::default())
-        .expect_err("every animation keyframe must be safe");
-    assert!(matches!(
-        error,
-        EngineError::Structured { ref code, .. }
-            if code == "CANVAS_STROKE_UNSUPPORTED_TRANSFORM"
-    ));
-}
-
-#[test]
-fn canvas_stroke_rejects_dasharrays_at_the_ir_boundary() {
-    let owner = group_node(
-        "hairline",
-        vec![canvas_border_node("hairline:border", Some("5,5"))],
-    );
-    let ir = ir_with_root(
-        group_node("canvas", vec![owner]),
-        vec!["hairline:border".to_string()],
-    );
-    let error = resolve_paint_scene(&ir, &PaintSceneOptions::default())
-        .expect_err("dash semantics are unsupported");
-    assert!(matches!(
-        error,
-        EngineError::Structured {
-            ref code,
-            ref message,
-            ref stage,
-            ref node_id,
-            ..
-        } if code == "CANVAS_STROKE_DASH_UNSUPPORTED"
-            && message == "Canvas-stable box borders do not support strokeDasharray"
-            && stage.as_ref() == Some(&crate::diagnostics::PipelineStage::Emit)
-            && node_id.as_deref() == Some("hairline")
-    ));
 }
 
 #[test]

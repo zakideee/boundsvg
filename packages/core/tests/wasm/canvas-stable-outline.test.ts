@@ -9,14 +9,14 @@ import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 import { decodeRgbaPng } from "../helpers/rgba-png.js";
 import { assertWasmPkgAvailable } from "./test-prerequisites.js";
 
-/** Canvas dimensions shared by the stable-border raster fixtures. */
+/** Canvas dimensions shared by the stable-outline raster fixtures. */
 const CANVAS_SIZE = 64;
 
 function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function stableBorderScene(
+function stableOutlineScene(
   options: {
     cameraScale?: number;
     cameraScaleY?: number;
@@ -52,10 +52,12 @@ function stableBorderScene(
         top: 10,
         width: 20,
         height: 20,
-        borderWidth: 1,
-        borderColor: "#ffffff",
-        strokeScaling: options.strokeScaling,
-        strokeDasharray: options.dasharray,
+        outline: {
+          stroke: "#ffffff",
+          strokeWidth: 1,
+          strokeScaling: options.strokeScaling,
+          strokeDasharray: options.dasharray,
+        },
       }),
     ),
   );
@@ -158,7 +160,7 @@ function animatedPathStrokeScene(endScale = 1): VNode {
 }
 
 function animatedCameraScene(endScale = 1): VNode {
-  return stableBorderScene({
+  return stableOutlineScene({
     strokeScaling: "canvas",
     animation: {
       keyframes: [
@@ -207,7 +209,7 @@ function expectStructuredFatal(
   expect(operation).toThrowError(expect.objectContaining({ code, nodeId, stage }));
 }
 
-describe("canvas-stable Box and Path strokes through the real WASM pipeline", () => {
+describe("canvas-stable outlines and Path strokes through the real WASM pipeline", () => {
   let engine: Engine;
   let rasterHandle: WasmEngineHandle;
 
@@ -224,24 +226,26 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
   });
 
   it("keeps omitted and explicit transform behavior byte-identical", () => {
-    const omitted = stableBorderScene();
-    const explicit = stableBorderScene({ strokeScaling: "transform" });
+    const omitted = stableOutlineScene();
+    const explicit = stableOutlineScene({ strokeScaling: "transform" });
     expect(engine.renderToIR(explicit)).toEqual(engine.renderToIR(omitted));
     expect(engine.renderToSvg(explicit)).toBe(engine.renderToSvg(omitted));
     expect(engine.renderToPng(explicit)).toEqual(engine.renderToPng(omitted));
   });
 
-  it("pins the default (transform-scaled) Box IR, SVG, and raster bytes", () => {
-    const scene = stableBorderScene({ cameraScale: 1.6 });
-    expect(sha256(JSON.stringify(engine.renderToIR(scene)))).toBe(
-      "1b045b36d56804c7a49db6084e7455291043991ca4788549cded9ddf5e9863bd",
-    );
-    expect(sha256(engine.renderToSvg(scene))).toBe(
-      "0aa79ec55986b6ba5848ce18f7734a37a45bdff08e675bf36ef9ebc5b5678f6d",
-    );
-    expect(sha256(engine.renderToPng(scene))).toBe(
-      "0b273664c740ebda319299728ece0823f70b3d44c777d729420138f301ddb691",
-    );
+  it("pins the default transform-scaled outline IR, SVG, and raster bytes", () => {
+    const scene = stableOutlineScene({ cameraScale: 1.6 });
+    expect({
+      ir: sha256(JSON.stringify(engine.renderToIR(scene))),
+      svg: sha256(engine.renderToSvg(scene)),
+      png: sha256(engine.renderToPng(scene)),
+    }).toMatchInlineSnapshot(`
+      {
+        "ir": "c16dce89bfb77307f8444b8c1f9628dceec2a17f647578e2980968460ca61b5f",
+        "png": "0b273664c740ebda319299728ece0823f70b3d44c777d729420138f301ddb691",
+        "svg": "5d7c2afb3f4a0d60baff7eed74a45e8a7860841e364e45c104a0a49abb235d87",
+      }
+    `);
   });
 
   it("pins the default (transform-scaled) Path IR, SVG, and raster bytes", () => {
@@ -266,7 +270,7 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
 
   it("uses camera scale for fallback but reserves output scale for resolution", () => {
     const svg = engine.renderToSvg(
-      stableBorderScene({ cameraScale: 1.6, strokeScaling: "canvas" }),
+      stableOutlineScene({ cameraScale: 1.6, strokeScaling: "canvas" }),
       { scale: 2 },
     );
     expect(svg).toContain('width="128" height="128"');
@@ -276,7 +280,7 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
     expect(svg).toContain("vector-effect: non-scaling-stroke;");
 
     const shrunkSvg = engine.renderToSvg(
-      stableBorderScene({ cameraScale: 0.5, strokeScaling: "canvas" }),
+      stableOutlineScene({ cameraScale: 0.5, strokeScaling: "canvas" }),
     );
     expect(shrunkSvg).toContain('stroke-width="2"');
   });
@@ -305,9 +309,7 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
             id: "hairline",
             width: 20,
             height: 10,
-            borderWidth: 1,
-            borderColor: "#fff",
-            strokeScaling: "canvas",
+            outline: { stroke: "#fff", strokeWidth: 1, strokeScaling: "canvas" },
           }),
         ),
       ),
@@ -347,18 +349,20 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
   });
 
   it("keeps canvas-space alpha energy stable and applies final raster scale once", () => {
-    const unit = engine.renderToPng(stableBorderScene({ cameraScale: 1, strokeScaling: "canvas" }));
+    const unit = engine.renderToPng(
+      stableOutlineScene({ cameraScale: 1, strokeScaling: "canvas" }),
+    );
     const shrunk = engine.renderToPng(
-      stableBorderScene({ cameraScale: 0.5, strokeScaling: "canvas" }),
+      stableOutlineScene({ cameraScale: 0.5, strokeScaling: "canvas" }),
     );
     const zoomed = engine.renderToPng(
-      stableBorderScene({ cameraScale: 1.6, strokeScaling: "canvas" }),
+      stableOutlineScene({ cameraScale: 1.6, strokeScaling: "canvas" }),
     );
     const transformScaled = engine.renderToPng(
-      stableBorderScene({ cameraScale: 1.6, strokeScaling: "transform" }),
+      stableOutlineScene({ cameraScale: 1.6, strokeScaling: "transform" }),
     );
     const highResolution = engine.renderToPng(
-      stableBorderScene({ cameraScale: 1.6, strokeScaling: "canvas" }),
+      stableOutlineScene({ cameraScale: 1.6, strokeScaling: "canvas" }),
       { scale: 2 },
     );
 
@@ -414,12 +418,12 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
   });
 
   it("preserves ancestor transforms and bbox semantics in layered SVG and PNG", () => {
-    const canvasScene = stableBorderScene({
+    const canvasScene = stableOutlineScene({
       cameraScale: 1.6,
       strokeScaling: "canvas",
       layer: "hairline",
     });
-    const transformScene = stableBorderScene({
+    const transformScene = stableOutlineScene({
       cameraScale: 1.6,
       strokeScaling: "transform",
       layer: "hairline",
@@ -444,7 +448,7 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
     expectStructuredFatal(
       () =>
         engine.renderToSvg(
-          stableBorderScene({ cameraScale: 2, cameraScaleY: 1, strokeScaling: "canvas" }),
+          stableOutlineScene({ cameraScale: 2, cameraScaleY: 1, strokeScaling: "canvas" }),
         ),
       "CANVAS_STROKE_UNSUPPORTED_TRANSFORM",
       "hairline",
@@ -453,7 +457,7 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
     expectStructuredFatal(
       () =>
         engine.renderToSvg(
-          stableBorderScene({ cameraScale: -1, cameraScaleY: 1, strokeScaling: "canvas" }),
+          stableOutlineScene({ cameraScale: -1, cameraScaleY: 1, strokeScaling: "canvas" }),
         ),
       "CANVAS_STROKE_UNSUPPORTED_TRANSFORM",
       "hairline",
@@ -462,7 +466,7 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
     expectStructuredFatal(
       () =>
         engine.renderToSvg(
-          stableBorderScene({
+          stableOutlineScene({
             strokeScaling: "canvas",
             animation: {
               keyframes: [
@@ -479,7 +483,7 @@ describe("canvas-stable Box and Path strokes through the real WASM pipeline", ()
       "emit",
     );
     expectStructuredFatal(
-      () => engine.renderToSvg(stableBorderScene({ strokeScaling: "canvas", dasharray: "4,2" })),
+      () => engine.renderToSvg(stableOutlineScene({ strokeScaling: "canvas", dasharray: "4,2" })),
       "CANVAS_STROKE_DASH_UNSUPPORTED",
       "hairline",
       "validate",

@@ -431,6 +431,8 @@ fn with_optional_transform(
                     rotate_deg: Some(rotate_deg),
                     origin_x: Some(center_x),
                     origin_y: Some(center_y),
+                    skew_x_deg: None,
+                    skew_y_deg: None,
                 },
                 child: Box::new(shape),
             },
@@ -759,6 +761,8 @@ fn f2_containing_ellipse_node() -> GeometryNode {
             rotate_deg: Some(297.485_532_345_754_3),
             origin_x: Some(50.0),
             origin_y: Some(50.0),
+            skew_x_deg: None,
+            skew_y_deg: None,
         },
         child: Box::new(path_node(ellipse_path_data(50.0, 50.0, 10.0, 10.0))),
     }
@@ -810,6 +814,8 @@ fn f3_order_dependent_topology_nodes() -> (GeometryNode, GeometryNode) {
                 rotate_deg: Some(321.055_020_247_799_1),
                 origin_x: Some(166.130_052_238_504_85),
                 origin_y: Some(183.952_947_944_324_62),
+                skew_x_deg: None,
+                skew_y_deg: None,
             },
             child: Box::new(path_node(
                 "M234.02561593086259 220.63147596831823 \
@@ -836,6 +842,8 @@ fn f5_xor_identity_nodes() -> (GeometryNode, GeometryNode) {
                 rotate_deg: Some(213.919_135_828_812_93),
                 origin_x: Some(50.0),
                 origin_y: Some(50.0),
+                skew_x_deg: None,
+                skew_y_deg: None,
             },
             child: Box::new(path_node(
                 "M59.20368154163175 80.90620991632733 \
@@ -853,6 +861,8 @@ fn f5_xor_identity_nodes() -> (GeometryNode, GeometryNode) {
                 rotate_deg: Some(150.823_426_350_999),
                 origin_x: Some(231.934_008_586_561_62),
                 origin_y: Some(54.801_893_216_613_97),
+                skew_x_deg: None,
+                skew_y_deg: None,
             },
             child: Box::new(path_node(
                 "M221.15766651611034 82.7481599416792 \

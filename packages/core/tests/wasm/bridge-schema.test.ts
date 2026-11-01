@@ -112,11 +112,16 @@ const typeTargets: Record<string, TypeTarget[]> = {
   // IR output DTOs (serialize direction — the public TS IR contract)
   BBox: [{ file: textTypesFile, typeName: "BBox" }],
   BorderRadii: [{ file: irTypesFile, typeName: "BorderRadii" }],
+  BoxContour: [
+    { file: irTypesFile, typeName: "BoxContour", intentionallyIgnoredTsFields: ["kind"] },
+  ],
+  CornerRadius: [{ file: generatedIrTypesFile, typeName: "CornerRadius" }],
+  BoxOutlineStyle: [{ file: "packages/core/src/vnode/types.ts", typeName: "BoxOutlineStyle" }],
+  TextGradient: [{ file: generatedIrTypesFile, typeName: "TextGradient" }],
   BoxShadow: [{ file: irTypesFile, typeName: "IRNode", path: ["boxShadow"] }],
   GradientStop: [{ file: irTypesFile, typeName: "IRNode", path: ["gradient", "stops", "[]"] }],
-  RadialGradientGeometry: [
-    { file: irTypesFile, typeName: "IRNode", path: ["gradient", "geometry"] },
-  ],
+  LinearGradientGeometry: [{ file: generatedIrTypesFile, typeName: "LinearGradientGeometry" }],
+  RadialGradientGeometry: [{ file: generatedIrTypesFile, typeName: "RadialGradientGeometry" }],
   HandlersRef: [{ file: irTypesFile, typeName: "HandlersRef" }],
   StructuralIr: [{ file: generatedIrTypesFile, typeName: "GeneratedStructuralIr" }],
   SerializedFatalError: [{ file: "packages/core/src/errors.ts", typeName: "SerializedFatalError" }],
@@ -871,6 +876,9 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       "FlowExclusionMargin",
       "FlowExclusionShape",
       "Gradient",
+      "BoxClip",
+      "TextPaint",
+      "RawWidths",
       "IrNodeInput",
       "IrNodeOutput",
       "IrNodeKindInput",
@@ -880,15 +888,15 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       rustDtos.size,
     );
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(152);
+    expect(rustDtos.size).toBe(160);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(1042);
-    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(95);
+    ).toBe(1066);
+    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(101);
   });
 
   it("keeps struct wire fields and requiredness directionally compatible", () => {
@@ -917,7 +925,7 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
     );
     const rustStringArray = (constantName: string): string[] => {
       const match = rustSource.match(
-        new RegExp(`const ${constantName}: &\\[&str\\] = &\\[([\\s\\S]*?)\\];`, "u"),
+        new RegExp(`const ${constantName}: &\\[&str\\] =\\s*&\\[([\\s\\S]*?)\\];`, "u"),
       );
       expect(match?.[1], `missing Rust constant ${constantName}`).toBeDefined();
       return [...(match?.[1] ?? "").matchAll(/"([^"]+)"/gu)]
@@ -934,7 +942,7 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
 
     expect(rustStringArray("LAYOUT_NODE_TRANSPORT_KEYS")).toEqual(transportFields);
     expect(rustStringArray("CANVAS_STROKE_SIGNATURE_KEYS")).toEqual(
-      ["strokeScaling", "borderWidth", "borderColor", "strokeWidth", "stroke"].sort(),
+      ["strokeScaling", "outline", "strokeWidth", "stroke"].sort(),
     );
   });
 

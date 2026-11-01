@@ -2,6 +2,7 @@ import type { Preset } from "../types";
 import { animatedSvgTimelinePreset } from "./animated-svg-timeline";
 import { bubbleFlowPreset } from "./bubble-flow";
 import { defsSharingPreset } from "./defs-sharing";
+import { designExpressionsPreset } from "./design-expressions";
 import { fitPreset } from "./fit";
 import { flowRichPreset } from "./flow-rich";
 import { fontFallbackPreset } from "./font-fallback";
@@ -35,9 +36,11 @@ import { verticalPreset } from "./vertical";
 import { verticalRichEllipsisPreset } from "./vertical-rich-ellipsis";
 import { zIndexPreset } from "./z-index";
 
+/** Selectable core scenes, including counterparts of the JSX templates. */
 export const presets: Record<string, Preset> = {
   "animated-svg-timeline": animatedSvgTimelinePreset,
   fit: fitPreset,
+  "design-expressions": designExpressionsPreset,
   "font-fallback": fontFallbackPreset,
   "variable-font": variableFontPreset,
   grid: gridPreset,

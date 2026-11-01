@@ -13,6 +13,7 @@ import type {
   AnimationSpec,
   AnimationSpring,
   AnimationTransform2D,
+  BoxOutlineStyle,
   PartPaintOverride,
   TextFlowExclusion,
   TextFlowExclusionMarginPx,
@@ -92,8 +93,10 @@ export type SceneRecordSchema = {
 
 type SceneNodeType = SceneNode["type"];
 
+/** Named nested record contracts used by the scene decoder. */
 export type RecordSchemaName =
   | SceneNodeType
+  | "boxOutline"
   | "textPathInline"
   | "transform"
   | "animationTransform"
@@ -227,13 +230,9 @@ const visualBoxFields = [
   optional("background", stringSchema),
   optional("boxShadow", stringSchema),
   optional("borderRadius", borderRadiusSchema),
-  optional("borderWidth", numberSchema),
+  optional("borderWidth", spacingSchema),
   optional("borderColor", stringSchema),
-  optional("strokeScaling", enumSchema(["transform", "canvas"])),
-  optional("strokeLinecap", enumSchema(["butt", "round", "square"])),
-  optional("strokeLinejoin", enumSchema(["miter", "round", "bevel"])),
-  optional("strokeDasharray", stringSchema),
-  optional("strokeMiterlimit", numberSchema),
+  optional("outline", recordSchema("boxOutline")),
   optional("overflow", enumSchema(["visible", "clip"])),
   optional("opacity", numberSchema),
   optional("zIndex", numberSchema),
@@ -809,12 +808,23 @@ function catalogRecord(recordFields: readonly SceneFieldSchema[]): SceneRecordSc
 }
 
 const nestedFields = {
+  boxOutline: fields([
+    required("stroke", stringSchema),
+    optional("strokeWidth", numberSchema),
+    optional("strokeScaling", enumSchema(["transform", "canvas"])),
+    optional("strokeDasharray", stringSchema),
+    optional("strokeLinecap", enumSchema(["butt", "round", "square"])),
+    optional("strokeLinejoin", enumSchema(["miter", "round", "bevel"])),
+    optional("strokeMiterlimit", numberSchema),
+  ]),
   transform: fields([
     optional("translateX", numberSchema),
     optional("translateY", numberSchema),
     optional("scaleX", numberSchema),
     optional("scaleY", numberSchema),
     optional("rotateDeg", numberSchema),
+    optional("skewXDeg", numberSchema),
+    optional("skewYDeg", numberSchema),
     optional("originX", numberSchema),
     optional("originY", numberSchema),
   ]),
@@ -824,6 +834,8 @@ const nestedFields = {
     optional("scaleX", numberSchema),
     optional("scaleY", numberSchema),
     optional("rotateDeg", numberSchema),
+    optional("skewXDeg", numberSchema),
+    optional("skewYDeg", numberSchema),
   ]),
   animationKeyframe: fields([
     required("at", numberSchema),
@@ -992,6 +1004,7 @@ const nestedFields = {
 } as const;
 
 type NestedRecordTypes = {
+  boxOutline: BoxOutlineStyle;
   textPathInline: TextOnPathInlineSceneNode;
   transform: Transform2D;
   animationTransform: AnimationTransform2D;
@@ -1031,9 +1044,11 @@ type NestedCatalogCheck<Name extends keyof NestedRecordTypes> =
       : never
     : never;
 
+/** Compile-time proof that every nested record has a field catalog. */
 const NESTED_CATALOG_COMPLETENESS: {
   readonly [Name in keyof NestedRecordTypes]: NestedCatalogCheck<Name>;
 } = {
+  boxOutline: true,
   textPathInline: true,
   transform: true,
   animationTransform: true,
@@ -1064,6 +1079,7 @@ const NESTED_CATALOG_COMPLETENESS: {
 
 void NESTED_CATALOG_COMPLETENESS;
 
+/** Runtime validators for all named nested scene records. */
 export const RECORD_SCHEMAS: Readonly<Record<RecordSchemaName, SceneRecordSchema>> = {
   [sceneNodeTypeName.canvas]: catalogRecord(nodeFields[sceneNodeTypeName.canvas]),
   [sceneNodeTypeName.flex]: catalogRecord(nodeFields[sceneNodeTypeName.flex]),
@@ -1081,6 +1097,7 @@ export const RECORD_SCHEMAS: Readonly<Record<RecordSchemaName, SceneRecordSchema
   [sceneNodeTypeName.svg]: catalogRecord(nodeFields[sceneNodeTypeName.svg]),
   [sceneNodeTypeName.shape]: catalogRecord(nodeFields[sceneNodeTypeName.shape]),
   [sceneNodeTypeName.symbol]: catalogRecord(nodeFields[sceneNodeTypeName.symbol]),
+  boxOutline: catalogRecord(nestedFields.boxOutline),
   textPathInline: catalogRecord(textPathInlineFields),
   transform: catalogRecord(nestedFields.transform),
   animationTransform: catalogRecord(nestedFields.animationTransform),

@@ -195,6 +195,7 @@ pub(super) fn validate_reserved_wrapper_namespace(
     Ok(())
 }
 
+/// Consume matching wrapper specs at semantic groups and return the wrapped tree.
 pub(super) fn inject_generated_wrappers(
     mut node: IrNode,
     wrapper_specs: &mut BTreeMap<String, GeneratedWrapperSpec>,
@@ -233,8 +234,7 @@ pub(super) fn inject_generated_wrappers(
         bbox: spec.bbox,
         kind: IrNodeKind::Group {
             children: vec![node],
-            clip_path: None,
-            clip_border_radius: None,
+            clip: None,
             opacity: None,
             box_shadow: None,
             meta: Some(meta),

@@ -41,8 +41,8 @@ That means `type`, `props`, and `children` stay aligned, and invalid prop/child 
 
 ### Canvas-stable stroke type
 
-`StrokeScaling` is exported from `@boundsvg/core` and applies to the border
-paint of `Flex`, `Grid`, and `Box`, plus `Path` strokes:
+`StrokeScaling` is exported from `@boundsvg/core` and applies to `outline`
+paint on `Flex`, `Grid`, and `Box`, plus `Path` strokes:
 
 ```ts
 type StrokeScaling = "transform" | "canvas";
@@ -54,6 +54,25 @@ a solid stroke's width in canvas space under translation, rotation, and
 uniform scale. It does not change layout or `inspectScene().visualBBox`, and
 the render method's `scale` option still scales the output resolution. Dashed strokes,
 non-uniform scale, and axis reflection are rejected for this mode.
+
+### Skew transforms
+
+`Transform2D` also accepts `skewXDeg` and `skewYDeg`. Composition is translate,
+origin, rotate, skew X, skew Y, scale, then inverse origin. The two shears are
+sequential. They affect paint, inspection, hit coordinates, and export while
+leaving layout and text advances unchanged. Omitted or zero skew is identity.
+Authored angles must be in [-60, 60] degrees. The same fields work in Shape
+geometry and node/text-unit animation. Animation interpolation is numeric;
+overshooting easing is accepted only when its conservative angle envelope
+stays inside the supported range.
+
+Skew-bearing paths also require bounded tuples: local scale magnitude at most
+2048, translation/rotation/resolved origins and physical local geometry/filter
+region/viewport coordinates at most 1,048,576, affected generated depth at most
+256, and product of noncontracting chain gains at most 65,536. Each nonzero
+shear contributes a conservative gain of 4; rotation contributes 1. Unrelated
+non-skew inputs retain their existing domains. Invalid tuples fail before
+paint/export; values are not clamped.
 
 ### Text flow types
 
@@ -245,6 +264,8 @@ type AnimationTransform2D = {
   scaleX?: number;
   scaleY?: number;
   rotateDeg?: number;
+  skewXDeg?: number;
+  skewYDeg?: number;
 };
 
 type AnimationKeyframe = {
@@ -862,7 +883,32 @@ not exposed as the public output type.
 
 ### `engine.renderToTextOutlines(input, options?)`
 
-Returns an array of `TextOutlineNode` objects containing SVG path data for each text element. Use to convert text to outlined paths (e.g., for static SVG export without font embedding).
+Returns an array of `TextOutlineNode` objects containing SVG paths for each Text.
+A path's `fill` is a solid-color string or `{ gradientIndex: number }`, referencing
+its parent node's optional `gradients` table. Each resource stores the original
+color expression, resolved linear endpoints or radial center/radii and stops, and shared Text `bbox` in the paths' local
+coordinate frame. Apply the node's `worldTransform` to paths and resources
+together. Do not treat a gradient reference as a color string or recompute its
+frame from an individual glyph. SVG and layered SVG exports resolve these
+resources automatically.
+
+IR schema 36 replaces group `clipPath` and `clipBorderRadius` with a single
+`clip`: `{ kind: "empty" }` or `{ kind: "boxContour", bbox, corners }`, where
+`corners` holds top-left, top-right, bottom-right, and bottom-left `{ rx, ry }`.
+These resolved axes must be finite and nonnegative, with `rx <= bbox.w / 2`
+and `ry <= bbox.h / 2`. The native emitter rejects unresolved corner geometry.
+Omission means no clip. Empty clips suppress paint and hits. Regenerate older
+IR from the scene; the former fields are rejected. Generic IR Rect and Path
+primitives both support `strokeScaling`; their canvas-scaled strokes share the
+same transform, solid-stroke, and namespacing rules. Container borders are
+filled surfaces, while container outlines are generated Paths.
+
+Box backgrounds and Text resources share one resolved gradient IR. Both
+variants require `geometry` and `stops`. Linear geometry stores
+`startX`, `startY`, `endX`, and `endY`; radial geometry stores `centerX`,
+`centerY`, `radiusX`, and `radiusY`, all relative to the gradient box. The
+former raw-IR `angle` field and omitted radial geometry are rejected. Keep
+using CSS gradient strings in scene authoring; the engine resolves them once.
 
 ### `engine.hitTest(ir, x, y)`
 

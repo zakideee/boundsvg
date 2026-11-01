@@ -58,10 +58,8 @@ function buildPartInspectionCanvas(): VNode {
           top: DISPLAY.top + bounds.y * SCALE_Y,
           width: bounds.width * SCALE_X,
           height: bounds.height * SCALE_Y,
-          borderWidth: 1,
-          borderColor: color,
-          strokeDasharray: "5,4",
           borderRadius: 2,
+          outline: { stroke: color, strokeWidth: 1, strokeDasharray: "5,4" },
         }),
         Text(
           {
