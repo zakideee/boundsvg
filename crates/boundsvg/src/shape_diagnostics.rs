@@ -562,7 +562,7 @@ impl ShapeOperationOutput {
 ///
 /// # Errors
 ///
-/// Returns a serialized fatal JsValue for invalid input, kernel failures, invalid output, or a
+/// Returns a serialized fatal `JsValue` for invalid input, kernel failures, invalid output, or a
 /// caught panic.
 ///
 /// # Panics

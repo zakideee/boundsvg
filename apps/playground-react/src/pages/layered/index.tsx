@@ -23,9 +23,10 @@ import "prismjs/components/prism-tsx";
 import "prismjs/components/prism-json";
 import { useCallback, useMemo, useState, useTransition } from "react";
 import type { EventEffectOverlayDisplayOptions } from "../../../../playground-shared/inspect-hover.js";
-import { INSPECTION_FRAME_OPTIONS } from "../../../../playground-shared/inspection-frame.js";
+import { DEFAULT_INSPECTION_FRAME_MODE } from "../../../../playground-shared/inspection-frame.js";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
 import { BBoxOverlayField } from "../../components/fields";
+import { InspectionFrameField } from "../../components/InspectionFrameField";
 import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspectFromData } from "../../hooks/use-svg-inspect";
 import { asset } from "../../lib/asset";
@@ -58,6 +59,10 @@ const workerConfig: BoundSvgConfig = {
 type Format = "svg" | "png";
 type ViewTab = "preview" | "rendered" | "jsx" | "manifest";
 type CodeLayout = "tab" | "panel";
+
+function isSvgPreviewVisible(format: Format, viewTab: ViewTab, codeLayout: CodeLayout): boolean {
+  return format === "svg" && (viewTab === "preview" || codeLayout === "panel");
+}
 
 /** Labels for the layered preview code tabs. */
 const CODE_TAB_LABELS: Record<Exclude<ViewTab, "preview">, string> = {
@@ -284,6 +289,7 @@ function LayeredPreviewBody({
   onFocusChange,
   currentLayeredIsRendering,
 }: LayeredPreviewBodyProps) {
+  const singleSvgMarkup = useMemo(() => ({ __html: stableSingleSvg ?? "" }), [stableSingleSvg]);
   return (
     <div className="preview-body">
       {showSingle && (
@@ -294,10 +300,7 @@ function LayeredPreviewBody({
           </div>
           {format === "svg" && stableSingleSvg ? (
             <div ref={setPreviewEl} className="preview-stage">
-              <div
-                className="rendered-content"
-                dangerouslySetInnerHTML={{ __html: stableSingleSvg }}
-              />
+              <div className="rendered-content" dangerouslySetInnerHTML={singleSvgMarkup} />
             </div>
           ) : (
             <div className="preview-stage">
@@ -422,7 +425,7 @@ function LayeredContent() {
   const [tilt, setTilt] = useState(true);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [focusKey, setFocusKey] = useState<string | null>(null);
-  const [overlayMode, setOverlayMode] = useState<OverlayMode>("layout");
+  const [overlayMode, setOverlayMode] = useState<OverlayMode>(DEFAULT_INSPECTION_FRAME_MODE);
   const [showOrigin, setShowOrigin] = useState(false);
 
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
@@ -500,6 +503,11 @@ function LayeredContent() {
   );
 
   const showCode = viewTab !== "preview";
+  const canInspect =
+    !mobileViewer &&
+    stableSingleSvg !== null &&
+    stableSingleIr !== null &&
+    isSvgPreviewVisible(format, viewTab, codeLayout);
   const activeCodeTab: Exclude<ViewTab, "preview"> =
     viewTab === "preview" ? "rendered" : (viewTab as Exclude<ViewTab, "preview">);
 
@@ -565,27 +573,21 @@ function LayeredContent() {
               <span>3D stack view</span>
             </label>
 
-            <h3>Overlay</h3>
-            <label className="layered-control-row">
-              <span className="layered-control-label">Mode</span>
-              <select
-                value={overlayMode}
-                onChange={(event) => setOverlayMode(event.target.value as OverlayMode)}
-              >
-                {Object.entries(INSPECTION_FRAME_OPTIONS).map(([mode, option]) => (
-                  <option key={mode} value={mode}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <h3>Inspection</h3>
+            <InspectionFrameField
+              id="layered-inspection-frame"
+              mode={overlayMode}
+              disabled={!canInspect}
+              onChange={setOverlayMode}
+            />
             <label className="layered-toggle">
               <input
                 type="checkbox"
                 checked={showOrigin}
+                disabled={!canInspect}
                 onChange={(event) => setShowOrigin(event.target.checked)}
               />
-              <span>Show origin anchor</span>
+              <span>Show origin anchor (amber)</span>
             </label>
             {showOrigin && !fixtureHasOrigins && (
               <p className="layered-hint-text">
@@ -593,10 +595,6 @@ function LayeredContent() {
                 anchors.
               </p>
             )}
-            <p className="layered-fixture-desc">
-              Slate dashed = layout / Cyan = transform / Pink corners = visual / Amber = origin
-            </p>
-
             <h3>Layers</h3>
             <LayerList
               layers={layerKeys}

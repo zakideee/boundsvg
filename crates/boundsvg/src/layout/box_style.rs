@@ -102,6 +102,17 @@ fn invalid(node_id: &str, message: impl Into<String>) -> EngineError {
     }
 }
 
+fn validate_outline_stroke(stroke: &str, node_id: &str) -> Result<(), EngineError> {
+    if stroke.trim().eq_ignore_ascii_case("none") || crate::ir::gradient::is_valid_color(stroke) {
+        Ok(())
+    } else {
+        Err(invalid(
+            node_id,
+            "outline.stroke must be a solid color or none.",
+        ))
+    }
+}
+
 /// Reject removed container stroke fields and validate the normalized box input.
 ///
 /// # Errors
@@ -135,6 +146,12 @@ pub(crate) fn validate_box_style(node: &LayoutNodeInput) -> Result<(), EngineErr
         ));
     }
     if !matches!(node.node_type.as_str(), "box" | "flex" | "grid") {
+        if visual.outline.is_some() {
+            return Err(invalid(
+                &node.node_id,
+                "outline is supported only by Box, Flex, and Grid.",
+            ));
+        }
         return Ok(());
     }
     if visual.stroke_scaling.is_some()
@@ -168,6 +185,7 @@ pub(crate) fn validate_box_style(node: &LayoutNodeInput) -> Result<(), EngineErr
         }
     }
     if let Some(outline) = &visual.outline {
+        validate_outline_stroke(&outline.stroke, &node.node_id)?;
         let width = outline.stroke_width.unwrap_or(1.0);
         let miter = outline.stroke_miterlimit.unwrap_or(4.0);
         if !width.is_finite()
@@ -222,10 +240,17 @@ pub(crate) fn validate_raw_box_tree(node: &serde_json::Value) -> Result<(), Engi
             }
         }
     }
-    if matches!(
+    let is_container = matches!(
         node.get("nodeType").and_then(serde_json::Value::as_str),
         Some("box" | "flex" | "grid")
-    ) {
+    );
+    if node["visual"].get("outline").is_some() && !is_container {
+        return Err(invalid(
+            node_id,
+            "outline is supported only by Box, Flex, and Grid.",
+        ));
+    }
+    if is_container {
         let visual = &node["visual"];
         for key in [
             "strokeScaling",
@@ -307,12 +332,10 @@ pub(crate) fn validate_raw_box_tree(node: &serde_json::Value) -> Result<(), Engi
             let Some(fields) = outline.as_object() else {
                 return Err(invalid(node_id, "outline must be an object."));
             };
-            if !fields
-                .get("stroke")
-                .is_some_and(serde_json::Value::is_string)
-            {
+            let Some(stroke) = fields.get("stroke").and_then(serde_json::Value::as_str) else {
                 return Err(invalid(node_id, "outline.stroke must be a string."));
-            }
+            };
+            validate_outline_stroke(stroke, node_id)?;
             for (key, value) in fields {
                 let valid = match key.as_str() {
                     "stroke" | "strokeDasharray" => value.is_string(),
@@ -504,4 +527,58 @@ pub(crate) fn validate_layout_results(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn outlined_node(node_type: &str, stroke: &str) -> serde_json::Value {
+        json!({
+            "nodeId": "owner",
+            "nodeType": node_type,
+            "authoredId": true,
+            "visual": { "outline": { "stroke": stroke } },
+        })
+    }
+
+    #[test]
+    fn outline_owner_is_checked_at_raw_and_typed_boundaries() {
+        for node_type in ["canvas", "text", "image", "path", "svg", "shape", "symbol"] {
+            let raw = outlined_node(node_type, "red");
+            let typed: LayoutNodeInput = serde_json::from_value(raw.clone()).expect("typed node");
+            assert!(validate_raw_box_tree(&raw).is_err(), "{node_type}");
+            assert!(validate_box_style(&typed).is_err(), "{node_type}");
+        }
+    }
+
+    #[test]
+    fn outline_colors_and_none_share_the_raw_and_typed_contract() {
+        for node_type in ["box", "flex", "grid"] {
+            for stroke in ["red", "#12ab34", "rgb(1,2,3)", "none", " NoNe "] {
+                let raw = outlined_node(node_type, stroke);
+                let typed: LayoutNodeInput =
+                    serde_json::from_value(raw.clone()).expect("typed node");
+                assert!(validate_raw_box_tree(&raw).is_ok(), "{node_type}: {stroke}");
+                assert!(validate_box_style(&typed).is_ok(), "{node_type}: {stroke}");
+            }
+            for stroke in [
+                "",
+                " ",
+                "not-a-color",
+                "url(#paint)",
+                "linear-gradient(red, blue)",
+            ] {
+                let raw = outlined_node(node_type, stroke);
+                let typed: LayoutNodeInput =
+                    serde_json::from_value(raw.clone()).expect("typed node");
+                assert!(
+                    validate_raw_box_tree(&raw).is_err(),
+                    "{node_type}: {stroke}"
+                );
+                assert!(validate_box_style(&typed).is_err(), "{node_type}: {stroke}");
+            }
+        }
+    }
 }

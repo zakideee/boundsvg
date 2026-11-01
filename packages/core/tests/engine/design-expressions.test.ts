@@ -4,6 +4,7 @@ import { inspectScene } from "../../src/inspect.js";
 import { buildHitTestIndex, hitTest, hitTestWithIndex } from "../../src/ir/hit-test.js";
 import type { IRNode } from "../../src/ir/types.js";
 import { collectNodeIds } from "../../src/node-ids.js";
+import { fromSceneDocument, toSceneDocument } from "../../src/scene/from-vnode.js";
 import { applyAffineMatrixToPoint, createResolvedTransformMatrix } from "../../src/transform.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { BoxProps, VNode } from "../../src/vnode/types.js";
@@ -31,6 +32,116 @@ describe("text paint, skew, and independent box surfaces", () => {
   });
   afterAll(() => {
     engine.dispose();
+  });
+
+  for (const componentType of ["Image", "Box"] as const) {
+    const radiusCases: {
+      input: NonNullable<BoxProps["borderRadius"]>;
+      canonical: NonNullable<BoxProps["borderRadius"]>;
+      hasRoundedCorners: boolean;
+    }[] = [
+      { input: -4, canonical: 0, hasRoundedCorners: false },
+      { input: [-4, 12, -2, 6], canonical: [0, 12, 0, 6], hasRoundedCorners: true },
+    ];
+    it.each(
+      radiusCases,
+    )(`canonicalizes negative ${componentType} clip radii consistently for SVG, PNG, and hits: $input`, ({
+      input,
+      canonical,
+      hasRoundedCorners,
+    }) => {
+      const imageBytes = engine.renderToPng(
+        canvas(createElement("Box", { width: 80, height: 80, background: "red" }), 80, 80),
+      );
+      const makeScene = (radius: NonNullable<BoxProps["borderRadius"]>): VNode =>
+        canvas(
+          componentType === "Image"
+            ? createElement("Image", {
+                id: "target",
+                width: 80,
+                height: 80,
+                borderRadius: radius,
+                src: imageBytes,
+                mediaType: "image/png",
+                onClick: "target-click",
+              })
+            : createElement(
+                "Box",
+                { width: 80, height: 80, borderRadius: radius, overflow: "clip" },
+                createElement("Box", {
+                  id: "target",
+                  width: 80,
+                  height: 80,
+                  background: "red",
+                  onClick: "target-click",
+                }),
+              ),
+          80,
+          80,
+        );
+      const scene = makeScene(input);
+      const ir = engine.renderToIR(scene);
+      const index = buildHitTestIndex(ir);
+      const png = engine.renderToPng(scene);
+      expect(engine.renderToSvg(scene)).toBe(engine.renderToSvg(makeScene(canonical)));
+      expect(png).toEqual(engine.renderToPng(makeScene(canonical)));
+      expect(colorAt(png, 0, 0)).toEqual([255, 0, 0, 255]);
+      for (const [x, y, expected] of [
+        [0, 0, "target"],
+        [40, 40, "target"],
+        [79, 0, hasRoundedCorners ? null : "target"],
+      ] as const) {
+        expect(hitTest(ir, x, y)).toBe(expected);
+        expect(hitTestWithIndex(index, x, y)).toBe(expected);
+      }
+    });
+  }
+
+  it("still rejects negative radii for border-bearing and outlined containers", () => {
+    const radii: NonNullable<BoxProps["borderRadius"]>[] = [-4, [-4, 12, -2, 6]];
+    for (const radius of radii) {
+      for (const decoration of [{ borderWidth: 2 }, { outline: { stroke: "red" } }]) {
+        const scene = canvas(
+          createElement("Box", { width: 80, height: 80, borderRadius: radius, ...decoration }),
+        );
+        expect(() => engine.renderToIR(scene)).toThrow(/nonnegative finite borderRadius/);
+      }
+    }
+  });
+
+  it("keeps solid and none outline paints aligned for VNode and Scene input", () => {
+    for (const stroke of ["red", "#12ab34", "rgb(1,2,3)", "none", " NoNe "]) {
+      const scene = canvas(createElement("Box", { width: 80, height: 80, outline: { stroke } }));
+      expect(engine.renderToSvg(scene)).toBe(engine.renderToSvg(toSceneDocument(scene)));
+    }
+  });
+
+  it("rejects unsupported outline colors through VNode and Scene input", () => {
+    for (const stroke of ["", "not-a-color", "url(#paint)", "linear-gradient(red, blue)"]) {
+      const scene = canvas(createElement("Box", { width: 80, height: 80, outline: { stroke } }));
+      expect(() => engine.renderToSvg(scene)).toThrow();
+      expect(() => engine.renderToSvg(toSceneDocument(scene))).toThrow();
+    }
+  });
+
+  it("rejects an outline on a noncontainer before native rendering", () => {
+    const text = createElement("Text", { font: "NotoSansJP", fontSizePx: 12 }, "X");
+    expect(Reflect.set(text.props, "outline", { stroke: "red" })).toBe(true);
+    expect(() => engine.renderToIR(canvas(text))).toThrow(/outline/);
+    expect(() =>
+      fromSceneDocument({
+        type: "Text",
+        font: "NotoSansJP",
+        fontSizePx: 12,
+        children: ["X"],
+        outline: { stroke: "red" },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "SCENE_DECODE_UNKNOWN_KEY",
+        context: expect.objectContaining({ key: "outline" }),
+      }),
+    );
   });
 
   it("reserves four layout edges and keeps the outline independent of border widths", () => {
@@ -198,7 +309,8 @@ describe("text paint, skew, and independent box surfaces", () => {
       ),
     );
     const ir = engine.renderToIR(scene);
-    expect(nodes(ir.root).find((node) => node.nodeId === "frame:content")?.clip).toEqual({
+    const content = nodes(ir.root).find((node) => node.nodeId === "frame:content");
+    expect(content?.type === "group" ? content.clip : undefined).toEqual({
       kind: "empty",
     });
     expect(hitTest(ir, 50, 50)).toBeNull();

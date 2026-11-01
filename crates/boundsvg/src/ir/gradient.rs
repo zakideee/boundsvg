@@ -5,13 +5,6 @@
 
 use super::types::{Gradient, GradientStop, LinearGradientGeometry, RadialGradientGeometry};
 
-/// Parse and resolve a CSS gradient in a unit-sized gradient box.
-/// Returns `None` for a solid color, malformed syntax, or non-finite resolved geometry.
-#[must_use]
-pub fn parse_gradient(value: &str) -> Option<Gradient> {
-    resolve_gradient_for_box(value, 1.0, 1.0)
-}
-
 // Authored syntax is never serialized as an alternative drawing contract.
 enum GradientSyntax {
     Linear {
@@ -902,30 +895,40 @@ mod tests {
     fn color_function_names_are_case_sensitive_like_ts() {
         // TS regexes have no /i flag on rgb()/hsl(); uppercase falls through
         // to the named-color lookup and fails.
-        assert!(parse_gradient("linear-gradient(RGB(255,0,0), blue)").is_none());
-        assert!(parse_gradient("linear-gradient(rgb(255,0,0), blue)").is_some());
+        assert!(parse_gradient_syntax("linear-gradient(RGB(255,0,0), blue)", 1.0, 1.0).is_none());
+        assert!(parse_gradient_syntax("linear-gradient(rgb(255,0,0), blue)", 1.0, 1.0).is_some());
     }
 
     #[test]
     fn hsl_hue_rejects_sign_and_exponent_like_ts() {
         // TS hue class is [\d.]+ — no sign, no exponent.
-        assert!(parse_gradient("linear-gradient(hsl(-10,50%,50%), blue)").is_none());
-        assert!(parse_gradient("linear-gradient(hsl(1e2,50%,50%), blue)").is_none());
-        assert!(parse_gradient("linear-gradient(hsl(100,50%,50%), blue)").is_some());
+        assert!(
+            parse_gradient_syntax("linear-gradient(hsl(-10,50%,50%), blue)", 1.0, 1.0).is_none()
+        );
+        assert!(
+            parse_gradient_syntax("linear-gradient(hsl(1e2,50%,50%), blue)", 1.0, 1.0).is_none()
+        );
+        assert!(
+            parse_gradient_syntax("linear-gradient(hsl(100,50%,50%), blue)", 1.0, 1.0).is_some()
+        );
     }
 
     #[test]
     fn degenerate_alpha_is_nan_valid_like_ts() {
         // Number("1.2.3") is NaN in JS and NaN passes the 0..1 range guard.
-        assert!(parse_gradient("linear-gradient(rgba(0,0,0,1.2.3), blue)").is_some());
-        assert!(parse_gradient("linear-gradient(rgba(0,0,0,1.5), blue)").is_none());
+        assert!(
+            parse_gradient_syntax("linear-gradient(rgba(0,0,0,1.2.3), blue)", 1.0, 1.0).is_some()
+        );
+        assert!(
+            parse_gradient_syntax("linear-gradient(rgba(0,0,0,1.5), blue)", 1.0, 1.0).is_none()
+        );
     }
 
     #[test]
     fn angle_accepts_css_number_syntax() {
-        assert!(parse_gradient("linear-gradient(.5deg, red, blue)").is_some());
+        assert!(parse_gradient_syntax("linear-gradient(.5deg, red, blue)", 1.0, 1.0).is_some());
         let Some(GradientSyntax::Linear { angle, stops, .. }) =
-            parse_gradient("linear-gradient(.5deg, red, blue)")
+            parse_gradient_syntax("linear-gradient(.5deg, red, blue)", 1.0, 1.0)
         else {
             panic!("expected linear gradient");
         };
@@ -934,21 +937,21 @@ mod tests {
 
         // Case-insensitive suffix, like the TS /i flag
         let Some(GradientSyntax::Linear { angle, .. }) =
-            parse_gradient("linear-gradient(45DEG, red, blue)")
+            parse_gradient_syntax("linear-gradient(45DEG, red, blue)", 1.0, 1.0)
         else {
             panic!("expected linear gradient");
         };
         assert_eq!(angle, 45.0);
 
         let Some(GradientSyntax::Linear { angle, .. }) =
-            parse_gradient("linear-gradient(+45deg, red, blue)")
+            parse_gradient_syntax("linear-gradient(+45deg, red, blue)", 1.0, 1.0)
         else {
             panic!("expected linear gradient");
         };
         assert_eq!(angle, 45.0);
 
         let Some(GradientSyntax::Linear { angle, .. }) =
-            parse_gradient("linear-gradient(1e2deg, red, blue)")
+            parse_gradient_syntax("linear-gradient(1e2deg, red, blue)", 1.0, 1.0)
         else {
             panic!("expected linear gradient");
         };
@@ -957,13 +960,9 @@ mod tests {
 
     use super::*;
 
-    fn parse_gradient(value: &str) -> Option<GradientSyntax> {
-        parse_gradient_syntax(value, 1.0, 1.0)
-    }
-
     #[test]
     fn test_parse_linear_gradient_basic() {
-        let g = parse_gradient("linear-gradient(red, blue)").unwrap();
+        let g = parse_gradient_syntax("linear-gradient(red, blue)", 1.0, 1.0).unwrap();
         match g {
             GradientSyntax::Linear { angle, stops, .. } => {
                 assert_eq!(angle, 180.0); // default: to bottom
@@ -979,7 +978,8 @@ mod tests {
 
     #[test]
     fn test_parse_linear_gradient_with_angle() {
-        let g = parse_gradient("linear-gradient(45deg, #ff0000, #0000ff)").unwrap();
+        let g =
+            parse_gradient_syntax("linear-gradient(45deg, #ff0000, #0000ff)", 1.0, 1.0).unwrap();
         match g {
             GradientSyntax::Linear { angle, stops, .. } => {
                 assert_eq!(angle, 45.0);
@@ -993,7 +993,7 @@ mod tests {
 
     #[test]
     fn test_parse_linear_gradient_with_direction() {
-        let g = parse_gradient("linear-gradient(to right, red, blue)").unwrap();
+        let g = parse_gradient_syntax("linear-gradient(to right, red, blue)", 1.0, 1.0).unwrap();
         match g {
             GradientSyntax::Linear { angle, .. } => {
                 assert_eq!(angle, 90.0);
@@ -1004,7 +1004,12 @@ mod tests {
 
     #[test]
     fn test_parse_linear_gradient_with_stops() {
-        let g = parse_gradient("linear-gradient(90deg, red 0%, green 50%, blue 100%)").unwrap();
+        let g = parse_gradient_syntax(
+            "linear-gradient(90deg, red 0%, green 50%, blue 100%)",
+            1.0,
+            1.0,
+        )
+        .unwrap();
         match g {
             GradientSyntax::Linear { stops, .. } => {
                 assert_eq!(stops.len(), 3);
@@ -1021,7 +1026,12 @@ mod tests {
 
     #[test]
     fn test_parse_linear_gradient_rgba() {
-        let g = parse_gradient("linear-gradient(rgba(255,0,0,0.5), rgba(0,0,255,1))").unwrap();
+        let g = parse_gradient_syntax(
+            "linear-gradient(rgba(255,0,0,0.5), rgba(0,0,255,1))",
+            1.0,
+            1.0,
+        )
+        .unwrap();
         match g {
             GradientSyntax::Linear { stops, .. } => {
                 assert_eq!(stops.len(), 2);
@@ -1045,14 +1055,14 @@ mod tests {
 
     #[test]
     fn test_parse_gradient_not_gradient() {
-        assert!(parse_gradient("#ff0000").is_none());
-        assert!(parse_gradient("red").is_none());
-        assert!(parse_gradient("rgb(255,0,0)").is_none());
+        assert!(parse_gradient_syntax("#ff0000", 1.0, 1.0).is_none());
+        assert!(parse_gradient_syntax("red", 1.0, 1.0).is_none());
+        assert!(parse_gradient_syntax("rgb(255,0,0)", 1.0, 1.0).is_none());
     }
 
     #[test]
     fn test_parse_gradient_too_few_stops() {
-        assert!(parse_gradient("linear-gradient(red)").is_none());
+        assert!(parse_gradient_syntax("linear-gradient(red)", 1.0, 1.0).is_none());
     }
 
     #[test]
@@ -1167,15 +1177,19 @@ mod tests {
 
     #[test]
     fn unknown_preludes_do_not_fall_back_to_default_geometry() {
-        assert!(parse_gradient("linear-gradient(45degrees, red, blue)").is_none());
-        assert!(parse_gradient("radial-gradient(square at left, red, blue)").is_none());
+        assert!(parse_gradient_syntax("linear-gradient(45degrees, red, blue)", 1.0, 1.0).is_none());
+        assert!(
+            parse_gradient_syntax("radial-gradient(square at left, red, blue)", 1.0, 1.0).is_none()
+        );
     }
 
     #[test]
     fn omitted_stops_are_distributed_between_explicit_neighbors() {
-        let Some(GradientSyntax::Linear { stops, .. }) =
-            parse_gradient("linear-gradient(red 20%, yellow, green, blue 80%)")
-        else {
+        let Some(GradientSyntax::Linear { stops, .. }) = parse_gradient_syntax(
+            "linear-gradient(red 20%, yellow, green, blue 80%)",
+            1.0,
+            1.0,
+        ) else {
             panic!("expected linear gradient");
         };
         for (stop, expected) in stops.iter().zip([0.2, 0.4, 0.6, 0.8]) {

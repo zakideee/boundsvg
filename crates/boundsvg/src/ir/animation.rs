@@ -348,7 +348,7 @@ pub(crate) fn sample_spring_progress(
 ///
 /// # Errors
 ///
-/// Returns ANIMATION_INVALID_SPEC for unsupported names or invalid easing parameters.
+/// Returns `ANIMATION_INVALID_SPEC` for unsupported names or invalid easing parameters.
 pub(super) fn resolve_easing(
     easing: Option<&AnimationEasing>,
     node_id: &str,
@@ -1073,7 +1073,7 @@ pub(crate) fn text_animation_budget_counts(root: &IrNode) -> (usize, usize) {
 ///
 /// # Errors
 ///
-/// Returns TEXT_ANIMATION_UNIT_LIMIT_EXCEEDED or TEXT_ANIMATION_FRAGMENT_LIMIT_EXCEEDED.
+/// Returns `TEXT_ANIMATION_UNIT_LIMIT_EXCEEDED` or `TEXT_ANIMATION_FRAGMENT_LIMIT_EXCEEDED`.
 pub(crate) fn validate_text_animation_budget_counts(
     unit_count: usize,
     fragment_count: usize,

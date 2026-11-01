@@ -4,12 +4,21 @@ use super::types::{BBox, BorderRadius, BoxClip, BoxContour, CornerRadius};
 use crate::error::EngineError;
 use crate::svg_emit::num_format::format_js_number;
 
-/// Resolve circular outer corners once in the box's placement coordinates.
+/// Resolve circular outer corners once, treating finite negative radii as square corners.
 pub(crate) fn outer_contour(bbox: BBox, radius: Option<BorderRadius>) -> BoxContour {
+    let normalize_radius = |radius: f64| {
+        if radius.is_finite() {
+            radius.max(0.0)
+        } else {
+            radius
+        }
+    };
     let radii = match radius {
         None => [0.0; 4],
-        Some(BorderRadius::Uniform(radius)) => [radius; 4],
-        Some(BorderRadius::PerCorner(radii)) => [radii.tl, radii.tr, radii.br, radii.bl],
+        Some(BorderRadius::Uniform(radius)) => [normalize_radius(radius); 4],
+        Some(BorderRadius::PerCorner(radii)) => {
+            [radii.tl, radii.tr, radii.br, radii.bl].map(normalize_radius)
+        }
     };
     BoxContour {
         bbox,

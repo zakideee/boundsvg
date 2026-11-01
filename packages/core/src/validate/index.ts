@@ -180,6 +180,11 @@ function validateNode(
   const props = node.props as Record<string, unknown>;
   if (node.type === "Box" || node.type === "Flex" || node.type === "Grid") {
     validateContainerVisualProps(props, nid);
+  } else if (props.outline !== undefined) {
+    throw new FatalError("VALIDATION", "outline is supported only by Box, Flex, and Grid.", {
+      stage: "validate",
+      nodeId: nid,
+    });
   }
   validateVisualNumberProps(props, nid);
   validateLayoutEnumAndGridProps(node, nid);
