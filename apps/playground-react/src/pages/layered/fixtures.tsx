@@ -145,7 +145,10 @@ export function buildLayeredFixtures(): LayeredFixtureDefinition[] {
             left={0}
             width={320}
             height={180}
-            background="#e5e7eb"
+            background="linear-gradient(90deg, #e5e7eb, #cbd5e1)"
+            overflow="clip"
+            borderRadius={8}
+            boxShadow="0 2 6 rgba(15,23,42,0.2)"
           />
           <Box
             id="panel"
@@ -155,7 +158,9 @@ export function buildLayeredFixtures(): LayeredFixtureDefinition[] {
             left={40}
             width={240}
             height={84}
-            background="#111827"
+            background="linear-gradient(0deg, #111827, #334155)"
+            overflow="clip"
+            boxShadow="0 6 10 rgba(15,23,42,0.4)"
             borderRadius={18}
           />
           <Text

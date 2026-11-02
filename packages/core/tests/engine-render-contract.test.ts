@@ -629,7 +629,7 @@ describe("wasm IR consumption by the TS IR contract", () => {
     const { ir } = engine.renderToSvgAndIR(glyphScene.build(), glyphScene.renderOptions);
 
     // Text selection: glyph source metadata must map back to quads.
-    const selection = buildTextSelectionMap(ir);
+    const selection = buildTextSelectionMap(buildIRSourceIndex(ir));
     expect(selection.nodes.size).toBeGreaterThan(0);
     for (const [nodeId, selectionNode] of selection.nodes) {
       expect(selectionNode.glyphs.length, `${nodeId}: selection glyphs`).toBeGreaterThan(0);

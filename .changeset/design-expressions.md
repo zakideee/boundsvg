@@ -24,3 +24,12 @@ Generated JSX preserves string and structured array props, including text stroke
 IR nodes now require explicit source/content/decoration/wrapper ownership. Source ownership alone carries handlers and metadata; tree order replaces serialized `drawOrder`. Hit, text selection, inspection and layer manifests use snapshot-local source occurrences, allowing raw IR labels to repeat. Update direct IR consumers to the new ownership and SourceRef contracts; former handler/type maps and order-list query adapters are removed.
 
 OUTPUT_AFFECTING: The SVG viewport contains the ordinary IR root element, so root transforms, clipping, opacity and animation apply. Source identity appears only on source anchors; endpoint metadata and generated resource identifiers use physical occurrences. Empty paint retains an empty endpoint. These changes alter SVG bytes and resource IDs. Layer extraction retains original ancestor structure and maps original source references to layer-local indices.
+
+When multiple SVG documents share one HTML document, supply distinct, normalized,
+pairwise prefix-free `resourceIdPrefix` scopes. This includes a single SVG shown
+alongside its extracted layers: occurrence-local resource IDs can otherwise
+refer to different clips, gradients or filters in another output.
+
+Inspection and text projections now take one prepared `IRSourceIndex` rather
+than an IR/index pair. Share that index across hit, copy and selection queries;
+text query methods reject source refs from a different prepared snapshot.

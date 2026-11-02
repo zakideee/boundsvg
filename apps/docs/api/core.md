@@ -876,7 +876,7 @@ It is not a persistent document identifier.
 
 Tree order determines painting; there is no serialized `drawOrder`. Source
 facts expose `primaryNodeIndex` and `parentSourceIndex`, replacing separate
-handler/type maps. `buildTextMap(ir)` and `buildTextSelectionMap(ir)` key entries
+handler/type maps. `buildTextMap(sourceIndex)` and `buildTextSelectionMap(sourceIndex)` key entries
 by source occurrence. Their queries take `sourceIndex`; `getAllText(textMap)`
 uses primary text paint order without a second order list.
 
@@ -1347,8 +1347,8 @@ With a non-empty prefix, layered SVG export derives the deterministic sub-prefix
 `<normalized-prefix>layer-<zero-based-index>-` for each emitted layer. Those
 sub-prefixes are pairwise prefix-free even for indices such as `1` and `10`.
 Across separate layered results, the caller still supplies normalized,
-non-empty, pairwise prefix-free base prefixes. Omitting the prefix preserves the
-legacy bytes and does not add a cross-layer namespace guarantee.
+non-empty, pairwise prefix-free base prefixes. Without a prefix there is
+no cross-layer namespace. Resource IDs are occurrence-local, so different documents may define the same ID for different geometry. Give the single SVG and each layered result distinct document scopes before inserting them together; layer export derives its own subscopes.
 
 ### `LayeredPngOptions`
 
@@ -1591,10 +1591,38 @@ import { inspectScene } from "@boundsvg/core";
 import { collectInspectionBBoxes } from "@boundsvg/core/inspect";
 
 const inspection = inspectScene(engine, vnode);
-const bboxes = collectInspectionBBoxes(inspection.ir);
+const bboxes = collectInspectionBBoxes(inspection.sourceIndex);
 ```
 
 `inspectScene(engine, input, options?)` returns the layout tree, sampled IR, primary text map, source index, occurrence bbox list, recoverable warnings, node ID validation result, and summary stats. Each bbox includes pre-transform `layoutBBox`, transformed corner points in `transformBox`, and their world-space axis-aligned `visualBBox`. Use it for CI checks, internal asset validation tools, or editor panels that need positioned geometry rather than rendered bytes.
+
+Build one `IRSourceIndex` with `buildIRSourceIndex(ir)` and share it with
+`buildTextMap(index)`, `buildTextSelectionMap(index)` and
+`collectInspectionBBoxes(index)`. These projections take the index alone.
+`inspectScene` already exposes its prepared index as `inspection.sourceIndex`.
+
+Text queries (`getNodeText`, `findLineAtPoint`, `getAncestorText`) take a
+canonical `IRSourceRef` from that same index. A copied object or a reference
+from an earlier index returns `null`, even if its ordinal and label match.
+Use a prepared hit index when combining hit results with text projections:
+
+```ts
+import {
+  buildHitTestIndex,
+  buildTextMap,
+  getNodeText,
+} from "@boundsvg/core/scene";
+const hits = buildHitTestIndex(ir);
+const textMap = buildTextMap(hits.sourceIndex);
+const source = hits.queryTopmost(x, y);
+const text = source ? getNodeText(textMap, source) : null;
+```
+
+Rebuild the index and its projections together after replacing the IR. Source
+refs identify this prepared snapshot; keep application IDs separately for
+persistent document entities. Source groups remain valid ancestor-query
+origins even when they have no primary text themselves. `TextMap.sourceIndex`
+is the ancestry authority; the old duplicated `parentMap` is removed.
 
 See [Choosing an API](/reference/api-selection) for bbox semantics, animation sampling, and cost.
 

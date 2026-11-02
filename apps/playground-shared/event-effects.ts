@@ -219,7 +219,7 @@ function buildNodeSemantics(
 export function buildNodeBBoxMap(ir: IR): Map<number, NodeBBox> {
   const sourceIndex = buildIRSourceIndex(ir);
   const geometry = new Map(
-    collectInspectionBBoxes(ir, sourceIndex).map((entry) => [entry.nodeIndex, entry]),
+    collectInspectionBBoxes(sourceIndex).map((entry) => [entry.nodeIndex, entry]),
   );
   const map = new Map<number, NodeBBox>();
   for (const source of sourceIndex.sources.values()) {

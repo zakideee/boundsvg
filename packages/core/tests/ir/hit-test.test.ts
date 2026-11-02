@@ -173,7 +173,7 @@ describe("hitTest", () => {
   });
 });
 
-describe("hitTestCandidates", () => {
+describe("prepared hit candidates", () => {
   it("returns all candidates in z-order descending", () => {
     const ir = makeIR([
       {

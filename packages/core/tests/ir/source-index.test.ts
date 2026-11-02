@@ -42,7 +42,7 @@ describe("source occurrence ownership", () => {
     expect(index.sources.get(3)?.primaryNodeIndex).toBe(4);
     expect(index.sources.size).toBe(4);
     expect(hitTest(tree, 10, 10)).toEqual({ nodeId: "card:outline", sourceIndex: 6 });
-    const boxes = collectInspectionBBoxes(tree, index);
+    const boxes = collectInspectionBBoxes(index);
     expect(boxes.map((entry) => entry.nodeIndex)).toEqual([0, 2, 3, 4, 5, 6]);
     expect(boxes.map((entry) => entry.paintOrder)).toEqual([null, 0, null, 1, 2, 3]);
   });
@@ -141,8 +141,9 @@ it("keeps all physical text outlines while copying and selecting only primary so
     lines: [{ text: "ornament", glyphs: [], width: 20, baselineY: 12 }],
   };
   const ir = document(group("same", [text, decoration]));
-  expect(getAllText(buildTextMap(ir))).toBe("primary");
-  expect([...buildTextSelectionMap(ir).nodes.keys()]).toEqual([0]);
+  const sourceIndex = buildIRSourceIndex(ir);
+  expect(getAllText(buildTextMap(sourceIndex))).toBe("primary");
+  expect([...buildTextSelectionMap(sourceIndex).nodes.keys()]).toEqual([0]);
   expect(
     projectResolvedTextOutlines(ir).map((entry) => ({
       nodeIndex: entry.nodeIndex,
@@ -196,7 +197,7 @@ it("indexes reused JS node values as separate tree occurrences across inspection
     ]),
   );
   const index = buildIRSourceIndex(ir);
-  const boxes = collectInspectionBBoxes(ir, index).filter((entry) => entry.type === "text");
+  const boxes = collectInspectionBBoxes(index).filter((entry) => entry.type === "text");
   expect(
     boxes.map((entry) => [
       entry.nodeIndex,
@@ -207,7 +208,7 @@ it("indexes reused JS node values as separate tree occurrences across inspection
     [2, 2, 0],
     [4, 4, 20],
   ]);
-  const selection = buildTextSelectionMap(ir, index);
+  const selection = buildTextSelectionMap(index);
   expect([...selection.nodes.keys()]).toEqual([2, 4]);
   expect(selection.nodes.get(4)?.glyphs[0]?.points[0].x).toBe(20);
   expect(hitTest(ir, 1, 1)).toEqual({ sourceIndex: 2, nodeId: "repeat" });

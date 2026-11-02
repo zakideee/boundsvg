@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createEngineAsync, type Engine } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import { buildTextMap, getNodeText } from "../../src/ir/text-map.js";
 import { buildTextSelectionMap } from "../../src/ir/text-selection.js";
 import type { IRNode, IRTextNode } from "../../src/ir/types.js";
@@ -917,18 +918,17 @@ describe("TextOnPath real WASM pipeline", () => {
       expect(svg).toContain('stroke="#ffffff" stroke-width="3"');
     }
     const glyphIr = engine.renderToSvgAndIR(vnode, { textPathMode: "glyphs" }).ir;
+    const sourceIndex = buildIRSourceIndex(glyphIr);
+    const textMap = buildTextMap(sourceIndex);
+    const textSource = [...textMap.nodes.values()].find(
+      (entry) => entry.source.nodeId === "path-text",
+    )?.source;
+    if (!textSource) {
+      throw new TypeError("Missing path text source");
+    }
+    expect(getNodeText(textMap, textSource)).toBe("曲線 Path");
     expect(
-      getNodeText(
-        buildTextMap(glyphIr),
-        [...buildTextMap(glyphIr).nodes.values()].find(
-          (entry) => entry.source.nodeId === "path-text",
-        )!.source.sourceIndex,
-      ),
-    ).toBe("曲線 Path");
-    expect(
-      [...buildTextSelectionMap(glyphIr).nodes.values()].find(
-        (entry) => entry.source.nodeId === "path-text",
-      )?.glyphs.length,
+      buildTextSelectionMap(sourceIndex).nodes.get(textSource.sourceIndex)?.glyphs.length,
     ).toBeGreaterThan(0);
     expect(engine.renderToSvg(vnode, { debug: true })).toContain("debug-overlay");
     const layered = engine.renderToLayeredSvg(withPathProps({ layer: "curve" }));

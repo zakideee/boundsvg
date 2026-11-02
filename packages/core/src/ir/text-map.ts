@@ -1,6 +1,5 @@
 import type { BBox } from "../text/types.js";
-import { buildIRSourceIndex, type IRSourceRef } from "./source-index.js";
-import type { IR } from "./types.js";
+import type { IRSourceIndex, IRSourceInfo, IRSourceRef } from "./source-index.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,25 +26,17 @@ export type TextNodeEntry = {
   lineHeightPx?: number;
 };
 
-/** Text entries and ancestor relations keyed by snapshot-local source occurrence. */
-export type TextMap = {
+/** Primary text entries and descendant text lists from one canonical source index. */
+export type TextMap = Readonly<{
+  sourceIndex: IRSourceIndex;
   nodes: ReadonlyMap<number, TextNodeEntry>;
   childTextMap: ReadonlyMap<number, readonly number[]>;
-  parentMap: ReadonlyMap<number, number>;
-};
+}>;
 
-/** Extract primary text paints in tree paint order and their semantic ancestors.
- * @throws {FatalError} VALIDATION for malformed source ownership.
- */
-export function buildTextMap(ir: IR, sourceIndex = buildIRSourceIndex(ir)): TextMap {
+/** Project primary text and descendant lists from the index of one IR snapshot. */
+export function buildTextMap(sourceIndex: IRSourceIndex): TextMap {
   const nodes = new Map<number, TextNodeEntry>();
   const childTextMap = new Map<number, number[]>();
-  const parentMap = new Map<number, number>();
-  for (const source of sourceIndex.sources.values()) {
-    if (source.parentSourceIndex !== null) {
-      parentMap.set(source.source.sourceIndex, source.parentSourceIndex);
-    }
-  }
   for (const occurrence of sourceIndex.nodes.values()) {
     const node = occurrence.node;
     if (
@@ -70,59 +61,55 @@ export function buildTextMap(ir: IR, sourceIndex = buildIRSourceIndex(ir)): Text
       fontSizePx: node.fontSizePx,
       lineHeightPx: node.lineHeightPx,
     });
-    let parent = parentMap.get(occurrence.source.sourceIndex);
-    while (parent !== undefined) {
+    let parent = sourceIndex.sources.get(occurrence.source.sourceIndex)?.parentSourceIndex;
+    while (parent !== null && parent !== undefined) {
       const descendants = childTextMap.get(parent) ?? [];
       descendants.push(occurrence.source.sourceIndex);
       childTextMap.set(parent, descendants);
-      parent = parentMap.get(parent);
+      parent = sourceIndex.sources.get(parent)?.parentSourceIndex;
     }
   }
-  return { nodes, childTextMap, parentMap };
+  return { sourceIndex, nodes, childTextMap };
+}
+
+function resolveCurrentSource(textMap: TextMap, source: IRSourceRef): IRSourceInfo | null {
+  const info = textMap.sourceIndex.sources.get(source.sourceIndex);
+  return info?.source === source ? info : null;
 }
 
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
 
-/** Get the full text of a single text node. */
-export function getNodeText(textMap: TextMap, sourceIndex: number): string | null {
-  return textMap.nodes.get(sourceIndex)?.text ?? null;
+/** Read primary text only for a canonical source reference in this map's snapshot. */
+export function getNodeText(textMap: TextMap, source: IRSourceRef): string | null {
+  return resolveCurrentSource(textMap, source)
+    ? (textMap.nodes.get(source.sourceIndex)?.text ?? null)
+    : null;
 }
 
 /**
  * Get concatenated text of the nearest ancestor group that contains
- * multiple text descendants. Falls back to the direct parent group
- * if all ancestors contain only one text node.
+ * multiple primary text descendants. Group sources are valid query origins.
+ * Returns null for stale/foreign refs or when no ancestor has multiple texts.
  */
-export function getAncestorText(textMap: TextMap, sourceIndex: number): string | null {
-  let current = sourceIndex;
-  const visited = new Set<number>();
-
-  while (true) {
-    if (visited.has(current)) {
-      return null;
-    }
-    visited.add(current);
-
-    const parentId = textMap.parentMap.get(current);
-    if (parentId === undefined) {
-      return null;
-    }
-
-    const textIds = textMap.childTextMap.get(parentId);
-    if (textIds && textIds.length > 1) {
-      return textIds
-        .map((id) => textMap.nodes.get(id)?.text)
+export function getAncestorText(textMap: TextMap, source: IRSourceRef): string | null {
+  let parent = resolveCurrentSource(textMap, source)?.parentSourceIndex;
+  while (parent !== null && parent !== undefined) {
+    const textIndices = textMap.childTextMap.get(parent);
+    if (textIndices && textIndices.length > 1) {
+      return textIndices
+        .map((ordinal) => textMap.nodes.get(ordinal)?.text)
         .filter((text): text is string => text != null)
         .join("\n\n");
     }
 
-    current = parentId;
+    parent = textMap.sourceIndex.sources.get(parent)?.parentSourceIndex;
   }
+  return null;
 }
 
-/** Get all text in the IR, ordered by draw order. */
+/** Read all primary text in tree paint order. */
 export function getAllText(textMap: TextMap): string {
   return [...textMap.nodes.values()].map((entry) => entry.text).join("\n\n");
 }
@@ -175,15 +162,17 @@ function scanLineByMidpoint(options: {
 }
 
 /**
- * Find the line at a given SVG-space point within a text node.
- * Uses baselineY midpoints to determine line boundaries.
+ * Find a primary-text line for a current canonical source at an SVG-space point.
+ * Uses baselineY midpoints for line boundaries; stale or foreign refs return null.
  */
 export function findLineAtPoint(
   textMap: TextMap,
-  sourceIndex: number,
+  source: IRSourceRef,
   point: { svgX: number; svgY: number },
 ): LineEntry | null {
-  const entry = textMap.nodes.get(sourceIndex);
+  const entry = resolveCurrentSource(textMap, source)
+    ? textMap.nodes.get(source.sourceIndex)
+    : undefined;
   if (!entry || entry.lines.length === 0) {
     return null;
   }

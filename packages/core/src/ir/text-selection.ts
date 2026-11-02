@@ -6,8 +6,7 @@ import {
   multiplyAffineMatrices,
   type Point2D,
 } from "../transform.js";
-import { buildIRSourceIndex, type IRSourceRef } from "./source-index.js";
-import type { IR } from "./types.js";
+import type { IRSourceIndex, IRSourceRef } from "./source-index.js";
 
 /** Source-range roles distinguishing ordinary content from ruby base and annotation. */
 export type TextSourceRole = "content" | "rubyBase" | "rubyAnnotation";
@@ -49,14 +48,11 @@ export type TextSelectionRange = {
 };
 
 /**
- * Build canvas-space glyph quads from an IR returned by renderToSvgAndIR with
- * textPathMode="glyphs". IRs without per-glyph paths produce no selectable quads.
- * @throws {FatalError} VALIDATION for malformed source ownership.
+ * Project canvas-space glyph quads from a prepared source index.
+ * Use renderToSvgAndIR with textPathMode="glyphs"; snapshots without per-glyph
+ * paths produce no selectable quads.
  */
-export function buildTextSelectionMap(
-  ir: IR,
-  sourceIndex = buildIRSourceIndex(ir),
-): TextSelectionMap {
+export function buildTextSelectionMap(sourceIndex: IRSourceIndex): TextSelectionMap {
   const nodes = new Map<number, TextSelectionNode>();
 
   const matrices = new Map<number, AffineMatrix>();

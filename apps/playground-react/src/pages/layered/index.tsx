@@ -7,6 +7,7 @@ import type {
   LayerWarning,
   VNode,
 } from "@boundsvg/core";
+import { createResourceIdPrefix } from "@boundsvg/core";
 import {
   useRenderToLayeredPngAsync,
   useRenderToLayeredSvgAsync,
@@ -21,7 +22,7 @@ import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
 import "prismjs/components/prism-json";
-import { useCallback, useMemo, useState, useTransition } from "react";
+import { useCallback, useId, useMemo, useState, useTransition } from "react";
 import type { EventEffectOverlayDisplayOptions } from "../../../../playground-shared/inspect-hover.js";
 import { DEFAULT_INSPECTION_FRAME_MODE } from "../../../../playground-shared/inspection-frame.js";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
@@ -88,18 +89,30 @@ function useLayeredRenders(
   includeSingleSvg: boolean,
 ) {
   const { validate, debug } = opts;
+  const documentScope = useId();
+  const singleSvgOptions = useMemo(
+    () => ({ resourceIdPrefix: createResourceIdPrefix(`layered-${documentScope}-single`) }),
+    [documentScope],
+  );
   const layeredOptions = useMemo(
     () => (validate ? { debug, validateComposition: { enabled: true } } : { debug }),
     [validate, debug],
   );
+  const layeredSvgOptions = useMemo(
+    () => ({
+      ...layeredOptions,
+      resourceIdPrefix: createResourceIdPrefix(`layered-${documentScope}-stack`),
+    }),
+    [layeredOptions, documentScope],
+  );
 
   const pngVNode = includePng ? vnode : null;
   const singleSvgVNode = includeSingleSvg ? vnode : null;
-  const singleSvg = useRenderToSvgAndIrAsync(singleSvgVNode, undefined, {
+  const singleSvg = useRenderToSvgAndIrAsync(singleSvgVNode, singleSvgOptions, {
     retainPreviousResult: false,
   });
   const singlePng = useRenderToPngAsync(pngVNode, undefined, { retainPreviousResult: false });
-  const layeredSvg = useRenderToLayeredSvgAsync(vnode, layeredOptions, {
+  const layeredSvg = useRenderToLayeredSvgAsync(vnode, layeredSvgOptions, {
     retainPreviousResult: false,
   });
   const layeredPng = useRenderToLayeredPngAsync(pngVNode, layeredOptions, {
@@ -744,6 +757,12 @@ function LayeredContent() {
 // Subcomponents
 // ---------------------------------------------------------------------------
 
+/** Keep each layer's SVG mounted while only its inspection or stacking controls change. */
+function LayeredSvgCanvas({ svg }: { svg: string }) {
+  const markup = useMemo(() => ({ __html: svg }), [svg]);
+  return <div className="layered-3d-canvas" dangerouslySetInnerHTML={markup} />;
+}
+
 function LayeredStage({
   format,
   svgResult,
@@ -782,9 +801,7 @@ function LayeredStage({
         hidden={hidden}
         focusKey={focusKey}
         onFocusChange={onFocusChange}
-        renderLayer={(layer) => (
-          <div className="layered-3d-canvas" dangerouslySetInnerHTML={{ __html: layer.svg }} />
-        )}
+        renderLayer={(layer) => <LayeredSvgCanvas svg={layer.svg} />}
       />
     );
   }

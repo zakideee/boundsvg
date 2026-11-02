@@ -1,5 +1,6 @@
 import { collectInspectionBBoxes } from "@boundsvg/core/inspect";
 import type { IR, IRGroupNode } from "@boundsvg/core/scene";
+import { buildIRSourceIndex } from "@boundsvg/core/scene";
 import { describe, expect, it } from "vitest";
 import {
   buildNodeBBoxMap,
@@ -41,7 +42,7 @@ describe("buildNodeBBoxMap", () => {
       },
     };
 
-    const matchingEntries = collectInspectionBBoxes(ir).filter(
+    const matchingEntries = collectInspectionBBoxes(buildIRSourceIndex(ir)).filter(
       (bbox) => bbox.nodeId === "transformed",
     );
     expect(matchingEntries.map((bbox) => bbox.type)).toEqual(["group", "rect"]);

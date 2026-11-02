@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 /** @jsxImportSource react */
 
+import { buildIRSourceIndex, buildTextMap, type IR, type TextMap } from "@boundsvg/core/scene";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -25,8 +26,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function mountTextCopy(): Promise<{
+async function mountTextCopy(initialMap: TextMap | null = null): Promise<{
   current: () => UseTextCopyResult;
+  updateMap: (textMap: TextMap) => Promise<void>;
   unmount: () => Promise<void>;
 }> {
   let textCopyResult: UseTextCopyResult | null = null;
@@ -34,16 +36,19 @@ async function mountTextCopy(): Promise<{
   document.body.appendChild(container);
   const root = createRoot(container);
 
-  function Probe() {
-    textCopyResult = useTextCopy(null);
+  function Probe({ textMap }: { textMap: TextMap | null }) {
+    textCopyResult = useTextCopy(textMap);
     return null;
   }
 
   await act(async () => {
-    root.render(<Probe />);
+    root.render(<Probe textMap={initialMap} />);
   });
 
   return {
+    updateMap: async (textMap) => {
+      await act(async () => root.render(<Probe textMap={textMap} />));
+    },
     current: () => {
       if (!textCopyResult) {
         throw new TypeError("text copy hook did not mount");
@@ -147,4 +152,73 @@ describe("useTextCopy clipboard fallback lifecycle", () => {
     expect(hook.current().copyStatus).toBe("failed");
     await hook.unmount();
   });
+});
+
+function snapshotTextMap(label: string, text: string): TextMap {
+  const bbox = { x: 0, y: 0, w: 100, h: 20 };
+  const ir: IR = {
+    width: 100,
+    height: 40,
+    warnings: [],
+    root: {
+      type: "group",
+      nodeId: "root",
+      bbox,
+      ownership: { role: "source" },
+      children: [
+        {
+          type: "group",
+          nodeId: `${label}-group`,
+          bbox,
+          ownership: { role: "source" },
+          children: [text, "peer"].map((content, index) => ({
+            type: "text",
+            nodeId: `${label}-${index}`,
+            bbox,
+            ownership: { role: "source" },
+            lines: [{ text: content, width: 50, baselineY: 15, glyphs: [] }],
+          })),
+        },
+      ],
+    },
+  };
+  return buildTextMap(buildIRSourceIndex(ir));
+}
+
+describe("useTextCopy snapshot source lifetime", () => {
+  for (const sameLabel of [false, true]) {
+    it(`rejects old node, line and ancestor refs after ordinal reuse (sameLabel=${sameLabel})`, async () => {
+      const oldMap = snapshotTextMap("old", "old text");
+      const nextMap = snapshotTextMap(sameLabel ? "old" : "new", "new text");
+      const oldSource = oldMap.nodes.get(2)?.source;
+      const currentSource = nextMap.nodes.get(2)?.source;
+      const oldGroup = oldMap.sourceIndex.sources.get(1)?.source;
+      const currentGroup = nextMap.sourceIndex.sources.get(1)?.source;
+      if (!oldSource || !currentSource || !oldGroup || !currentGroup) {
+        throw new TypeError("Missing snapshot sources");
+      }
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal("navigator", { clipboard: { writeText } });
+      const hook = await mountTextCopy(oldMap);
+      expect(hook.current().resolveNodeText(oldSource)).toBe("old text");
+      await hook.updateMap(nextMap);
+      expect(hook.current().resolveNodeText(oldSource)).toBeNull();
+      expect(hook.current().resolveLineText(oldSource, { svgX: 5, svgY: 5 })).toBeNull();
+      expect(hook.current().resolveAncestorText(oldSource)).toBeNull();
+      expect(hook.current().resolveAncestorText(oldGroup)).toBeNull();
+      expect(await hook.current().copyNodeText(oldSource)).toBe(false);
+      expect(await hook.current().copyLineText(oldSource, { svgX: 5, svgY: 5 })).toBe(false);
+      expect(await hook.current().copyAncestorText(oldSource)).toBe(false);
+      expect(await hook.current().copyAncestorText(oldGroup)).toBe(false);
+      expect(writeText).not.toHaveBeenCalled();
+      expect(hook.current().resolveNodeText(currentSource)).toBe("new text");
+      expect(hook.current().resolveLineText(currentSource, { svgX: 5, svgY: 5 })).toBe("new text");
+      expect(hook.current().resolveAncestorText(currentGroup)).toBe("new text\n\npeer");
+      await act(async () => {
+        expect(await hook.current().copyAncestorText(currentGroup)).toBe(true);
+      });
+      expect(writeText).toHaveBeenCalledExactlyOnceWith("new text\n\npeer");
+      await hook.unmount();
+    });
+  }
 });

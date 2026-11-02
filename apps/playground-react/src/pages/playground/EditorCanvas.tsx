@@ -1,4 +1,9 @@
-import { bindIRToSvg, resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
+import {
+  bindIRToSvg,
+  type IRDomBinding,
+  resolveHitTarget,
+  translateSvgCoords,
+} from "@boundsvg/browser";
 import type { IR } from "@boundsvg/core";
 import {
   buildHitTestIndex,
@@ -16,7 +21,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "../../components/Tooltip";
 import {
   type EditorLayer,
@@ -89,8 +94,11 @@ type CanvasPoint = { x: number; y: number };
 type TextSelectionStart = { selection: EditorTextSelection; drag: DragState };
 type MutableValueRef<T> = { current: T };
 
+/** Minimum layer width and height accepted by resize gestures, in canvas pixels. */
 const MIN_LAYER_SIZE = 20;
+/** Pointer travel in viewport pixels required before a transform becomes a drag. */
 const DRAG_THRESHOLD_VIEWPORT_PX = 4;
+/** Accessible descriptions for the editor's eight resize handles. */
 const RESIZE_HANDLE_LABELS: Record<ResizeHandle, string> = {
   nw: "Resize from top left",
   n: "Resize from top",
@@ -204,6 +212,12 @@ export function EditorCanvas({
     [document.layers, state.present.selectedLayerIds],
   );
   const containerRef = useRef<HTMLFieldSetElement>(null);
+  const bindingRef = useRef<IRDomBinding | null>(null);
+  const [renderContainer, setRenderContainer] = useState<HTMLDivElement | null>(null);
+  const bindRenderContainer = useCallback((node: HTMLDivElement | null) => {
+    bindingRef.current = null;
+    setRenderContainer(node);
+  }, []);
   const keyboardTargetRef = useRef<HTMLButtonElement>(null);
   const textEditorRef = useRef<HTMLTextAreaElement>(null);
   const compositionBeforeRef = useRef<EditorPresent | null>(null);
@@ -237,15 +251,23 @@ export function EditorCanvas({
     }
   }, [engine, vnode, showDebug]);
   const artifacts = renderResult.artifacts;
+  const svgMarkup = useMemo(() => ({ __html: artifacts?.svg ?? "" }), [artifacts]);
   const interaction = useMemo(() => {
     if (!artifacts) {
       return null;
     }
-    return {
-      hitIndex: buildHitTestIndex(artifacts.ir),
-      textSelectionMap: buildTextSelectionMap(artifacts.ir),
-    };
+    const hitIndex = buildHitTestIndex(artifacts.ir);
+    return { hitIndex, textSelectionMap: buildTextSelectionMap(hitIndex.sourceIndex) };
   }, [artifacts]);
+
+  useLayoutEffect(() => {
+    const root = renderContainer?.querySelector<SVGSVGElement>(":scope > svg");
+    bindingRef.current =
+      root && interaction ? bindIRToSvg(root, interaction.hitIndex.sourceIndex) : null;
+    return () => {
+      bindingRef.current = null;
+    };
+  }, [renderContainer, interaction]);
 
   useEffect(() => {
     onArtifacts(artifacts);
@@ -304,25 +326,21 @@ export function EditorCanvas({
   );
 
   const pointFromEvent = (event: CanvasPointEvent): CanvasPoint | null => {
-    const svg = containerRef.current?.querySelector("svg[data-boundsvg-node-id]");
+    const svg = bindingRef.current?.root;
     if (!svg) {
       return null;
     }
-    return translateSvgCoords(svg as SVGSVGElement, event.clientX, event.clientY);
+    return translateSvgCoords(svg, event.clientX, event.clientY);
   };
 
   const hitFromEvent = (
     event: CanvasPointEvent,
     point: { x: number; y: number },
   ): string | null => {
-    if (!interaction || !containerRef.current) {
+    const binding = bindingRef.current;
+    if (!interaction || binding?.sourceIndex !== interaction.hitIndex.sourceIndex) {
       return null;
     }
-    const svg = containerRef.current.querySelector("svg");
-    if (!svg) {
-      return null;
-    }
-    const binding = bindIRToSvg(svg, interaction.hitIndex.sourceIndex);
     const candidates = interaction.hitIndex.queryCandidates(point.x, point.y);
     return resolveHitTarget(binding, candidates, event.clientX, event.clientY)?.nodeId ?? null;
   };
@@ -539,11 +557,7 @@ export function EditorCanvas({
     }
     event.preventDefault();
     event.stopPropagation();
-    const artboard = containerRef.current?.querySelector("svg[data-boundsvg-node-id]");
-    if (!artboard) {
-      return;
-    }
-    const point = translateSvgCoords(artboard as SVGSVGElement, event.clientX, event.clientY);
+    const point = pointFromEvent(event);
     if (!point) {
       return;
     }
@@ -593,11 +607,7 @@ export function EditorCanvas({
     }
     event.preventDefault();
     event.stopPropagation();
-    const artboard = containerRef.current?.querySelector("svg[data-boundsvg-node-id]");
-    if (!artboard) {
-      return;
-    }
-    const point = translateSvgCoords(artboard as SVGSVGElement, event.clientX, event.clientY);
+    const point = pointFromEvent(event);
     if (!point) {
       return;
     }
@@ -741,8 +751,9 @@ export function EditorCanvas({
           >
             {artifacts ? (
               <div
+                ref={bindRenderContainer}
                 className="visual-editor-render"
-                dangerouslySetInnerHTML={{ __html: artifacts.svg }}
+                dangerouslySetInnerHTML={svgMarkup}
               />
             ) : (
               <div className="visual-editor-render-error">Render failed: {renderResult.error}</div>
@@ -1762,6 +1773,7 @@ function applyRotationDrag(
   });
 }
 
+/** Rotate a group about its center and clamp translation on axes where the result fits. */
 export function rotateLayerSelection(
   layers: EditorLayer[],
   bounds: SelectionBounds,
@@ -1790,6 +1802,7 @@ export function rotateLayerSelection(
   return transformedLayerPatches(clampLayerSelection(transformedLayers, canvas));
 }
 
+/** Scale group frames from a shared resize handle while respecting minimum layer sizes. */
 export function scaleLayerSelection(
   layers: EditorLayer[],
   bounds: SelectionBounds,
@@ -2115,6 +2128,7 @@ function resolveSelectionBounds(quads: TextSelectionQuad[]): SelectionBounds | n
   };
 }
 
+/** Enclose the selected layers' rotated corners in a canvas-space rectangle. */
 export function resolveLayerSelectionBounds(layers: EditorLayer[]): SelectionBounds | null {
   if (layers.length === 0) {
     return null;
@@ -2128,6 +2142,7 @@ export function resolveLayerSelectionBounds(layers: EditorLayer[]): SelectionBou
   };
 }
 
+/** Clamp group translation to the canvas; an oversized selection cannot move on that axis. */
 export function resolveSelectionMoveDelta(
   layers: EditorLayer[],
   canvas: { width: number; height: number },
@@ -2146,10 +2161,12 @@ export function resolveSelectionMoveDelta(
   };
 }
 
+/** Allow grouped transforms only for a nonempty selection with every member unlocked. */
 export function canMoveLayerSelection(layers: EditorLayer[]): boolean {
   return layers.length > 0 && layers.every((layer) => !layer.locked);
 }
 
+/** Select visible layers whose rotated quads intersect the canvas-space marquee. */
 export function resolveMarqueeLayerIds(layers: EditorLayer[], bounds: SelectionBounds): string[] {
   return layers
     .filter((layer) => layer.visible && quadIntersectsBounds(resolveLayerQuad(layer), bounds))

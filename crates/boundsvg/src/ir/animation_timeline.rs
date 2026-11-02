@@ -2921,7 +2921,6 @@ mod tests {
                     animation: Some(spec),
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -3362,7 +3361,6 @@ mod tests {
 
         let text_ir = Ir {
             root: animated_text_unit("text-owner", "unit-0", &spec),
-
             width: 100.0,
             height: 20.0,
             debug: None,
@@ -3416,7 +3414,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -3697,7 +3694,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -3856,7 +3852,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -3907,7 +3902,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -3957,7 +3951,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -4006,7 +3999,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -4073,7 +4065,6 @@ mod tests {
                 timeline_ir(seam_spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &seam_spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -4094,7 +4085,6 @@ mod tests {
                 timeline_ir(continuous_spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &continuous_spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -4144,7 +4134,6 @@ mod tests {
                     timeline_ir(spec.clone()),
                     Ir {
                         root: animated_text_unit("text-owner", "unit-0", &spec),
-
                         width: 100.0,
                         height: 20.0,
                         debug: None,
@@ -4200,7 +4189,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -4279,7 +4267,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -4749,7 +4736,6 @@ mod tests {
                     animation: None,
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -4838,7 +4824,6 @@ mod tests {
                         animation: None,
                     },
                 },
-
                 width: 100.0,
                 height: 50.0,
                 debug: None,
@@ -4928,7 +4913,6 @@ mod tests {
         .expect("text-unit fixture should deserialize");
         let source = Ir {
             root,
-
             width: 100.0,
             height: 20.0,
             debug: None,
@@ -5060,7 +5044,6 @@ mod tests {
                     animation: None,
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -5402,7 +5385,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5458,7 +5440,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5525,7 +5506,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5551,7 +5531,6 @@ mod tests {
         );
         let matching_text_ir = Ir {
             root: animated_text_unit("text-owner", "unit-0", &matching_text_spec),
-
             width: 100.0,
             height: 20.0,
             debug: None,
@@ -5599,7 +5578,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5696,7 +5674,6 @@ mod tests {
                 (
                     Ir {
                         root: animated_text_unit("text-owner", "unit-0", &spec),
-
                         width: 100.0,
                         height: 20.0,
                         debug: None,
@@ -5782,7 +5759,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5876,7 +5852,6 @@ mod tests {
                 (
                     Ir {
                         root: animated_text_unit("text-owner", "unit-0", &spec),
-
                         width: 100.0,
                         height: 20.0,
                         debug: None,
@@ -5936,7 +5911,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5999,7 +5973,6 @@ mod tests {
                     animation: None,
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6047,7 +6020,6 @@ mod tests {
                     animation: None,
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6098,7 +6070,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -6355,7 +6326,6 @@ mod tests {
                     animation: None,
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6426,7 +6396,6 @@ mod tests {
                     animation: None,
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6595,7 +6564,6 @@ mod tests {
                     animation: None,
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6703,7 +6671,6 @@ mod tests {
                     animation: None,
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6806,7 +6773,6 @@ mod tests {
                     animation: None,
                 },
             },
-
             width: 100.0,
             height: 50.0,
             debug: None,

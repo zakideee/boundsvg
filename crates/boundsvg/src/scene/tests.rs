@@ -371,7 +371,6 @@ fn leaf_order_follows_the_ir_tree() {
     let ir = sample_ir();
     let paint_scene =
         resolve_paint_scene(&ir, &PaintSceneOptions::default()).expect("scene resolves");
-
     assert_eq!(
         leaf_node_ids(&paint_scene.items),
         ["canvas:bg", "inner:bg", "p1", "s1", "s2"]

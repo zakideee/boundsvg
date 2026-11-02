@@ -58,7 +58,6 @@ fn ir(root: IrNode) -> Ir {
 fn ir_with_size(root: IrNode, width: f64, height: f64) -> Ir {
     Ir {
         root,
-
         width,
         height,
         debug: None,
@@ -600,7 +599,6 @@ fn transition_ir_injects_only_required_wrapper_and_preserves_authored_inner_node
         480.0,
         480.0,
     );
-
     let reference = compiled_state(&transport, reference_ir);
     let target = compiled_state(&transport, target_ir);
 

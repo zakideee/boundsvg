@@ -147,14 +147,14 @@ export function useTextCopy(textMap: TextMap | null): UseTextCopyResult {
     if (!textMapRef.current) {
       return null;
     }
-    return getNodeText(textMapRef.current, source.sourceIndex);
+    return getNodeText(textMapRef.current, source);
   }, []);
 
   const resolveLineText = useCallback((source: IRSourceRef, point: SvgPoint): string | null => {
     if (!textMapRef.current) {
       return null;
     }
-    const line = findLineAtPoint(textMapRef.current, source.sourceIndex, point);
+    const line = findLineAtPoint(textMapRef.current, source, point);
     return line?.text ?? null;
   }, []);
 
@@ -162,7 +162,7 @@ export function useTextCopy(textMap: TextMap | null): UseTextCopyResult {
     if (!textMapRef.current) {
       return null;
     }
-    return getAncestorText(textMapRef.current, source.sourceIndex);
+    return getAncestorText(textMapRef.current, source);
   }, []);
 
   const resolveAllText = useCallback((): string => {

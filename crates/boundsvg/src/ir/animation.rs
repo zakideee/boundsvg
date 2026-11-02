@@ -1302,7 +1302,6 @@ mod tests {
                     animation: Some(spec(fill, iterations)),
                 },
             },
-
             width: 100.0,
             height: 100.0,
             debug: None,
@@ -1420,7 +1419,6 @@ mod tests {
         .expect("text unit node fixture deserializes");
         Ir {
             root,
-
             width: 20.0,
             height: 10.0,
             debug: None,

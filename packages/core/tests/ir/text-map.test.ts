@@ -40,11 +40,11 @@ function textNode(
     type: "text",
     nodeId,
     bbox,
-    lines: lines.map((l) => ({
-      text: l.text,
+    lines: lines.map((line) => ({
+      text: line.text,
       glyphs: [],
-      width: l.width,
-      baselineY: l.baselineY,
+      width: line.width,
+      baselineY: line.baselineY,
     })),
     writingMode: extra?.writingMode,
     fontSizePx: extra?.fontSizePx,
@@ -67,7 +67,7 @@ describe("buildTextMap", () => {
       },
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(map.nodes.size).toBe(0);
     expect(map.childTextMap.size).toBe(0);
   });
@@ -79,7 +79,7 @@ describe("buildTextMap", () => {
       ]),
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(map.nodes.size).toBe(1);
     const entry = [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt1");
     expect(entry?.text).toBe("Hello");
@@ -95,7 +95,7 @@ describe("buildTextMap", () => {
       ]),
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect([...map.nodes.values()].find((entry) => entry.source.nodeId === "txt1")?.text).toBe(
       "Line 1\nLine 2",
     );
@@ -131,7 +131,7 @@ describe("buildTextMap", () => {
       warnings: [],
     };
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       map.childTextMap.get(1)?.map((ordinal) => index.sources.get(ordinal)?.source.nodeId),
     ).toEqual(["txt1", "txt2"]);
@@ -140,7 +140,7 @@ describe("buildTextMap", () => {
     ).toEqual(["txt1", "txt2"]);
   });
 
-  it("builds parentMap correctly", () => {
+  it("uses the canonical source ancestry", () => {
     const ir: IR = {
       root: {
         ownership: { role: "source" },
@@ -167,10 +167,10 @@ describe("buildTextMap", () => {
       warnings: [],
     };
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
-    expect(map.parentMap.get(2)).toBe(1);
-    expect(map.parentMap.get(1)).toBe(0);
-    expect(map.parentMap.get(0)).toBeUndefined();
+    const map = buildTextMap(index);
+    expect(map.sourceIndex.sources.get(2)?.parentSourceIndex).toBe(1);
+    expect(map.sourceIndex.sources.get(1)?.parentSourceIndex).toBe(0);
+    expect(map.sourceIndex.sources.get(0)?.parentSourceIndex).toBeNull();
   });
 
   it("keeps same-label content attached to its explicit source", () => {
@@ -211,8 +211,8 @@ describe("buildTextMap", () => {
       warnings: [],
     };
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
-    expect(map.parentMap.get(2)).toBe(1);
+    const map = buildTextMap(index);
+    expect(map.sourceIndex.sources.get(2)?.parentSourceIndex).toBe(1);
     expect(map.nodes.get(2)?.source.nodeId).toBe("title");
     expect(map.nodes.has(3)).toBe(false);
   });
@@ -227,7 +227,7 @@ describe("buildTextMap", () => {
       ),
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     const entry = [...map.nodes.values()].find((entry) => entry.source.nodeId === "vtxt");
     expect(entry?.writingMode).toBe("vertical-rl");
     expect(entry?.fontSizePx).toBe(16);
@@ -247,12 +247,14 @@ describe("getNodeText", () => {
       ]),
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       getNodeText(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt1")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt1")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
       ),
     ).toBe("Hello");
   });
@@ -260,12 +262,14 @@ describe("getNodeText", () => {
   it("returns null for nonexistent node", () => {
     const ir = makeIR([]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       getNodeText(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "missing")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "missing")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
       ),
     ).toBeNull();
   });
@@ -306,12 +310,14 @@ describe("getAncestorText", () => {
       warnings: [],
     };
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       getAncestorText(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "title")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "title")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
       ),
     ).toBe("Title\n\nBody text");
   });
@@ -335,12 +341,14 @@ describe("getAncestorText", () => {
       warnings: [],
     };
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       getAncestorText(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "only")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "only")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
       ),
     ).toBeNull();
   });
@@ -348,12 +356,14 @@ describe("getAncestorText", () => {
   it("returns null for nonexistent node", () => {
     const ir = makeIR([]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       getAncestorText(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "missing")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "missing")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
       ),
     ).toBeNull();
   });
@@ -396,13 +406,15 @@ describe("getAncestorText", () => {
       warnings: [],
     };
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     // "inner" has 1 text child, "outer" has 2 → should return outer's text
     expect(
       getAncestorText(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "deep")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "deep")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
       ),
     ).toBe("Deep\n\nSibling");
   });
@@ -453,12 +465,14 @@ describe("getAncestorText", () => {
       warnings: [],
     };
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       getAncestorText(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "title")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "title")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
       ),
     ).toBe("Title\n\nBody");
   });
@@ -497,7 +511,7 @@ describe("getAllText", () => {
       warnings: [],
     };
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(getAllText(map)).toBe("First\n\nSecond");
   });
 
@@ -511,7 +525,7 @@ describe("getAllText", () => {
       },
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(getAllText(map)).toBe("");
   });
 });
@@ -528,11 +542,13 @@ describe("findLineAtPoint", () => {
       ]),
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     const line = findLineAtPoint(
       map,
-      [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source.sourceIndex ??
-        -1,
+      [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source ?? {
+        sourceIndex: -1,
+        nodeId: "missing",
+      },
       { svgX: 50, svgY: 35 },
     );
     expect(line?.text).toBe("Only line");
@@ -547,14 +563,16 @@ describe("findLineAtPoint", () => {
       ]),
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
 
     // Top area → Line A
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 50, svgY: 5 },
       )?.text,
     ).toBe("Line A");
@@ -562,8 +580,10 @@ describe("findLineAtPoint", () => {
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 50, svgY: 20 },
       )?.text,
     ).toBe("Line A");
@@ -571,8 +591,10 @@ describe("findLineAtPoint", () => {
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 50, svgY: 30 },
       )?.text,
     ).toBe("Line B");
@@ -580,8 +602,10 @@ describe("findLineAtPoint", () => {
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 50, svgY: 40 },
       )?.text,
     ).toBe("Line B");
@@ -589,8 +613,10 @@ describe("findLineAtPoint", () => {
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 50, svgY: 50 },
       )?.text,
     ).toBe("Line C");
@@ -598,8 +624,10 @@ describe("findLineAtPoint", () => {
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 50, svgY: 75 },
       )?.text,
     ).toBe("Line C");
@@ -612,20 +640,24 @@ describe("findLineAtPoint", () => {
       ]),
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 50, svgY: 5 },
       ),
     ).toBeNull();
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "txt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 50, svgY: 65 },
       ),
     ).toBeNull();
@@ -634,12 +666,14 @@ describe("findLineAtPoint", () => {
   it("returns null for nonexistent node", () => {
     const ir = makeIR([]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "missing")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "missing")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 0, svgY: 0 },
       ),
     ).toBeNull();
@@ -648,12 +682,14 @@ describe("findLineAtPoint", () => {
   it("returns null for text node with no lines", () => {
     const ir = makeIR([textNode("empty", { x: 0, y: 0, w: 100, h: 20 }, [])]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "empty")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "empty")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 50, svgY: 10 },
       ),
     ).toBeNull();
@@ -673,7 +709,7 @@ describe("findLineAtPoint", () => {
       ),
     ]);
     const index = buildIRSourceIndex(ir);
-    const map = buildTextMap(ir, index);
+    const map = buildTextMap(index);
 
     // Column 1 is rightmost: x = 10 + 80 - 15 = 75
     // Column 2 is leftmost:  x = 10 + 80 - 45 = 45
@@ -682,8 +718,10 @@ describe("findLineAtPoint", () => {
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "vtxt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "vtxt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 70, svgY: 100 },
       )?.text,
     ).toBe("Column 1");
@@ -691,8 +729,10 @@ describe("findLineAtPoint", () => {
     expect(
       findLineAtPoint(
         map,
-        [...map.nodes.values()].find((entry) => entry.source.nodeId === "vtxt")?.source
-          .sourceIndex ?? -1,
+        [...map.nodes.values()].find((entry) => entry.source.nodeId === "vtxt")?.source ?? {
+          sourceIndex: -1,
+          nodeId: "missing",
+        },
         { svgX: 30, svgY: 100 },
       )?.text,
     ).toBe("Column 2");

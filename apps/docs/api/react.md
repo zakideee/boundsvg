@@ -922,3 +922,8 @@ export type {
 ```
 
 Debug selection uses physical `nodeIndex` values from the matching inspection snapshot. Interaction and text-copy callbacks carry source references; use their `nodeId` only as an application label. Rebuild bindings and clear selected references when replacing the IR.
+
+Text copy methods resolve source refs against the current `TextMap.sourceIndex`.
+After an IR/index replacement, old node/line/ancestor refs return `null` and
+copy methods return `false` without writing the clipboard. Reusing the same
+ordinal or node label does not make an old ref current.

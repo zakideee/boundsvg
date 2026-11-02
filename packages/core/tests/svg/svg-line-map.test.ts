@@ -102,6 +102,43 @@ describe("buildNodeLineMap", () => {
 });
 
 describe("anonymous and opaque SVG scopes", () => {
+  it.each([
+    '<text><tspan data-boundsvg-role="source" data-boundsvg-node-index="2" data-boundsvg-source-index="2">inside</tspan> tail</text>',
+    "<g data-caption='first > last'><text><tspan>inside</tspan> tail</text></g>",
+    '<text><![CDATA[</svg><g data-boundsvg-node-index="2">]]></text><!-- </g> -->',
+  ])("keeps opaque tags, mixed content and quotes scoped: %s", (svgContent) => {
+    const bbox = { x: 0, y: 0, w: 40, h: 30 };
+    const ir: IR = {
+      width: 40,
+      height: 30,
+      warnings: [],
+      root: {
+        type: "group",
+        nodeId: "root",
+        bbox,
+        ownership: { role: "source" },
+        children: [
+          {
+            type: "svg",
+            nodeId: "embedded",
+            bbox,
+            ownership: { role: "source" },
+            svgViewBox: "0 0 40 30",
+            preserveAspectRatio: "xMidYMid meet",
+            svgContent,
+          },
+          { type: "rect", nodeId: "following", bbox, ownership: { role: "source" }, fill: "blue" },
+        ],
+      },
+    };
+    const formatted = formatSvgCode(emitSvgFromIrViaHandle(handle, ir));
+    const ranges = buildNodeLineMap(formatted, buildIRSourceIndex(ir));
+    expect([...ranges.keys()].sort((left, right) => left - right)).toEqual([0, 1, 2]);
+    const lines = formatted.split("\n");
+    expect(lines[ranges.get(2)?.start ?? -1]).toContain('data-boundsvg-node-id="following"');
+    expect(ranges.get(1)?.end).toBeLessThan(ranges.get(2)?.start ?? -1);
+  });
+
   it("maps duplicate source labels by occurrence through defs and inner clips", () => {
     const bbox = { x: 0, y: 0, w: 40, h: 30 };
     const ir: IR = {

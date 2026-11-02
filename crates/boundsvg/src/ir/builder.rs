@@ -75,7 +75,6 @@ pub fn build_ir<S: std::hash::BuildHasher>(
 
     let ir = Ir {
         root,
-
         width: root_bbox.w,
         height: root_bbox.h,
         debug,
@@ -241,7 +240,6 @@ fn has_transform(transform: &Transform2D) -> bool {
 fn build_node<S: std::hash::BuildHasher>(
     input: &LayoutNodeInput,
     outputs: &HashMap<String, LayoutNodeOutput, S>,
-
     warnings: &mut Vec<SerializedRecoverableError>,
 ) -> Result<IrNode, EngineError> {
     let node_id = &input.node_id;
@@ -306,9 +304,7 @@ fn build_node<S: std::hash::BuildHasher>(
                 visual,
                 node_id,
                 bbox,
-
                 children: &mut children,
-
                 warnings,
             })?;
         }
@@ -327,9 +323,7 @@ fn build_node<S: std::hash::BuildHasher>(
                 visual,
                 node_id,
                 bbox,
-
                 children: &mut children,
-
                 warnings,
             })?;
         }
@@ -579,9 +573,7 @@ struct TextChildContext<'a> {
     visual: &'a VisualInput,
     node_id: &'a str,
     bbox: BBox,
-
     children: &'a mut Vec<IrNode>,
-
     warnings: &'a mut Vec<SerializedRecoverableError>,
 }
 
@@ -1176,7 +1168,6 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
         },
     };
     context.children.push(text_node);
-
     append_inline_rects(&mut context, layout, &placement, "front");
     Ok(())
 }
@@ -1189,9 +1180,7 @@ fn build_image_child(
     visual: &VisualInput,
     node_id: &str,
     bbox: BBox,
-
     children: &mut Vec<IrNode>,
-
     warnings: &mut Vec<SerializedRecoverableError>,
 ) {
     // The serializer already embedded byte sources as data URIs. A string
@@ -1239,7 +1228,6 @@ fn build_image_child(
                     stroke_miterlimit: None,
                 },
             });
-
             return;
         }
     };
@@ -1313,9 +1301,7 @@ struct ShapeChildContext<'a> {
     visual: &'a VisualInput,
     node_id: &'a str,
     bbox: BBox,
-
     children: &'a mut Vec<IrNode>,
-
     warnings: &'a mut Vec<SerializedRecoverableError>,
 }
 
@@ -1545,7 +1531,6 @@ fn build_shape_child(context: &mut ShapeChildContext) -> Result<(), EngineError>
             stroke_miterlimit: visual.stroke_miterlimit,
         },
     });
-
     Ok(())
 }
 
@@ -1557,9 +1542,7 @@ fn build_svg_child(
     visual: &VisualInput,
     node_id: &str,
     bbox: BBox,
-
     children: &mut Vec<IrNode>,
-
     warnings: &mut Vec<SerializedRecoverableError>,
 ) -> Result<(), EngineError> {
     let Some(content) = visual.svg_content.as_deref() else {
@@ -1611,7 +1594,6 @@ fn build_svg_child(
             preserve_aspect_ratio: resolve_nested_svg_par(visual.preserve_aspect_ratio.as_deref()),
         },
     });
-
     Ok(())
 }
 

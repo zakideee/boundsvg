@@ -322,8 +322,8 @@ describe("Engine.renderToLayeredSvg()", () => {
   it("reports paintOrder 0 for a layer that draws nothing, wherever it sits", () => {
     const engine = createTestEngine();
     // `overflow: "clip"` alone makes the box atomic without painting anything, so
-    // it owns a layer yet contributes no `ir.drawOrder` entry. `findPaintOrder`
-    // returns undefined for it and `buildManifestEntry` resolves that with `?? 0`.
+    // it owns a layer with no physical paint ordinal. The layer manifest uses 0
+    // for this empty island without changing the order of its painted neighbors.
     const ghost = () =>
       createElement("Box", {
         id: "ghost",

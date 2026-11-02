@@ -103,7 +103,7 @@ import { collectInspectionBBoxes } from "@boundsvg/core/inspect";
 import { replaceTextById, withNodeIdPrefix } from "@boundsvg/core/vnode";
 
 const inspection = inspectScene(engine, vnode);
-const bboxes = collectInspectionBBoxes(inspection.ir);
+const bboxes = collectInspectionBBoxes(inspection.sourceIndex);
 console.table(
   inspection.bboxes.map(({ nodeId, nodeIndex, paintOrder, layoutBBox }) => ({
     nodeId,

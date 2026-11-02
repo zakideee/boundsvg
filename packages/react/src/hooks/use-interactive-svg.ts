@@ -168,7 +168,7 @@ export function useInteractiveSvg(
             )
           : engine.renderToSvgAndIR(renderInput.vnode, captured.options as RenderSvgOptions);
       const spatialIndex = buildHitTestIndex(ir);
-      const textMap = buildTextMap(ir, spatialIndex.sourceIndex);
+      const textMap = buildTextMap(spatialIndex.sourceIndex);
       return {
         artifacts: {
           svg,

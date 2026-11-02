@@ -89,17 +89,17 @@ function buildCopyMenuItems(
 ): Array<{ label: string; text: string }> {
   const items: Array<{ label: string; text: string }> = [];
 
-  const lineEntry = findLineAtPoint(textMap, textSource.sourceIndex, { svgX, svgY });
+  const lineEntry = findLineAtPoint(textMap, textSource, { svgX, svgY });
   if (lineEntry) {
     items.push({ label: `Copy line: ${truncate(lineEntry.text, 24)}`, text: lineEntry.text });
   }
 
-  const nodeText = getNodeText(textMap, textSource.sourceIndex);
+  const nodeText = getNodeText(textMap, textSource);
   if (nodeText) {
     items.push({ label: `Copy text: ${truncate(nodeText, 24)}`, text: nodeText });
   }
 
-  const ancestorText = getAncestorText(textMap, textSource.sourceIndex);
+  const ancestorText = getAncestorText(textMap, textSource);
   if (ancestorText) {
     items.push({ label: "Copy parent text", text: ancestorText });
   }
@@ -252,7 +252,7 @@ export function setupMouseEvents(
       ? undefined
       : index.sourceIndex.nodes.get(info.primaryNodeIndex)?.node.type;
   }
-  const textMap = buildTextMap(ir, index.sourceIndex);
+  const textMap = buildTextMap(index.sourceIndex);
   let lastHovered: IRSourceRef | null = null;
   const hoverEl = getElement("event-log-hover");
 

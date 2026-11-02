@@ -576,7 +576,9 @@ test.describe("mobile sample viewer", () => {
     expect(await page.evaluate(() => window.scrollY)).toBe(beforeScrollY);
     await expect(dragSurface).toHaveCSS("touch-action", "none");
 
-    const badge = page.locator('.editor-canvas-content svg[data-boundsvg-node-id="badge"]');
+    const badge = page.locator(
+      '.editor-canvas-content [data-boundsvg-role="source"][data-boundsvg-node-id="badge"]',
+    );
     const badgeBeforeBox = await badge.boundingBox();
     if (!badgeBeforeBox) {
       throw new Error("Missing Multi-SVG Editor badge bounds");
@@ -688,5 +690,93 @@ test.describe("mobile sample viewer", () => {
     await page.goto("/#/worker");
     await expect(renderedSvg(page)).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.route-nav-pages a[href="#/api"]')).toHaveCount(0);
+  });
+});
+
+test("Controls Editor preserves the SVG snapshot for selection and rebinds after edits", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1600, height: 1100 });
+  await page.goto("/#/playground");
+  const source = page.locator(".visual-editor-render > svg");
+  const selection = page.locator(".visual-editor-selection");
+  await expect(source).toBeVisible({ timeout: 30_000 });
+  const point = async (x: number, y: number) =>
+    source.evaluate(
+      (element, position) => {
+        const screenMatrix = element.getScreenCTM();
+        if (!screenMatrix) {
+          throw new TypeError("Missing Controls Editor SVG screen matrix");
+        }
+        const screen = new DOMPoint(position.x, position.y).matrixTransform(screenMatrix);
+        return { x: screen.x, y: screen.y };
+      },
+      { x, y },
+    );
+  await source.evaluate((element) => {
+    const animation = element.animate([{ opacity: 1 }, { opacity: 0.9 }], {
+      duration: 1000,
+      iterations: Number.POSITIVE_INFINITY,
+    });
+    animation.pause();
+    animation.currentTime = 500;
+    Object.assign(window, { editorSnapshot: { element, animation } });
+  });
+  await page.getByRole("button", { name: "Select range", exact: true }).click();
+  const start = await point(20, 20);
+  const end = await point(930, 520);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 4 });
+  await expect(page.getByTestId("visual-editor-marquee")).toBeVisible();
+  await page.mouse.up();
+  await expect(selection).toBeVisible();
+  await page.getByRole("button", { name: "Move layers", exact: true }).click();
+  const hover = await point(400, 240);
+  await page.mouse.move(hover.x, hover.y);
+  expect(
+    await source.evaluate((element) => {
+      const retained = Reflect.get(window, "editorSnapshot") as {
+        element: Element;
+        animation: Animation;
+      };
+      return (
+        element === retained.element &&
+        element.getAnimations().includes(retained.animation) &&
+        retained.animation.currentTime === 500
+      );
+    }),
+  ).toBe(true);
+
+  const moveStart = await point(100, 80);
+  const moveEnd = await point(120, 100);
+  await page.mouse.move(moveStart.x, moveStart.y);
+  await page.mouse.down();
+  await page.mouse.move(moveEnd.x, moveEnd.y, { steps: 4 });
+  await page.mouse.up();
+  await expect(selection).toHaveAttribute("style", /left: 100px; top: 80px;/);
+  expect(
+    await page.evaluate(() => {
+      const retained = Reflect.get(window, "editorSnapshot") as { element: Element };
+      return retained.element.isConnected;
+    }),
+  ).toBe(false);
+
+  const editPoint = await point(160, 120);
+  await page.mouse.dblclick(editPoint.x, editPoint.y);
+  const editor = page.getByRole("textbox", { name: "Edit Main text", exact: true });
+  await expect(editor).toBeVisible();
+  await editor.fill("Snapshot replacement");
+  await expect(source.locator('[data-boundsvg-text="Snapshot replacement"]')).toBeVisible();
+  await page.getByRole("button", { name: "Move layers", exact: true }).click();
+  const nextStart = await point(120, 100);
+  const nextEnd = await point(130, 110);
+  await page.mouse.move(nextStart.x, nextStart.y);
+  await page.mouse.down();
+  await page.mouse.move(nextEnd.x, nextEnd.y, { steps: 4 });
+  await page.mouse.up();
+  await expect(selection).toHaveAttribute("style", /left: 110px; top: 90px;/);
+  await page.locator(".visual-editor-stage").screenshot({
+    path: testInfo.outputPath("controls-editor-after-edits.png"),
   });
 });

@@ -100,8 +100,8 @@ export function inspectScene(
   const layout = engine.renderToLayoutTree(vnode, layoutOptions);
   const ir = engine.renderToIR(vnode, options);
   const sourceIndex = buildIRSourceIndex(ir);
-  const bboxes = collectInspectionBBoxes(ir, sourceIndex);
-  const textMap = buildTextMap(ir, sourceIndex);
+  const bboxes = collectInspectionBBoxes(sourceIndex);
+  const textMap = buildTextMap(sourceIndex);
   const nodeIds = validateNodeIds(vnode);
 
   return {
@@ -116,13 +116,8 @@ export function inspectScene(
   };
 }
 
-/** Collect source and paint geometry while keeping generated clip wrappers transparent.
- * @throws {FatalError} VALIDATION for malformed source ownership.
- */
-export function collectInspectionBBoxes(
-  ir: IR,
-  sourceIndex = buildIRSourceIndex(ir),
-): InspectionBBox[] {
+/** Project source and paint geometry from one index, keeping clip wrappers transparent. */
+export function collectInspectionBBoxes(sourceIndex: IRSourceIndex): InspectionBBox[] {
   const bboxes: InspectionBBox[] = [];
   const matrices = new Map<number, ReturnType<typeof createIdentityAffineMatrix>>();
   for (const occurrence of sourceIndex.nodes.values()) {

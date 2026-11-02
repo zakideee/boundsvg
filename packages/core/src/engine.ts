@@ -3564,7 +3564,7 @@ export class Engine {
   }
 
   /** Return the snapshot-local source hit at canvas coordinates, or null when no source is hit. */
-  hitTest(ir: IR, x: number, y: number): import("./ir/source-index.js").IRSourceRef | null {
+  hitTest(ir: IR, x: number, y: number): IRSourceRef | null {
     return hitTest(ir, x, y);
   }
 

@@ -6,7 +6,14 @@ import type {
   IRSourceRef,
   SceneInspection,
 } from "../../dist/index.js";
-import { buildHitTestIndex, buildIRSourceIndex, buildTextMap } from "../../dist/scene.js";
+import { collectInspectionBBoxes } from "../../dist/inspect.js";
+import {
+  buildHitTestIndex,
+  buildIRSourceIndex,
+  buildTextMap,
+  buildTextSelectionMap,
+  getNodeText,
+} from "../../dist/scene.js";
 
 declare const engine: Engine;
 declare const ir: IR;
@@ -14,7 +21,22 @@ declare const inspection: SceneInspection;
 const hit: IRSourceRef | null = engine.hitTest(ir, 10, 20);
 const indexedHit: IRSourceRef | null = buildHitTestIndex(ir).queryTopmost(10, 20);
 const source = buildIRSourceIndex(ir).sources.get(0)?.source;
-const textMap = buildTextMap(ir);
+const textMap = buildTextMap(buildIRSourceIndex(ir));
+const preparedIndex = buildIRSourceIndex(ir);
+buildTextSelectionMap(preparedIndex);
+collectInspectionBBoxes(preparedIndex);
+// @ts-expect-error projections accept one prepared index, not an IR
+buildTextMap(ir);
+// @ts-expect-error the redundant IR/index pair is removed
+buildTextMap(ir, preparedIndex);
+// @ts-expect-error the redundant IR/index pair is removed
+buildTextSelectionMap(ir, preparedIndex);
+// @ts-expect-error the redundant IR/index pair is removed
+collectInspectionBBoxes(ir, preparedIndex);
+// @ts-expect-error copy queries require a canonical source reference, not an ordinal
+getNodeText(textMap, 0);
+// @ts-expect-error ancestry is owned by sourceIndex
+textMap.parentMap;
 void [hit, indexedHit, source];
 
 const sourceOwnership: IRNodeOwnership = {

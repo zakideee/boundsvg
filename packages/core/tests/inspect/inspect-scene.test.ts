@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { collectInspectionBBoxes, inspectScene } from "../../src/inspect.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import { Box, Canvas, Path, Text } from "../../src/vnode/components.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
@@ -79,7 +80,7 @@ describe("inspectScene", () => {
       }),
     );
 
-    const bboxes = collectInspectionBBoxes(engine.renderToIR(vnode));
+    const bboxes = collectInspectionBBoxes(buildIRSourceIndex(engine.renderToIR(vnode)));
     const parent = bboxes.find((bbox) => bbox.nodeId === "parent");
     const child = bboxes.find((bbox) => bbox.nodeId === "child");
     const mirror = bboxes.find((bbox) => bbox.nodeId === "mirror");

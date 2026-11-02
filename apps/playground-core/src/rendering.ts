@@ -1,6 +1,6 @@
 import { bindIRToSvg, resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
 import { createPngObjectUrl } from "@boundsvg/browser/png";
-import type { Engine } from "@boundsvg/core";
+import { createResourceIdPrefix, type Engine } from "@boundsvg/core";
 import { buildHitTestIndex, buildInspectHitTestIndex, type IR } from "@boundsvg/core/scene";
 import { getElement } from "../../playground-shared/dom.js";
 import { escapeHtml } from "../../playground-shared/html-utils.js";
@@ -16,6 +16,11 @@ import { setupMouseEvents } from "./mouse-events";
 import { presets } from "./presets/index";
 import { coreState, resolveDebugOverlayConfig } from "./state";
 import type { Preset } from "./types";
+
+/** Stable document scopes for the single render and its inline layer stack. */
+const LAYERED_SINGLE_RESOURCE_PREFIX = createResourceIdPrefix("playground-core-layered-single");
+/** Layer extraction appends its own layer ordinal inside this stack scope. */
+const LAYERED_STACK_RESOURCE_PREFIX = createResourceIdPrefix("playground-core-layered-stack");
 
 function resolveOverlayDisplay(): EventEffectOverlayDisplayOptions {
   return { mode: coreState.inspectionMode, showOrigin: coreState.showInspectionOrigin };
@@ -199,9 +204,15 @@ function renderLayeredPreset(engine: Engine, preset: Preset): void {
   };
   const pngOpts = coreState.pngScale > 1 ? { ...options, scale: coreState.pngScale } : options;
 
-  const { svg: singleSvg, ir: singleIr } = engine.renderToSvgAndIR(vnode, options);
+  const { svg: singleSvg, ir: singleIr } = engine.renderToSvgAndIR(vnode, {
+    ...options,
+    resourceIdPrefix: LAYERED_SINGLE_RESOURCE_PREFIX,
+  });
   const singlePngBytes = engine.renderToPng(vnode, pngOpts);
-  const layeredSvg = engine.renderToLayeredSvg(vnode, options);
+  const layeredSvg = engine.renderToLayeredSvg(vnode, {
+    ...options,
+    resourceIdPrefix: LAYERED_STACK_RESOURCE_PREFIX,
+  });
   const layeredPng = engine.renderToLayeredPng(vnode, pngOpts);
   coreState.cachedSvgString = singleSvg;
   coreState.cachedIr = singleIr;

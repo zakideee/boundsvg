@@ -1,3 +1,4 @@
+/** Literal default scope; callers choose distinct scopes for outputs sharing a document. */
 const DEFAULT_RESOURCE_ID_SCOPE = "bsvg";
 
 /**

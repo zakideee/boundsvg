@@ -17,7 +17,7 @@ declare const compiled: CompiledScene;
 const layoutOptions: LayoutRenderOptions = { skipValidation: true };
 const inspection: SceneInspection = inspectScene(engine, scene, { timeMs: 120 });
 const bbox: InspectionBBox | undefined = inspection.bboxes[0];
-const collected: InspectionBBox[] = collectInspectionBBoxes(inspection.ir);
+const collected: InspectionBBox[] = collectInspectionBBoxes(inspection.sourceIndex);
 engine.renderToLayoutTree(scene, layoutOptions);
 void bbox;
 void collected;

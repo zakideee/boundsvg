@@ -204,7 +204,6 @@ fn finite_animation_inputs_can_report_a_typed_output_overflow() {
     .expect("finite input DTO");
     let source = Ir {
         root: IrNode::from(root),
-
         width: 10.0,
         height: 10.0,
         debug: None,
