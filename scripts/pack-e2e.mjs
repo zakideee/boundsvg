@@ -13,8 +13,11 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** Workspace whose built public packages supply the consumer archives. */
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+/** Package directories inspected for publishable manifests. */
 const packagesRoot = join(repoRoot, "packages");
+/** Temporary archives and installed consumer, removed when the checks finish. */
 const workDir = mkdtempSync(join(tmpdir(), "boundsvg-pack-e2e-"));
 const fontPath = join(repoRoot, "fixtures", "fonts", "NotoSansJP-Regular.subset.ttf");
 const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
@@ -81,12 +84,23 @@ function discoverPublicPackages() {
   }
   return packages.sort((left, right) => left.manifest.name.localeCompare(right.manifest.name));
 }
+/** Pack a package directory and verify the resulting archive identity. */
 function packPackage(packageInfo) {
   log(`packing ${packageInfo.manifest.name}`);
   const metadata = JSON.parse(
-    run("pnpm", ["pack", "--json", "--pack-destination", workDir], {
-      cwd: packageInfo.directory,
-    }).stdout,
+    run(
+      "pnpm",
+      [
+        "pack",
+        ...(packageInfo.shouldSkipLifecycleScripts ? ["--config.ignore-scripts=true"] : []),
+        "--json",
+        "--pack-destination",
+        workDir,
+      ],
+      {
+        cwd: packageInfo.directory,
+      },
+    ).stdout,
   );
   if (
     metadata.name !== packageInfo.manifest.name ||
@@ -304,13 +318,30 @@ function externalProviders() {
   }
   return providers;
 }
+/**
+ * Preserve installed dependency versions for the consumer's strict peer checks.
+ * Directory dependencies can expose their file protocol as the peer version.
+ */
+function packExternalProviders() {
+  return Object.fromEntries(
+    Object.entries(externalProviders()).map(([name, directory]) => {
+      const packedProvider = packPackage({
+        directory,
+        manifest: readJson(join(directory, "package.json")),
+        shouldSkipLifecycleScripts: true,
+      });
+      return [name, `file:${packedProvider.path}`];
+    }),
+  );
+}
+/** Install captured archives offline with strict peer dependency validation. */
 function installConsumer(packedPackages) {
   const dependencies = Object.fromEntries(
     packedPackages.map((item) => [item.manifest.name, `file:${item.path}`]),
   );
-  const providers = externalProviders();
-  for (const [name, path] of Object.entries(providers)) {
-    dependencies[name] = `file:${path}`;
+  const providers = packExternalProviders();
+  for (const [name, specification] of Object.entries(providers)) {
+    dependencies[name] = specification;
   }
   writeFileSync(
     join(workDir, "package.json"),
@@ -318,7 +349,7 @@ function installConsumer(packedPackages) {
   );
   const overrides = [
     ...packedPackages.map((item) => [item.manifest.name, `file:${item.path}`]),
-    ...Object.entries(providers).map(([name, path]) => [name, `file:${path}`]),
+    ...Object.entries(providers),
   ];
   writeFileSync(
     join(workDir, "pnpm-workspace.yaml"),
