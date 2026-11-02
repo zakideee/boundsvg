@@ -31,20 +31,21 @@ function sampleVNode(): VNode {
 function sampleIr(): IR {
   return {
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "root",
       bbox: { x: 0, y: 0, w: 100, h: 100 },
       children: [
         {
+          ownership: { role: "source", on: { onClick: "click:txt" } },
           type: "text",
           nodeId: "txt",
           bbox: { x: 0, y: 0, w: 40, h: 20 },
           lines: [],
-          on: { onClick: "click:txt" },
         },
       ],
     },
-    drawOrder: ["txt"],
+
     width: 100,
     height: 100,
     warnings: [],
@@ -54,22 +55,23 @@ function sampleIr(): IR {
 function sampleSvgIr(): IR {
   return {
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "root",
       bbox: { x: 0, y: 0, w: 200, h: 120 },
       children: [
         {
+          ownership: { role: "source", on: { onClick: "click:embedded" } },
           type: "svg",
           nodeId: "embedded",
           bbox: { x: 24, y: 18, w: 120, h: 72 },
           svgContent: '<rect width="40" height="20" fill="#22d3ee"/>',
           svgViewBox: "0 0 40 20",
           preserveAspectRatio: "xMidYMid meet",
-          on: { onClick: "click:embedded" },
         },
       ],
     },
-    drawOrder: ["embedded"],
+
     width: 200,
     height: 120,
     warnings: [],
@@ -147,7 +149,7 @@ describe("useInteractiveSvg", () => {
     expect(snapshot!.svg).toBeNull();
     expect(snapshot!.ir).toBeNull();
     expect(snapshot!.error).toBeNull();
-    expect(snapshot!.hoverNodeId).toBeNull();
+    expect(snapshot!.hoverSource).toBeNull();
     expect(typeof snapshot!.containerRef).toBe("function");
     expect(renderToSvgAndIR).not.toHaveBeenCalled();
   });
@@ -177,7 +179,7 @@ describe("useInteractiveSvg", () => {
     expect(snapshot!.svg).toContain("<svg");
     expect(snapshot!.ir).not.toBeNull();
     expect(snapshot!.error).toBeNull();
-    expect(snapshot!.hoverNodeId).toBeNull();
+    expect(snapshot!.hoverSource).toBeNull();
     expect(renderToSvgAndIR).toHaveBeenCalledTimes(1);
     expect(renderToSvgAndIR).toHaveBeenCalledWith(vnode, {
       textPathMode: "merged",

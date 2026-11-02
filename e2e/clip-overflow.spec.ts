@@ -1,7 +1,7 @@
 import { createElement, createEngineAsync, type VNode } from "@boundsvg/core";
+import { buildIRSourceIndex } from "@boundsvg/core/scene";
 import { expect, type Page, test } from "@playwright/test";
 import type {} from "../apps/playground-react/src/e2e/e2e-clip-hit-harness.js";
-import { verifyPathGeometry } from "../packages/browser/src/svg-event-utils.js";
 
 /** Build the signed-coordinate paint fixture with an optional explicit parent clip. */
 function pathScene(isNegative: boolean, clipRadius?: number): VNode {
@@ -117,15 +117,17 @@ test("browser paints rounded child clips and visible positive/negative Path over
     const pathCardSvg = engine.renderToSvg(pathCard);
     expect(await pixelAt(page, pathCardSvg, { x: 12, y: 12 })).toEqual([255, 255, 255, 255]);
     expect(engine.hitTest(engine.renderToIR(pathCard), 12, 12)).toBeNull();
-    await page.setContent(`<style>body { margin: 0 }</style>${pathCardSvg}`);
-    await page.addScriptTag({
-      content: `globalThis.verifyPathGeometry = ${verifyPathGeometry.toString()};`,
-    });
-    const clippedCornerGeometry = await page.evaluate(() => {
-      const verify = (window as unknown as { verifyPathGeometry: typeof verifyPathGeometry })
-        .verifyPathGeometry;
-      return verify(document.body, "card-content", 12, 12);
-    });
+    await mountInteractive(page, pathCard);
+    const pathCardSource = [
+      ...buildIRSourceIndex(engine.renderToIR(pathCard)).sources.values(),
+    ].find((entry) => entry.source.nodeId === "card-content")?.source;
+    if (!pathCardSource) {
+      throw new TypeError("Missing Path source");
+    }
+    const clippedCornerGeometry = await page.evaluate(
+      (ordinal) => window.boundsvgClipHit.pathGeometry(ordinal, 12, 12),
+      pathCardSource.sourceIndex,
+    );
     // Geometry refinement is combined with Core clip gates; the primitive itself tests only Path paint.
     expect(clippedCornerGeometry).toBe(true);
 
@@ -134,7 +136,7 @@ test("browser paints rounded child clips and visible positive/negative Path over
       const svg = engine.renderToSvg(scene);
       const outsideX = isNegative ? 100 : 200;
       expect(await pixelAt(page, svg, { x: outsideX, y: 30 })).toEqual([255, 0, 0, 255]);
-      expect(engine.hitTest(engine.renderToIR(scene), outsideX, 30)).toBe("arrow");
+      expect(engine.hitTest(engine.renderToIR(scene), outsideX, 30)?.nodeId).toBe("arrow");
       for (const clipRadius of [0, 20]) {
         expect(
           await pixelAt(page, engine.renderToSvg(pathScene(isNegative, clipRadius)), {
@@ -144,24 +146,25 @@ test("browser paints rounded child clips and visible positive/negative Path over
         ).toEqual([255, 255, 255, 255]);
       }
 
-      await page.setContent(`<style>body { margin: 0 }</style>${svg}`);
-      await page.addScriptTag({
-        content: `globalThis.verifyPathGeometry = ${verifyPathGeometry.toString()};`,
-      });
-      const wrapper = page.locator('svg[data-boundsvg-node-id="arrow"]');
+      await mountInteractive(page, scene);
+      const source = [...buildIRSourceIndex(engine.renderToIR(scene)).sources.values()].find(
+        (entry) => entry.source.nodeId === "arrow",
+      )?.source;
+      if (!source) {
+        throw new TypeError("Missing Path source");
+      }
+      const wrapper = page.locator(
+        `[data-boundsvg-role="content"][data-boundsvg-source-index="${source.sourceIndex}"]`,
+      );
       await expect(wrapper).toHaveAttribute("overflow", "visible");
-      await expect(wrapper.locator("path")).toHaveCount(1);
+      await expect(wrapper.locator(":scope > path")).toHaveCount(1);
       const geometry = await page.evaluate(
-        ({ insideX, outsideX: tailX }) => {
-          const verify = (window as unknown as { verifyPathGeometry: typeof verifyPathGeometry })
-            .verifyPathGeometry;
-          return {
-            inside: verify(document.body, "arrow", insideX, 25),
-            empty: verify(document.body, "arrow", insideX, 59),
-            tail: verify(document.body, "arrow", tailX, 30),
-          };
-        },
-        { insideX: isNegative ? 180 : 130, outsideX },
+        ({ insideX, outsideX: tailX, sourceIndex }) => ({
+          inside: window.boundsvgClipHit.pathGeometry(sourceIndex, insideX, 25),
+          empty: window.boundsvgClipHit.pathGeometry(sourceIndex, insideX, 59),
+          tail: window.boundsvgClipHit.pathGeometry(sourceIndex, tailX, 30),
+        }),
+        { insideX: isNegative ? 180 : 130, outsideX, sourceIndex: source.sourceIndex },
       );
       expect(geometry).toEqual({ inside: true, empty: false, tail: true });
     }
@@ -476,7 +479,9 @@ for (const fixture of [
     path.props.strokeScaling = "scaling" in fixture ? fixture.scaling : "transform";
     await mountInteractive(page, scene);
     const painted = await page.evaluate(() => {
-      const svgPath = document.querySelector('svg[data-boundsvg-node-id="path"] path');
+      const svgPath = document.querySelector(
+        '[data-boundsvg-role="source"][data-boundsvg-node-id="path"] > svg[data-boundsvg-role="content"] > path',
+      );
       const points: { x: number; y: number }[] = [];
       for (let y = 10; y < 100; y += 5) {
         for (let x = 10; x < 300; x += 5) {
@@ -631,5 +636,55 @@ for (const timeMs of [0, 500, 1000]) {
     );
     await page.mouse.click(120 + shift, 40);
     expect((await clickDeliveries(page)).map((delivery) => delivery.nodeId)).toEqual(["path"]);
+  });
+}
+
+for (const useKeys of [false, true]) {
+  test(`source suffixes remain selectable under generated clip and outline paint (keys=${useKeys})`, async ({
+    page,
+  }) => {
+    const expected = useKeys
+      ? ["card.0:content", "card.1:outline"]
+      : ["card:content", "card:outline"];
+    const scene = createElement(
+      "Canvas",
+      { width: 220, height: 120 },
+      createElement(
+        "Box",
+        {
+          id: "card",
+          width: 220,
+          height: 120,
+          overflow: "clip",
+          borderWidth: 8,
+          borderRadius: 12,
+          outline: { stroke: "black", strokeWidth: 2 },
+        },
+        ...expected.map((nodeId, index) =>
+          createElement("Box", {
+            ...(useKeys ? { key: index === 0 ? "content" : "outline" } : { id: nodeId }),
+            width: 80,
+            height: 80,
+            position: "absolute",
+            left: index * 100,
+            top: 0,
+            background: index === 0 ? "red" : "blue",
+            onClick: index === 0 ? "path-click" : "underlay-click",
+          }),
+        ),
+      ),
+    );
+    await mountInteractive(page, scene);
+    for (const [index, nodeId] of expected.entries()) {
+      await page.mouse.move(30 + index * 100, 30);
+      await expect
+        .poll(() => page.evaluate(() => window.boundsvgClipHit.read().hoverSource?.nodeId))
+        .toBe(nodeId);
+      await page.mouse.click(30 + index * 100, 30);
+      expect((await clickDeliveries(page)).at(-1)?.nodeId).toBe(nodeId);
+      expect(
+        await page.evaluate((x) => window.boundsvgClipHit.coreHit(x, 30), 30 + index * 100),
+      ).toBe(nodeId);
+    }
   });
 }

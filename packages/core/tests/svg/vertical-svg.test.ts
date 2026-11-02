@@ -31,6 +31,7 @@ function makeTextIR(options: {
   glyphPaths?: TextOutlinePath[];
 }): IR {
   const textNode: IRNode = {
+    ownership: { role: "source" },
     type: "text",
     nodeId: "text-1",
     bbox: { x: 10, y: 10, w: 100, h: 100 },
@@ -47,12 +48,13 @@ function makeTextIR(options: {
 
   return {
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "root",
       bbox: { x: 0, y: 0, w: 200, h: 200 },
       children: [textNode],
     },
-    drawOrder: ["text-1"],
+
     width: 200,
     height: 200,
     warnings: [],
@@ -69,7 +71,7 @@ describe("SVG emitter text outlines", () => {
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
 
-    expect(svg).toContain('<g data-boundsvg-node-id="text-1"');
+    expect(svg).toContain('data-boundsvg-node-id="text-1"');
     expect(svg).toContain('data-boundsvg-text="あ"');
     expect(svg).toContain('aria-label="あ"');
     expect(svg).toContain('<path d="M10 10H20V20H10z" fill="#000000"/>');

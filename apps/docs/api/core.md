@@ -41,8 +41,8 @@ That means `type`, `props`, and `children` stay aligned, and invalid prop/child 
 
 ### Canvas-stable stroke type
 
-`StrokeScaling` is exported from `@boundsvg/core` and applies to the border
-paint of `Flex`, `Grid`, and `Box`, plus `Path` strokes:
+`StrokeScaling` is exported from `@boundsvg/core` and applies to `outline`
+paint on `Flex`, `Grid`, and `Box`, plus `Path` strokes:
 
 ```ts
 type StrokeScaling = "transform" | "canvas";
@@ -54,6 +54,25 @@ a solid stroke's width in canvas space under translation, rotation, and
 uniform scale. It does not change layout or `inspectScene().visualBBox`, and
 the render method's `scale` option still scales the output resolution. Dashed strokes,
 non-uniform scale, and axis reflection are rejected for this mode.
+
+### Skew transforms
+
+`Transform2D` also accepts `skewXDeg` and `skewYDeg`. Composition is translate,
+origin, rotate, skew X, skew Y, scale, then inverse origin. The two shears are
+sequential. They affect paint, inspection, hit coordinates, and export while
+leaving layout and text advances unchanged. Omitted or zero skew is identity.
+Authored angles must be in [-60, 60] degrees. The same fields work in Shape
+geometry and node/text-unit animation. Animation interpolation is numeric;
+overshooting easing is accepted only when its conservative angle envelope
+stays inside the supported range.
+
+Skew-bearing paths also require bounded tuples: local scale magnitude at most
+2048, translation/rotation/resolved origins and physical local geometry/filter
+region/viewport coordinates at most 1,048,576, affected generated depth at most
+256, and product of noncontracting chain gains at most 65,536. Each nonzero
+shear contributes a conservative gain of 4; rotation contributes 1. Unrelated
+non-skew inputs retain their existing domains. Invalid tuples fail before
+paint/export; values are not clamped.
 
 ### Text flow types
 
@@ -245,6 +264,8 @@ type AnimationTransform2D = {
   scaleX?: number;
   scaleY?: number;
   rotateDeg?: number;
+  skewXDeg?: number;
+  skewYDeg?: number;
 };
 
 type AnimationKeyframe = {
@@ -517,7 +538,7 @@ interface Engine {
   registerSymbol(id: string, def: SymbolDefinition): void;
   unregisterGeometry(id: string): void;
   unregisterSymbol(id: string): void;
-  hitTest(ir: IR, x: number, y: number): string | null;
+  hitTest(ir: IR, x: number, y: number): IRSourceRef | null;
   dispose(): void;
 }
 ```
@@ -824,6 +845,61 @@ For animated scenes it always samples opacity and transform at `timeMs` while
 retaining the semantic animation track. The `animation` output mode does not
 select a different IR representation.
 
+Every IR node requires structural `ownership`:
+
+```ts
+type IRNodeOwnership =
+  | { role: "source"; on?: HandlersRef; meta?: Record<string, string> }
+  | { role: "content"; ownerNodeId: string }
+  | { role: "decoration"; ownerNodeId: string }
+  | { role: "wrapper"; ownerNodeId: string; placement: "inner" | "outer" };
+```
+
+A source is a semantic entity. Its `on` and `meta` exist only inside source
+ownership. A source group owns at most one primary `content` primitive;
+`decoration` paints without becoming a separate selectable entity. InlineRect
+and inline box paint are decoration. A source primitive is its own primary.
+Groups can be sources or wrappers; primitives can be sources, content or
+decoration. An inner wrapper belongs to the nearest source ancestor. An outer
+wrapper has exactly one direct source child and belongs to that child.
+`ownerNodeId` must match this structurally resolved source's label; it is not
+an ID lookup. The root must be a source or an outer wrapper.
+
+Use `buildIRSourceIndex(ir)` from `@boundsvg/core/scene` to obtain occurrence
+and source facts. `nodeIndex` counts every physical node in preorder, including
+wrappers. `sourceIndex` is the owning source's `nodeIndex`. Raw IR may repeat
+`nodeId` labels, including labels shared by a source and paint. VNode/Scene
+source IDs still must be unique, but generated paint labels do not reserve
+user IDs. A SourceRef `{ sourceIndex, nodeId }` belongs to one IR snapshot;
+rebuild indices and clear selection/DOM bindings when replacing that snapshot.
+It is not a persistent document identifier.
+
+Tree order determines painting; there is no serialized `drawOrder`. Source
+facts expose `primaryNodeIndex` and `parentSourceIndex`, replacing separate
+handler/type maps. `buildTextMap(index)` and `buildTextSelectionMap(index)` take
+a prepared `IRSourceIndex` and key entries by source ordinal. Text queries
+(`getNodeText`, `findLineAtPoint`, `getAncestorText`) take a canonical
+`IRSourceRef` from that same index. `getAllText(textMap)` uses primary text
+paint order without a second order list.
+
+`source.meta` uses the authoring rules at every input boundary: at most 16
+keys matching `^[a-z][a-z0-9-]{0,31}$`, with values at most 256 UTF-16 code units.
+Event references use the declared handler keys and non-null strings. Unknown
+ownership fields, null variants, dangling owners and multiple primary paints
+are rejected. IR schema 37 requires migration or regeneration of older IR;
+node-level `on`/`meta`, serialized order and transition provenance metadata
+are not accepted as alternate ownership paths.
+
+SVG emission adds an ordinary IR root element inside the viewport `<svg>`.
+Root transforms, clip, opacity and animation therefore apply normally. The
+viewport itself carries no source identity. Only source anchors carry
+`data-boundsvg-node-id` and business metadata. Physical endpoints carry role,
+node-index and source-index attributes; empty paints retain an empty endpoint.
+Generated resource IDs use physical occurrences, so SVG bytes and generated
+identifiers change even when normal Canvas pixels are unchanged. Treat these
+attributes as correspondence metadata, not authorization. Browser bindings
+scope endpoints to the matching IR and keep embedded Svg markup opaque.
+
 In text IR, `IRTextNode.lines[].fragments[].style` is optional. It is present
 only for a fragment with an explicit color-bearing style override; a fragment
 without that override does not carry a concrete `TextRunStyle`. The effective
@@ -862,19 +938,54 @@ not exposed as the public output type.
 
 ### `engine.renderToTextOutlines(input, options?)`
 
-Returns an array of `TextOutlineNode` objects containing SVG path data for each text element. Use to convert text to outlined paths (e.g., for static SVG export without font embedding).
+Returns one `TextOutlineNode` for every physical Text occurrence, including decorative
+text. Each entry includes `nodeIndex`, `source` and `ownership`; repeated `nodeId`
+labels do not identify a unique paint. Empty Text occurrences retain an empty paths
+array. Text-copy queries use primary source text instead of this physical paint list.
+A path's `fill` is a solid-color string or `{ gradientIndex: number }`, referencing
+its parent node's optional `gradients` table. Each resource stores the original
+color expression, resolved linear endpoints or radial center/radii and stops, and shared Text `bbox` in the paths' local
+coordinate frame. Apply the node's `worldTransform` to paths and resources
+together. Do not treat a gradient reference as a color string or recompute its
+frame from an individual glyph. SVG and layered SVG exports resolve these
+resources automatically.
+
+The structured clip contract replaces group `clipPath` and `clipBorderRadius` with a single
+`clip`: `{ kind: "empty" }` or `{ kind: "boxContour", bbox, corners }`, where
+`corners` holds top-left, top-right, bottom-right, and bottom-left `{ rx, ry }`.
+These resolved axes must be finite and nonnegative, with `rx <= bbox.w / 2`
+and `ry <= bbox.h / 2`. The native emitter rejects unresolved corner geometry.
+Omission means no clip. Empty clips suppress paint and hits. Regenerate older
+IR from the scene; the former fields are rejected. Generic IR Rect and Path
+primitives both support `strokeScaling`; their canvas-scaled strokes share the
+same transform, solid-stroke, and namespacing rules. Container borders are
+filled surfaces, while container outlines are generated Paths.
+
+Box backgrounds and Text resources share one resolved gradient IR. Both
+variants require `geometry` and `stops`. Linear geometry stores
+`startX`, `startY`, `endX`, and `endY`; radial geometry stores `centerX`,
+`centerY`, `radiusX`, and `radiusY`, all relative to the gradient box. The
+former raw-IR `angle` field and omitted radial geometry are rejected. Keep
+using CSS gradient strings in scene authoring; the engine resolves them once.
 
 ### `engine.hitTest(ir, x, y)`
 
-Returns the `NodeId` of the topmost conservative candidate at canvas point
+Returns an `IRSourceRef` for the topmost conservative source candidate at canvas point
 `(x, y)`, or `null`. Path geometry/stroke bounds can extend beyond its layout
 `bbox`. Explicit rectangular and rounded clips exclude invisible portions of
 their owner and descendants in the clip's original coordinates. Candidate
 bounds still contain Path holes or curve whitespace; Browser/React interaction
 checks actual Path fill/stroke for the final target. Supply IR from the matching
-engine version: missing schema-34 `pathGeometry` raises `FatalError` with code
+engine version: missing canonical `pathGeometry` raises `FatalError` with code
 `VALIDATION`. Regenerate older IR from the scene rather than substituting layout
-bounds. See [Choosing an API](/reference/api-selection) for precision and sampling.
+bounds. Prepare repeated queries with `buildHitTestIndex(ir)` or
+`buildInspectHitTestIndex(ir)` from `@boundsvg/core/scene`. Their
+`queryCandidates(x, y)` returns `{ source, geometryNodeIndex, order }[]`.
+Interaction uses primary paint position, or a handler-only source frame after
+its children. Inspection uses primary geometry, or the source frame before
+its children. Decoration and wrappers are not independent selections. A source
+with primary paint never falls back to its frame when that paint misses.
+See [Choosing an API](/reference/api-selection) for precision and sampling.
 
 ### `engine.compile(input, options?)`
 
@@ -1238,8 +1349,8 @@ With a non-empty prefix, layered SVG export derives the deterministic sub-prefix
 `<normalized-prefix>layer-<zero-based-index>-` for each emitted layer. Those
 sub-prefixes are pairwise prefix-free even for indices such as `1` and `10`.
 Across separate layered results, the caller still supplies normalized,
-non-empty, pairwise prefix-free base prefixes. Omitting the prefix preserves the
-legacy bytes and does not add a cross-layer namespace guarantee.
+non-empty, pairwise prefix-free base prefixes. Without a prefix there is
+no cross-layer namespace. Resource IDs are occurrence-local, so different documents may define the same ID for different geometry. Give the single SVG and each layered result distinct document scopes before inserting them together; layer export derives its own subscopes.
 
 ### `LayeredPngOptions`
 
@@ -1305,18 +1416,17 @@ type LayeredPngResult = {
 
 ### `LayerEntry` / `LayerPngEntry`
 
-| Field                 | Type                                      | Description                                                                                                                                         |
-| --------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                  | `string`                                  | Resolved layer id (`"default"` when unspecified)                                                                                                    |
-| `svg` or `png`        | `string` / `Uint8Array`                   | Layer payload                                                                                                                                       |
-| `bbox`                | `{ x, y, width, height }`                 | Union bbox of source nodes assigned to this layer                                                                                                   |
-| `nodeIds`             | `string[]`                                | Source `NodeId`s painted into this layer (sorted)                                                                                                   |
-| `nodeMeta`            | `Record<string, Record<string, string>>?` | Per-node `meta` for the nodes in this layer                                                                                                         |
-| `parts`               | `LayerManifestPart[]?`                    | Addressable shape parts, when `emitPartIds` is on                                                                                                   |
-| `mode`                | `"independent" \| "atomic"`               | `atomic` when any [compositing-island trigger](/guides/layered-export#compositing-islands) applies to this layer's content; `independent` otherwise |
-| `paintOrder`          | `number`                                  | Lowest `ir.drawOrder` index inside the layer, or `0` if it draws nothing. Ascending = back-to-front                                                 |
-| `collapsedFromLayers` | `string[]?`                               | Other layer ids absorbed into this atomic layer                                                                                                     |
-| `warnings`            | `LayerWarning[]`                          | Resolver warnings (see below)                                                                                                                       |
+| Field                 | Type                                                                                 | Description                                                                                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                  | `string`                                                                             | Resolved layer id (`"default"` when unspecified)                                                                                                    |
+| `svg` or `png`        | `string` / `Uint8Array`                                                              | Layer payload                                                                                                                                       |
+| `bbox`                | `{ x, y, width, height }`                                                            | Union of pre-transform layout boxes assigned to this layer                                                                                          |
+| `sources`             | `{ source: IRSourceRef; layerSourceIndex: number; meta?: Record<string, string> }[]` | Original source occurrences contributing to the layer, their layer-local ordinals and application metadata.                                         |
+| `parts`               | `LayerManifestPart[]?`                                                               | Addressable shape parts, when `emitPartIds` is on                                                                                                   |
+| `mode`                | `"independent" \| "atomic"`                                                          | `atomic` when any [compositing-island trigger](/guides/layered-export#compositing-islands) applies to this layer's content; `independent` otherwise |
+| `paintOrder`          | `number`                                                                             | Lowest tree-derived physical paint ordinal inside the layer, or `0` if it draws nothing. Ascending = back-to-front                                  |
+| `collapsedFromLayers` | `string[]?`                                                                          | Other layer ids absorbed into this atomic layer                                                                                                     |
+| `warnings`            | `LayerWarning[]`                                                                     | Resolver warnings (see below)                                                                                                                       |
 
 ### `LayerWarning`
 
@@ -1483,10 +1593,38 @@ import { inspectScene } from "@boundsvg/core";
 import { collectInspectionBBoxes } from "@boundsvg/core/inspect";
 
 const inspection = inspectScene(engine, vnode);
-const bboxes = collectInspectionBBoxes(inspection.ir);
+const bboxes = collectInspectionBBoxes(inspection.sourceIndex);
 ```
 
-`inspectScene(engine, input, options?)` returns the layout tree, sampled IR, text map, handler map, node type map, bbox list, recoverable warnings, node ID validation result, and summary stats. Each bbox includes pre-transform `layoutBBox`, transformed corner points in `transformBox`, and their world-space axis-aligned `visualBBox`. Use it for CI checks, internal asset validation tools, or editor panels that need positioned geometry rather than rendered bytes.
+`inspectScene(engine, input, options?)` returns the layout tree, sampled IR, primary text map, source index, occurrence bbox list, recoverable warnings, node ID validation result, and summary stats. Each bbox includes pre-transform `layoutBBox`, transformed corner points in `transformBox`, and their world-space axis-aligned `visualBBox`. Use it for CI checks, internal asset validation tools, or editor panels that need positioned geometry rather than rendered bytes.
+
+Build one `IRSourceIndex` with `buildIRSourceIndex(ir)` and share it with
+`buildTextMap(index)`, `buildTextSelectionMap(index)` and
+`collectInspectionBBoxes(index)`. These projections take the index alone.
+`inspectScene` already exposes its prepared index as `inspection.sourceIndex`.
+
+Text queries (`getNodeText`, `findLineAtPoint`, `getAncestorText`) take a
+canonical `IRSourceRef` from that same index. A copied object or a reference
+from an earlier index returns `null`, even if its ordinal and label match.
+Use a prepared hit index when combining hit results with text projections:
+
+```ts
+import {
+  buildHitTestIndex,
+  buildTextMap,
+  getNodeText,
+} from "@boundsvg/core/scene";
+const hits = buildHitTestIndex(ir);
+const textMap = buildTextMap(hits.sourceIndex);
+const source = hits.queryTopmost(x, y);
+const text = source ? getNodeText(textMap, source) : null;
+```
+
+Rebuild the index and its projections together after replacing the IR. Source
+refs identify this prepared snapshot; keep application IDs separately for
+persistent document entities. Source groups remain valid ancestor-query
+origins even when they have no primary text themselves. `TextMap.sourceIndex`
+is the ancestry authority; the old duplicated `parentMap` is removed.
 
 See [Choosing an API](/reference/api-selection) for bbox semantics, animation sampling, and cost.
 
@@ -1585,3 +1723,7 @@ Import this low-level adapter helper from `@boundsvg/core/wasm`. Its signature i
 `decodeAnimatedRasterFatal(value: unknown): FatalError | undefined`. It validates
 a local or serialized animated raster diagnostic and returns a `FatalError`, or
 `undefined` when the diagnostic envelope or closed context is invalid.
+
+Animation-state samples include `nodeIndex` and `source` from the sampled IR snapshot.
+Use these references to distinguish source, wrapper and text-unit targets; do not
+join sampled tracks to sources by a node-ID suffix.

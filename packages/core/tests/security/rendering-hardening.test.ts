@@ -67,11 +67,13 @@ describe("attribute escaping (markup injection)", () => {
   it("escapes a raw image preserveAspectRatio in a hand-built IR", () => {
     const ir: IR = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 100, h: 100 },
         children: [
           {
+            ownership: { role: "source" },
             type: "image",
             nodeId: "img",
             bbox: { x: 0, y: 0, w: 50, h: 50 },
@@ -80,7 +82,7 @@ describe("attribute escaping (markup injection)", () => {
           },
         ],
       },
-      drawOrder: ["img"],
+
       width: 100,
       height: 100,
       warnings: [],
@@ -94,11 +96,13 @@ describe("emit_svg_from_ir SVG trust boundary", () => {
   it("rejects unsafe nested-svg content in a hand-built IR", () => {
     const ir: IR = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 100, h: 100 },
         children: [
           {
+            ownership: { role: "source" },
             type: "svg",
             nodeId: "nested",
             bbox: { x: 0, y: 0, w: 50, h: 50 },
@@ -107,7 +111,7 @@ describe("emit_svg_from_ir SVG trust boundary", () => {
           },
         ],
       },
-      drawOrder: ["nested"],
+
       width: 100,
       height: 100,
       warnings: [],
@@ -124,11 +128,13 @@ describe("emit_svg_from_ir SVG trust boundary", () => {
   it("rejects a character-reference-obfuscated javascript: URI", () => {
     const ir: IR = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 100, h: 100 },
         children: [
           {
+            ownership: { role: "source" },
             type: "svg",
             nodeId: "nested",
             bbox: { x: 0, y: 0, w: 50, h: 50 },
@@ -139,7 +145,7 @@ describe("emit_svg_from_ir SVG trust boundary", () => {
           },
         ],
       },
-      drawOrder: ["nested"],
+
       width: 100,
       height: 100,
       warnings: [],
@@ -274,20 +280,23 @@ describe("hand-built IR spring easing", () => {
   function springIr(stiffness: number): IR {
     return {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 100, h: 100 },
         children: [
           {
+            ownership: { role: "source" },
             type: "group",
             nodeId: "animated",
             bbox: { x: 0, y: 0, w: 50, h: 50 },
             children: [
               {
+                ownership: { role: "source" },
                 type: "rect",
                 nodeId: "painted",
                 bbox: { x: 0, y: 0, w: 50, h: 50 },
-                background: "#2563eb",
+                fill: "#2563eb",
               },
             ],
             animation: {
@@ -301,7 +310,7 @@ describe("hand-built IR spring easing", () => {
           },
         ],
       },
-      drawOrder: [],
+
       width: 100,
       height: 100,
       warnings: [],

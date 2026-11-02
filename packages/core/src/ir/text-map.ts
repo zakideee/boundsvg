@@ -1,5 +1,5 @@
 import type { BBox } from "../text/types.js";
-import type { IR, IRNode } from "./types.js";
+import type { IRSourceIndex, IRSourceInfo, IRSourceRef } from "./source-index.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -16,7 +16,7 @@ export type LineEntry = {
 
 /** Text node entry in a TextMap */
 export type TextNodeEntry = {
-  nodeId: string;
+  source: IRSourceRef;
   /** Full text (lines joined by "\n") */
   text: string;
   bbox: BBox;
@@ -26,133 +26,92 @@ export type TextNodeEntry = {
   lineHeightPx?: number;
 };
 
-/** Flat text structure extracted from an IR tree */
-export type TextMap = {
-  /** All text nodes indexed by nodeId */
-  nodes: ReadonlyMap<string, TextNodeEntry>;
-  /** groupNodeId → descendant text nodeIds (in tree walk order) */
-  childTextMap: ReadonlyMap<string, readonly string[]>;
-  /** nodeId → parent nodeId (for ancestor lookups) */
-  parentMap: ReadonlyMap<string, string>;
-};
+/** Primary text entries and descendant text lists from one canonical source index. */
+export type TextMap = Readonly<{
+  sourceIndex: IRSourceIndex;
+  nodes: ReadonlyMap<number, TextNodeEntry>;
+  childTextMap: ReadonlyMap<number, readonly number[]>;
+}>;
 
-// ---------------------------------------------------------------------------
-// Build
-// ---------------------------------------------------------------------------
-
-/**
- * Build a TextMap by walking the IR tree once.
- * Collects all text nodes and builds group-to-descendants + parent mappings.
- */
-export function buildTextMap(ir: IR): TextMap {
-  const nodes = new Map<string, TextNodeEntry>();
-  const childTextMap = new Map<string, string[]>();
-  const parentMap = new Map<string, string>();
-
-  function walk(node: IRNode, parentNodeId: string | null): string[] {
-    if (parentNodeId !== null) {
-      parentMap.set(node.nodeId, parentNodeId);
+/** Project primary text and descendant lists from the index of one IR snapshot. */
+export function buildTextMap(sourceIndex: IRSourceIndex): TextMap {
+  const nodes = new Map<number, TextNodeEntry>();
+  const childTextMap = new Map<number, number[]>();
+  for (const occurrence of sourceIndex.nodes.values()) {
+    const node = occurrence.node;
+    if (
+      node.type !== "text" ||
+      sourceIndex.sources.get(occurrence.source.sourceIndex)?.primaryNodeIndex !==
+        occurrence.nodeIndex
+    ) {
+      continue;
     }
-
-    if (node.type === "text") {
-      const lineEntries: LineEntry[] = node.lines.map((line, i) => ({
-        text: line.text,
-        lineIndex: i,
-        baselineY: line.baselineY,
-        width: line.width,
-      }));
-      const text = lineEntries.map((line) => line.text).join("\n");
-
-      nodes.set(node.nodeId, {
-        nodeId: node.nodeId,
-        text,
-        bbox: node.bbox,
-        lines: lineEntries,
-        writingMode: node.writingMode,
-        fontSizePx: node.fontSizePx,
-        lineHeightPx: node.lineHeightPx,
-      });
-
-      return [node.nodeId];
+    const lines = node.lines.map((line, lineIndex) => ({
+      text: line.text,
+      lineIndex,
+      baselineY: line.baselineY,
+      width: line.width,
+    }));
+    nodes.set(occurrence.source.sourceIndex, {
+      source: occurrence.source,
+      text: node.displayText ?? lines.map((line) => line.text).join("\n"),
+      bbox: node.bbox,
+      lines,
+      writingMode: node.writingMode,
+      fontSizePx: node.fontSizePx,
+      lineHeightPx: node.lineHeightPx,
+    });
+    let parent = sourceIndex.sources.get(occurrence.source.sourceIndex)?.parentSourceIndex;
+    while (parent !== null && parent !== undefined) {
+      const descendants = childTextMap.get(parent) ?? [];
+      descendants.push(occurrence.source.sourceIndex);
+      childTextMap.set(parent, descendants);
+      parent = sourceIndex.sources.get(parent)?.parentSourceIndex;
     }
-
-    if (node.type === "group" && node.children) {
-      const descendantTextIds: string[] = [];
-      for (const child of node.children) {
-        // IR wrappers may reuse the same nodeId as their single child (for
-        // example a text group wrapper plus the text node itself). In that case
-        // the logical parent for ancestor traversal is the nearest ancestor with
-        // a different nodeId, not the immediate wrapper with the same nodeId.
-        const childParentNodeId = child.nodeId === node.nodeId ? parentNodeId : node.nodeId;
-        descendantTextIds.push(...walk(child, childParentNodeId));
-      }
-      if (descendantTextIds.length > 0) {
-        childTextMap.set(node.nodeId, descendantTextIds);
-      }
-      return descendantTextIds;
-    }
-
-    return [];
   }
+  return { sourceIndex, nodes, childTextMap };
+}
 
-  walk(ir.root, null);
-
-  return { nodes, childTextMap, parentMap };
+function resolveCurrentSource(textMap: TextMap, source: IRSourceRef): IRSourceInfo | null {
+  const info = textMap.sourceIndex.sources.get(source.sourceIndex);
+  return info?.source === source ? info : null;
 }
 
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
 
-/** Get the full text of a single text node. */
-export function getNodeText(textMap: TextMap, nodeId: string): string | null {
-  return textMap.nodes.get(nodeId)?.text ?? null;
+/** Read primary text only for a canonical source reference in this map's snapshot. */
+export function getNodeText(textMap: TextMap, source: IRSourceRef): string | null {
+  return resolveCurrentSource(textMap, source)
+    ? (textMap.nodes.get(source.sourceIndex)?.text ?? null)
+    : null;
 }
 
 /**
  * Get concatenated text of the nearest ancestor group that contains
- * multiple text descendants. Falls back to the direct parent group
- * if all ancestors contain only one text node.
+ * multiple primary text descendants. Group sources are valid query origins.
+ * Returns null for stale/foreign refs or when no ancestor has multiple texts.
  */
-export function getAncestorText(textMap: TextMap, nodeId: string): string | null {
-  let current = nodeId;
-  const visited = new Set<string>();
-
-  while (true) {
-    if (visited.has(current)) {
-      return null;
-    }
-    visited.add(current);
-
-    const parentId = textMap.parentMap.get(current);
-    if (parentId === undefined) {
-      return null;
-    }
-
-    const textIds = textMap.childTextMap.get(parentId);
-    if (textIds && textIds.length > 1) {
-      return textIds
-        .map((id) => textMap.nodes.get(id)?.text)
+export function getAncestorText(textMap: TextMap, source: IRSourceRef): string | null {
+  let parent = resolveCurrentSource(textMap, source)?.parentSourceIndex;
+  while (parent !== null && parent !== undefined) {
+    const textIndices = textMap.childTextMap.get(parent);
+    if (textIndices && textIndices.length > 1) {
+      return textIndices
+        .map((ordinal) => textMap.nodes.get(ordinal)?.text)
         .filter((text): text is string => text != null)
         .join("\n\n");
     }
 
-    current = parentId;
+    parent = textMap.sourceIndex.sources.get(parent)?.parentSourceIndex;
   }
+  return null;
 }
 
-/** Get all text in the IR, ordered by draw order. */
-export function getAllText(textMap: TextMap, drawOrder: readonly string[]): string {
-  const texts: string[] = [];
-
-  for (const nodeId of drawOrder) {
-    const entry = textMap.nodes.get(nodeId);
-    if (entry) {
-      texts.push(entry.text);
-    }
-  }
-
-  return texts.join("\n\n");
+/** Read all primary text in tree paint order. */
+export function getAllText(textMap: TextMap): string {
+  return [...textMap.nodes.values()].map((entry) => entry.text).join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -203,15 +162,17 @@ function scanLineByMidpoint(options: {
 }
 
 /**
- * Find the line at a given SVG-space point within a text node.
- * Uses baselineY midpoints to determine line boundaries.
+ * Find a primary-text line for a current canonical source at an SVG-space point.
+ * Uses baselineY midpoints for line boundaries; stale or foreign refs return null.
  */
 export function findLineAtPoint(
   textMap: TextMap,
-  nodeId: string,
+  source: IRSourceRef,
   point: { svgX: number; svgY: number },
 ): LineEntry | null {
-  const entry = textMap.nodes.get(nodeId);
+  const entry = resolveCurrentSource(textMap, source)
+    ? textMap.nodes.get(source.sourceIndex)
+    : undefined;
   if (!entry || entry.lines.length === 0) {
     return null;
   }

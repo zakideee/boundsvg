@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildHitTestIndex, hitTest, hitTestWithIndex } from "../../src/ir/hit-test.js";
-import { buildSpatialIndex, createSpatialIndex } from "../../src/ir/spatial-index.js";
+import { buildHitTestIndex, hitTest } from "../../src/ir/hit-test.js";
+import { createSpatialIndex } from "../../src/ir/spatial-index.js";
 import type { IR, IRNode } from "../../src/ir/types.js";
 
 describe("SpatialIndex", () => {
@@ -23,15 +23,17 @@ describe("SpatialIndex", () => {
     expect(index.queryTopmost(12, 12)).toBe("bottom");
   });
 
-  it("skips :bg and :border nodes", () => {
+  it("retains every opaque inserted identifier", () => {
     const index = createSpatialIndex({ x: 0, y: 0, w: 100, h: 100 });
     index.insert("node1:bg", { x: 0, y: 0, w: 100, h: 100 }, 0);
     index.insert("node1:border", { x: 0, y: 0, w: 100, h: 100 }, 1);
+    index.insert("node1:outline", { x: 0, y: 0, w: 100, h: 100 }, 10);
+    index.insert("node1:content", { x: 0, y: 0, w: 100, h: 100 }, 11);
     index.insert("node1", { x: 10, y: 10, w: 80, h: 80 }, 2);
 
-    expect(index.queryTopmost(50, 50)).toBe("node1");
+    expect(index.queryTopmost(50, 50)).toBe("node1:content");
     // Point at (2, 2) — only bg and border, should return null
-    expect(index.queryTopmost(2, 2)).toBeNull();
+    expect(index.queryTopmost(2, 2)).toBe("node1:content");
   });
 
   it("handles many nodes across quadrants", () => {
@@ -79,53 +81,37 @@ describe("SpatialIndex", () => {
   });
 });
 
-describe("buildSpatialIndex", () => {
-  it("builds from drawOrder and bboxMap", () => {
-    const drawOrder = ["a:bg", "a", "b:bg", "b"];
-    const bboxMap = new Map([
-      ["a:bg", { x: 0, y: 0, w: 50, h: 50 }],
-      ["a", { x: 0, y: 0, w: 50, h: 50 }],
-      ["b:bg", { x: 50, y: 0, w: 50, h: 50 }],
-      ["b", { x: 50, y: 0, w: 50, h: 50 }],
-    ]);
-
-    const index = buildSpatialIndex({ width: 100, height: 50 }, drawOrder, bboxMap);
-    expect(index.queryTopmost(25, 25)).toBe("a");
-    expect(index.queryTopmost(75, 25)).toBe("b");
-  });
-});
-
 describe("hitTest with spatial index", () => {
   function makeIR(nodeCount: number): IR {
     const children: IRNode[] = [];
-    const drawOrder: string[] = [];
 
     for (let i = 0; i < nodeCount; i++) {
       const bgId = `node${i}:bg`;
       const nodeId = `node${i}`;
       children.push({
+        ownership: { role: "source" },
         type: "rect",
         nodeId: bgId,
         bbox: { x: i * 10, y: 0, w: 8, h: 8 },
         fill: "#fff",
       });
       children.push({
+        ownership: { role: "source" },
         type: "rect",
         nodeId,
         bbox: { x: i * 10, y: 0, w: 8, h: 8 },
       });
-      drawOrder.push(bgId);
-      drawOrder.push(nodeId);
     }
 
     return {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: nodeCount * 10, h: 10 },
         children,
       },
-      drawOrder,
+
       width: nodeCount * 10,
       height: 10,
       warnings: [],
@@ -134,30 +120,28 @@ describe("hitTest with spatial index", () => {
 
   it("uses spatial index for trees with >= 16 draw entries", () => {
     const ir = makeIR(10); // 20 draw entries (bg + node for each)
-    expect(ir.drawOrder.length).toBe(20);
 
     // hitTest should still work correctly with spatial index
-    expect(hitTest(ir, 4, 4)).toBe("node0");
-    expect(hitTest(ir, 14, 4)).toBe("node1");
-    expect(hitTest(ir, 94, 4)).toBe("node9");
-    expect(hitTest(ir, 9, 4)).toBeNull(); // in the gap
+    expect(hitTest(ir, 4, 4)?.nodeId ?? null).toBe("node0");
+    expect(hitTest(ir, 14, 4)?.nodeId ?? null).toBe("node1");
+    expect(hitTest(ir, 94, 4)?.nodeId ?? null).toBe("node9");
+    expect(hitTest(ir, 9, 4)?.nodeId ?? null).toBeNull(); // in the gap
   });
 
   it("uses linear scan for small trees", () => {
     const ir = makeIR(4); // 8 draw entries
-    expect(ir.drawOrder.length).toBe(8);
 
-    expect(hitTest(ir, 4, 4)).toBe("node0");
-    expect(hitTest(ir, 34, 4)).toBe("node3");
+    expect(hitTest(ir, 4, 4)?.nodeId ?? null).toBe("node0");
+    expect(hitTest(ir, 34, 4)?.nodeId ?? null).toBe("node3");
   });
 
-  it("buildHitTestIndex + hitTestWithIndex for repeated queries", () => {
+  it("buildHitTestIndex queries for repeated queries", () => {
     const ir = makeIR(20);
     const index = buildHitTestIndex(ir);
 
-    expect(hitTestWithIndex(index, 4, 4)).toBe("node0");
-    expect(hitTestWithIndex(index, 194, 4)).toBe("node19");
-    expect(hitTestWithIndex(index, 9, 4)).toBeNull();
+    expect(index.queryTopmost(4, 4)?.nodeId ?? null).toBe("node0");
+    expect(index.queryTopmost(194, 4)?.nodeId ?? null).toBe("node19");
+    expect(index.queryTopmost(9, 4)?.nodeId ?? null).toBeNull();
   });
 });
 
@@ -186,16 +170,23 @@ describe("SpatialIndex.queryCandidates", () => {
     expect(result).toEqual(["top", "middle", "bottom"]);
   });
 
-  it("filters :bg and :border nodes", () => {
+  it("queries every opaque inserted identifier", () => {
     const index = createSpatialIndex({ x: 0, y: 0, w: 100, h: 100 });
     index.insert("node1:bg", { x: 0, y: 0, w: 100, h: 100 }, 0);
     index.insert("node1:border", { x: 0, y: 0, w: 100, h: 100 }, 1);
+    index.insert("node1:outline", { x: 0, y: 0, w: 100, h: 100 }, 10);
+    index.insert("node1:content", { x: 0, y: 0, w: 100, h: 100 }, 11);
     index.insert("node1", { x: 10, y: 10, w: 80, h: 80 }, 2);
 
     const result = index.queryCandidates(50, 50);
-    expect(result).toEqual(["node1"]);
-    // bg-only area returns empty
-    expect(index.queryCandidates(2, 2)).toEqual([]);
+    expect(result).toEqual(["node1:content", "node1:outline", "node1", "node1:border", "node1:bg"]);
+    // The wider inserted entries remain queryable outside the smaller node.
+    expect(index.queryCandidates(2, 2)).toEqual([
+      "node1:content",
+      "node1:outline",
+      "node1:border",
+      "node1:bg",
+    ]);
   });
 
   it("returns only nodes that contain the point", () => {

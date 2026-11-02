@@ -1,6 +1,7 @@
 import type { SerializedRecoverableError } from "../errors.js";
 import { FatalError, RecoverableError } from "../errors.js";
 import { structuralIRValidationFailure, validateStructuralIR } from "../ir/output-validator.js";
+import type { IRSourceRef } from "../ir/source-index.js";
 import type { MeasurementTextLayoutOperation } from "../text/layout-operation.js";
 import type {
   IntrinsicInlineSizeResult,
@@ -235,6 +236,8 @@ const isRenderToSvgEnvelope = objectGuard<RenderToSvgEnvelope>({
 } satisfies ObjectShape<RenderToSvgEnvelope>);
 
 type DecodedAnimationStateSample = {
+  nodeIndex: number;
+  source: IRSourceRef;
   nodeId: string;
   opacity?: number;
   transform?: { a: number; b: number; c: number; d: number; e: number; f: number };
@@ -249,7 +252,18 @@ const isAnimationAffineMatrix = objectGuard<NonNullable<DecodedAnimationStateSam
   f: required(isNumber),
 } satisfies ObjectShape<NonNullable<DecodedAnimationStateSample["transform"]>>);
 
+/** Snapshot ordinals must be exact finite nonnegative integers. */
+const isSnapshotOrdinal: Guard<number> = (value): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+/** Source association for a sampled physical animation target. */
+const isSourceRef = objectGuard<IRSourceRef>({
+  sourceIndex: required(isSnapshotOrdinal),
+  nodeId: required(isString),
+} satisfies ObjectShape<IRSourceRef>);
+
 const isAnimationStateSample = objectGuard<DecodedAnimationStateSample>({
+  nodeIndex: required(isSnapshotOrdinal),
+  source: required(isSourceRef),
   nodeId: required(isString),
   opacity: optional(isNumber),
   transform: optional(isAnimationAffineMatrix),
@@ -426,6 +440,9 @@ export function isWasmIntrinsicInlineSizeResult(
   return testDecodedValue(value, isIntrinsicInlineSizeResult);
 }
 
+/** Decode warning-free structural IR and its canonical warning envelope.
+ * @throws {FatalError} WASM_INVALID_IR_OUTPUT for invalid JSON, ownership or output fields.
+ */
 export function decodeRenderToIrEnvelope(json: string): RenderToIrEnvelope {
   return decodeJson(json, isRenderToIrEnvelope, {
     code: "WASM_INVALID_IR_OUTPUT",
@@ -433,6 +450,9 @@ export function decodeRenderToIrEnvelope(json: string): RenderToIrEnvelope {
   });
 }
 
+/** Decode matching emitted SVG, optional IR and recoverable diagnostics.
+ * @throws {FatalError} WASM_INVALID_SVG_OUTPUT for invalid JSON or output fields.
+ */
 export function decodeRenderToSvgEnvelope(json: string): RenderToSvgEnvelope {
   return decodeJson(json, isRenderToSvgEnvelope, {
     code: "WASM_INVALID_SVG_OUTPUT",
@@ -440,6 +460,9 @@ export function decodeRenderToSvgEnvelope(json: string): RenderToSvgEnvelope {
   });
 }
 
+/** Decode sampled physical occurrences with their snapshot-local source references.
+ * @throws {FatalError} WASM_INVALID_ANIMATION_STATE_OUTPUT for invalid JSON or sample fields.
+ */
 export function decodeAnimationStateSamples(json: string): DecodedAnimationStateSample[] {
   return decodeJson(json, arrayOf(isAnimationStateSample), {
     code: "WASM_INVALID_ANIMATION_STATE_OUTPUT",

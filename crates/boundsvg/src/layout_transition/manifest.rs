@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde_json::Value;
 
@@ -10,6 +10,7 @@ use super::signature::{semantic_source_signatures, text_flow_signature};
 use super::{CompatibilityCategory, CompatibilityMismatch};
 
 #[derive(Debug, Clone, PartialEq)]
+/// Authored transition identity and signatures associated with one source group.
 pub(super) struct SemanticManifestEntry {
     pub(super) node_id: String,
     pub(super) node_kind: String,
@@ -23,12 +24,18 @@ pub(super) struct SemanticManifestEntry {
 }
 
 #[derive(Debug)]
+/// Ordered authored entries with an ID index for cross-state correspondence.
 pub(super) struct SemanticManifest {
     pub(super) entries: Vec<SemanticManifestEntry>,
     pub(super) index_by_id: BTreeMap<String, usize>,
 }
 
 impl SemanticManifest {
+    /// Collect authored source entries and their parent and sibling relationships.
+    ///
+    /// # Errors
+    ///
+    /// Returns a mismatch for missing authored identity or invalid transport signatures.
     pub(super) fn from_root(
         root: &LayoutNodeInput,
         raw_root: &Value,
@@ -42,10 +49,14 @@ impl SemanticManifest {
         })
     }
 
+    /// Attach source-group bounds and primary text flow, ignoring generated wrappers.
+    ///
+    /// # Errors
+    ///
+    /// Returns a mismatch when a source lacks exactly one group or has invalid bounds.
     pub(super) fn attach_ir_groups(&mut self, root: &IrNode) -> Result<(), CompatibilityMismatch> {
         let mut group_nodes = BTreeMap::new();
         collect_group_nodes(root, &mut group_nodes);
-        let semantic_ids = self.index_by_id.keys().cloned().collect::<BTreeSet<_>>();
         for entry in &mut self.entries {
             let matching_groups = group_nodes.get(&entry.node_id);
             let observed_count = matching_groups.map_or(0, Vec::len);
@@ -68,11 +79,16 @@ impl SemanticManifest {
                 })?;
             validate_bbox(entry, group.bbox)?;
             entry.bbox = Some(group.bbox);
-            entry.text_flow_signature = text_flow_signature(group, &entry.node_id, &semantic_ids);
+            entry.text_flow_signature = text_flow_signature(group);
         }
         Ok(())
     }
 
+    /// Compare source identity, relationships and resolved signatures in reference order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first missing, additional or incompatible authored source.
     pub(super) fn validate_compatibility(
         &self,
         target: &Self,
@@ -179,10 +195,12 @@ fn collect_semantic_entries(
 
 fn collect_group_nodes<'a>(node: &'a IrNode, group_nodes: &mut BTreeMap<String, Vec<&'a IrNode>>) {
     if let IrNodeKind::Group { children, .. } = &node.kind {
-        group_nodes
-            .entry(node.node_id.clone())
-            .or_default()
-            .push(node);
+        if node.ownership.is_source() {
+            group_nodes
+                .entry(node.node_id.clone())
+                .or_default()
+                .push(node);
+        }
         for child in children {
             collect_group_nodes(child, group_nodes);
         }
@@ -290,6 +308,11 @@ fn validate_bbox_pair(
     Ok(())
 }
 
+/// Read bounds previously attached to an authored source entry.
+///
+/// # Errors
+///
+/// Returns a bbox mismatch if the selected state has no resolved source bounds.
 pub(super) fn required_entry_bbox(
     entry: &SemanticManifestEntry,
     state_name: &str,
@@ -302,6 +325,7 @@ pub(super) fn required_entry_bbox(
     })
 }
 
+/// Format an authored parent relationship for a compatibility diagnostic.
 pub(super) fn describe_parent(parent_id: Option<&str>) -> String {
     parent_id.map_or_else(
         || "root (no parent)".to_string(),

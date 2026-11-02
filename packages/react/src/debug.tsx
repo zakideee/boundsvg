@@ -1,7 +1,8 @@
 import type { InspectionBBox, SceneInspection } from "@boundsvg/core/inspect";
-import type { IRNodeType } from "@boundsvg/core/scene";
+import type { IRNodeType, IRSourceInfo } from "@boundsvg/core/scene";
 import type { CSSProperties, ReactNode } from "react";
 
+/** Presentation and occurrence selection for the non-interactive debug overlay. */
 export type BoundSvgDebugOverlayProps = {
   inspection: SceneInspection | null;
   className?: string;
@@ -12,9 +13,9 @@ export type BoundSvgDebugOverlayProps = {
   showLabels?: boolean;
   filter?: (bbox: InspectionBBox) => boolean;
   /** Convenience highlight for one selected inspection bbox. */
-  selectedNodeId?: string | null;
-  /** Highlight inspection bboxes by node ID while keeping the overlay non-interactive. */
-  highlightedNodeIds?: readonly string[];
+  selectedNodeIndex?: number | null;
+  /** Highlight inspection bboxes by physical occurrence ordinal while keeping the overlay non-interactive. */
+  highlightedNodeIndices?: readonly number[];
   /** Highlight custom px bboxes such as crop, hover, or validation regions. */
   highlightedBBoxes?: readonly DebugOverlayHighlight[];
   highlightColor?: string;
@@ -35,9 +36,10 @@ export type DebugOverlayHighlight = {
   color?: string;
 };
 
+/** Scene and physical occurrence displayed by the inspector panel. */
 export type NodeInspectorPanelProps = {
   inspection: SceneInspection | null;
-  selectedNodeId?: string | null;
+  selectedNodeIndex?: number | null;
   className?: string;
   empty?: ReactNode;
 };
@@ -52,8 +54,8 @@ export function BoundSvgDebugOverlay({
   labelMode,
   showLabels,
   filter,
-  selectedNodeId,
-  highlightedNodeIds = [],
+  selectedNodeIndex,
+  highlightedNodeIndices = [],
   highlightedBBoxes = [],
   highlightColor = "#06b6d4",
 }: BoundSvgDebugOverlayProps) {
@@ -63,19 +65,19 @@ export function BoundSvgDebugOverlay({
 
   const bboxes = filter ? inspection.bboxes.filter(filter) : inspection.bboxes;
   const resolvedLabelMode = resolveLabelMode(labelMode, showLabels);
-  const highlightedNodeIdSet = new Set(highlightedNodeIds);
-  if (selectedNodeId != null) {
-    highlightedNodeIdSet.add(selectedNodeId);
+  const highlightedNodeIndexSet = new Set(highlightedNodeIndices);
+  if (selectedNodeIndex != null) {
+    highlightedNodeIndexSet.add(selectedNodeIndex);
   }
   const highlightedNodeBBoxes: DebugOverlayHighlight[] = bboxes
-    .filter((bbox) => highlightedNodeIdSet.has(bbox.nodeId))
+    .filter((bbox) => highlightedNodeIndexSet.has(bbox.nodeIndex))
     .map((bbox) => ({
-      id: `node:${bbox.nodeId}`,
+      id: `node:${bbox.nodeIndex}`,
       nodeId: bbox.nodeId,
-      x: bbox.x,
-      y: bbox.y,
-      w: bbox.w,
-      h: bbox.h,
+      x: bbox.layoutBBox.x,
+      y: bbox.layoutBBox.y,
+      w: bbox.layoutBBox.w,
+      h: bbox.layoutBBox.h,
       color: highlightColor,
     }));
   const highlights = [...highlightedNodeBBoxes, ...highlightedBBoxes];
@@ -98,8 +100,9 @@ export function BoundSvgDebugOverlay({
       <g data-layer="base-bboxes">
         {bboxes.map((bbox) => (
           <DebugBBox
-            key={`${bbox.nodeId}:${bbox.depth}`}
+            key={bbox.nodeIndex}
             bbox={bbox}
+            source={inspection.sourceIndex.sources.get(bbox.source.sourceIndex)}
             labelMode={resolvedLabelMode}
           />
         ))}
@@ -132,20 +135,22 @@ function resolveLabelMode(
 
 function DebugBBox({
   bbox,
+  source,
   labelMode,
 }: {
   bbox: InspectionBBox;
+  source: IRSourceInfo | undefined;
   labelMode: DebugOverlayLabelMode;
 }) {
-  const color = getBBoxColor(bbox);
-  const labelLines = getBBoxLabelLines(bbox, labelMode);
+  const color = getBBoxColor(bbox, source);
+  const labelLines = getBBoxLabelLines(bbox, labelMode, source);
   return (
     <g>
       <rect
-        x={bbox.x}
-        y={bbox.y}
-        width={bbox.w}
-        height={bbox.h}
+        x={bbox.layoutBBox.x}
+        y={bbox.layoutBBox.y}
+        width={bbox.layoutBBox.w}
+        height={bbox.layoutBBox.h}
         fill="none"
         stroke={color}
         strokeWidth={1}
@@ -153,7 +158,12 @@ function DebugBBox({
         opacity={0.72}
       />
       {labelLines.length > 0 && (
-        <DebugLabel x={bbox.x + 3} y={bbox.y + 3} color={color} lines={labelLines} />
+        <DebugLabel
+          x={bbox.layoutBBox.x + 3}
+          y={bbox.layoutBBox.y + 3}
+          color={color}
+          lines={labelLines}
+        />
       )}
     </g>
   );
@@ -228,13 +238,17 @@ function DebugLabel({
   );
 }
 
-function getBBoxColor(bbox: InspectionBBox): string {
-  if (bbox.hasHandlers) {
+function getBBoxColor(bbox: InspectionBBox, source: IRSourceInfo | undefined): string {
+  if (
+    source?.node.ownership.role === "source" &&
+    Object.keys(source.node.ownership.on ?? {}).length > 0
+  ) {
     return "#22c55e";
   }
   return NODE_TYPE_COLORS[bbox.type];
 }
 
+/** Debug-overlay colors for physical IR node types. */
 const NODE_TYPE_COLORS: Record<IRNodeType, string> = {
   group: "#94a3b8",
   rect: "#ef4444",
@@ -248,6 +262,7 @@ const NODE_TYPE_COLORS: Record<IRNodeType, string> = {
 function getBBoxLabelLines(
   bbox: InspectionBBox,
   labelMode: DebugOverlayLabelMode,
+  source: IRSourceInfo | undefined,
 ): readonly string[] {
   if (labelMode === "none") {
     return [];
@@ -256,10 +271,10 @@ function getBBoxLabelLines(
     return [bbox.nodeId];
   }
 
-  const drawLabel = bbox.drawIndex == null ? "#-" : `#${bbox.drawIndex}`;
-  const summary = `${bbox.type} ${formatNumber(bbox.w)}x${formatNumber(bbox.h)} @ ${formatNumber(
-    bbox.x,
-  )},${formatNumber(bbox.y)} d${bbox.depth} ${drawLabel}`;
+  const drawLabel = bbox.paintOrder == null ? "#-" : `#${bbox.paintOrder}`;
+  const summary = `${bbox.type} ${formatNumber(bbox.layoutBBox.w)}x${formatNumber(bbox.layoutBBox.h)} @ ${formatNumber(
+    bbox.layoutBBox.x,
+  )},${formatNumber(bbox.layoutBBox.y)} d${bbox.depth} ${drawLabel}`;
   if (labelMode === "summary") {
     return [bbox.nodeId, summary];
   }
@@ -267,8 +282,11 @@ function getBBoxLabelLines(
   return [
     bbox.nodeId,
     summary,
-    bbox.hasHandlers ? "handlers yes" : "handlers none",
-    bbox.drawIndex == null ? "draw order none" : `draw order ${bbox.drawIndex}`,
+    source?.node.ownership.role === "source" &&
+    Object.keys(source.node.ownership.on ?? {}).length > 0
+      ? "source handlers yes"
+      : "source handlers none",
+    bbox.paintOrder == null ? "paint order none" : `paint order ${bbox.paintOrder}`,
   ];
 }
 
@@ -294,7 +312,7 @@ function formatNumber(value: number): string {
  */
 export function NodeInspectorPanel({
   inspection,
-  selectedNodeId,
+  selectedNodeIndex,
   className,
   empty = null,
 }: NodeInspectorPanelProps) {
@@ -303,16 +321,17 @@ export function NodeInspectorPanel({
   }
 
   const selected =
-    selectedNodeId != null
-      ? inspection.bboxes.find((bbox) => bbox.nodeId === selectedNodeId)
+    selectedNodeIndex != null
+      ? inspection.bboxes.find((bbox) => bbox.nodeIndex === selectedNodeIndex)
       : inspection.bboxes[0];
 
   if (!selected) {
     return <>{empty}</>;
   }
 
-  const handlers = inspection.handlerMap.get(selected.nodeId);
-  const text = inspection.textMap.nodes.get(selected.nodeId)?.text ?? null;
+  const source = inspection.sourceIndex.sources.get(selected.source.sourceIndex);
+  const handlers = source?.node.ownership.role === "source" ? source.node.ownership.on : undefined;
+  const text = inspection.textMap.nodes.get(selected.source.sourceIndex)?.text ?? null;
 
   return (
     <section className={className}>
@@ -323,20 +342,21 @@ export function NodeInspectorPanel({
         <dd>{selected.type}</dd>
         <dt>position</dt>
         <dd>
-          {selected.x}, {selected.y}
+          {selected.layoutBBox.x}, {selected.layoutBBox.y}
         </dd>
         <dt>size</dt>
         <dd>
-          {selected.w} x {selected.h}
+          {selected.layoutBBox.w} x {selected.layoutBBox.h}
         </dd>
         <dt>bbox</dt>
         <dd>
-          {selected.x}, {selected.y}, {selected.w} x {selected.h}
+          {selected.layoutBBox.x}, {selected.layoutBBox.y}, {selected.layoutBBox.w} x{" "}
+          {selected.layoutBBox.h}
         </dd>
         <dt>depth</dt>
         <dd>{selected.depth}</dd>
-        <dt>drawIndex</dt>
-        <dd>{selected.drawIndex ?? "none"}</dd>
+        <dt>paintOrder</dt>
+        <dd>{selected.paintOrder ?? "none"}</dd>
         <dt>handlers</dt>
         <dd>
           {handlers

@@ -1,12 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine } from "../../src/engine.js";
 import { inspectScene } from "../../src/inspect.js";
-import {
-  buildHitTestIndex,
-  hitTest,
-  hitTestCandidates,
-  hitTestWithIndex,
-} from "../../src/ir/hit-test.js";
+import { buildHitTestIndex, hitTest } from "../../src/ir/hit-test.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { AnimationSpec, Transform2D, VNode } from "../../src/vnode/types.js";
 import { createWasmEngineInstance, type WasmEngineHandle } from "../../src/wasm/index.js";
@@ -149,9 +144,11 @@ describe("container clip and Path paint through WASM", () => {
         );
         const ir = engine.renderToIR(scene);
         const index = buildHitTestIndex(ir);
-        expect(engine.hitTest(ir, 200, 40)).toBe("path");
-        expect(hitTestWithIndex(index, 200, 40)).toBe("path");
-        expect(hitTestCandidates(index, 200, 40)).toContain("path");
+        expect(engine.hitTest(ir, 200, 40)?.nodeId ?? null).toBe("path");
+        expect(index.queryTopmost(200, 40)?.nodeId ?? null).toBe("path");
+        expect(
+          index.queryCandidates(200, 40).map((candidate) => candidate.source.nodeId),
+        ).toContain("path");
         expect(ir.root.children?.find((node) => node.nodeId === "path")?.bbox).toEqual({
           x: 100,
           y: 20,
@@ -179,8 +176,18 @@ describe("container clip and Path paint through WASM", () => {
             : borderRadius,
         });
         const card = engine.renderToIR(scene).root.children?.[1];
-        expect(card?.clipPath).toEqual({ x: 10, y: 10, w: 100, h: 100 });
-        expect(card?.clipBorderRadius).toEqual(card?.children?.[0]?.borderRadius);
+        expect(card?.clip?.kind).toBe("boxContour");
+        if (card?.clip?.kind !== "boxContour") {
+          throw new TypeError("A resolved box contour is required");
+        }
+        expect(card.clip.bbox).toEqual({ x: 10, y: 10, w: 100, h: 100 });
+        const radii =
+          typeof borderRadius === "number"
+            ? [borderRadius, borderRadius, borderRadius, borderRadius]
+            : (borderRadius ?? [0, 0, 0, 0]);
+        expect(card.clip.corners).toEqual(
+          radii.map((radius) => ({ rx: Math.min(50, radius), ry: Math.min(50, radius) })),
+        );
         expect(pixelAt(engine.renderToPng(scene), 12, 12)).toEqual(
           borderRadius === undefined || borderRadius === 0
             ? [255, 0, 0, 255]
@@ -195,8 +202,7 @@ describe("container clip and Path paint through WASM", () => {
     it(`${container} keeps children visible when overflow is visible`, () => {
       const scene = roundedScene({ container, borderRadius: 50, overflow: "visible" });
       const card = engine.renderToIR(scene).root.children?.[1];
-      expect(card?.clipPath).toBeUndefined();
-      expect(card?.clipBorderRadius).toBeUndefined();
+      expect(card?.clip).toBeUndefined();
       expect(pixelAt(engine.renderToPng(scene), 12, 12)).toEqual([255, 0, 0, 255]);
     });
   }
@@ -207,7 +213,7 @@ describe("container clip and Path paint through WASM", () => {
       const x = isNegative ? 100 : 200;
       expect(pixelAt(engine.renderToPng(scene), x, 30)).toEqual([255, 0, 0, 255]);
       expect(engine.renderToSvg(scene)).toMatch(
-        /<svg data-boundsvg-node-id="arrow"[^>]*width="40" height="40" overflow="visible">/,
+        /<svg[^>]*width="40" height="40" overflow="visible"[^>]*data-boundsvg-role="content"[^>]*>/,
       );
       for (const radius of [0, 20]) {
         const clippedPng = engine.renderToPng(overflowingPathScene(isNegative, radius));
@@ -347,8 +353,8 @@ describe("container clip and Path paint through WASM", () => {
       expect(pixelAt(png, fixture.outside[0], fixture.outside[1])).toEqual([255, 255, 255, 255]);
       expect(pixelAt(png, fixture.inside[0], fixture.inside[1])).toEqual([255, 0, 0, 255]);
       const ir = engine.renderToIR(scene);
-      expect(hitTest(ir, fixture.outside[0], fixture.outside[1])).toBeNull();
-      expect(hitTest(ir, fixture.inside[0], fixture.inside[1])).toBe("card");
+      expect(hitTest(ir, fixture.outside[0], fixture.outside[1])?.nodeId ?? null).toBeNull();
+      expect(hitTest(ir, fixture.inside[0], fixture.inside[1])?.nodeId ?? null).toBe("card");
     }
     const rotatedCorners = roundedScene({
       borderRadius: [50, 0, 0, 0],
@@ -357,11 +363,11 @@ describe("container clip and Path paint through WASM", () => {
     const rotatedCornersPng = engine.renderToPng(rotatedCorners);
     expect(pixelAt(rotatedCornersPng, 12, 12)).toEqual([255, 0, 0, 255]);
     expect(pixelAt(rotatedCornersPng, 107, 12)).toEqual([255, 255, 255, 255]);
-    expect(hitTest(engine.renderToIR(rotatedCorners), 12, 12)).toBe("card");
-    expect(hitTest(engine.renderToIR(rotatedCorners), 107, 12)).toBeNull();
+    expect(hitTest(engine.renderToIR(rotatedCorners), 12, 12)?.nodeId ?? null).toBe("card");
+    expect(hitTest(engine.renderToIR(rotatedCorners), 107, 12)?.nodeId ?? null).toBeNull();
     const transformedPath = overflowingPathScene(false, undefined, { translateX: 10 });
     expect(pixelAt(engine.renderToPng(transformedPath), 210, 30)).toEqual([255, 0, 0, 255]);
-    expect(hitTest(engine.renderToIR(transformedPath), 210, 30)).toBe("arrow");
+    expect(hitTest(engine.renderToIR(transformedPath), 210, 30)?.nodeId ?? null).toBe("arrow");
     expect(
       pixelAt(
         engine.renderToPng(
@@ -465,8 +471,10 @@ describe("container clip and Path paint through WASM", () => {
       );
       expect(pixelAt(engine.renderToPng(scene), 30, 22)).toEqual([255, 0, 0, 255]);
       const ir = engine.renderToIR(scene);
-      expect(hitTest(ir, 30, 17)).toBe(overflow === "visible" ? "edge-stroke" : null);
-      expect(hitTest(ir, 30, 22)).toBe("edge-stroke");
+      expect(hitTest(ir, 30, 17)?.nodeId ?? null).toBe(
+        overflow === "visible" ? "edge-stroke" : null,
+      );
+      expect(hitTest(ir, 30, 22)?.nodeId ?? null).toBe("edge-stroke");
     }
   });
 
@@ -497,16 +505,20 @@ describe("container clip and Path paint through WASM", () => {
       expect(pixelAt(png, 60 + shift, 60)).toEqual([255, 0, 0, 255]);
       expect(pixelAt(png, 102 + shift, 60)).toEqual([255, 0, 0, 255]);
       const sampledIr = engine.renderToIR(scene, { timeMs });
-      expect(hitTest(sampledIr, 12 + shift, 12)).toBeNull();
-      expect(hitTest(sampledIr, 60 + shift, 60)).toBe("card");
+      expect(hitTest(sampledIr, 12 + shift, 12)?.nodeId ?? null).toBeNull();
+      expect(hitTest(sampledIr, 60 + shift, 60)?.nodeId ?? null).toBe("card");
       expect(rasterHandle.createSvgToPngFn()(engine.renderToSvg(scene, { timeMs }))).toEqual(png);
       const path = overflowingPathScene(false, 20, undefined, animate);
       expect(pixelAt(engine.renderToPng(path, { timeMs }), 200 + shift, 30)).toEqual([
         255, 255, 255, 255,
       ]);
-      expect(hitTest(engine.renderToIR(path, { timeMs }), 200 + shift, 30)).toBeNull();
+      expect(
+        hitTest(engine.renderToIR(path, { timeMs }), 200 + shift, 30)?.nodeId ?? null,
+      ).toBeNull();
       const visiblePath = overflowingPathScene(false, undefined, undefined, animate);
-      expect(hitTest(engine.renderToIR(visiblePath, { timeMs }), 200 + shift, 30)).toBe("arrow");
+      expect(
+        hitTest(engine.renderToIR(visiblePath, { timeMs }), 200 + shift, 30)?.nodeId ?? null,
+      ).toBe("arrow");
       expect(
         pixelAt(
           engine.renderToPng(overflowingPathScene(false, undefined, undefined, animate), {
@@ -545,10 +557,10 @@ describe("container clip and Path paint through WASM", () => {
       w: 40,
       h: 40,
     });
-    expect(hitTest(inspection.ir, 200, 30)).toBe("arrow");
-    expect(hitTest(inspection.ir, 130, 25)).toBe("arrow");
+    expect(hitTest(inspection.ir, 200, 30)?.nodeId ?? null).toBe("arrow");
+    expect(hitTest(inspection.ir, 130, 25)?.nodeId ?? null).toBe("arrow");
     const cardScene = roundedScene({ borderRadius: 50 });
-    expect(hitTest(engine.renderToIR(cardScene), 12, 12)).toBeNull();
+    expect(hitTest(engine.renderToIR(cardScene), 12, 12)?.nodeId ?? null).toBeNull();
     const pathCardScene = createElement(
       "Canvas",
       { width: 120, height: 120, background: "#ffffff" },
@@ -574,7 +586,7 @@ describe("container clip and Path paint through WASM", () => {
       ),
     );
     expect(pixelAt(engine.renderToPng(pathCardScene), 12, 12)).toEqual([255, 255, 255, 255]);
-    expect(hitTest(engine.renderToIR(pathCardScene), 12, 12)).toBeNull();
+    expect(hitTest(engine.renderToIR(pathCardScene), 12, 12)?.nodeId ?? null).toBeNull();
     const overlappingPathScene = createElement(
       "Canvas",
       { width: 300, height: 100, background: "#ffffff" },
@@ -603,6 +615,6 @@ describe("container clip and Path paint through WASM", () => {
       }),
     );
     expect(pixelAt(engine.renderToPng(overlappingPathScene), 200, 30)).toEqual([255, 0, 0, 255]);
-    expect(hitTest(engine.renderToIR(overlappingPathScene), 200, 30)).toBe("arrow");
+    expect(hitTest(engine.renderToIR(overlappingPathScene), 200, 30)?.nodeId ?? null).toBe("arrow");
   });
 });

@@ -33,20 +33,21 @@ function sampleVNode(): VNode {
 function sampleStructuralIr(): Omit<IR, "warnings"> {
   return {
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "auto:0",
       bbox: { x: 0, y: 0, w: 100, h: 80 },
       children: [
         {
+          ownership: { role: "source", on: { onClick: "click:txt" } },
           type: "text",
           nodeId: "txt",
           bbox: { x: 10, y: 12, w: 40, h: 18 },
           lines: [{ text: "hello", glyphs: [], width: 40, baselineY: 14 }],
-          on: { onClick: "click:txt" },
         },
       ],
     },
-    drawOrder: ["txt"],
+
     width: 100,
     height: 80,
   };
@@ -84,7 +85,7 @@ function makeAssetEngine(): Engine {
     renderToIrFn: () => {
       const ir = sampleStructuralIr();
       return JSON.stringify({
-        ir: { ...ir, root: { ...ir.root, children: [] }, drawOrder: [] },
+        ir: { ...ir, root: { ...ir.root, children: [] } },
         warnings: [],
       });
     },
@@ -112,7 +113,11 @@ describe("react debug/assets", () => {
 
     expect(snapshot?.isReady).toBe(true);
     expect(snapshot?.inspection?.stats.nodeCount).toBe(2);
-    expect(snapshot?.inspection?.handlerMap.get("txt")?.onClick).toBe("click:txt");
+    expect(
+      snapshot?.inspection?.sourceIndex.sources.get(1)?.node.ownership.role === "source"
+        ? snapshot.inspection.sourceIndex.sources.get(1)?.node.ownership.on?.onClick
+        : undefined,
+    ).toBe("click:txt");
   });
 
   it("renders overlay and inspector markup", () => {
@@ -127,7 +132,7 @@ describe("react debug/assets", () => {
         <BoundSvgDebugOverlay inspection={inspection} />
         <NodeInspectorPanel
           inspection={inspection}
-          selectedNodeId="txt"
+          selectedNodeIndex={1}
           className="node-inspector"
         />
       </>,
@@ -136,7 +141,7 @@ describe("react debug/assets", () => {
     expect(html).toContain('class="node-inspector"');
     expect(html).toContain("txt");
     expect(html).toContain("text 40x18 @ 10,12 d1 #0");
-    expect(html).toContain("drawIndex");
+    expect(html).toContain("paintOrder");
     expect(html).toContain("click:txt");
   });
 
@@ -152,8 +157,8 @@ describe("react debug/assets", () => {
         inspection={inspection}
         className="debug-overlay"
         labelMode="metrics"
-        selectedNodeId="txt"
-        highlightedNodeIds={["auto:0"]}
+        selectedNodeIndex={1}
+        highlightedNodeIndices={[0]}
         highlightedBBoxes={[{ id: "manual", label: "manual bbox", x: 2, y: 3, w: 4, h: 5 }]}
         highlightColor="#123456"
       />,
@@ -162,7 +167,7 @@ describe("react debug/assets", () => {
     expect(html).toContain('class="debug-overlay"');
     expect(html).toContain("text 40x18 @ 10,12 d1 #0");
     expect(html).toContain("handlers yes");
-    expect(html).toContain("draw order 0");
+    expect(html).toContain("paint order 0");
     expect(html).toContain("manual bbox");
     expect(html).toContain('data-layer="highlight-bboxes"');
     expect(html).toContain('x="10" y="12" width="40" height="18" fill="#123456"');

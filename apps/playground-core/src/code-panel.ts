@@ -1,3 +1,4 @@
+import { buildIRSourceIndex, type IRSourceIndex, type IRSourceRef } from "@boundsvg/core/scene";
 import Prism from "prismjs";
 import {
   highlightCodeLines,
@@ -12,22 +13,23 @@ import { coreState } from "./state";
 
 export { escapeHtml } from "../../playground-shared/html-utils.js";
 
-/** Cached nodeId → line range map for the current SVG source. */
-let cachedLineMap: Map<string, NodeLineRange> | null = null;
+/** Cached source occurrence → line range map for the current SVG source. */
+let cachedSources: IRSourceIndex["sources"] | null = null;
+let cachedLineMap: Map<number, NodeLineRange> | null = null;
 
-/** Reverse map: line number → nodeId (for code→SVG hover). */
-let cachedLineToNodeMap: Map<number, string> | null = null;
+/** Reverse map: line number → source ordinal (for code→SVG hover). */
+let cachedLineToSourceMap: Map<number, number> | null = null;
 
 /** Cleanup for code-line hover listeners. */
 let codeHoverCleanup: (() => void) | null = null;
 
-function buildLineToNodeMap(lineMap: Map<string, NodeLineRange>): Map<number, string> {
-  const result = new Map<number, string>();
-  for (const [nodeId, range] of lineMap) {
+function buildLineToSourceMap(lineMap: Map<number, NodeLineRange>): Map<number, number> {
+  const result = new Map<number, number>();
+  for (const [sourceOrdinal, range] of lineMap) {
     for (let line = range.start; line <= range.end; line++) {
-      // First nodeId wins (innermost elements are added first by buildNodeLineMap)
+      // First source ordinal wins (innermost elements are added first by buildNodeLineMap)
       if (!result.has(line)) {
-        result.set(line, nodeId);
+        result.set(line, sourceOrdinal);
       }
     }
   }
@@ -37,24 +39,24 @@ function buildLineToNodeMap(lineMap: Map<string, NodeLineRange>): Map<number, st
 function setupCodeLineHover(codeOutput: HTMLElement): () => void {
   const onMouseOver = (e: MouseEvent): void => {
     const target = (e.target as HTMLElement).closest?.(".code-line") as HTMLElement | null;
-    if (!target || !cachedLineToNodeMap || !cachedLineMap) {
+    if (!target || !cachedLineToSourceMap || !cachedLineMap) {
       return;
     }
     const lineNum = Number(target.dataset.line);
-    const nodeId = cachedLineToNodeMap.get(lineNum) ?? null;
-    if (nodeId) {
-      const range = cachedLineMap.get(nodeId) ?? null;
+    const sourceOrdinal = cachedLineToSourceMap.get(lineNum) ?? null;
+    if (sourceOrdinal !== null) {
+      const range = cachedLineMap.get(sourceOrdinal) ?? null;
       highlightCodeLines(codeOutput, range);
-      coreState.inspectHighlight?.(nodeId);
+      coreState.inspectHandle?.highlight(cachedSources?.get(sourceOrdinal)?.source ?? null);
     } else {
       highlightCodeLines(codeOutput, null);
-      coreState.inspectHighlight?.(null);
+      coreState.inspectHandle?.highlight(null);
     }
   };
 
   const onMouseLeave = (): void => {
     highlightCodeLines(codeOutput, null);
-    coreState.inspectHighlight?.(null);
+    coreState.inspectHandle?.highlight(null);
   };
 
   codeOutput.addEventListener("mouseover", onMouseOver);
@@ -66,6 +68,7 @@ function setupCodeLineHover(codeOutput: HTMLElement): () => void {
   };
 }
 
+/** Update source or SVG code and bind inspection to the current line map. */
 export function updateCodePanel(): void {
   // Clean up previous code hover listeners
   if (codeHoverCleanup) {
@@ -95,11 +98,13 @@ export function updateCodePanel(): void {
       "typescript",
     );
     cachedLineMap = null;
-    cachedLineToNodeMap = null;
+    cachedLineToSourceMap = null;
   } else {
     const formatted = formatSvgCode(coreState.cachedSvgString);
-    cachedLineMap = buildNodeLineMap(formatted);
-    cachedLineToNodeMap = buildLineToNodeMap(cachedLineMap);
+    const sourceIndex = coreState.cachedIr ? buildIRSourceIndex(coreState.cachedIr) : null;
+    cachedSources = sourceIndex?.sources ?? null;
+    cachedLineMap = sourceIndex ? buildNodeLineMap(formatted, sourceIndex) : new Map();
+    cachedLineToSourceMap = buildLineToSourceMap(cachedLineMap);
     const highlighted = Prism.highlight(formatted, getPrismGrammar("markup"), "markup");
     codeOutput.innerHTML = wrapInLineElements(highlighted);
     // Attach code→SVG hover listeners
@@ -108,14 +113,14 @@ export function updateCodePanel(): void {
 }
 
 /**
- * Highlight SVG source lines corresponding to the given nodeId.
+ * Highlight SVG source lines corresponding to the given source occurrence.
  * Called by the inspect hover `onHoverChange` callback (SVG→code direction).
  */
-export function highlightSvgSourceLine(nodeId: string | null): void {
+export function highlightSvgSourceLine(source: IRSourceRef | null): void {
   if (coreState.currentCodeTab !== "svg" || !cachedLineMap) {
     return;
   }
   const codeOutput = getElement("code-output");
-  const range = nodeId ? (cachedLineMap.get(nodeId) ?? null) : null;
+  const range = source ? (cachedLineMap.get(source.sourceIndex) ?? null) : null;
   highlightCodeLines(codeOutput, range);
 }

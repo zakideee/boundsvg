@@ -839,8 +839,8 @@ describe("computeLayout visual transport", () => {
       createElement(
         "Canvas",
         { width: 100, height: 100 },
-        createElement("Flex", { strokeScaling: "canvas" }),
-        createElement("Grid", { strokeScaling: "transform" }),
+        createElement("Flex", { outline: { stroke: "none", strokeScaling: "canvas" } }),
+        createElement("Grid", { outline: { stroke: "none", strokeScaling: "transform" } }),
         createElement("Box", { borderWidth: 1, borderColor: "#fff" }),
         createElement("Path", {
           d: "M0 0L10 10",
@@ -851,8 +851,12 @@ describe("computeLayout visual transport", () => {
       ),
     );
 
-    expect(root.children[0]!.visual).toEqual({ strokeScaling: "canvas" });
-    expect(root.children[1]!.visual).toBeUndefined();
+    expect(root.children[0]!.visual).toEqual({
+      outline: { stroke: "none", strokeScaling: "canvas" },
+    });
+    expect(root.children[1]!.visual).toEqual({
+      outline: { stroke: "none", strokeScaling: "transform" },
+    });
     expect(root.children[2]!.visual).toEqual({ borderWidth: 1, borderColor: "#fff" });
     expect(root.children[3]!.visual).toEqual({
       d: "M0 0L10 10",

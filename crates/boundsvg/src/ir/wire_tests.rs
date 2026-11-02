@@ -16,7 +16,7 @@ use serde_json::json;
 
 #[test]
 fn path_geometry_is_output_only_and_recomputed_for_every_input_presence() {
-    let fixture = json!({"type":"path", "nodeId":"path", "bbox":{"x":10.0,"y":20.0,"w":1.0,"h":1.0}, "pathData":"M-50 0h200v40h-200Z", "stroke":"red", "strokeWidth":3.006, "strokeLinecap":"square", "strokeLinejoin":"miter", "strokeMiterlimit":7.006});
+    let fixture = json!({ "ownership": { "role": "source" },"type":"path", "nodeId":"path", "bbox":{"x":10.0,"y":20.0,"w":1.0,"h":1.0}, "pathData":"M-50 0h200v40h-200Z", "stroke":"red", "strokeWidth":3.006, "strokeLinecap":"square", "strokeLinejoin":"miter", "strokeMiterlimit":7.006});
     let mut expected = None;
     for supplied in [
         None,
@@ -67,7 +67,7 @@ fn empty_and_prefix_path_metadata_have_explicit_output_meanings() {
             false,
         ),
     ] {
-        let input = json!({"type":"path","nodeId":"path","bbox":{"x":0.0,"y":0.0,"w":0.0,"h":0.0},"pathData":path_data});
+        let input = json!({ "ownership": { "role": "source" },"type":"path","nodeId":"path","bbox":{"x":0.0,"y":0.0,"w":0.0,"h":0.0},"pathData":path_data});
         let input_node: super::wire_input::IrNodeInput =
             serde_json::from_value(input).expect("raw Path input");
         let node: super::types::IrNode = input_node.into();
@@ -193,7 +193,7 @@ fn animation_transform2_d_keeps_directional_presence_and_round_trip() {
     );
     let mut unknown = fixture;
     unknown["unknownOption"] = json!(true);
-    assert!(serde_json::from_value::<AnimationTransform2DInput>(unknown).is_ok());
+    assert!(serde_json::from_value::<AnimationTransform2DInput>(unknown).is_err());
 }
 
 #[test]
@@ -290,7 +290,7 @@ fn handlers_ref_keeps_directional_presence_and_round_trip() {
     );
     let mut unknown = fixture;
     unknown["unknownOption"] = json!(true);
-    assert!(serde_json::from_value::<HandlersRefInput>(unknown).is_ok());
+    assert!(serde_json::from_value::<HandlersRefInput>(unknown).is_err());
 }
 
 #[test]

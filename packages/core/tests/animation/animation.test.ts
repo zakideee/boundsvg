@@ -186,10 +186,10 @@ describe("declarative animation v1", () => {
       resourceIdPrefix: "scope:one.",
     });
 
-    expect(svg).toContain('class="bsvg-scope:one.anim-na-card"');
-    expect(svg).toContain("@keyframes scope\\:one\\.anim-na-card-keyframes");
-    expect(svg).toContain(".bsvg-scope\\:one\\.anim-na-card {");
-    expect(svg).toContain("animation-name: scope\\:one\\.anim-na-card-keyframes;");
+    expect(svg).toContain('class="bsvg-scope:one.anim-n4"');
+    expect(svg).toContain("@keyframes scope\\:one\\.anim-n4-keyframes");
+    expect(svg).toContain(".bsvg-scope\\:one\\.anim-n4 {");
+    expect(svg).toContain("animation-name: scope\\:one\\.anim-n4-keyframes;");
   });
 
   it("samples step keywords across the delay and active-start boundary", () => {
@@ -669,6 +669,7 @@ describe("declarative animation v1", () => {
     });
   });
   describe("reducedMotion", () => {
+    /** Reduced-motion stylesheet expected around declarative animation rules. */
     const REDUCED_MOTION_BLOCK = "@media (prefers-reduced-motion: reduce) {";
 
     it("leaves output byte identical when unspecified or explicitly kept", () => {

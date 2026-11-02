@@ -35,9 +35,9 @@ void (<BoundSvg vnode={vnode} />);
 const stableStroke: StrokeScaling = "canvas";
 void (
   <Canvas width={100} height={100}>
-    <Flex strokeScaling={stableStroke} />
-    <Grid strokeScaling="canvas" />
-    <Box strokeScaling="transform" />
+    <Flex outline={{ stroke: "none", strokeScaling: stableStroke }} />
+    <Grid outline={{ stroke: "none", strokeScaling: "canvas" }} />
+    <Box outline={{ stroke: "none", strokeScaling: "transform" }} />
     <Path d="M0 0L1 1" width={1} height={1} stroke="#000" strokeScaling="canvas" />
   </Canvas>
 );

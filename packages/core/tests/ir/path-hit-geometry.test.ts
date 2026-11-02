@@ -1,18 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { FatalError } from "../../src/errors.js";
 import { cloneIRForLayeredTransform } from "../../src/ir/clone.js";
-import {
-  buildHitTestIndex,
-  hitTest,
-  hitTestCandidates,
-  hitTestWithIndex,
-} from "../../src/ir/hit-test.js";
+import { buildHitTestIndex, hitTest } from "../../src/ir/hit-test.js";
 import type { IR, IRGroupNode, IRNode, IRPathNode } from "../../src/ir/types.js";
 import { applyAffineMatrixToPoint, createResolvedTransformMatrix } from "../../src/transform.js";
+import { circularClip } from "../helpers/box-clip.js";
 
 /** A narrow placement frame deliberately excludes the authored painted rectangle. */
 function overflowPath(negative = false): IRPathNode {
   return {
+    ownership: { role: "source", on: { onClick: "path-click" } },
     type: "path",
     nodeId: "path",
     bbox: { x: negative ? 150 : 10, y: 10, w: 20, h: 20 },
@@ -23,17 +20,22 @@ function overflowPath(negative = false): IRPathNode {
       strokeOutset: { radius: 0, multiplier: 1 },
       isComplete: true,
     },
-    on: { onClick: "path-click" },
   };
 }
 
 /** Attach one scene without conflating semantic order with layout-tree order. */
-function makeHitScene(nodes: IRNode[], drawOrder: string[]): IR {
+function makeHitScene(nodes: IRNode[]): IR {
   return {
-    root: { type: "group", nodeId: "root", bbox: { x: 0, y: 0, w: 300, h: 120 }, children: nodes },
+    root: {
+      ownership: { role: "source" },
+      type: "group",
+      nodeId: "root",
+      bbox: { x: 0, y: 0, w: 300, h: 120 },
+      children: nodes,
+    },
     width: 300,
     height: 120,
-    drawOrder,
+
     warnings: [],
   };
 }
@@ -41,31 +43,42 @@ function makeHitScene(nodes: IRNode[], drawOrder: string[]): IR {
 /** Compare every public hit query against the same expected candidate order. */
 function expectHitQueries(ir: IR, point: { x: number; y: number }, candidates: string[]): void {
   const index = buildHitTestIndex(ir);
-  expect(hitTest(ir, point.x, point.y)).toBe(candidates[0] ?? null);
-  expect(hitTestWithIndex(index, point.x, point.y)).toBe(candidates[0] ?? null);
-  expect(hitTestCandidates(index, point.x, point.y)).toEqual(candidates);
+  expect(hitTest(ir, point.x, point.y)?.nodeId ?? null).toBe(candidates[0] ?? null);
+  expect(index.queryTopmost(point.x, point.y)?.nodeId ?? null).toBe(candidates[0] ?? null);
+  expect(
+    index.queryCandidates(point.x, point.y).map((candidate) => candidate.source.nodeId),
+  ).toEqual(candidates);
 }
 
 /** An interactive underlay precedes the Path; its presence exposes lost candidates. */
-const underlay: IRNode = { type: "rect", nodeId: "underlay", bbox: { x: 0, y: 0, w: 300, h: 120 } };
+const underlay: IRNode = {
+  ownership: { role: "source" },
+  type: "rect",
+  nodeId: "underlay",
+  bbox: { x: 0, y: 0, w: 300, h: 120 },
+};
 
 describe("Path paint candidates and exact clip gates", () => {
   it.each([15, 16, 17])("keeps signed overflow geometry across the %i-entry threshold", (count) => {
     for (const negative of [false, true]) {
       const path = overflowPath(negative);
       const fillers: IRNode[] = Array.from({ length: count - 2 }, (_, entryIndex) => ({
+        ownership: { role: "source" },
         type: "rect",
         nodeId: `filler-${entryIndex}`,
         bbox: { x: 280, y: 100, w: 1, h: 1 },
       }));
-      const scene = makeHitScene(
-        [
-          underlay,
-          ...fillers,
-          { type: "group", nodeId: "path", bbox: path.bbox, children: [path] },
-        ],
-        ["underlay", ...fillers.map((node) => node.nodeId), "path"],
-      );
+      const scene = makeHitScene([
+        underlay,
+        ...fillers,
+        {
+          ownership: { role: "source" },
+          type: "group",
+          nodeId: "path",
+          bbox: path.bbox,
+          children: [path],
+        },
+      ]);
       expectHitQueries(scene, { x: negative ? 100 : 200, y: 30 }, ["path", "underlay"]);
       expect(path.bbox.w).toBe(20);
       expectHitQueries(scene, { x: -1, y: 30 }, []);
@@ -75,13 +88,18 @@ describe("Path paint candidates and exact clip gates", () => {
 
   it("replaces the semantic placement frame, including deletion for empty geometry", () => {
     const path = overflowPath();
-    expectHitQueries(makeHitScene([path], ["path"]), { x: 20, y: 20 }, []);
+    expectHitQueries(makeHitScene([path]), { x: 20, y: 20 }, []);
     path.pathGeometry.bounds = null;
     expectHitQueries(
-      makeHitScene(
-        [{ type: "group", nodeId: "path", bbox: path.bbox, children: [path] }],
-        ["path"],
-      ),
+      makeHitScene([
+        {
+          ownership: { role: "source" },
+          type: "group",
+          nodeId: "path",
+          bbox: path.bbox,
+          children: [path],
+        },
+      ]),
       { x: 20, y: 20 },
       [],
     );
@@ -95,15 +113,22 @@ describe("Path paint candidates and exact clip gates", () => {
     -4,
   ])("clips the owner and descendant with resolved radius %j", (radius) => {
     const card: IRGroupNode = {
+      ownership: { role: "source", on: { onClick: "card-click" } },
       type: "group",
       nodeId: "card",
       bbox: { x: 10, y: 10, w: 100, h: 100 },
-      clipPath: { x: 10, y: 10, w: 100, h: 100 },
-      clipBorderRadius: radius,
-      on: { onClick: "card-click" },
-      children: [{ type: "rect", nodeId: "content", bbox: { x: 0, y: 0, w: 200, h: 120 } }],
+
+      children: [
+        {
+          ownership: { role: "source" },
+          type: "rect",
+          nodeId: "content",
+          bbox: { x: 0, y: 0, w: 200, h: 120 },
+        },
+      ],
+      clip: circularClip({ x: 10, y: 10, w: 100, h: 100 }, radius),
     };
-    const scene = makeHitScene([card], ["content", "card"]);
+    const scene = makeHitScene([card]);
     expectHitQueries(scene, { x: 60, y: 60 }, ["card", "content"]);
     expectHitQueries(
       scene,
@@ -111,33 +136,35 @@ describe("Path paint candidates and exact clip gates", () => {
       radius === 50 || typeof radius === "object" ? [] : ["card", "content"],
     );
     expectHitQueries(scene, { x: 150, y: 30 }, []);
-    const index = buildHitTestIndex(scene);
-    index.insert("card", { x: 0, y: 0, w: 20, h: 20 }, 100);
-    expect(index.queryCandidates(12, 12)).toEqual(
-      radius === 50 || typeof radius === "object" ? ["card"] : ["card", "card", "content"],
-    );
   });
 
   it("tests rotated nested clips in their original coordinates", () => {
     const outer: IRGroupNode = {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "outer",
       bbox: { x: 0, y: 0, w: 100, h: 100 },
       transform: { translateX: 100, rotateDeg: 45 },
-      clipPath: { x: 0, y: 0, w: 100, h: 100 },
-      clipBorderRadius: 50,
       children: [
         {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "inner",
           bbox: { x: 20, y: 20, w: 60, h: 60 },
-          clipPath: { x: 20, y: 20, w: 60, h: 60 },
-          clipBorderRadius: 30,
-          children: [{ type: "rect", nodeId: "content", bbox: { x: 0, y: 0, w: 100, h: 100 } }],
+          children: [
+            {
+              ownership: { role: "source" },
+              type: "rect",
+              nodeId: "content",
+              bbox: { x: 0, y: 0, w: 100, h: 100 },
+            },
+          ],
+          clip: circularClip({ x: 20, y: 20, w: 60, h: 60 }, 30),
         },
       ],
+      clip: circularClip({ x: 0, y: 0, w: 100, h: 100 }, 50),
     };
-    const scene = makeHitScene([outer], ["content"]);
+    const scene = makeHitScene([outer]);
     const matrix = createResolvedTransformMatrix(outer.transform, outer.bbox);
     expectHitQueries(scene, applyAffineMatrixToPoint(matrix, { x: 50, y: 50 }), ["content"]);
     expectHitQueries(scene, applyAffineMatrixToPoint(matrix, { x: 21, y: 21 }), []);
@@ -148,15 +175,16 @@ describe("Path paint candidates and exact clip gates", () => {
     path.bbox = { x: 0, y: 0, w: 20, h: 20 };
     path.pathGeometry.bounds = { minX: -40, minY: -40, maxX: 100, maxY: 100 };
     const parent: IRGroupNode = {
+      ownership: { role: "source", on: { onClick: "parent-click" } },
       type: "group",
       nodeId: "parent",
       bbox: { x: 0, y: 0, w: 40, h: 40 },
       transform: { translateX: 80, translateY: 20, rotateDeg: 45 },
-      on: { onClick: "parent-click" },
+
       children: [path],
     };
     const matrix = createResolvedTransformMatrix(parent.transform, parent.bbox);
-    const scene = makeHitScene([parent], ["path", "parent"]);
+    const scene = makeHitScene([parent]);
     expectHitQueries(scene, applyAffineMatrixToPoint(matrix, { x: 20, y: 20 }), ["parent", "path"]);
     expectHitQueries(scene, applyAffineMatrixToPoint(matrix, { x: -5, y: 20 }), ["path"]);
   });
@@ -170,13 +198,14 @@ describe("Path paint candidates and exact clip gates", () => {
       isComplete: true,
     };
     const parent: IRGroupNode = {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "scale",
       bbox: path.bbox,
       transform: { scaleX: 2, scaleY: 2 },
       children: [path],
     };
-    const scene = makeHitScene([parent], ["path"]);
+    const scene = makeHitScene([parent]);
     expectHitQueries(scene, { x: 60, y: 49 }, ["path"]);
     path.strokeScaling = "canvas";
     expectHitQueries(scene, { x: 60, y: 49 }, []);
@@ -189,7 +218,7 @@ describe("Path paint candidates and exact clip gates", () => {
     const path = overflowPath();
     path.pathGeometry.bounds = { minX: -1e308, minY: -1e308, maxX: 1e308, maxY: 1e308 };
     path.pathGeometry.strokeOutset = { radius: 1e308, multiplier: 1e308 };
-    expectHitQueries(makeHitScene([path], ["path"]), { x: 10, y: 10 }, ["path"]);
+    expectHitQueries(makeHitScene([path]), { x: 10, y: 10 }, ["path"]);
   });
 
   it.each([
@@ -199,8 +228,10 @@ describe("Path paint candidates and exact clip gates", () => {
     { bounds: null, isComplete: true, strokeOutset: { radius: -1, multiplier: 1 } },
   ])("rejects invalid output geometry %j instead of using layout", (metadata) => {
     const path = { ...overflowPath(), pathGeometry: metadata } as unknown as IRPathNode;
-    expect(() => buildHitTestIndex(makeHitScene([path], ["path"]))).toThrow(FatalError);
-    expect(() => hitTest(makeHitScene([path], ["path"]), 20, 20)).toThrow(/schema-34/);
+    expect(() => buildHitTestIndex(makeHitScene([path]))).toThrow(FatalError);
+    expect(() => hitTest(makeHitScene([path]), 20, 20)?.nodeId ?? null).toThrow(
+      /canonical pathGeometry/,
+    );
   });
 
   it("detaches derived bounds and stroke factors during layered cloning", () => {

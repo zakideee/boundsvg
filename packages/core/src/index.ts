@@ -80,12 +80,16 @@ export type { FontFaceInput, RegisterFontsOptions } from "./font/types.js";
 export type { InspectionBBox, SceneInspection } from "./inspect.js";
 export { inspectScene } from "./inspect.js";
 export { validateSerializedIR } from "./ir/output-validator.js";
+export type { IRSourceRef } from "./ir/source-index.js";
 // IR (type-only — query functions are in @boundsvg/core/scene)
 export type {
+  BoxClip,
+  BoxContour,
   IR,
   IRGroupNode,
   IRImageNode,
   IRNode,
+  IRNodeOwnership,
   IRNodeType,
   IRPathNode,
   IRRectNode,
@@ -120,7 +124,6 @@ export type {
   LayoutTransitionCheckpoint,
   LayoutTransitionInput,
 } from "./layout-transition.js";
-export { LAYOUT_TRANSITION_WRAPPER_META } from "./layout-transition.js";
 // Node IDs
 export type {
   CollectedNodeId,
@@ -223,6 +226,7 @@ export type {
   TextDecorationFragment,
   TextDecorationLine,
   TextDecorationPaintPath,
+  TextGradient,
   TextOutlineNode,
   TextOutlinePath,
   TextPathMode,
@@ -282,6 +286,7 @@ export type {
   AnimationTransform2D,
   AnyVNode,
   BorderRadius,
+  BoxOutlineStyle,
   BoxProps,
   BoxVNode,
   CanvasProps,

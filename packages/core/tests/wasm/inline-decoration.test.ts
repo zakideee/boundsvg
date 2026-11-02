@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createEngineAsync, type Engine } from "../../src/engine.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import { initNodeWasm } from "../../src/node.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import { assertWasmPkgAvailable, loadSubsetFont } from "./test-prerequisites.js";
@@ -91,8 +92,14 @@ describe("Inline decoration rendering", () => {
   it("emits a decoration rect into the IR, painted before the text", () => {
     const { ir } = engine.renderToSvgAndIR(decoratedText());
 
-    const decorationIndex = ir.drawOrder.findIndex((id) => id.startsWith("deco:ibox"));
-    const textIndex = ir.drawOrder.indexOf("deco");
+    const decorationIndex = [...buildIRSourceIndex(ir).nodes.values()]
+      .filter((entry) => entry.paintOrder !== null)
+      .map((entry) => entry.node.nodeId)
+      .findIndex((id) => id.startsWith("deco:ibox"));
+    const textIndex = [...buildIRSourceIndex(ir).nodes.values()]
+      .filter((entry) => entry.paintOrder !== null)
+      .map((entry) => entry.node.nodeId)
+      .indexOf("deco");
 
     expect(decorationIndex).toBeGreaterThanOrEqual(0);
     expect(textIndex).toBeGreaterThanOrEqual(0);
@@ -131,9 +138,12 @@ describe("Inline decoration rendering", () => {
       const omitted = engine.renderToSvgAndIR(paddingOnlyText(writingMode, false));
       const padded = engine.renderToSvgAndIR(paddingOnlyText(writingMode, true));
 
-      expect(padded.ir.drawOrder.some((nodeId) => nodeId.startsWith("padding-only:ibox"))).toBe(
-        false,
-      );
+      expect(
+        [...buildIRSourceIndex(padded.ir).nodes.values()]
+          .filter((entry) => entry.paintOrder !== null)
+          .map((entry) => entry.node.nodeId)
+          .some((nodeId) => nodeId.startsWith("padding-only:ibox")),
+      ).toBe(false);
       expect(padded.svg).not.toBe(omitted.svg);
 
       const omittedPng = engine.renderToPng(paddingOnlyText(writingMode, false));

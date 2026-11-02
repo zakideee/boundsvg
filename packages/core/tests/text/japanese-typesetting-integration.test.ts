@@ -16,6 +16,7 @@ afterAll(() => {
 describe("Japanese typesetting integration", () => {
   it("renders vertical text as path-only output without vert CSS hacks", () => {
     const textNode: IRNode = {
+      ownership: { role: "source" },
       type: "text",
       nodeId: "t1",
       bbox: { x: 0, y: 0, w: 100, h: 200 },
@@ -41,12 +42,13 @@ describe("Japanese typesetting integration", () => {
 
     const ir: IR = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 100, h: 200 },
         children: [textNode],
       },
-      drawOrder: ["t1"],
+
       width: 100,
       height: 200,
       warnings: [],

@@ -1,12 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Engine } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import type { IR, IRNode, IRTextNode } from "../../src/ir/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { AnimationSpec } from "../../src/vnode/types.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
+/** Keyframe track used by the text-unit rendering and sampling fixtures. */
 const UNIT_TRACK: AnimationSpec = {
   keyframes: [
     { at: 0, opacity: 0, transform: { translateY: 12, scaleX: 0.8, scaleY: 0.8 } },
@@ -137,8 +139,18 @@ describe("Text animateUnits", () => {
     expect(text.unitAnimationSamples?.[1]?.opacity).toBeCloseTo(0);
     expect(text.unitAnimationSamples?.[0]?.bbox?.w).toBeGreaterThan(0);
     expect(text.unitAnimationSamples?.[0]?.bbox?.h).toBeGreaterThan(0);
-    expect(ir.drawOrder.filter((nodeId) => nodeId === "units")).toHaveLength(1);
-    expect(ir.drawOrder.some((nodeId) => nodeId.includes(":unit:"))).toBe(false);
+    expect(
+      [...buildIRSourceIndex(ir).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId)
+        .filter((nodeId) => nodeId === "units"),
+    ).toHaveLength(1);
+    expect(
+      [...buildIRSourceIndex(ir).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId)
+        .some((nodeId) => nodeId.includes(":unit:")),
+    ).toBe(false);
     expect(text.glyphPaths?.map((path) => path.unitId)).toEqual(
       text.unitMap?.units.map((unit) => unit.unitId),
     );
@@ -405,8 +417,8 @@ describe("Text animateUnits", () => {
       timeMs: 25,
     });
 
-    expect(svg.indexOf('class="bsvg-anim-units"')).toBeLessThan(
-      svg.indexOf('class="bsvg-anim-units:unit:0"'),
+    expect(svg.indexOf('class="bsvg-anim-n1"')).toBeLessThan(
+      svg.indexOf('class="bsvg-anim-n2:unit:0"'),
     );
     expect(svg.match(/aria-label="AB"/g)).toHaveLength(1);
   });
@@ -417,12 +429,12 @@ describe("Text animateUnits", () => {
       playback: { mode: "independent" },
       timeMs: 25,
     });
-    const firstShadowIndex = svg.indexOf('filter="url(#filter-units:ts0)"');
-    const secondShadowIndex = svg.indexOf('filter="url(#filter-units:ts1)"');
+    const firstShadowIndex = svg.indexOf('filter="url(#filter-n2:ts0)"');
+    const secondShadowIndex = svg.indexOf('filter="url(#filter-n2:ts1)"');
     const firstStrokeIndex = svg.indexOf('stroke="#ff0000"');
     const secondStrokeIndex = svg.indexOf('stroke="#0000ff"');
     const fillIndex = svg.indexOf('fill="#ffffff"');
-    const allShadowIndices = [...svg.matchAll(/filter="url\(#filter-units:ts[01]\)"/g)].map(
+    const allShadowIndices = [...svg.matchAll(/filter="url\(#filter-n2:ts[01]\)"/g)].map(
       (match) => match.index,
     );
     const allStrokeIndices = [...svg.matchAll(/stroke="(?:#ff0000|#0000ff)"/g)].map(
@@ -757,8 +769,8 @@ describe("Text animateUnits", () => {
     const originalX = sample.bbox.x + sample.bbox.w / 2;
     const centerY = sample.bbox.y + sample.bbox.h / 2;
 
-    expect(engine.hitTest(ir, originalX, centerY)).toBeNull();
-    expect(engine.hitTest(ir, originalX + 80, centerY)).toBe("moving-unit");
+    expect(engine.hitTest(ir, originalX, centerY)?.nodeId ?? null).toBeNull();
+    expect(engine.hitTest(ir, originalX + 80, centerY)?.nodeId ?? null).toBe("moving-unit");
   });
 
   it("keeps unit fragments inside one Text layer and marks static manifests animated", () => {
@@ -767,7 +779,7 @@ describe("Text animateUnits", () => {
     });
 
     expect(sampled.layers).toHaveLength(1);
-    expect(sampled.layers[0]?.nodeIds).toEqual(["units"]);
+    expect(sampled.layers[0]?.sources.map((entry) => entry.source.nodeId)).toEqual(["units"]);
     expect(sampled.layers[0]?.svg).not.toContain("@keyframes");
     expect(sampled.layers[0]?.svg.match(/aria-label="AB"/g)).toHaveLength(1);
     expect(sampled.manifest).toMatchObject({ animated: true, timeMs: 25 });

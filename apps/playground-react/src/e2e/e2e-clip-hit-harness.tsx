@@ -1,5 +1,6 @@
+import { bindIRToSvg, verifyPathGeometry } from "@boundsvg/browser/events";
 import type { IR, VNode } from "@boundsvg/core";
-import { buildHitTestIndex, hitTest, hitTestCandidates } from "@boundsvg/core/scene";
+import { buildHitTestIndex, buildIRSourceIndex, hitTest } from "@boundsvg/core/scene";
 import { type EventCallback, InteractiveBoundSvg } from "@boundsvg/react/interactive";
 import { BoundSvgProvider } from "@boundsvg/react/provider";
 import { StrictMode } from "react";
@@ -19,7 +20,8 @@ type CallbackDelivery = {
 type HarnessSnapshot = {
   ready: boolean;
   callbacks: CallbackDelivery[];
-  drawOrder: string[];
+  sources: string[];
+  hoverSource: import("@boundsvg/core/scene").IRSourceRef | null;
   svg: string | null;
   error: string | null;
 };
@@ -31,6 +33,8 @@ let renderedIr: IR | null = null;
 let mountElement = document.getElementById("mount");
 /** Mutable callback log avoids introducing event-driven scene rerenders into the test. */
 let deliveries: CallbackDelivery[] = [];
+/** Latest hover source belongs to the currently mounted snapshot. */
+let hoveredSource: import("@boundsvg/core/scene").IRSourceRef | null = null;
 
 /** One receiver records the unmodified event contract delivered by React. */
 const recordDelivery: EventCallback = (info) => {
@@ -53,6 +57,7 @@ function mountScene(vnode: VNode, options: MountOptions = {}): void {
   }
   mountedRoot?.unmount();
   renderedIr = null;
+  hoveredSource = null;
   deliveries = [];
   mountElement?.remove();
   mountElement = document.createElement("div");
@@ -78,6 +83,9 @@ function mountScene(vnode: VNode, options: MountOptions = {}): void {
           {...(options.animated
             ? { renderMode: "animated", renderOptions: { playback: { mode: "independent" } } }
             : { renderOptions: { timeMs: options.timeMs } })}
+          onHoverChange={(source) => {
+            hoveredSource = source;
+          }}
           onRender={(ir) => {
             renderedIr = ir;
           }}
@@ -94,7 +102,10 @@ function readSnapshot(): HarnessSnapshot {
   return {
     ready: renderedIr !== null,
     callbacks: [...deliveries],
-    drawOrder: renderedIr?.drawOrder ?? [],
+    hoverSource: hoveredSource,
+    sources: renderedIr
+      ? [...buildIRSourceIndex(renderedIr).sources.values()].map((info) => info.source.nodeId)
+      : [],
     svg: scope?.querySelector("svg")?.outerHTML ?? null,
     error: scope?.querySelector('[data-testid="error"]')?.textContent ?? null,
   };
@@ -121,6 +132,7 @@ type ClipHitHarness = {
   armCapture: typeof armPointerCapture;
   coreHit: (x: number, y: number) => string | null;
   coreCandidates: (x: number, y: number) => string[];
+  pathGeometry: (sourceIndex: number, clientX: number, clientY: number) => boolean | null;
 };
 
 declare global {
@@ -138,7 +150,28 @@ window.boundsvgClipHit = {
     deliveries = [];
   },
   armCapture: armPointerCapture,
-  coreHit: (x, y) => (renderedIr ? hitTest(renderedIr, x, y) : null),
+  pathGeometry: (sourceIndex, clientX, clientY) => {
+    const scope = mountElement?.shadowRoot ?? mountElement;
+    const svg = scope?.querySelector("svg");
+    if (!renderedIr || !svg) {
+      return null;
+    }
+    const index = buildIRSourceIndex(renderedIr);
+    const primary = index.sources.get(sourceIndex)?.primaryNodeIndex;
+    if (
+      primary === undefined ||
+      primary === null ||
+      index.nodes.get(primary)?.node.type !== "path"
+    ) {
+      return null;
+    }
+    return verifyPathGeometry(bindIRToSvg(svg, index), primary, clientX, clientY);
+  },
+  coreHit: (x, y) => (renderedIr ? (hitTest(renderedIr, x, y)?.nodeId ?? null) : null),
   coreCandidates: (x, y) =>
-    renderedIr ? hitTestCandidates(buildHitTestIndex(renderedIr), x, y) : [],
+    renderedIr
+      ? buildHitTestIndex(renderedIr)
+          .queryCandidates(x, y)
+          .map((candidate) => candidate.source.nodeId)
+      : [],
 };

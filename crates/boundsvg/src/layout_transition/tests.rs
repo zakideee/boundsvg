@@ -8,6 +8,10 @@ use crate::ir::types::{AnimationKeyframe, AnimationSpec, BBox, IrNode, IrNodeKin
 
 fn group(node_id: &str, children: Vec<IrNode>) -> IrNode {
     IrNode {
+        ownership: crate::ir::ownership::IrNodeOwnership::Source {
+            on: None,
+            meta: None,
+        },
         node_id: node_id.to_string(),
         bbox: BBox {
             x: 0.0,
@@ -17,14 +21,11 @@ fn group(node_id: &str, children: Vec<IrNode>) -> IrNode {
         },
         kind: IrNodeKind::Group {
             children,
-            clip_path: None,
-            clip_border_radius: None,
+            clip: None,
             opacity: None,
             box_shadow: None,
-            meta: None,
             transform: None,
             animation: None,
-            on: None,
         },
     }
 }
@@ -37,12 +38,15 @@ fn group_with_bbox(node_id: &str, bbox: BBox, children: Vec<IrNode>) -> IrNode {
 
 fn image_with_bbox(node_id: &str, bbox: BBox) -> IrNode {
     IrNode {
+        ownership: crate::ir::ownership::IrNodeOwnership::Source {
+            on: None,
+            meta: None,
+        },
         node_id: node_id.to_string(),
         bbox,
         kind: IrNodeKind::Image {
             src: "data:image/png;base64,AA==".to_string(),
             preserve_aspect_ratio: "xMidYMid meet".to_string(),
-            on: None,
         },
     }
 }
@@ -54,7 +58,6 @@ fn ir(root: IrNode) -> Ir {
 fn ir_with_size(root: IrNode, width: f64, height: f64) -> Ir {
     Ir {
         root,
-        draw_order: Vec::new(),
         width,
         height,
         debug: None,
@@ -268,9 +271,7 @@ fn near_identity_generated_affine_is_not_omitted() {
 #[test]
 fn canvas_stroke_signature_requires_an_actually_painted_stroke() {
     assert!(signature_has_painted_canvas_stroke(&json!({
-        "strokeScaling": "canvas",
-        "borderWidth": 2,
-        "borderColor": "#ffffff"
+        "outline": {"strokeScaling": "canvas", "strokeWidth": 2, "stroke": "#ffffff"}
     })));
     assert!(signature_has_painted_canvas_stroke(&json!({
         "strokeScaling": "canvas",
@@ -282,9 +283,7 @@ fn canvas_stroke_signature_requires_an_actually_painted_stroke() {
         "stroke": "#ffffff"
     })));
     assert!(!signature_has_painted_canvas_stroke(&json!({
-        "strokeScaling": "canvas",
-        "borderWidth": 0,
-        "borderColor": "#ffffff"
+        "outline": {"strokeScaling": "canvas", "strokeWidth": 0, "stroke": "#ffffff"}
     })));
     assert!(signature_has_painted_canvas_stroke(&json!({
         "strokeScaling": "canvas",
@@ -292,9 +291,7 @@ fn canvas_stroke_signature_requires_an_actually_painted_stroke() {
         "stroke": "#ffffff"
     })));
     assert!(!signature_has_painted_canvas_stroke(&json!({
-        "strokeScaling": "transform",
-        "borderWidth": 2,
-        "borderColor": "#ffffff"
+        "outline": {"strokeScaling": "transform", "strokeWidth": 2, "stroke": "#ffffff"}
     })));
 }
 
@@ -314,9 +311,7 @@ fn canvas_stroke_rejects_non_uniform_generated_wrapper_ancestor_before_emit() {
                     "nodeType": "box",
                     "authoredId": true,
                     "visual": {
-                        "strokeScaling": "canvas",
-                        "borderWidth": 2,
-                        "borderColor": "#ffffff"
+                        "outline": {"strokeScaling": "canvas", "strokeWidth": 2, "stroke": "#ffffff"}
                     },
                     "children": []
                 }]
@@ -564,20 +559,21 @@ fn transition_ir_injects_only_required_wrapper_and_preserves_authored_inner_node
             group_with_bbox("child", BBox::new(10.0, 10.0, 20.0, 20.0), Vec::new()),
         ],
     );
-    let IrNodeKind::Group {
-        animation, meta, ..
-    } = &mut authored_parent.kind
-    else {
+    let IrNodeKind::Group { animation, .. } = &mut authored_parent.kind else {
         panic!("test helper always builds Groups");
     };
     *animation = Some(parent_animation);
-    *meta = Some(BTreeMap::from([(
-        "authored".to_string(),
-        "preserved".to_string(),
-    )]));
+    if let crate::ir::ownership::IrNodeOwnership::Source { meta, .. } =
+        &mut authored_parent.ownership
+    {
+        *meta = Some(BTreeMap::from([(
+            "authored".to_string(),
+            "preserved".to_string(),
+        )]));
+    }
     let authored_parent_snapshot =
         serde_json::to_value(&authored_parent).expect("authored node should serialize");
-    let mut reference_ir = ir_with_size(
+    let reference_ir = ir_with_size(
         group_with_bbox(
             "scene",
             BBox::new(0.0, 0.0, 480.0, 480.0),
@@ -586,8 +582,8 @@ fn transition_ir_injects_only_required_wrapper_and_preserves_authored_inner_node
         480.0,
         480.0,
     );
-    reference_ir.draw_order = vec!["parent".to_string()];
-    let mut target_ir = ir_with_size(
+
+    let target_ir = ir_with_size(
         group_with_bbox(
             "scene",
             BBox::new(0.0, 0.0, 480.0, 480.0),
@@ -603,7 +599,6 @@ fn transition_ir_injects_only_required_wrapper_and_preserves_authored_inner_node
         480.0,
         480.0,
     );
-    target_ir.draw_order = vec!["parent".to_string()];
     let reference = compiled_state(&transport, reference_ir);
     let target = compiled_state(&transport, target_ir);
 
@@ -611,16 +606,13 @@ fn transition_ir_injects_only_required_wrapper_and_preserves_authored_inner_node
         .into_transition_ir(target, &transition_plan())
         .expect("compatible geometry should compile to generated wrappers");
 
-    assert_eq!(transition_ir.draw_order, vec!["parent"]);
     let wrapper_id = format!("{GENERATED_WRAPPER_ID_PREFIX}1:parent");
     let wrapper = find_ir_node(&transition_ir.root, &wrapper_id)
         .expect("moving parent should have a deterministic generated wrapper");
     let IrNodeKind::Group {
         children,
-        meta,
         animation,
         transform,
-        on,
         ..
     } = &wrapper.kind
     else {
@@ -631,20 +623,10 @@ fn transition_ir_injects_only_required_wrapper_and_preserves_authored_inner_node
         serde_json::to_value(&children[0]).expect("inner node should serialize"),
         authored_parent_snapshot
     );
-    assert_eq!(
-        meta.as_ref()
-            .and_then(|value| value.get(GENERATED_PROVENANCE_KEY))
-            .map(String::as_str),
-        Some(GENERATED_PROVENANCE_VALUE)
-    );
-    assert_eq!(
-        meta.as_ref()
-            .and_then(|value| value.get(GENERATED_SOURCE_NODE_ID_KEY))
-            .map(String::as_str),
-        Some("parent")
+    assert!(
+        matches!(&wrapper.ownership, crate::ir::ownership::IrNodeOwnership::Wrapper { owner_node_id, placement: crate::ir::ownership::WrapperPlacement::Outer } if owner_node_id == "parent")
     );
     assert!(transform.is_none());
-    assert!(on.is_none());
 
     let generated_animation = animation
         .as_ref()
@@ -694,47 +676,6 @@ fn transition_ir_injects_only_required_wrapper_and_preserves_authored_inner_node
         )
         .is_none(),
         "child inherits the complete world delta from its parent"
-    );
-}
-
-#[test]
-fn reserved_wrapper_namespace_collision_is_rejected_before_injection() {
-    let reserved_id = format!("{GENERATED_WRAPPER_ID_PREFIX}authored");
-    let transport = json!({
-        "root": {
-            "nodeId": reserved_id,
-            "nodeType": "canvas",
-            "authoredId": true,
-            "children": []
-        }
-    })
-    .to_string();
-    let reference = compiled_state(
-        &transport,
-        ir(group(
-            &format!("{GENERATED_WRAPPER_ID_PREFIX}authored"),
-            Vec::new(),
-        )),
-    );
-    let target = compiled_state(
-        &transport,
-        ir(group(
-            &format!("{GENERATED_WRAPPER_ID_PREFIX}authored"),
-            Vec::new(),
-        )),
-    );
-
-    let mismatch = reference
-        .into_transition_ir(target, &transition_plan())
-        .expect_err("reserved wrapper namespace must reject authored collisions");
-    assert_eq!(mismatch.category, CompatibilityCategory::Id);
-    assert_eq!(
-        mismatch.node_id,
-        format!("{GENERATED_WRAPPER_ID_PREFIX}authored")
-    );
-    assert_eq!(
-        mismatch.expected,
-        "authored and internal IR IDs outside the reserved transition wrapper namespace"
     );
 }
 
@@ -1610,4 +1551,36 @@ fn transition_operation_invokes_the_full_compile_seam_once_per_state() {
     assert_eq!(reference_compile_calls, 1);
     assert_eq!(target_compile_calls, 1);
     assert_eq!(transition_ir.root.node_id, "scene");
+}
+
+#[test]
+fn text_flow_uses_only_the_sources_primary_text() {
+    use crate::ir::ownership::IrNodeOwnership;
+    let raw: Value = serde_json::from_str(&text_transport(180)).expect("transport");
+    let input: LayoutInput = serde_json::from_value(raw).expect("layout input");
+    let registry = real_compile_registry();
+    let compiled =
+        crate::compile_layout_input_to_ir(&input, &crate::RenderSvgOptions::default(), &registry)
+            .expect("compile");
+    let mut source = find_ir_node(&compiled.root, "copy")
+        .expect("source")
+        .clone();
+    let expected = super::signature::text_flow_signature(&source);
+    let IrNodeKind::Group { children, .. } = &mut source.kind else {
+        panic!("source group")
+    };
+    let mut decoration = children
+        .iter()
+        .find(|node| matches!(node.kind, IrNodeKind::Text { .. }))
+        .expect("primary text")
+        .clone();
+    decoration.ownership = IrNodeOwnership::Decoration {
+        owner_node_id: "copy".to_string(),
+    };
+    if let IrNodeKind::Text { source_text, .. } = &mut decoration.kind {
+        *source_text = Some("unrelated decorative text".to_string());
+    }
+    children.push(decoration);
+    children.push(group("nested", Vec::new()));
+    assert_eq!(super::signature::text_flow_signature(&source), expected);
 }

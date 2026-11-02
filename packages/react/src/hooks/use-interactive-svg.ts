@@ -1,17 +1,19 @@
 import {
+  bindIRToSvg,
+  type IRDomBinding,
+  nativePathCandidates,
   resolveHitTarget as resolveHitTargetBrowser,
   translateSvgCoords,
 } from "@boundsvg/browser/events";
 import type { IR, RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/core";
 import {
-  buildHandlerMap,
   buildHitTestIndex,
-  buildNodeTypeMap,
   buildTextMap,
   type HandlersRef,
-  hitTestCandidates,
-  type IRNodeType,
-  type SpatialIndex,
+  type IRHitCandidate,
+  type IRHitIndex,
+  type IRSourceIndex,
+  type IRSourceRef,
   type TextMap,
 } from "@boundsvg/core/scene";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -33,7 +35,7 @@ import { useStructurallyStableRenderOptions } from "./use-structurally-stable-va
 
 /** Info passed when a text node is right-clicked without a user-defined onContextMenu handler */
 export type TextContextMenuHit = {
-  nodeId: string;
+  source: IRSourceRef;
   svgX: number;
   svgY: number;
   clientX: number;
@@ -78,8 +80,8 @@ export type UseInteractiveSvgResult = {
   error: Error | null;
   /** Whether the engine is ready and rendering succeeded */
   isReady: boolean;
-  /** The nodeId currently hovered, or null */
-  hoverNodeId: string | null;
+  /** The source occurrence currently hovered, or null */
+  hoverSource: IRSourceRef | null;
   /** Ref callback to attach to the container div */
   containerRef: (node: HTMLDivElement | null) => void;
 };
@@ -92,33 +94,17 @@ export type UseInteractiveSvgResult = {
 type RenderArtifacts = {
   svg: string | null;
   ir: IR | null;
-  spatialIndex: SpatialIndex | null;
-  handlerMap: Map<string, HandlersRef> | null;
-  nodeTypeMap: Map<string, IRNodeType> | null;
-  /** Last draw position of each semantic id, used when adding native Path hits. */
-  drawPositionMap: Map<string, number> | null;
+  spatialIndex: IRHitIndex | null;
   textMap: TextMap | null;
   error: Error | null;
   isReady: boolean;
 };
 
-/** True only for points within the rendered document's outer canvas clip. */
-function isInsideHitCanvas(coords: { svgX: number; svgY: number }, ir: IR): boolean {
-  return (
-    coords.svgX >= 0 && coords.svgY >= 0 && coords.svgX <= ir.width && coords.svgY <= ir.height
-  );
-}
-
-/** Read the current native hit stack from the container's Document or ShadowRoot. */
-function getNativeElementsAtPointer(
-  container: Element,
-  point: { clientX: number; clientY: number },
-): Element[] {
-  const root = container.getRootNode() as Document | ShadowRoot;
-  const hitRoot = typeof root.elementsFromPoint === "function" ? root : container.ownerDocument;
-  return typeof hitRoot.elementsFromPoint === "function"
-    ? hitRoot.elementsFromPoint(point.clientX, point.clientY)
-    : [];
+function sourceHandlers(index: IRSourceIndex, source: IRSourceRef): HandlersRef | undefined {
+  const info = index.sources.get(source.sourceIndex);
+  return info?.source === source && info.node.ownership.role === "source"
+    ? info.node.ownership.on
+    : undefined;
 }
 
 /** Empty interactive render state shared before a successful main-thread render. */
@@ -126,9 +112,6 @@ const EMPTY_ARTIFACTS: RenderArtifacts = {
   svg: null,
   ir: null,
   spatialIndex: null,
-  handlerMap: null,
-  nodeTypeMap: null,
-  drawPositionMap: null,
   textMap: null,
   error: null,
   isReady: false,
@@ -155,7 +138,7 @@ export function useInteractiveSvg(
   const stableRenderOptions = useStructurallyStableRenderOptions(options?.renderOptions);
   const stableDefaultCommonOptions = useStructurallyStableRenderOptions(defaultCommonOptions);
   const renderMode = options?.renderMode ?? "static";
-  const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
+  const [hoverSource, setHoverSource] = useState<IRSourceRef | null>(null);
 
   // Memoize render artifacts — uses engine.renderToSvgAndIR() for single layout pass
   const computation = useMemo<InteractiveRenderComputation>(() => {
@@ -185,18 +168,12 @@ export function useInteractiveSvg(
             )
           : engine.renderToSvgAndIR(renderInput.vnode, captured.options as RenderSvgOptions);
       const spatialIndex = buildHitTestIndex(ir);
-      const handlerMap = buildHandlerMap(ir);
-      const nodeTypeMap = buildNodeTypeMap(ir);
-      const drawPositionMap = new Map(ir.drawOrder.map((nodeId, drawIndex) => [nodeId, drawIndex]));
-      const textMap = buildTextMap(ir);
+      const textMap = buildTextMap(spatialIndex.sourceIndex);
       return {
         artifacts: {
           svg,
           ir,
           spatialIndex,
-          handlerMap,
-          nodeTypeMap,
-          drawPositionMap,
           textMap,
           error: null,
           isReady: true,
@@ -223,19 +200,26 @@ export function useInteractiveSvg(
   const artifacts = computation.artifacts;
 
   // Store latest handlers & artifacts in refs to avoid closure staleness
+  const bindingRef = useRef<IRDomBinding | null>(null);
   const handlersRef = useRef(handlers);
   const artifactsRef = useRef(artifacts);
   useLayoutEffect(() => {
     handlersRef.current = handlers;
+    if (artifactsRef.current !== artifacts) {
+      bindingRef.current = null;
+      hoverRef.current = null;
+      activePointerTargetsRef.current.clear();
+      setHoverSource(null);
+    }
     artifactsRef.current = artifacts;
   }, [artifacts, handlers]);
 
   // Track current hover node for enter/leave detection
-  const hoverRef = useRef<string | null>(null);
+  const hoverRef = useRef<IRSourceRef | null>(null);
 
   // A pointer gesture can outlive a listener-effect instance when interactive
   // options change. Keep its original down target until the gesture terminates.
-  const activePointerTargetsRef = useRef(new Map<number, string>());
+  const activePointerTargetsRef = useRef(new Map<number, IRSourceRef>());
 
   const showPointerCursor = options?.showPointerCursor !== false;
   const enableTextCopy = options?.enableTextCopy === true;
@@ -264,6 +248,7 @@ export function useInteractiveSvg(
       return;
     }
     const activePointerTargets = activePointerTargetsRef.current;
+    let pendingPointerMove: PointerEvent | null = null;
 
     /**
      * Translate DOM pointer coordinates to SVG user-space coordinates.
@@ -296,24 +281,6 @@ export function useInteractiveSvg(
       };
     }
 
-    /** Resolve the actual hit target from bbox candidates. */
-    function resolveHitTarget(
-      candidates: string[],
-      nativeEvent: MouseEvent | PointerEvent,
-    ): string | null {
-      const { nodeTypeMap } = artifactsRef.current;
-      if (!nodeTypeMap || !container) {
-        return candidates[0] ?? null;
-      }
-      return resolveHitTargetBrowser(
-        container,
-        candidates,
-        nodeTypeMap,
-        nativeEvent.clientX,
-        nativeEvent.clientY,
-      );
-    }
-
     /** Resolve a handler against the latest committed callback map. */
     function resolveCallback(handlerId: string): EventCallback | undefined {
       return handlersRef.current.get(handlerId);
@@ -322,19 +289,26 @@ export function useInteractiveSvg(
     /** Preserve the native event and translated coordinates in the public callback payload. */
     function buildInfo(
       handlerName: string,
-      nodeId: string,
+      source: IRSourceRef,
       {
         coords,
         nativeEvent,
       }: { coords: { svgX: number; svgY: number }; nativeEvent: PointerEvent | MouseEvent },
     ): PointerEventInfo {
-      return { handlerName, nodeId, svgX: coords.svgX, svgY: coords.svgY, nativeEvent };
+      return {
+        handlerName,
+        source,
+        nodeId: source.nodeId,
+        svgX: coords.svgX,
+        svgY: coords.svgY,
+        nativeEvent,
+      };
     }
 
     /** Fire a named handler on a node if it exists. */
     function fireHandler(
-      handlerMap: Map<string, HandlersRef>,
-      nodeId: string,
+      sourceIndex: IRSourceIndex,
+      source: IRSourceRef,
       {
         eventKey,
         coords,
@@ -345,105 +319,83 @@ export function useInteractiveSvg(
         nativeEvent: PointerEvent | MouseEvent;
       },
     ): void {
-      const irHandlers = handlerMap.get(nodeId);
+      const irHandlers = sourceHandlers(sourceIndex, source);
       const handlerName = irHandlers?.[eventKey] as string | undefined;
       if (!handlerName) {
         return;
       }
       const callback = resolveCallback(handlerName);
       if (callback) {
-        callback(buildInfo(handlerName, nodeId, { coords, nativeEvent }));
+        callback(buildInfo(handlerName, source, { coords, nativeEvent }));
       }
     }
 
-    /**
-     * Merge actual current-pointer Path hits at their IR draw positions. This
-     * covers canvas-stable strokes under host CSS scaling and pointer capture
-     * without measuring all nodes or rebuilding the Core index.
-     */
-    function appendNativePathCandidates(
-      candidates: string[],
-      pointer: { e: MouseEvent | PointerEvent; coords: { svgX: number; svgY: number } },
-      artifacts: RenderArtifacts,
-    ): void {
-      const { ir, nodeTypeMap, drawPositionMap } = artifacts;
-      const { e, coords } = pointer;
-      if (!container || !ir || !nodeTypeMap || !drawPositionMap) {
-        return;
+    function bindingForCurrent(): IRDomBinding | null {
+      const index = artifactsRef.current.spatialIndex;
+      const root = container?.querySelector("svg");
+      if (!index || !root) {
+        return null;
       }
-      if (!isInsideHitCanvas(coords, ir)) {
-        return;
+      const current = bindingRef.current;
+      if (current?.root === root && current.sourceIndex === index.sourceIndex) {
+        return current;
       }
-      const nativeHits = getNativeElementsAtPointer(container, e);
-      for (const element of nativeHits) {
-        const wrapper = element.closest("svg[data-boundsvg-node-id]");
-        const nativeId = wrapper?.getAttribute("data-boundsvg-node-id");
-        if (
-          nativeId &&
-          wrapper &&
-          container.contains(wrapper) &&
-          nodeTypeMap.get(nativeId) === "path" &&
-          !candidates.includes(nativeId)
-        ) {
-          candidates.push(nativeId);
-        }
-      }
-      candidates.sort(
-        (left, right) => (drawPositionMap.get(right) ?? -1) - (drawPositionMap.get(left) ?? -1),
-      );
+      const binding = bindIRToSvg(root, index.sourceIndex);
+      bindingRef.current = binding;
+      return binding;
     }
 
-    /** Resolve hit target from a pointer/mouse event. */
+    /** Resolve prepared and native Path candidates under the same canvas and clip gates. */
     function hitFromEvent(e: MouseEvent | PointerEvent): {
-      nodeId: string | null;
-      candidates: string[];
+      source: IRSourceRef | null;
+      candidates: IRHitCandidate[];
       coords: { svgX: number; svgY: number };
-      handlerMap: Map<string, HandlersRef>;
+      sourceIndex: IRSourceIndex;
     } | null {
       const coords = translateCoords(e);
-      if (!coords) {
+      const index = artifactsRef.current.spatialIndex;
+      const binding = bindingForCurrent();
+      if (!coords || !index || !binding) {
         return null;
       }
-      const { spatialIndex, handlerMap } = artifactsRef.current;
-      if (!spatialIndex || !handlerMap) {
-        return null;
-      }
-      const candidates = hitTestCandidates(spatialIndex, coords.svgX, coords.svgY);
-      appendNativePathCandidates(candidates, { e, coords }, artifactsRef.current);
-      const nodeId = resolveHitTarget(candidates, e);
-      return { nodeId, candidates, coords, handlerMap };
-    }
-
-    /** Select a text leaf without opening the copy menu through another painted leaf. */
-    function resolveTextContextTarget(
-      candidates: ReadonlyArray<string>,
-      resolvedNodeId: string | null,
-    ): string | null {
-      const { nodeTypeMap } = artifactsRef.current;
-      if (!nodeTypeMap) {
-        return null;
-      }
-
-      const resolvedType = resolvedNodeId ? nodeTypeMap.get(resolvedNodeId) : undefined;
-      if (resolvedType === "text") {
-        return resolvedNodeId;
-      }
-
-      // If the resolved target is another leaf node (rect/image/path/svg), keep
-      // the browser behavior: do not open the text-copy menu through that node.
-      if (resolvedType !== undefined) {
-        return null;
-      }
-
-      // When the resolved target is a group wrapper, fall through to the topmost
-      // text leaf under the pointer so text copy works across the text bbox.
-      for (const candidate of candidates) {
-        if (nodeTypeMap.get(candidate) === "text") {
-          return candidate;
+      const candidates = index.queryCandidates(coords.svgX, coords.svgY);
+      for (const native of nativePathCandidates(binding, index, {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        x: coords.svgX,
+        y: coords.svgY,
+      })) {
+        if (!candidates.some((entry) => entry.source === native.source)) {
+          candidates.push(native);
         }
       }
+      candidates.sort((left, right) => right.order - left.order);
+      const source = resolveHitTargetBrowser(binding, candidates, e.clientX, e.clientY);
+      return { source, candidates, coords, sourceIndex: index.sourceIndex };
+    }
 
-      return null;
+    /** Offer text copy through a source frame, but never through another painted primary. */
+    function resolveTextContextTarget(
+      candidates: readonly IRHitCandidate[],
+      resolved: IRSourceRef | null,
+    ): IRSourceRef | null {
+      const index = artifactsRef.current.spatialIndex?.sourceIndex;
+      if (!index || !resolved) {
+        return null;
+      }
+      const source = index.sources.get(resolved.sourceIndex);
+      const primary =
+        source?.primaryNodeIndex === null || source?.primaryNodeIndex === undefined
+          ? undefined
+          : index.nodes.get(source.primaryNodeIndex);
+      if (primary) {
+        return primary.node.type === "text" ? resolved : null;
+      }
+      return (
+        candidates.find(
+          (candidate) => index.nodes.get(candidate.geometryNodeIndex)?.node.type === "text",
+        )?.source ?? null
+      );
     }
 
     /**
@@ -451,23 +403,24 @@ export function useInteractiveSvg(
      * Shared by pointerleave, pointercancel, and lostpointercapture.
      */
     function clearHover(e: PointerEvent) {
+      cancelPendingPointerMove();
       const prevHover = hoverRef.current;
       if (prevHover) {
-        const { handlerMap } = artifactsRef.current;
-        if (handlerMap) {
+        const sourceIndex = artifactsRef.current.spatialIndex?.sourceIndex;
+        if (sourceIndex) {
           const coords = translateCoords(e) ?? { svgX: 0, svgY: 0 };
-          fireHandler(handlerMap, prevHover, {
+          fireHandler(sourceIndex, prevHover, {
             eventKey: "onPointerLeave",
             coords,
             nativeEvent: e,
           });
-          fireHandler(handlerMap, prevHover, { eventKey: "onPointerOut", coords, nativeEvent: e });
-          fireHandler(handlerMap, prevHover, { eventKey: "onMouseLeave", coords, nativeEvent: e });
-          fireHandler(handlerMap, prevHover, { eventKey: "onMouseOut", coords, nativeEvent: e });
+          fireHandler(sourceIndex, prevHover, { eventKey: "onPointerOut", coords, nativeEvent: e });
+          fireHandler(sourceIndex, prevHover, { eventKey: "onMouseLeave", coords, nativeEvent: e });
+          fireHandler(sourceIndex, prevHover, { eventKey: "onMouseOut", coords, nativeEvent: e });
         }
       }
       hoverRef.current = null;
-      setHoverNodeId(null);
+      setHoverSource(null);
       if (showPointerCursor && container) {
         container.style.cursor = "";
       }
@@ -476,10 +429,10 @@ export function useInteractiveSvg(
     /** Deliver one click to the final candidate at the current pointer. */
     function handleClick(e: MouseEvent) {
       const hit = hitFromEvent(e);
-      if (!hit?.nodeId) {
+      if (!hit?.source) {
         return;
       }
-      fireHandler(hit.handlerMap, hit.nodeId, {
+      fireHandler(hit.sourceIndex, hit.source, {
         eventKey: "onClick",
         coords: hit.coords,
         nativeEvent: e,
@@ -489,10 +442,10 @@ export function useInteractiveSvg(
     /** Deliver one double-click to the final candidate at the current pointer. */
     function handleDoubleClick(e: MouseEvent) {
       const hit = hitFromEvent(e);
-      if (!hit?.nodeId) {
+      if (!hit?.source) {
         return;
       }
-      fireHandler(hit.handlerMap, hit.nodeId, {
+      fireHandler(hit.sourceIndex, hit.source, {
         eventKey: "onDoubleClick",
         coords: hit.coords,
         nativeEvent: e,
@@ -502,15 +455,15 @@ export function useInteractiveSvg(
     /** Prefer a registered context handler, otherwise offer the enabled text-copy action. */
     function handleContextMenu(e: MouseEvent) {
       const hit = hitFromEvent(e);
-      if (!hit?.nodeId) {
+      if (!hit?.source) {
         return;
       }
-      const irHandlers = hit.handlerMap.get(hit.nodeId);
+      const irHandlers = sourceHandlers(hit.sourceIndex, hit.source);
 
       // User-defined onContextMenu handler takes priority
       if (irHandlers?.onContextMenu) {
         e.preventDefault();
-        fireHandler(hit.handlerMap, hit.nodeId, {
+        fireHandler(hit.sourceIndex, hit.source, {
           eventKey: "onContextMenu",
           coords: hit.coords,
           nativeEvent: e,
@@ -521,15 +474,15 @@ export function useInteractiveSvg(
       // Text copy: if the topmost resolved node is a group wrapper, fall
       // through to the topmost text leaf under the pointer.
       if (enableTextCopy && onTextContextMenuRef.current) {
-        const textNodeId = resolveTextContextTarget(hit.candidates, hit.nodeId);
-        if (!textNodeId) {
+        const textSource = resolveTextContextTarget(hit.candidates, hit.source);
+        if (!textSource) {
           return;
         }
 
-        const textHandlers = hit.handlerMap.get(textNodeId);
+        const textHandlers = sourceHandlers(hit.sourceIndex, textSource);
         if (textHandlers?.onContextMenu) {
           e.preventDefault();
-          fireHandler(hit.handlerMap, textNodeId, {
+          fireHandler(hit.sourceIndex, textSource, {
             eventKey: "onContextMenu",
             coords: hit.coords,
             nativeEvent: e,
@@ -539,7 +492,7 @@ export function useInteractiveSvg(
 
         e.preventDefault();
         onTextContextMenuRef.current({
-          nodeId: textNodeId,
+          source: textSource,
           svgX: hit.coords.svgX,
           svgY: hit.coords.svgY,
           clientX: e.clientX,
@@ -564,17 +517,17 @@ export function useInteractiveSvg(
     /** Remember gesture ownership and deliver pointer/touch start to the current hit. */
     function handlePointerDown(e: PointerEvent) {
       const hit = hitFromEvent(e);
-      if (!hit?.nodeId) {
+      if (!hit?.source) {
         return;
       }
-      activePointerTargets.set(e.pointerId, hit.nodeId);
-      fireHandler(hit.handlerMap, hit.nodeId, {
+      activePointerTargets.set(e.pointerId, hit.source);
+      fireHandler(hit.sourceIndex, hit.source, {
         eventKey: "onPointerDown",
         coords: hit.coords,
         nativeEvent: e,
       });
       if (e.pointerType === "touch") {
-        fireHandler(hit.handlerMap, hit.nodeId, {
+        fireHandler(hit.sourceIndex, hit.source, {
           eventKey: "onTouchStart",
           coords: hit.coords,
           nativeEvent: e,
@@ -586,16 +539,16 @@ export function useInteractiveSvg(
     function handlePointerUp(e: PointerEvent) {
       activePointerTargets.delete(e.pointerId);
       const hit = hitFromEvent(e);
-      if (!hit?.nodeId) {
+      if (!hit?.source) {
         return;
       }
-      fireHandler(hit.handlerMap, hit.nodeId, {
+      fireHandler(hit.sourceIndex, hit.source, {
         eventKey: "onPointerUp",
         coords: hit.coords,
         nativeEvent: e,
       });
       if (e.pointerType === "touch") {
-        fireHandler(hit.handlerMap, hit.nodeId, {
+        fireHandler(hit.sourceIndex, hit.source, {
           eventKey: "onTouchEnd",
           coords: hit.coords,
           nativeEvent: e,
@@ -606,10 +559,10 @@ export function useInteractiveSvg(
     /** Deliver the mouse-down compatibility handler at the current hit. */
     function handleMouseDown(e: MouseEvent) {
       const hit = hitFromEvent(e);
-      if (!hit?.nodeId) {
+      if (!hit?.source) {
         return;
       }
-      fireHandler(hit.handlerMap, hit.nodeId, {
+      fireHandler(hit.sourceIndex, hit.source, {
         eventKey: "onMouseDown",
         coords: hit.coords,
         nativeEvent: e,
@@ -619,10 +572,10 @@ export function useInteractiveSvg(
     /** Deliver the mouse-up compatibility handler at the current hit. */
     function handleMouseUp(e: MouseEvent) {
       const hit = hitFromEvent(e);
-      if (!hit?.nodeId) {
+      if (!hit?.source) {
         return;
       }
-      fireHandler(hit.handlerMap, hit.nodeId, {
+      fireHandler(hit.sourceIndex, hit.source, {
         eventKey: "onMouseUp",
         coords: hit.coords,
         nativeEvent: e,
@@ -631,8 +584,8 @@ export function useInteractiveSvg(
 
     /** Fire a group of event names on a single target node. */
     function fireEventGroup(
-      handlerMap: Map<string, HandlersRef>,
-      nodeId: string,
+      sourceIndex: IRSourceIndex,
+      source: IRSourceRef,
       {
         events,
         coords,
@@ -644,7 +597,7 @@ export function useInteractiveSvg(
       },
     ): void {
       for (const eventKey of events) {
-        fireHandler(handlerMap, nodeId, { eventKey, coords, nativeEvent });
+        fireHandler(sourceIndex, source, { eventKey, coords, nativeEvent });
       }
     }
 
@@ -665,26 +618,26 @@ export function useInteractiveSvg(
 
     /** Deliver leave/enter transitions and move handlers for the current hover owner. */
     function dispatchHoverTransition(
-      handlerMap: Map<string, HandlersRef>,
+      sourceIndex: IRSourceIndex,
       transition: {
-        prevHover: string | null;
-        nodeId: string | null;
+        prevHover: IRSourceRef | null;
+        source: IRSourceRef | null;
         coords: { svgX: number; svgY: number };
         nativeEvent: PointerEvent;
       },
     ): void {
-      const { prevHover, nodeId, coords, nativeEvent } = transition;
-      if (prevHover && prevHover !== nodeId) {
-        fireEventGroup(handlerMap, prevHover, { events: LEAVE_EVENTS, coords, nativeEvent });
+      const { prevHover, source, coords, nativeEvent } = transition;
+      if (prevHover && prevHover !== source) {
+        fireEventGroup(sourceIndex, prevHover, { events: LEAVE_EVENTS, coords, nativeEvent });
       }
-      if (nodeId && nodeId !== prevHover) {
-        fireEventGroup(handlerMap, nodeId, { events: ENTER_EVENTS, coords, nativeEvent });
+      if (source && source !== prevHover) {
+        fireEventGroup(sourceIndex, source, { events: ENTER_EVENTS, coords, nativeEvent });
       }
-      if (nodeId) {
-        fireHandler(handlerMap, nodeId, { eventKey: "onPointerMove", coords, nativeEvent });
-        fireHandler(handlerMap, nodeId, { eventKey: "onMouseMove", coords, nativeEvent });
+      if (source) {
+        fireHandler(sourceIndex, source, { eventKey: "onPointerMove", coords, nativeEvent });
+        fireHandler(sourceIndex, source, { eventKey: "onMouseMove", coords, nativeEvent });
         if (nativeEvent.pointerType === "touch") {
-          fireHandler(handlerMap, nodeId, { eventKey: "onTouchMove", coords, nativeEvent });
+          fireHandler(sourceIndex, source, { eventKey: "onTouchMove", coords, nativeEvent });
         }
       }
     }
@@ -695,31 +648,45 @@ export function useInteractiveSvg(
       if (!hit) {
         return;
       }
-      const { nodeId, coords, handlerMap } = hit;
-      dispatchHoverTransition(handlerMap, {
+      const { source, coords, sourceIndex } = hit;
+      dispatchHoverTransition(sourceIndex, {
         prevHover: hoverRef.current,
-        nodeId,
+        source,
         coords,
         nativeEvent: e,
       });
 
-      hoverRef.current = nodeId;
-      setHoverNodeId(nodeId);
+      hoverRef.current = source;
+      setHoverSource(source);
 
       if (showPointerCursor && container) {
-        container.style.cursor = nodeId && handlerMap.has(nodeId) ? "pointer" : "";
+        container.style.cursor =
+          source && sourceHandlers(sourceIndex, source) !== undefined ? "pointer" : "";
       }
     }
 
-    /** Schedule at most one pending pointer-move frame. */
+    /** Cancel queued work when the current pointer or container lifetime ends. */
+    function cancelPendingPointerMove(): void {
+      pendingPointerMove = null;
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
+    }
+
+    /** Resolve the latest pointer position once per frame, including the final move. */
     function handlePointerMove(e: PointerEvent) {
-      // rAF throttle: skip if a frame is already scheduled
+      pendingPointerMove = e;
       if (rafRef.current) {
         return;
       }
       rafRef.current = requestAnimationFrame(() => {
         rafRef.current = 0;
-        processPointerMoveFrame(e);
+        const latestMove = pendingPointerMove;
+        pendingPointerMove = null;
+        if (latestMove) {
+          processPointerMoveFrame(latestMove);
+        }
       });
     }
 
@@ -735,12 +702,12 @@ export function useInteractiveSvg(
         return;
       }
       activePointerTargets.delete(e.pointerId);
-      const { handlerMap } = artifactsRef.current;
-      if (!handlerMap) {
+      const sourceIndex = artifactsRef.current.spatialIndex?.sourceIndex;
+      if (!sourceIndex) {
         return;
       }
       const coords = translateCoords(e) ?? { svgX: 0, svgY: 0 };
-      fireHandler(handlerMap, downTarget, {
+      fireHandler(sourceIndex, downTarget, {
         eventKey: "onPointerCancel",
         coords,
         nativeEvent: e,
@@ -784,12 +751,9 @@ export function useInteractiveSvg(
       container.style.touchAction = prevTouchAction;
       container.style.userSelect = prevUserSelect;
       container.style.setProperty("-webkit-user-select", prevWebkitUserSelect);
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = 0;
-      }
+      cancelPendingPointerMove();
       hoverRef.current = null;
-      setHoverNodeId(null);
+      setHoverSource(null);
       container.removeEventListener("click", handleClick);
       container.removeEventListener("dblclick", handleDoubleClick);
       container.removeEventListener("contextmenu", handleContextMenu);
@@ -802,7 +766,7 @@ export function useInteractiveSvg(
       container.removeEventListener("mousedown", handleMouseDown);
       container.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [containerEl, artifacts.isReady, showPointerCursor, enableTextCopy]);
+  }, [containerEl, artifacts, showPointerCursor, enableTextCopy]);
 
   useEffect(() => {
     if (!containerEl || !artifacts.isReady || artifacts.svg === null) {
@@ -836,7 +800,7 @@ export function useInteractiveSvg(
     textMap: artifacts.textMap,
     error: artifacts.error,
     isReady: artifacts.isReady,
-    hoverNodeId,
+    hoverSource,
     containerRef,
   };
 }

@@ -397,6 +397,21 @@
       <!-- Toolbar -->
       <div class="toolbar">
         <span class="preset-desc" id="preset-desc"></span>
+        <div class="inspection-frame-control">
+          <label for="inspection-frame" id="inspection-frame-label"></label>
+          <select
+            id="inspection-frame"
+            aria-describedby="inspection-frame-description"
+          ></select>
+          <p
+            id="inspection-frame-description"
+            class="inspection-frame-help"
+          ></p>
+        </div>
+        <label>
+          <input type="checkbox" id="inspection-origin" />
+          Show origin anchor
+        </label>
         <details class="bbox-overlay-menu">
           <summary id="bbox-overlay-summary">BBox Overlay: off</summary>
           <fieldset class="bbox-overlay-options" aria-label="BBox Overlay">

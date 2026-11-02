@@ -741,12 +741,11 @@ fn collect_text_node_ids<'a>(node: &'a ir::types::IrNode, target: &mut Vec<&'a s
 
 /// Subset of the public TS `IR` shape consumed by SVG emission.
 ///
-/// `drawOrder` and `warnings` are intentionally omitted: neither affects the
-/// paint scene. Keeping this wire type shared prevents the one-shot and
-/// prepared emit paths from drifting.
+/// Tree order determines painting. Warnings are returned separately from this
+/// rendering input; one-shot and prepared emit share the same wire contract.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EmitIrInput {
     root: ir::wire_input::IrNodeInput,
     width: f64,
@@ -1024,7 +1023,9 @@ fn validate_text_decoration_wire_value(
             "textDecoration.color must be a valid color.",
         ));
     };
-    if !ir::gradient::is_valid_color(color) {
+    // Normalized decoration colors may inherit their parent Text's gradient.
+    if !ir::gradient::is_valid_color(color) && !ir::gradient::is_supported_gradient_function(color)
+    {
         return Err(text_decoration_wire_error(
             node_id,
             "textDecoration.color must be a valid color.",
@@ -1172,6 +1173,8 @@ fn parse_layout_input(input_json: &str) -> Result<layout::LayoutInput, JsValue> 
     let raw_input: serde_json::Value = serde_json::from_str(input_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid input JSON: {e}")))?;
     if let Some(root) = raw_input.get("root") {
+        layout::box_style::validate_raw_box_tree(root)
+            .map_err(|error| engine_error_to_render_envelope(&error))?;
         validate_layout_text_decoration_wire_values(root)
             .map_err(|error| engine_error_to_render_envelope(&error))?;
     }
@@ -1187,6 +1190,8 @@ fn parse_layout_input_with_raw(
     let raw_input: serde_json::Value = serde_json::from_str(input_json)
         .map_err(|error| JsValue::from_str(&format!("Invalid input JSON: {error}")))?;
     if let Some(root) = raw_input.get("root") {
+        layout::box_style::validate_raw_box_tree(root)
+            .map_err(|error| engine_error_to_render_envelope(&error))?;
         validate_layout_text_decoration_wire_values(root)
             .map_err(|error| engine_error_to_render_envelope(&error))?;
     }
@@ -1263,22 +1268,56 @@ fn assert_static_animation_time(
     Ok(())
 }
 
+fn validate_ir_box_wire(node: &serde_json::Value) -> Result<(), error::EngineError> {
+    if node.get("clipPath").is_some() || node.get("clipBorderRadius").is_some() {
+        return Err(error::EngineError::Structured {
+            code: "VALIDATION".to_string(),
+            message: "Removed IR clip fields; use structured clip.".to_string(),
+            stage: Some(diagnostics::PipelineStage::Ir),
+            node_id: node
+                .get("nodeId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+        });
+    }
+    if let Some(children) = node.get("children").and_then(serde_json::Value::as_array) {
+        for child in children {
+            validate_ir_box_wire(child)?;
+        }
+    }
+    Ok(())
+}
+
 fn parse_emit_ir(ir_json: &str) -> Result<ir::types::Ir, JsValue> {
     #[cfg(test)]
     pipeline_phase_trace::record_emit_ir_parse();
-    let input: EmitIrInput = serde_json::from_str(ir_json)
-        .map_err(|e| JsValue::from_str(&format!("Invalid IR JSON: {e}")))?;
+    let raw_input: serde_json::Value = serde_json::from_str(ir_json)
+        .map_err(|error| JsValue::from_str(&format!("Invalid IR JSON: {error}")))?;
+    if let Some(root) = raw_input.get("root") {
+        validate_ir_box_wire(root).map_err(|error| engine_error_to_render_envelope(&error))?;
+    }
+    let input: EmitIrInput = serde_json::from_value(raw_input).map_err(|error| {
+        render_error_envelope(
+            "VALIDATION",
+            &format!("Invalid IR JSON: {error}"),
+            Some(diagnostics::PipelineStage::Ir),
+            None,
+        )
+    })?;
     let parsed_ir = ir::types::Ir {
         root: input.root.into(),
-        draw_order: Vec::new(),
         width: input.width,
         height: input.height,
         debug: input.debug,
         warnings: Vec::new(),
     };
+    ir::ownership::build_source_index(&parsed_ir.root)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
     // Hand-authored IRs bypass the VNode build path that vets nested SVG
     // content. Both one-shot and prepared entry points are trust boundaries.
     assert_ir_svg_content_safe(&parsed_ir.root)?;
+    ir::numeric_envelope::validate(&parsed_ir)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
     ir::animation::validate_text_animation_budgets(&parsed_ir.root)
         .map_err(|error| engine_error_to_render_envelope(&error))?;
     Ok(parsed_ir)
@@ -2117,7 +2156,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 35;
+pub const WASM_SCHEMA_VERSION: u32 = 37;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -4229,11 +4268,11 @@ mod tests {
 
     fn timeline_ir_json() -> String {
         serde_json::json!({
-            "root": {
+            "root": { "ownership": { "role": "source" },
                 "nodeId": "root",
                 "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0 },
                 "type": "group",
-                "children": [{
+                "children": [{ "ownership": { "role": "source" },
                     "nodeId": "card",
                     "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0 },
                     "type": "group",

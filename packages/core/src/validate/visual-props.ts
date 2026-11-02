@@ -9,20 +9,19 @@ import { assertValidTransform2D } from "../transform.js";
 import type { VNode, VNodeFor, VNodeType } from "../vnode/types.js";
 import { layoutContractError, validateFiniteNumberProp } from "./layout-props.js";
 
-const STROKE_SCALING_SUPPORTED_TYPES: ReadonlySet<VNodeType> = new Set([
-  "Flex",
-  "Grid",
-  "Box",
-  "Path",
-]);
-
+/**
+ * Validate canvas-stable Path and container-outline stroke restrictions.
+ * @throws {FatalError} For unsupported owners, invalid scaling tokens, or painted dash patterns.
+ */
 export function validateStrokeScalingProp(node: VNode, nid: string): void {
-  const props = node.props as Record<string, unknown>;
+  const fields = node.props as Record<string, unknown>;
+  const isContainer = node.type === "Box" || node.type === "Flex" || node.type === "Grid";
+  const props = isContainer ? ((fields.outline ?? {}) as Record<string, unknown>) : fields;
   const strokeScaling = props.strokeScaling;
   if (strokeScaling === undefined) {
     return;
   }
-  if (!STROKE_SCALING_SUPPORTED_TYPES.has(node.type)) {
+  if (!isContainer && node.type !== "Path") {
     throw new FatalError(
       "VALIDATION",
       `Validation error: ${node.type} does not support prop "strokeScaling"`,
@@ -36,10 +35,8 @@ export function validateStrokeScalingProp(node: VNode, nid: string): void {
       { stage: "validate", nodeId: nid },
     );
   }
-  const normalizedPathStroke = node.type === "Path" ? String(props.stroke ?? "").trim() : null;
-  const hasPaintedStroke =
-    normalizedPathStroke === null ||
-    (normalizedPathStroke.length > 0 && normalizedPathStroke.toLowerCase() !== "none");
+  const normalizedStroke = String(props.stroke ?? "").trim();
+  const hasPaintedStroke = normalizedStroke.length > 0 && normalizedStroke.toLowerCase() !== "none";
   if (
     strokeScaling === "canvas" &&
     hasPaintedStroke &&
@@ -58,7 +55,6 @@ export function validateStrokeScalingProp(node: VNode, nid: string): void {
  *  the JSON transport (turning `NaN`/`Infinity` into null → "unspecified"). */
 const VISUAL_FINITE_NUMBER_PROPS = [
   "opacity",
-  "borderWidth",
   "strokeWidth",
   "strokeMiterlimit",
   "textStrokeWidth",
@@ -121,6 +117,7 @@ export function validateVisualNumberProps(props: Record<string, unknown>, nid: s
   validatePartPaintNumbers(props, nid);
 }
 
+/** Node kinds that own a static post-layout transform. */
 const TRANSFORM_SUPPORTED_TYPES = new Set<VNodeType>([
   "Flex",
   "Grid",
@@ -133,6 +130,7 @@ const TRANSFORM_SUPPORTED_TYPES = new Set<VNodeType>([
   "Symbol",
 ]);
 
+/** Node kinds that can own post-layout animation or inline paint animation. */
 const ANIMATION_SUPPORTED_TYPES = new Set<VNodeType>([
   ...TRANSFORM_SUPPORTED_TYPES,
   "Inline",
@@ -141,6 +139,7 @@ const ANIMATION_SUPPORTED_TYPES = new Set<VNodeType>([
   "TextOnPath",
 ]);
 
+/** Reject unsupported transform owners or channels outside the authored transform contract. */
 export function validateTransformProp(node: VNode, nid: string): void {
   const transform = Reflect.get(node.props as Record<string, unknown>, "transform");
   if (transform === undefined) {
@@ -161,6 +160,7 @@ export function validateTransformProp(node: VNode, nid: string): void {
   });
 }
 
+/** Accepted animation options; other record keys are rejected. */
 const ANIMATION_SPEC_KEYS = new Set([
   "keyframes",
   "durationMs",
@@ -170,8 +170,10 @@ const ANIMATION_SPEC_KEYS = new Set([
   "fill",
 ]);
 
+/** Accepted keyframe fields before validating offset and target channels. */
 const ANIMATION_KEYFRAME_KEYS = new Set(["at", "opacity", "transform"]);
 
+/** Named easing functions shared with the native animation validator. */
 const ANIMATION_EASING_NAMES = new Set([
   "linear",
   "ease",
@@ -182,10 +184,13 @@ const ANIMATION_EASING_NAMES = new Set([
   "step-end",
 ]);
 
+/** Supported step discontinuity policies for authored easing. */
 const ANIMATION_STEP_POSITIONS = new Set(["jump-start", "jump-end", "jump-none", "jump-both"]);
 
+/** Accepted fields of a steps easing record. */
 const ANIMATION_STEPS_KEYS = new Set(["type", "count", "position"]);
 
+/** Accepted fields of a spring easing record. */
 const ANIMATION_SPRING_KEYS = new Set(["type", "stiffness", "damping", "mass"]);
 
 /** Accepted spring parameter ranges, mirrored by the Rust validator. */
@@ -195,6 +200,7 @@ const ANIMATION_SPRING_RANGES = {
   mass: [0.1, 10],
 } as const;
 
+/** Create a node-scoped ANIMATION_INVALID_SPEC failure for authored animation input. */
 export function animationValidationError(nid: string, message: string): FatalError {
   return new FatalError("ANIMATION_INVALID_SPEC", `Invalid animation: ${message} (${nid}).`, {
     stage: "validate",
@@ -202,6 +208,7 @@ export function animationValidationError(nid: string, message: string): FatalErr
   });
 }
 
+/** Narrow an animation record or throw a node-scoped ANIMATION_INVALID_SPEC failure. */
 export function assertAnimationRecord(
   value: unknown,
   nid: string,
@@ -430,6 +437,7 @@ function assertAnimationTargetsComplete(
   }
 }
 
+/** Validate an optional node animation, including its owner and enclosing timeline domain. */
 export function validateAnimationProp(
   node: VNode,
   nid: string,
@@ -445,6 +453,7 @@ export function validateAnimationProp(
   validateAnimationValue(animation, nid, timelineOwner);
 }
 
+/** Validate animation options and ordered, complete keyframe targets before transport. */
 export function validateAnimationValue(
   animation: unknown,
   nid: string,
@@ -513,6 +522,7 @@ const PATH_COMMAND_ARITY = new Map<string, number>([
   ["Z", 0],
 ]);
 
+/** SVG command and number tokens used by the lightweight authored path syntax check. */
 const PATH_TOKEN_PATTERN =
   /([MmZzLlHhVvCcSsQqTtAa])|(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)|([\s,]+)|(.)/g;
 
@@ -572,6 +582,7 @@ export function assertValidPathData(d: string, nid: string): void {
   }
 }
 
+/** Validate a childless Path and its required path data and dimensions. */
 export function validatePathNode(node: VNodeFor<"Path">, nid: string): void {
   if (node.children.length > 0) {
     throw new FatalError("VALIDATION", "Validation error: Path must not have children", {
@@ -692,6 +703,9 @@ export function validateSymbolNode(node: VNodeFor<"Symbol">, nid: string): void 
   }
 }
 
+/**
+ * Validate solid-color strings, optionally admitting none and deferring gradients to native parsing.
+ */
 export function validateColorProp(
   node: VNode,
   prop: string,

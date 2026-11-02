@@ -319,18 +319,3 @@ export function resolveLayoutTransitionInput(
     },
   };
 }
-
-/**
- * Meta keys the compiler stamps on generated wrapper Groups in a transition's
- * private compiled state. Consumers inspecting a detached IR snapshot can map
- * a wrapper back to its authored source node by matching these keys instead of
- * copying the strings.
- */
-export const LAYOUT_TRANSITION_WRAPPER_META = {
-  /** Meta key marking a Group as compiler-generated. */
-  generatedKey: "boundsvg.generated",
-  /** Value of `generatedKey` on layout-transition wrappers. */
-  generatedValue: "layout-transition-wrapper",
-  /** Meta key carrying the authored source node id. */
-  sourceNodeIdKey: "boundsvg.sourceNodeId",
-} as const;

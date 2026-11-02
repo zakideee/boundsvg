@@ -1,14 +1,7 @@
-import { resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
+import { bindIRToSvg, resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
 import { createPngObjectUrl } from "@boundsvg/browser/png";
-import type { Engine } from "@boundsvg/core";
-import {
-  buildHandlerMap,
-  buildHitTestIndex,
-  buildInspectHitTestIndex,
-  buildNodeTypeMap,
-  type IR,
-  inspectHitTestCandidates,
-} from "@boundsvg/core/scene";
+import { createResourceIdPrefix, type Engine } from "@boundsvg/core";
+import { buildHitTestIndex, buildInspectHitTestIndex, type IR } from "@boundsvg/core/scene";
 import { getElement } from "../../playground-shared/dom.js";
 import { escapeHtml } from "../../playground-shared/html-utils.js";
 import {
@@ -24,23 +17,28 @@ import { presets } from "./presets/index";
 import { coreState, resolveDebugOverlayConfig } from "./state";
 import type { Preset } from "./types";
 
-function resolveOverlayDisplay(key: string): EventEffectOverlayDisplayOptions {
-  if (key === "transform") {
-    return { mode: "all", showOrigin: true };
-  }
-  return { mode: "layout", showOrigin: false };
+/** Stable document scopes for the single render and its inline layer stack. */
+const LAYERED_SINGLE_RESOURCE_PREFIX = createResourceIdPrefix("playground-core-layered-single");
+/** Layer extraction appends its own layer ordinal inside this stack scope. */
+const LAYERED_STACK_RESOURCE_PREFIX = createResourceIdPrefix("playground-core-layered-stack");
+
+function resolveOverlayDisplay(): EventEffectOverlayDisplayOptions {
+  return { mode: coreState.inspectionMode, showOrigin: coreState.showInspectionOrigin };
 }
 
 function createHitTester(ir: IR): InspectHitTestFn {
   const index = buildInspectHitTestIndex(ir);
-  const nodeTypeMap = buildNodeTypeMap(ir);
+  let binding: ReturnType<typeof bindIRToSvg> | null = null;
   return (svgEl, clientX, clientY) => {
     const coords = translateSvgCoords(svgEl, clientX, clientY);
     if (!coords) {
       return null;
     }
-    const candidates = inspectHitTestCandidates(index, coords.x, coords.y);
-    return resolveHitTarget(svgEl, candidates, nodeTypeMap, clientX, clientY);
+    const candidates = index.queryCandidates(coords.x, coords.y);
+    if (binding?.root !== svgEl) {
+      binding = bindIRToSvg(svgEl, index.sourceIndex);
+    }
+    return resolveHitTarget(binding, candidates, clientX, clientY);
   };
 }
 
@@ -49,21 +47,26 @@ function setupFlowDragWithInspect(
   presetKey: string,
   engine: Engine,
   initialIr: IR,
-  display: EventEffectOverlayDisplayOptions,
 ): () => void {
   let handle = setupInspectHover(
     container,
     initialIr,
     createHitTester(initialIr),
     highlightSvgSourceLine,
-    display,
+    resolveOverlayDisplay(),
   );
-  coreState.inspectHighlight = handle.highlight;
+  coreState.inspectHandle = handle;
 
   const onPostRender = (ir: IR): void => {
-    // Old overlay/listeners were destroyed by innerHTML; set up fresh ones.
-    handle = setupInspectHover(container, ir, createHitTester(ir), highlightSvgSourceLine, display);
-    coreState.inspectHighlight = handle.highlight;
+    handle.cleanup();
+    handle = setupInspectHover(
+      container,
+      ir,
+      createHitTester(ir),
+      highlightSvgSourceLine,
+      resolveOverlayDisplay(),
+    );
+    coreState.inspectHandle = handle;
   };
 
   const dragCleanup = setupFlowDrag(container, presetKey, engine, onPostRender);
@@ -71,10 +74,11 @@ function setupFlowDragWithInspect(
   return () => {
     handle.cleanup();
     dragCleanup();
-    coreState.inspectHighlight = null;
+    coreState.inspectHandle = null;
   };
 }
 
+/** Render the selected preset and connect inspection to its current IR. */
 export function renderPreset(engine: Engine, key: string): void {
   const preset = presets[key];
   if (!preset) {
@@ -112,15 +116,26 @@ export function renderPreset(engine: Engine, key: string): void {
           ...(preset.animatedSvgOptions ?? { playback: { mode: "independent" } }),
         });
   coreState.cachedSvgString = svg;
+  coreState.cachedIr = ir;
   svgOutput.innerHTML = svg;
 
   if (key === "mouse") {
     // Build spatial index and handler map
     const index = buildHitTestIndex(ir);
-    const handlerMap = buildHandlerMap(ir);
 
     // Setup event listeners (includes its own overlay + hover glow)
-    coreState.activeMouseCleanup = setupMouseEvents(svgOutput, ir, index, handlerMap);
+    const mouseHandle = setupMouseEvents(
+      svgOutput,
+      ir,
+      index,
+      resolveOverlayDisplay(),
+      highlightSvgSourceLine,
+    );
+    coreState.inspectHandle = mouseHandle;
+    coreState.activeMouseCleanup = () => {
+      mouseHandle.cleanup();
+      coreState.inspectHandle = null;
+    };
 
     // Show event log panel
     eventLogPanel.style.display = "block";
@@ -128,10 +143,9 @@ export function renderPreset(engine: Engine, key: string): void {
     // Hide event log panel
     eventLogPanel.style.display = "none";
 
-    const display = resolveOverlayDisplay(key);
     if (key === "text-flow" || key === "flow-rich") {
       // Flow presets: drag + inspect hover with drag-aware reconstruction
-      coreState.activeMouseCleanup = setupFlowDragWithInspect(svgOutput, key, engine, ir, display);
+      coreState.activeMouseCleanup = setupFlowDragWithInspect(svgOutput, key, engine, ir);
     } else {
       // All other presets: inspect hover with SVG source sync
       const handle = setupInspectHover(
@@ -139,12 +153,12 @@ export function renderPreset(engine: Engine, key: string): void {
         ir,
         createHitTester(ir),
         highlightSvgSourceLine,
-        display,
+        resolveOverlayDisplay(),
       );
-      coreState.inspectHighlight = handle.highlight;
+      coreState.inspectHandle = handle;
       coreState.activeMouseCleanup = () => {
         handle.cleanup();
-        coreState.inspectHighlight = null;
+        coreState.inspectHandle = null;
       };
     }
   }
@@ -180,7 +194,7 @@ export function renderPreset(engine: Engine, key: string): void {
 
 function renderLayeredPreset(engine: Engine, preset: Preset): void {
   coreState.currentPresetKey = "layered";
-  coreState.inspectHighlight = null;
+  coreState.inspectHandle = null;
 
   const vnode = preset.build(engine);
   const options = {
@@ -190,11 +204,18 @@ function renderLayeredPreset(engine: Engine, preset: Preset): void {
   };
   const pngOpts = coreState.pngScale > 1 ? { ...options, scale: coreState.pngScale } : options;
 
-  const { svg: singleSvg, ir: singleIr } = engine.renderToSvgAndIR(vnode, options);
+  const { svg: singleSvg, ir: singleIr } = engine.renderToSvgAndIR(vnode, {
+    ...options,
+    resourceIdPrefix: LAYERED_SINGLE_RESOURCE_PREFIX,
+  });
   const singlePngBytes = engine.renderToPng(vnode, pngOpts);
-  const layeredSvg = engine.renderToLayeredSvg(vnode, options);
+  const layeredSvg = engine.renderToLayeredSvg(vnode, {
+    ...options,
+    resourceIdPrefix: LAYERED_STACK_RESOURCE_PREFIX,
+  });
   const layeredPng = engine.renderToLayeredPng(vnode, pngOpts);
   coreState.cachedSvgString = singleSvg;
+  coreState.cachedIr = singleIr;
 
   const sortedSvgLayers = [...layeredSvg.layers].sort((a, b) => a.paintOrder - b.paintOrder);
   const sortedPngLayers = [...layeredPng.layers].sort((a, b) => a.paintOrder - b.paintOrder);
@@ -226,7 +247,7 @@ function renderLayeredPreset(engine: Engine, preset: Preset): void {
       </div>
     </div>`;
 
-  // Inspect hover on the Single SVG cell (layout bbox). Stacked SVG keeps
+  // Inspect hover on the Single SVG cell. Stacked SVG keeps
   // its own CSS-only diagonal shift interaction.
   const singleCell = getElement("layered-single-svg");
   const inspectHandle = setupInspectHover(
@@ -234,12 +255,12 @@ function renderLayeredPreset(engine: Engine, preset: Preset): void {
     singleIr,
     createHitTester(singleIr),
     highlightSvgSourceLine,
-    resolveOverlayDisplay("layered"),
+    resolveOverlayDisplay(),
   );
-  coreState.inspectHighlight = inspectHandle.highlight;
+  coreState.inspectHandle = inspectHandle;
   coreState.activeMouseCleanup = () => {
     inspectHandle.cleanup();
-    coreState.inspectHighlight = null;
+    coreState.inspectHandle = null;
   };
 
   const pngOutput = getElement("png-output");

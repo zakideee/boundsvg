@@ -1,4 +1,4 @@
-import type { IR } from "@boundsvg/core";
+import type { IRSourceRef } from "@boundsvg/core/scene";
 import {
   findLineAtPoint,
   getAllText,
@@ -8,6 +8,7 @@ import {
 } from "@boundsvg/core/scene";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+/** Clipboard feedback lifetime in ms after the latest completed copy request. */
 const COPY_STATUS_TIMEOUT_MS = 1500;
 
 // ---------------------------------------------------------------------------
@@ -19,7 +20,7 @@ export type CopyStatus = "idle" | "copied" | "failed";
 
 /** Information passed to onTextCopyMenu callback */
 export type TextCopyMenuInfo = {
-  nodeId: string;
+  source: IRSourceRef;
   svgX: number;
   svgY: number;
   clientX: number;
@@ -41,7 +42,7 @@ export type SvgPoint = { svgX: number; svgY: number };
 
 /** Parameters for buildMenuInfo */
 export type BuildMenuInfoParams = {
-  nodeId: string;
+  source: IRSourceRef;
   svgX: number;
   svgY: number;
   clientX: number;
@@ -52,13 +53,13 @@ export type BuildMenuInfoParams = {
 export type UseTextCopyResult = {
   textMap: TextMap | null;
   copyToClipboard: (text: string) => Promise<boolean>;
-  resolveNodeText: (nodeId: string) => string | null;
-  resolveLineText: (nodeId: string, point: SvgPoint) => string | null;
-  resolveAncestorText: (nodeId: string) => string | null;
+  resolveNodeText: (source: IRSourceRef) => string | null;
+  resolveLineText: (source: IRSourceRef, point: SvgPoint) => string | null;
+  resolveAncestorText: (source: IRSourceRef) => string | null;
   resolveAllText: () => string;
-  copyNodeText: (nodeId: string) => Promise<boolean>;
-  copyLineText: (nodeId: string, point: SvgPoint) => Promise<boolean>;
-  copyAncestorText: (nodeId: string) => Promise<boolean>;
+  copyNodeText: (source: IRSourceRef) => Promise<boolean>;
+  copyLineText: (source: IRSourceRef, point: SvgPoint) => Promise<boolean>;
+  copyAncestorText: (source: IRSourceRef) => Promise<boolean>;
   copyAllText: () => Promise<boolean>;
   copyStatus: CopyStatus;
   /** Build a TextCopyMenuInfo for a given hit target. Used by InteractiveBoundSvg internally. */
@@ -105,18 +106,17 @@ async function writeClipboard(text: string): Promise<boolean> {
 // Hook
 // ---------------------------------------------------------------------------
 
-export function useTextCopy(ir: IR | null, textMap: TextMap | null): UseTextCopyResult {
+/** Copy primary text from the current snapshot and report asynchronous clipboard status. */
+export function useTextCopy(textMap: TextMap | null): UseTextCopyResult {
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const statusTimerRef = useRef<ReturnType<typeof setTimeout>>(0 as never);
   const mountedRef = useRef(false);
   const requestGenerationRef = useRef(0);
 
-  const irRef = useRef(ir);
   const textMapRef = useRef(textMap);
   useLayoutEffect(() => {
-    irRef.current = ir;
     textMapRef.current = textMap;
-  }, [ir, textMap]);
+  }, [textMap]);
 
   useLayoutEffect(() => {
     mountedRef.current = true;
@@ -143,38 +143,38 @@ export function useTextCopy(ir: IR | null, textMap: TextMap | null): UseTextCopy
     return ok;
   }, []);
 
-  const resolveNodeText = useCallback((nodeId: string): string | null => {
+  const resolveNodeText = useCallback((source: IRSourceRef): string | null => {
     if (!textMapRef.current) {
       return null;
     }
-    return getNodeText(textMapRef.current, nodeId);
+    return getNodeText(textMapRef.current, source);
   }, []);
 
-  const resolveLineText = useCallback((nodeId: string, point: SvgPoint): string | null => {
+  const resolveLineText = useCallback((source: IRSourceRef, point: SvgPoint): string | null => {
     if (!textMapRef.current) {
       return null;
     }
-    const line = findLineAtPoint(textMapRef.current, nodeId, point);
+    const line = findLineAtPoint(textMapRef.current, source, point);
     return line?.text ?? null;
   }, []);
 
-  const resolveAncestorText = useCallback((nodeId: string): string | null => {
+  const resolveAncestorText = useCallback((source: IRSourceRef): string | null => {
     if (!textMapRef.current) {
       return null;
     }
-    return getAncestorText(textMapRef.current, nodeId);
+    return getAncestorText(textMapRef.current, source);
   }, []);
 
   const resolveAllText = useCallback((): string => {
-    if (!textMapRef.current || !irRef.current) {
+    if (!textMapRef.current) {
       return "";
     }
-    return getAllText(textMapRef.current, irRef.current.drawOrder);
+    return getAllText(textMapRef.current);
   }, []);
 
   const copyNodeText = useCallback(
-    async (nodeId: string): Promise<boolean> => {
-      const text = resolveNodeText(nodeId);
+    async (source: IRSourceRef): Promise<boolean> => {
+      const text = resolveNodeText(source);
       if (!text) {
         return false;
       }
@@ -184,8 +184,8 @@ export function useTextCopy(ir: IR | null, textMap: TextMap | null): UseTextCopy
   );
 
   const copyLineText = useCallback(
-    async (nodeId: string, point: SvgPoint): Promise<boolean> => {
-      const text = resolveLineText(nodeId, point);
+    async (source: IRSourceRef, point: SvgPoint): Promise<boolean> => {
+      const text = resolveLineText(source, point);
       if (!text) {
         return false;
       }
@@ -195,8 +195,8 @@ export function useTextCopy(ir: IR | null, textMap: TextMap | null): UseTextCopy
   );
 
   const copyAncestorText = useCallback(
-    async (nodeId: string): Promise<boolean> => {
-      const text = resolveAncestorText(nodeId);
+    async (source: IRSourceRef): Promise<boolean> => {
+      const text = resolveAncestorText(source);
       if (!text) {
         return false;
       }
@@ -215,14 +215,14 @@ export function useTextCopy(ir: IR | null, textMap: TextMap | null): UseTextCopy
 
   const buildMenuInfo = useCallback(
     (params: BuildMenuInfoParams): TextCopyMenuInfo => ({
-      nodeId: params.nodeId,
+      source: params.source,
       svgX: params.svgX,
       svgY: params.svgY,
       clientX: params.clientX,
       clientY: params.clientY,
-      nodeText: resolveNodeText(params.nodeId),
-      lineText: resolveLineText(params.nodeId, { svgX: params.svgX, svgY: params.svgY }),
-      ancestorText: resolveAncestorText(params.nodeId),
+      nodeText: resolveNodeText(params.source),
+      lineText: resolveLineText(params.source, { svgX: params.svgX, svgY: params.svgY }),
+      ancestorText: resolveAncestorText(params.source),
       allText: resolveAllText(),
       copyToClipboard,
     }),

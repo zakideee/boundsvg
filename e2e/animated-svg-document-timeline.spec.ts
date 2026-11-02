@@ -9,10 +9,15 @@ import {
 } from "@boundsvg/core";
 import { expect, type Page, test } from "@playwright/test";
 
+/** Document clock period shared by the standalone SVG timeline probes. */
 const DOCUMENT_DURATION_MS = 200;
+/** Distance from a timeline boundary used to compare the poses on its two sides. */
 const PROBE_DISTANCE_MS = Math.max(DOCUMENT_DURATION_MS * 2 ** -20, 0.001);
+/** Absolute opacity difference accepted when comparing browser CSS with sampled output. */
 const OPACITY_TOLERANCE = 1e-5;
+/** Per-coefficient tolerance used for browser-versus-sampler affine comparisons. */
 const MATRIX_TOLERANCE = 5e-4;
+/** Freeze SVG animation clocks so timeline poses can be inspected deterministically. */
 const PAUSED_ANIMATION_CSS = "svg * { animation-play-state: paused !important; }";
 
 type VisualState = {
@@ -475,5 +480,52 @@ test("keeps node and text-unit tracks on the same document clock", async ({ page
   for (const fixture of fixtures) {
     const animated = await readVisualState(page, animatedSvg, fixture.selector);
     expectNear(animated.opacity, fixture.expected, OPACITY_TOLERANCE);
+  }
+});
+
+test("keeps both skew function channels aligned with native samples", async ({ page }) => {
+  const scene = createElement(
+    "Canvas",
+    { width: 120, height: 80 },
+    createElement("Box", {
+      id: "skew-card",
+      width: 80,
+      height: 40,
+      background: "#2563eb",
+      borderWidth: [4, 2, 6, 2],
+      borderColor: "#fff",
+      outline: { stroke: "#f97316" },
+      animate: {
+        durationMs: DOCUMENT_DURATION_MS,
+        easing: "linear",
+        fill: "both",
+        keyframes: [
+          { at: 0, transform: { skewXDeg: 0, skewYDeg: -6, scaleX: 1, scaleY: 1 } },
+          { at: 1, transform: { skewXDeg: 18, skewYDeg: 0, scaleX: 1.2, scaleY: 0.9 } },
+        ],
+      },
+    }),
+  );
+  for (const timeMs of [0, 50, 100, 200]) {
+    const staticSvg = engine.renderToSvg(scene, { timeMs });
+    const sampled = await readUnpausedVisualState(
+      page,
+      staticSvg,
+      '[data-boundsvg-node-id="skew-card"]',
+    );
+    for (const options of [
+      { playback: { mode: "independent" }, timeMs } as const,
+      timelineOptions(timeMs, 1),
+    ]) {
+      const svg = engine.renderToAnimatedSvg(scene, options);
+      const animated = await readVisualState(page, svg, '[data-boundsvg-node-id="skew-card"]');
+      for (let index = 0; index < 6; index += 1) {
+        expectNear(
+          animated.matrix[index] ?? Number.NaN,
+          sampled.matrix[index] ?? Number.NaN,
+          MATRIX_TOLERANCE,
+        );
+      }
+    }
   }
 });

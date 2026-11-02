@@ -13,6 +13,7 @@ pub(super) struct AxisAlignedAffine {
 }
 
 impl AxisAlignedAffine {
+    /// Construct the neutral axis-aligned generated transform.
     pub(super) const fn identity() -> Self {
         Self {
             scale_x: 1.0,
@@ -32,6 +33,7 @@ impl AxisAlignedAffine {
         }
     }
 
+    /// Test whether scale and translation are exactly neutral.
     pub(super) fn is_identity(self) -> bool {
         self.scale_x == 1.0
             && self.scale_y == 1.0
@@ -39,6 +41,11 @@ impl AxisAlignedAffine {
             && self.translate_y == 0.0
     }
 
+    /// Invert a finite, non-singular generated axis-aligned transform.
+    ///
+    /// # Errors
+    ///
+    /// Returns a geometry mismatch when a coefficient is non-finite or either scale is zero.
     pub(super) fn inverse(self, node_id: &str) -> Result<Self, CompatibilityMismatch> {
         if !self.scale_x.is_finite()
             || !self.scale_y.is_finite()
@@ -61,6 +68,11 @@ impl AxisAlignedAffine {
         })
     }
 
+    /// Express this generated affine as center-origin animation channels.
+    ///
+    /// # Errors
+    ///
+    /// Returns a geometry mismatch if origin rebasing produces a non-finite translation.
     pub(super) fn to_animation_transform(
         self,
         reference_bbox: BBox,
@@ -83,10 +95,19 @@ impl AxisAlignedAffine {
             scale_x: Some(self.scale_x),
             scale_y: Some(self.scale_y),
             rotate_deg: None,
+            skew_x_deg: None,
+            skew_y_deg: None,
         })
     }
 }
 
+/// Derive the axis-aligned world transform mapping a reference box onto a target box.
+///
+/// # Errors
+///
+/// Returns a geometry mismatch for non-finite or negative extents, or an axis changing between zero
+/// and nonzero size.
+/// Also rejects a non-finite derived translation or a non-invertible scale ratio.
 pub(super) fn bbox_world_delta(
     reference_bbox: BBox,
     target_bbox: BBox,
@@ -160,6 +181,7 @@ fn validate_transition_bbox(
     Ok(())
 }
 
+/// Format logical box coordinates for transition compatibility diagnostics.
 pub(super) fn describe_bbox(bbox: BBox) -> String {
     format!("x={}, y={}, w={}, h={}", bbox.x, bbox.y, bbox.w, bbox.h)
 }

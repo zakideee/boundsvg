@@ -22,19 +22,30 @@ use super::types::{
 use crate::error::EngineError;
 use crate::svg_emit::num_format::format_js_number;
 
+/// Maximum document-timeline duration in milliseconds.
 pub const MAX_TIMELINE_DURATION_MS: f64 = 4_294_967_296.0;
+/// Maximum finite document-timeline iteration count.
 pub const MAX_TIMELINE_ITERATIONS: f64 = 1_048_576.0;
+/// Maximum document elapsed time accepted for timeline sampling, in milliseconds.
 pub const MAX_TIMELINE_TIME_MS: f64 = 4_503_599_627_370_496.0;
+/// Maximum elapsed-time/duration ratio preserving the supported timeline precision.
 pub const MAX_TIMELINE_TIME_RATIO: f64 = 2_147_483_648.0;
+/// Maximum compiled document keyframe stops, counted across all tracks.
 pub const MAX_TIMELINE_KEYFRAME_STOPS: usize = 16_384;
+/// Maximum emitted document-timeline CSS bytes, including every compiled track.
 pub const MAX_TIMELINE_CSS_BYTES: usize = 16_777_216;
 
+/// Minimum authored track duration allowed in document-timeline mode, in milliseconds.
 const MIN_AUTHORED_TIMELINE_DURATION_MS: f64 = 1.0;
+/// Maximum absolute authored track delay in document-timeline mode, in milliseconds.
 const MAX_AUTHORED_TIMELINE_DELAY_MS: f64 = MAX_TIMELINE_DURATION_MS;
+/// Minimum finite authored iteration count allowed in document-timeline mode.
 const MIN_AUTHORED_TIMELINE_ITERATIONS: f64 = 1.0 / 4_294_967_296.0;
+/// Remedy reported when authored track values cannot be represented in timeline mode.
 const AUTHORED_TIMELINE_DOMAIN_MIGRATION: &str =
     "Use playback mode independent or change the authored value to the supported timeline range.";
 
+/// Divisor of the document period used to reserve boundary-discontinuity windows.
 const CARVE_OUT_SCALE: f64 = 1_048_576.0;
 
 #[cfg(test)]
@@ -46,24 +57,28 @@ static PREFLIGHT_WINDOW_TRACE: LazyLock<Mutex<HashMap<ThreadId, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Finite or infinite repetition of the document timeline.
 pub enum DocumentIterationCount {
     Finite(f64),
     Infinite,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Document period and repetition policy checked before mapping elapsed time onto authored tracks.
 pub struct DocumentPlayback {
     pub duration_ms: f64,
     pub iterations: DocumentIterationCount,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Finite or infinite repetition count emitted in document-level CSS playback.
 pub enum CssIterationCount {
     Finite(f64),
     Infinite,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// CSS delay, remaining repetitions, and final-hold state derived from document elapsed time.
 pub struct DocumentCssTiming {
     pub delay_ms: f64,
     pub iterations: CssIterationCount,
@@ -71,6 +86,7 @@ pub struct DocumentCssTiming {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Whether a compiled timeline track belongs to a node or one text paint unit.
 pub enum TimelineOwnerKind {
     Node,
     TextUnit,
@@ -78,6 +94,7 @@ pub enum TimelineOwnerKind {
 
 impl TimelineOwnerKind {
     #[must_use]
+    /// Return the stable owner-kind label used by timeline diagnostics.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Node => "node",
@@ -87,6 +104,7 @@ impl TimelineOwnerKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Finite easing vocabulary emitted between compiled document keyframes.
 pub enum CompiledCssEasing {
     Linear,
     OutputScaledLinear(f64),
@@ -95,6 +113,7 @@ pub enum CompiledCssEasing {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Sampled keyframe in document time with easing for the following segment.
 pub struct DocumentKeyframe {
     pub time_ms: f64,
     pub value: AnimationKeyframe,
@@ -102,17 +121,19 @@ pub struct DocumentKeyframe {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Compiled node or text-unit track, retaining owner identity and local reference bounds.
 pub struct DocumentTrackPlan {
     pub owner_kind: TimelineOwnerKind,
     pub owner_id: String,
     pub unit_id: Option<String>,
-    pub animation_name_owner: String,
+    pub animation_resource_key: String,
     pub bbox: BBox,
     pub keyframes: Vec<DocumentKeyframe>,
     pub discontinuities_ms: Vec<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Resolved document playback and bounded CSS tracks ready for SVG emission.
 pub struct DocumentAnimationPlan {
     pub duration_ms: f64,
     pub css_iteration_count: CssIterationCount,
@@ -205,6 +226,7 @@ pub fn validate_document_playback(
 
 impl DocumentPlayback {
     #[must_use]
+    /// Return the document-period fraction reserved for discontinuity carve-out windows.
     pub fn delta_ms(self) -> f64 {
         self.duration_ms / CARVE_OUT_SCALE
     }
@@ -284,6 +306,8 @@ impl TrackValue {
                     scale_x: Some(transform.scale_x.unwrap_or(1.0)),
                     scale_y: Some(transform.scale_y.unwrap_or(1.0)),
                     rotate_deg: Some(transform.rotate_deg.unwrap_or(0.0)),
+                    skew_x_deg: transform.skew_x_deg,
+                    skew_y_deg: transform.skew_y_deg,
                 }),
         }
     }
@@ -308,6 +332,8 @@ impl TrackValue {
                 transform.scale_x.unwrap_or(1.0),
                 transform.scale_y.unwrap_or(1.0),
                 transform.rotate_deg.unwrap_or(0.0),
+                transform.skew_x_deg.unwrap_or(0.0),
+                transform.skew_y_deg.unwrap_or(0.0),
             ]);
         }
         values
@@ -319,7 +345,7 @@ struct TrackSource {
     owner_kind: TimelineOwnerKind,
     owner_id: String,
     unit_id: Option<String>,
-    animation_name_owner: String,
+    animation_resource_key: String,
     bbox: BBox,
     spec: AnimationSpec,
     base_value: TrackValue,
@@ -517,12 +543,17 @@ fn identity_animation_transform() -> AnimationTransform2D {
         scale_x: Some(1.0),
         scale_y: Some(1.0),
         rotate_deg: Some(0.0),
+        skew_x_deg: None,
+        skew_y_deg: None,
     }
 }
 
-fn base_transform_value(transform: Option<&Transform2D>, bbox: BBox) -> AnimationTransform2D {
+fn base_transform_value(
+    transform: Option<&Transform2D>,
+    bbox: BBox,
+) -> Result<AnimationTransform2D, EngineError> {
     let Some(transform) = transform else {
-        return identity_animation_transform();
+        return Ok(identity_animation_transform());
     };
     let translate_x = transform.translate_x.unwrap_or(0.0);
     let translate_y = transform.translate_y.unwrap_or(0.0);
@@ -533,24 +564,26 @@ fn base_transform_value(transform: Option<&Transform2D>, bbox: BBox) -> Animatio
     let origin_y = transform.origin_y.unwrap_or(0.0);
     let center_x = bbox.w / 2.0;
     let center_y = bbox.h / 2.0;
-    let radians = rotate_deg.to_radians();
-    let (sin, cos) = radians.sin_cos();
-    let matrix_a = cos * scale_x;
-    let matrix_b = sin * scale_x;
-    let matrix_c = -sin * scale_y;
-    let matrix_d = cos * scale_y;
+    let [matrix_a, matrix_b, matrix_c, matrix_d, _, _] = boundshape::transform_to_affine(transform)
+        .map_err(|error| EngineError::Validation(error.to_string()))?;
     let offset_x = origin_x - center_x;
     let offset_y = origin_y - center_y;
-    AnimationTransform2D {
+    Ok(AnimationTransform2D {
         translate_x: Some(translate_x + offset_x - (matrix_a * offset_x + matrix_c * offset_y)),
         translate_y: Some(translate_y + offset_y - (matrix_b * offset_x + matrix_d * offset_y)),
         scale_x: Some(scale_x),
         scale_y: Some(scale_y),
         rotate_deg: Some(rotate_deg),
-    }
+        skew_x_deg: transform.skew_x_deg,
+        skew_y_deg: transform.skew_y_deg,
+    })
 }
 
-fn collect_track_sources_at_node(node: &IrNode, sources: &mut Vec<TrackSource>) {
+fn collect_track_sources_at_node(
+    node: &IrNode,
+    sources: &mut Vec<TrackSource>,
+    node_index: usize,
+) -> Result<(), EngineError> {
     match &node.kind {
         IrNodeKind::Group {
             opacity,
@@ -563,13 +596,14 @@ fn collect_track_sources_at_node(node: &IrNode, sources: &mut Vec<TrackSource>) 
                 owner_kind: TimelineOwnerKind::Node,
                 owner_id: node.node_id.clone(),
                 unit_id: None,
-                animation_name_owner: node.node_id.clone(),
+                animation_resource_key: crate::ir::ownership::node_resource_key(node_index),
                 bbox: node.bbox,
                 spec: spec.clone(),
                 base_value: TrackValue {
                     opacity: animates_opacity.then_some(opacity.unwrap_or(1.0)),
                     transform: animates_transform
-                        .then(|| base_transform_value(transform.as_ref(), node.bbox)),
+                        .then(|| base_transform_value(transform.as_ref(), node.bbox))
+                        .transpose()?,
                 },
             });
         }
@@ -616,7 +650,10 @@ fn collect_track_sources_at_node(node: &IrNode, sources: &mut Vec<TrackSource>) 
                     owner_kind: TimelineOwnerKind::TextUnit,
                     owner_id: node.node_id.clone(),
                     unit_id: Some(sample.unit_id.clone()),
-                    animation_name_owner: format!("{}:unit:{unit_index}", node.node_id),
+                    animation_resource_key: format!(
+                        "{}:unit:{unit_index}",
+                        crate::ir::ownership::node_resource_key(node_index)
+                    ),
                     bbox,
                     spec,
                     base_value: TrackValue {
@@ -628,11 +665,12 @@ fn collect_track_sources_at_node(node: &IrNode, sources: &mut Vec<TrackSource>) 
         }
         _ => {}
     }
+    Ok(())
 }
 
 #[cfg(test)]
 fn collect_track_sources(node: &IrNode, sources: &mut Vec<TrackSource>) {
-    collect_track_sources_at_node(node, sources);
+    collect_track_sources_at_node(node, sources, 0).expect("valid test track sources");
     if let IrNodeKind::Group { children, .. } = &node.kind {
         for child in children {
             collect_track_sources(child, sources);
@@ -902,6 +940,7 @@ impl LocalBoundaryPattern {
     }
 
     fn first_nonincrementing_step_progress(&self, lower: f64, upper: f64) -> Option<f64> {
+        /// First nonnegative binary64 integer for which adding one no longer advances the value.
         const FIRST_NONINCREMENTING_INTEGER: f64 = 9_007_199_254_740_992.0;
         self.step_segments.iter().find_map(|segment| {
             let segment_span = segment.end_progress - segment.start_progress;
@@ -1390,6 +1429,10 @@ fn interpolate_transform(
         scale_x: interpolate(start.scale_x, end.scale_x, 1.0),
         scale_y: interpolate(start.scale_y, end.scale_y, 1.0),
         rotate_deg: interpolate(start.rotate_deg, end.rotate_deg, 0.0),
+        skew_x_deg: interpolate(start.skew_x_deg, end.skew_x_deg, 0.0)
+            .filter(|angle| *angle != 0.0),
+        skew_y_deg: interpolate(start.skew_y_deg, end.skew_y_deg, 0.0)
+            .filter(|angle| *angle != 0.0),
     }
 }
 
@@ -1439,6 +1482,8 @@ fn transform_interpolation_is_constant(
         && start.scale_x.unwrap_or(1.0) == end.scale_x.unwrap_or(1.0)
         && start.scale_y.unwrap_or(1.0) == end.scale_y.unwrap_or(1.0)
         && start.rotate_deg.unwrap_or(0.0) == end.rotate_deg.unwrap_or(0.0)
+        && start.skew_x_deg.unwrap_or(0.0) == end.skew_x_deg.unwrap_or(0.0)
+        && start.skew_y_deg.unwrap_or(0.0) == end.skew_y_deg.unwrap_or(0.0)
 }
 
 fn segment_interpolation_is_constant(spec: &AnimationSpec, segment_index: usize) -> bool {
@@ -2266,6 +2311,8 @@ fn base_transition_failure(
                 transform.scale_x,
                 transform.scale_y,
                 transform.rotate_deg,
+                transform.skew_x_deg,
+                transform.skew_y_deg,
             ]
             .into_iter()
             .flatten()
@@ -2484,7 +2531,7 @@ fn compile_track(
         owner_kind: source.owner_kind,
         owner_id: source.owner_id.clone(),
         unit_id: source.unit_id.clone(),
-        animation_name_owner: source.animation_name_owner.clone(),
+        animation_resource_key: source.animation_resource_key.clone(),
         bbox: source.bbox,
         keyframes,
         discontinuities_ms,
@@ -2804,12 +2851,14 @@ pub fn compile_document_animation_plan_with_prefix(
 ) -> Result<DocumentAnimationPlan, EngineError> {
     validate_document_playback(playback, time_ms)?;
     let mut sources = Vec::new();
+    let mut node_index = 0;
     animation::validate_animations_with_node_hooks(
         ir,
         &mut validate_authored_timeline_node,
         &mut |node| {
-            collect_track_sources_at_node(node, &mut sources);
-            Ok(())
+            let result = collect_track_sources_at_node(node, &mut sources, node_index);
+            node_index += 1;
+            result
         },
     )?;
     let timing = playback.css_timing(time_ms);
@@ -2857,21 +2906,21 @@ mod tests {
     fn timeline_ir(spec: AnimationSpec) -> Ir {
         Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "animated-node".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
                     children: Vec::new(),
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: Some(0.25),
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: Some(spec),
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -2881,60 +2930,63 @@ mod tests {
 
     fn animated_group(node_id: &str, spec: AnimationSpec) -> IrNode {
         IrNode {
+            ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                on: None,
+                meta: None,
+            },
             node_id: node_id.to_string(),
             bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
             kind: IrNodeKind::Group {
                 children: Vec::new(),
-                clip_path: None,
-                clip_border_radius: None,
+                clip: None,
                 opacity: Some(0.25),
                 box_shadow: None,
-                meta: None,
                 transform: None,
                 animation: Some(spec),
-                on: None,
             },
         }
     }
 
     fn animated_text_unit(node_id: &str, unit_id: &str, spec: &AnimationSpec) -> IrNode {
-        serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(json!({
-            "nodeId": node_id,
-            "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
-            "type": "text",
-            "lines": [],
-            "font": "Fixture",
-            "fontSizePx": 16.0,
-            "color": "#000000",
-            "textAlign": "start",
-            "layoutBox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
-            "lineHeightPx": 20.0,
-            "glyphPaths": [],
-            "unitMap": {
-                "kind": "cluster",
-                "ruby": "with-base",
-                "units": [{
-                    "unitId": unit_id,
+        serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(
+            json!({ "ownership": { "role": "source" },
+                "nodeId": node_id,
+                "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
+                "type": "text",
+                "lines": [],
+                "font": "Fixture",
+                "fontSizePx": 16.0,
+                "color": "#000000",
+                "textAlign": "start",
+                "layoutBox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
+                "lineHeightPx": 20.0,
+                "glyphPaths": [],
+                "unitMap": {
                     "kind": "cluster",
-                    "sourceStart": 0,
-                    "sourceEnd": 1,
-                    "lineId": "line-0",
-                    "logicalOrder": 0,
-                    "visualOrder": 0,
-                    "members": []
+                    "ruby": "with-base",
+                    "units": [{
+                        "unitId": unit_id,
+                        "kind": "cluster",
+                        "sourceStart": 0,
+                        "sourceEnd": 1,
+                        "lineId": "line-0",
+                        "logicalOrder": 0,
+                        "visualOrder": 0,
+                        "members": []
+                    }]
+                },
+                "unitAnimation": {
+                    "by": "cluster",
+                    "animation": spec,
+                    "delayStepMs": 0.0,
+                    "order": "logical"
+                },
+                "unitAnimationSamples": [{
+                    "unitId": unit_id,
+                    "bbox": { "x": 0.0, "y": 0.0, "w": 10.0, "h": 20.0 }
                 }]
-            },
-            "unitAnimation": {
-                "by": "cluster",
-                "animation": spec,
-                "delayStepMs": 0.0,
-                "order": "logical"
-            },
-            "unitAnimationSamples": [{
-                "unitId": unit_id,
-                "bbox": { "x": 0.0, "y": 0.0, "w": 10.0, "h": 20.0 }
-            }]
-        }))
+            }),
+        )
         .map(IrNode::from)
         .expect("text-unit fixture should deserialize")
     }
@@ -3309,7 +3361,6 @@ mod tests {
 
         let text_ir = Ir {
             root: animated_text_unit("text-owner", "unit-0", &spec),
-            draw_order: Vec::new(),
             width: 100.0,
             height: 20.0,
             debug: None,
@@ -3363,7 +3414,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-                draw_order: Vec::new(),
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -3515,6 +3565,8 @@ mod tests {
                         scale_x: Some(1.0),
                         scale_y: Some(1.0),
                         rotate_deg: Some(0.0),
+                        skew_x_deg: None,
+                        skew_y_deg: None,
                     }),
                 },
                 AnimationKeyframe {
@@ -3642,7 +3694,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-                draw_order: Vec::new(),
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -3801,7 +3852,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -3852,7 +3902,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-                draw_order: Vec::new(),
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -3902,7 +3951,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-                draw_order: Vec::new(),
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -3951,7 +3999,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-                draw_order: Vec::new(),
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -4018,7 +4065,6 @@ mod tests {
                 timeline_ir(seam_spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &seam_spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -4039,7 +4085,6 @@ mod tests {
                 timeline_ir(continuous_spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &continuous_spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -4089,7 +4134,6 @@ mod tests {
                     timeline_ir(spec.clone()),
                     Ir {
                         root: animated_text_unit("text-owner", "unit-0", &spec),
-                        draw_order: Vec::new(),
                         width: 100.0,
                         height: 20.0,
                         debug: None,
@@ -4145,7 +4189,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -4224,7 +4267,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -4587,9 +4629,11 @@ mod tests {
             rotate_deg: Some(30.0),
             origin_x: Some(10.0),
             origin_y: Some(12.0),
+            skew_x_deg: None,
+            skew_y_deg: None,
         };
         let bbox = BBox::new(20.0, 30.0, 100.0, 50.0);
-        let rebased = base_transform_value(Some(&base_transform), bbox);
+        let rebased = base_transform_value(Some(&base_transform), bbox).expect("valid base");
         let spec = AnimationSpec {
             keyframes: vec![
                 AnimationKeyframe {
@@ -4674,6 +4718,10 @@ mod tests {
         }));
         let source = Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
@@ -4681,17 +4729,13 @@ mod tests {
                         animated_group("precision-first", precision_spec),
                         animated_group("spring-second", spring_spec),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: None,
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -4762,6 +4806,10 @@ mod tests {
         ] {
             let source = Ir {
                 root: IrNode {
+                    ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                        on: None,
+                        meta: None,
+                    },
                     node_id: "root".to_string(),
                     bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                     kind: IrNodeKind::Group {
@@ -4769,17 +4817,13 @@ mod tests {
                             animated_group(early_owner_id, early_spec),
                             animated_text_unit("copy", "unit-a", &spring_spec),
                         ],
-                        clip_path: None,
-                        clip_border_radius: None,
+                        clip: None,
                         opacity: None,
                         box_shadow: None,
-                        meta: None,
                         transform: None,
                         animation: None,
-                        on: None,
                     },
                 },
-                draw_order: Vec::new(),
                 width: 100.0,
                 height: 50.0,
                 debug: None,
@@ -4804,70 +4848,71 @@ mod tests {
 
     #[test]
     fn compiles_text_units_in_sample_order_and_validates_every_effective_delay() {
-        let root: IrNode = serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(json!({
-                "nodeId": "copy",
-                "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
-                "type": "text",
-                "lines": [],
-                "font": "Fixture",
-                "fontSizePx": 16.0,
-                "color": "#000000",
-                "textAlign": "start",
-                "layoutBox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
-                "lineHeightPx": 20.0,
-                "glyphPaths": [],
-                "unitMap": {
-                    "kind": "cluster",
-                    "ruby": "with-base",
-                    "units": [{
-                        "unitId": "unit-a",
+        let root: IrNode = serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(
+            json!({ "ownership": { "role": "source" },
+                    "nodeId": "copy",
+                    "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
+                    "type": "text",
+                    "lines": [],
+                    "font": "Fixture",
+                    "fontSizePx": 16.0,
+                    "color": "#000000",
+                    "textAlign": "start",
+                    "layoutBox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 20.0 },
+                    "lineHeightPx": 20.0,
+                    "glyphPaths": [],
+                    "unitMap": {
                         "kind": "cluster",
-                        "sourceStart": 0,
-                        "sourceEnd": 1,
-                        "lineId": "line-0",
-                        "logicalOrder": 0,
-                        "visualOrder": 1,
-                        "members": []
+                        "ruby": "with-base",
+                        "units": [{
+                            "unitId": "unit-a",
+                            "kind": "cluster",
+                            "sourceStart": 0,
+                            "sourceEnd": 1,
+                            "lineId": "line-0",
+                            "logicalOrder": 0,
+                            "visualOrder": 1,
+                            "members": []
+                        }, {
+                            "unitId": "unit-b",
+                            "kind": "cluster",
+                            "sourceStart": 1,
+                            "sourceEnd": 2,
+                            "lineId": "line-0",
+                            "logicalOrder": 1,
+                            "visualOrder": 0,
+                            "members": []
+                        }]
+                    },
+                    "unitAnimation": {
+                        "by": "cluster",
+                        "animation": {
+                            "keyframes": [
+                                { "at": 0.0, "opacity": 0.0 },
+                                { "at": 1.0, "opacity": 1.0 }
+                            ],
+                            "durationMs": 100.0,
+                            "delayMs": 0.0,
+                            "easing": "linear",
+                            "iterations": 1.0,
+                            "fill": "both"
+                        },
+                        "delayStepMs": 20.0,
+                        "order": "visual"
+                    },
+                    "unitAnimationSamples": [{
+                        "unitId": "unit-a",
+                        "bbox": { "x": 0.0, "y": 0.0, "w": 10.0, "h": 20.0 }
                     }, {
                         "unitId": "unit-b",
-                        "kind": "cluster",
-                        "sourceStart": 1,
-                        "sourceEnd": 2,
-                        "lineId": "line-0",
-                        "logicalOrder": 1,
-                        "visualOrder": 0,
-                        "members": []
+                        "bbox": { "x": 12.0, "y": 0.0, "w": 10.0, "h": 20.0 }
                     }]
-                },
-                "unitAnimation": {
-                    "by": "cluster",
-                    "animation": {
-                        "keyframes": [
-                            { "at": 0.0, "opacity": 0.0 },
-                            { "at": 1.0, "opacity": 1.0 }
-                        ],
-                        "durationMs": 100.0,
-                        "delayMs": 0.0,
-                        "easing": "linear",
-                        "iterations": 1.0,
-                        "fill": "both"
-                    },
-                    "delayStepMs": 20.0,
-                    "order": "visual"
-                },
-                "unitAnimationSamples": [{
-                    "unitId": "unit-a",
-                    "bbox": { "x": 0.0, "y": 0.0, "w": 10.0, "h": 20.0 }
-                }, {
-                    "unitId": "unit-b",
-                    "bbox": { "x": 12.0, "y": 0.0, "w": 10.0, "h": 20.0 }
-                }]
-        }))
+            }),
+        )
         .map(IrNode::from)
         .expect("text-unit fixture should deserialize");
         let source = Ir {
             root,
-            draw_order: Vec::new(),
             width: 100.0,
             height: 20.0,
             debug: None,
@@ -4981,6 +5026,10 @@ mod tests {
         out_of_domain_spec.duration_ms = next_down(MIN_AUTHORED_TIMELINE_DURATION_MS);
         let grouped_ir = |first: (&str, AnimationSpec), second: (&str, AnimationSpec)| Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
@@ -4988,17 +5037,13 @@ mod tests {
                         animated_group(first.0, first.1),
                         animated_group(second.0, second.1),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: None,
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -5340,7 +5385,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5396,7 +5440,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5463,7 +5506,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5489,7 +5531,6 @@ mod tests {
         );
         let matching_text_ir = Ir {
             root: animated_text_unit("text-owner", "unit-0", &matching_text_spec),
-            draw_order: Vec::new(),
             width: 100.0,
             height: 20.0,
             debug: None,
@@ -5537,7 +5578,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5634,7 +5674,6 @@ mod tests {
                 (
                     Ir {
                         root: animated_text_unit("text-owner", "unit-0", &spec),
-                        draw_order: Vec::new(),
                         width: 100.0,
                         height: 20.0,
                         debug: None,
@@ -5720,7 +5759,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5814,7 +5852,6 @@ mod tests {
                 (
                     Ir {
                         root: animated_text_unit("text-owner", "unit-0", &spec),
-                        draw_order: Vec::new(),
                         width: 100.0,
                         height: 20.0,
                         debug: None,
@@ -5874,7 +5911,6 @@ mod tests {
                 timeline_ir(spec.clone()),
                 Ir {
                     root: animated_text_unit("text-owner", "unit-0", &spec),
-                    draw_order: Vec::new(),
                     width: 100.0,
                     height: 20.0,
                     debug: None,
@@ -5908,6 +5944,10 @@ mod tests {
     fn reports_the_first_owner_representability_failure() {
         let ir = Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
@@ -5926,17 +5966,13 @@ mod tests {
                             })),
                         ),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: None,
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -5963,6 +5999,10 @@ mod tests {
         hold_spec.delay_ms = Some(0.0);
         let ir = Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
@@ -5973,17 +6013,13 @@ mod tests {
                             opacity_spec(AnimationEasing::Named("ease-in".to_string())),
                         ),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: None,
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6034,7 +6070,6 @@ mod tests {
             timeline_ir(spec.clone()),
             Ir {
                 root: animated_text_unit("text-owner", "unit-0", &spec),
-                draw_order: Vec::new(),
                 width: 100.0,
                 height: 20.0,
                 debug: None,
@@ -6273,6 +6308,10 @@ mod tests {
         };
         let source = Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
@@ -6280,17 +6319,13 @@ mod tests {
                         animated_group("linear-first", make_spec()),
                         animated_group("linear-second", make_spec()),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: None,
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6342,6 +6377,10 @@ mod tests {
         };
         let grouped_ir = |specs: Vec<AnimationSpec>| Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
@@ -6350,17 +6389,13 @@ mod tests {
                         .enumerate()
                         .map(|(index, spec)| animated_group(&format!("owner-{index}"), spec))
                         .collect(),
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: None,
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6507,6 +6542,10 @@ mod tests {
         };
         let ir = Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
@@ -6518,17 +6557,13 @@ mod tests {
                         animated_group("steps-second", near_limit_steps()),
                         animated_group("steps-third", near_limit_steps()),
                     ],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: None,
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6621,21 +6656,21 @@ mod tests {
             .collect::<Vec<_>>();
         let repeated_ir = |children| Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
                     children,
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: None,
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,
@@ -6723,21 +6758,21 @@ mod tests {
             .collect();
         let ir = Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                 kind: IrNodeKind::Group {
                     children,
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: None,
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 50.0,
             debug: None,

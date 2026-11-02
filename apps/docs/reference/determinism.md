@@ -88,7 +88,7 @@ attributes on each text group.
 
 ## Canvas-stable stroke fallback
 
-For `strokeScaling: "canvas"` on a `Flex`, `Grid`, or `Box` border or a `Path`,
+For `strokeScaling: "canvas"` on a `Flex`, `Grid`, or `Box` outline or a `Path`,
 animated SVG contains both a sampled fallback width and an `@supports`
 rule for the standard `vector-effect: non-scaling-stroke` behavior. Supporting
 browsers use the authored canvas-space width during playback. Static renderers

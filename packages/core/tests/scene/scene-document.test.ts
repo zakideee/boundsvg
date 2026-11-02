@@ -35,9 +35,9 @@ describe("toSceneDocument", () => {
     const vnode = createElement(
       "Canvas",
       { width: 100, height: 100 },
-      createElement("Flex", { id: "flex", strokeScaling: "canvas" }),
-      createElement("Grid", { id: "grid", strokeScaling: "canvas" }),
-      createElement("Box", { id: "box", strokeScaling: "canvas" }),
+      createElement("Flex", { id: "flex", outline: { stroke: "none", strokeScaling: "canvas" } }),
+      createElement("Grid", { id: "grid", outline: { stroke: "none", strokeScaling: "canvas" } }),
+      createElement("Box", { id: "box", outline: { stroke: "none", strokeScaling: "canvas" } }),
       createElement("Path", {
         id: "path",
         d: "M0 0L10 10",
@@ -50,16 +50,30 @@ describe("toSceneDocument", () => {
     if (scene.type !== "Canvas") {
       throw new Error("Expected Canvas scene node");
     }
-    expect(scene.children.map((child) => Reflect.get(child, "strokeScaling"))).toEqual([
-      "canvas",
-      "canvas",
-      "canvas",
+    expect(
+      scene.children.map((child) =>
+        Reflect.get(child, child.type === "Path" ? "strokeScaling" : "outline"),
+      ),
+    ).toEqual([
+      { stroke: "none", strokeScaling: "canvas" },
+      { stroke: "none", strokeScaling: "canvas" },
+      { stroke: "none", strokeScaling: "canvas" },
       "canvas",
     ]);
     const restored = expectCanvasVNode(fromSceneDocument(scene));
     expect(
-      restored.children.map((child) => Reflect.get(expectChildVNode(child).props, "strokeScaling")),
-    ).toEqual(["canvas", "canvas", "canvas", "canvas"]);
+      restored.children.map((child) =>
+        Reflect.get(
+          expectChildVNode(child).props,
+          expectChildVNode(child).type === "Path" ? "strokeScaling" : "outline",
+        ),
+      ),
+    ).toEqual([
+      { stroke: "none", strokeScaling: "canvas" },
+      { stroke: "none", strokeScaling: "canvas" },
+      { stroke: "none", strokeScaling: "canvas" },
+      "canvas",
+    ]);
   });
 
   it("converts a simple Canvas VNode", () => {

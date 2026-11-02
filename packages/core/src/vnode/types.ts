@@ -30,6 +30,7 @@ export type Spacing = number | [number, number, number, number];
 /** Post-layout transform channels supported by declarative animation. */
 export type AnimationTransform2D = Omit<Transform2D, "originX" | "originY">;
 
+/** One normalized animation stop with opacity or post-layout transform channels. */
 export type AnimationKeyframe = {
   /** Normalized offset in the inclusive range 0..1. */
   at: number;
@@ -37,6 +38,7 @@ export type AnimationKeyframe = {
   transform?: AnimationTransform2D;
 };
 
+/** CSS step discontinuity policy for a steps easing function. */
 export type AnimationStepPosition = "jump-start" | "jump-end" | "jump-none" | "jump-both";
 
 type AnimationSteps = {
@@ -61,6 +63,7 @@ export type AnimationSpring = {
   mass?: number;
 };
 
+/** Named, cubic-bezier, spring, or steps easing accepted by declarative animation. */
 export type AnimationEasing =
   | "linear"
   | "ease"
@@ -176,6 +179,24 @@ export type BorderRadius = number | [number, number, number, number];
 /** Whether a supported stroke scales with post-layout transforms or stays stable in canvas space. */
 export type StrokeScaling = "transform" | "canvas";
 
+/** A line decoration following the resolved outer contour without reserving layout space. */
+export type BoxOutlineStyle = {
+  /** Solid stroke paint. */
+  stroke: string;
+  /** Nonnegative width in px, at most 1048576. Defaults to 1. */
+  strokeWidth?: number;
+  /** Canvas mode supports the same transforms and solid strokes as Path. */
+  strokeScaling?: StrokeScaling;
+  /** Dash lengths in the same syntax as Path strokes. */
+  strokeDasharray?: string;
+  /** Shape of dash endpoints. */
+  strokeLinecap?: "butt" | "round" | "square";
+  /** Shape of joins along the outer contour. */
+  strokeLinejoin?: "miter" | "round" | "bevel";
+  /** Miter ratio from 1 to 1048576. Defaults to 4. */
+  strokeMiterlimit?: number;
+};
+
 /** Flex — flex container */
 export type FlexProps = {
   // Container
@@ -217,19 +238,13 @@ export type FlexProps = {
   boxShadow?: string;
   /** Background and border radius; also rounds child clipping when overflow is "clip". */
   borderRadius?: BorderRadius;
-  borderWidth?: number;
+  /** Layout border widths in px: uniform or [top, right, bottom, left]. */
+  borderWidth?: Spacing;
+  /** Solid paint for the border surface; width reserves space even without paint. */
   borderColor?: string;
-  /** Border width behavior under post-layout transforms. Defaults to "transform". */
-  strokeScaling?: StrokeScaling;
-  /** Stroke line cap for border */
-  strokeLinecap?: "butt" | "round" | "square";
-  /** Stroke line join for border */
-  strokeLinejoin?: "miter" | "round" | "bevel";
-  /** Stroke dash pattern for border (e.g. "5,5") */
-  strokeDasharray?: string;
-  /** Stroke miter limit for border */
-  strokeMiterlimit?: number;
-  /** Child paint visibility. "clip" uses the layout box and its resolved borderRadius. */
+  /** Outer-contour line painted after content; does not reserve layout space. */
+  outline?: BoxOutlineStyle;
+  /** Child paint visibility. "clip" intersects the outer and inset border contours. */
   overflow?: "visible" | "clip";
   /** Opacity (0-1) */
   opacity?: number;
@@ -309,19 +324,13 @@ export type GridProps = {
   boxShadow?: string;
   /** Background and border radius; also rounds child clipping when overflow is "clip". */
   borderRadius?: BorderRadius;
-  borderWidth?: number;
+  /** Layout border widths in px: uniform or [top, right, bottom, left]. */
+  borderWidth?: Spacing;
+  /** Solid paint for the border surface; width reserves space even without paint. */
   borderColor?: string;
-  /** Border width behavior under post-layout transforms. Defaults to "transform". */
-  strokeScaling?: StrokeScaling;
-  /** Stroke line cap for border */
-  strokeLinecap?: "butt" | "round" | "square";
-  /** Stroke line join for border */
-  strokeLinejoin?: "miter" | "round" | "bevel";
-  /** Stroke dash pattern for border (e.g. "5,5") */
-  strokeDasharray?: string;
-  /** Stroke miter limit for border */
-  strokeMiterlimit?: number;
-  /** Child paint visibility. "clip" uses the layout box and its resolved borderRadius. */
+  /** Outer-contour line painted after content; does not reserve layout space. */
+  outline?: BoxOutlineStyle;
+  /** Child paint visibility. "clip" intersects the outer and inset border contours. */
   overflow?: "visible" | "clip";
   /** Opacity (0-1) */
   opacity?: number;
@@ -385,19 +394,13 @@ export type BoxProps = {
   boxShadow?: string;
   /** Background and border radius; also rounds child clipping when overflow is "clip". */
   borderRadius?: BorderRadius;
-  borderWidth?: number;
+  /** Layout border widths in px: uniform or [top, right, bottom, left]. */
+  borderWidth?: Spacing;
+  /** Solid paint for the border surface; width reserves space even without paint. */
   borderColor?: string;
-  /** Border width behavior under post-layout transforms. Defaults to "transform". */
-  strokeScaling?: StrokeScaling;
-  /** Stroke line cap for border */
-  strokeLinecap?: "butt" | "round" | "square";
-  /** Stroke line join for border */
-  strokeLinejoin?: "miter" | "round" | "bevel";
-  /** Stroke dash pattern for border (e.g. "5,5") */
-  strokeDasharray?: string;
-  /** Stroke miter limit for border */
-  strokeMiterlimit?: number;
-  /** Child paint visibility. "clip" uses the layout box and its resolved borderRadius. */
+  /** Outer-contour line painted after content; does not reserve layout space. */
+  outline?: BoxOutlineStyle;
+  /** Child paint visibility. "clip" intersects the outer and inset border contours. */
   overflow?: "visible" | "clip";
   /** Opacity (0-1) */
   opacity?: number;
@@ -1102,9 +1105,12 @@ export type PropsMap = {
 type ChildlessVNodeType = "InlineRect" | "Image" | "Path" | "Svg" | "Shape" | "Symbol";
 type VNodeKey = string | number;
 
+/** Authoring props associated with a specific component tag. */
 export type PropsFor<T extends VNodeType> = PropsMap[T];
+/** Stored VNode props after children have been separated from the props object. */
 export type NormalizedPropsFor<T extends VNodeType> = Omit<PropsMap[T], "children">;
 
+/** Normalized child grammar for the selected component tag. */
 export type ChildFor<T extends VNodeType> = T extends "Text"
   ? TextChild
   : T extends "TextOnPath"
@@ -1119,10 +1125,12 @@ export type ChildFor<T extends VNodeType> = T extends "Text"
             ? RtChild
             : VNode | string;
 
+/** Stored children for a component, with an empty tuple for childless primitives. */
 export type ChildrenFor<T extends VNodeType> = T extends ChildlessVNodeType
   ? []
   : Array<ChildFor<T>>;
 
+/** Function-API child inputs, including flattenable arrays and permitted scalar placeholders. */
 export type VNodeInputChildFor<T extends VNodeType> = T extends "TextOnPath"
   ? TextOnPathChild | VNodeInputChildFor<T>[]
   : ChildFor<T> | number | boolean | null | undefined | VNodeInputChildFor<T>[];
@@ -1139,10 +1147,12 @@ export type VNodeJsxChildFor<T extends VNodeType> =
   | VNode
   | VNodeJsxChildFor<T>[];
 
+/** createElement rest arguments constrained by the selected component child grammar. */
 export type VNodeChildrenArgs<T extends VNodeType> = T extends ChildlessVNodeType
   ? []
   : Array<VNodeInputChildFor<T>>;
 
+/** Component-tagged props and normalized children stored in the virtual tree. */
 export type VNodeFor<T extends VNodeType> = {
   type: T;
   props: NormalizedPropsFor<T>;
@@ -1150,21 +1160,37 @@ export type VNodeFor<T extends VNodeType> = {
   key?: VNodeKey;
 };
 
+/** A Canvas virtual node with its component-specific props and child grammar. */
 export type CanvasVNode = VNodeFor<"Canvas">;
+/** A Flex virtual node with its component-specific props and child grammar. */
 export type FlexVNode = VNodeFor<"Flex">;
+/** A Grid virtual node with its component-specific props and child grammar. */
 export type GridVNode = VNodeFor<"Grid">;
+/** A Box virtual node with its component-specific props and child grammar. */
 export type BoxVNode = VNodeFor<"Box">;
+/** A Text virtual node with its component-specific props and child grammar. */
 export type TextVNode = VNodeFor<"Text">;
+/** A TextOnPath virtual node with its component-specific props and child grammar. */
 export type TextOnPathVNode = VNodeFor<"TextOnPath">;
+/** A Inline virtual node with its component-specific props and child grammar. */
 export type InlineVNode = VNodeFor<"Inline">;
+/** A InlineBox virtual node with its component-specific props and child grammar. */
 export type InlineBoxVNode = VNodeFor<"InlineBox">;
+/** A InlineRect virtual node with its component-specific props and child grammar. */
 export type InlineRectVNode = VNodeFor<"InlineRect">;
+/** A Ruby virtual node with its component-specific props and child grammar. */
 export type RubyVNode = VNodeFor<"Ruby">;
+/** A Rt virtual node with its component-specific props and child grammar. */
 export type RtVNode = VNodeFor<"Rt">;
+/** A Image virtual node with its component-specific props and child grammar. */
 export type ImageVNode = VNodeFor<"Image">;
+/** A Path virtual node with its component-specific props and child grammar. */
 export type PathVNode = VNodeFor<"Path">;
+/** A Svg virtual node with its component-specific props and child grammar. */
 export type SvgVNode = VNodeFor<"Svg">;
+/** A Shape virtual node with its component-specific props and child grammar. */
 export type ShapeVNode = VNodeFor<"Shape">;
+/** A Symbol virtual node with its component-specific props and child grammar. */
 export type SymbolVNode = VNodeFor<"Symbol">;
 
 /** Virtual node representing a component in the render tree */
@@ -1186,13 +1212,20 @@ export type VNode =
   | ShapeVNode
   | SymbolVNode;
 
+/** A VNode of any supported component tag. */
 export type AnyVNode = VNode;
 
+/** Normalized text content, styled spans, inline boxes/rectangles, or ruby. */
 export type TextChild = string | InlineVNode | InlineBoxVNode | InlineRectVNode | RubyVNode;
+/** Normalized path-text content: strings and Inline spans only. */
 export type TextOnPathChild = string | InlineVNode;
+/** Normalized Inline content: strings, nested Inline, InlineRect, or Ruby. */
 export type InlineChild = string | InlineVNode | InlineRectVNode | RubyVNode;
+/** Normalized rich content accepted by an InlineBox. */
 export type InlineBoxChild = string | InlineVNode | InlineBoxVNode | InlineRectVNode | RubyVNode;
+/** Normalized ruby base text, styled spans, and annotation containers. */
 export type RubyChild = string | InlineVNode | RtVNode;
+/** Normalized annotation text and styled Inline spans. */
 export type RtChild = string | InlineVNode;
 
 /** Allowed raw children in JSX/createElement input */

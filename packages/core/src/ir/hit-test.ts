@@ -15,65 +15,175 @@ import {
   pointInHitBBox,
   worldHitBounds,
 } from "./hit-geometry.js";
-import { buildFilteredSpatialIndex, type SpatialIndex } from "./spatial-index.js";
+import { buildIRSourceIndex, type IRSourceIndex, type IRSourceRef } from "./source-index.js";
+import { buildFilteredSpatialIndex } from "./spatial-index.js";
 import type { BBox, IR, IRNode } from "./types.js";
 
-/** One candidate keeps its clip ownership separate from ordinary inserted boxes. */
+/** One source candidate with its physical geometry and tree-derived query rank. */
+export type IRHitCandidate = Readonly<{
+  source: IRSourceRef;
+  geometryNodeIndex: number;
+  order: number;
+}>;
+
+/** Prepared snapshot queries sharing the same source, canvas and clip gates. */
+export type IRHitIndex = {
+  sourceIndex: IRSourceIndex;
+  queryTopmost: (x: number, y: number) => IRSourceRef | null;
+  queryCandidates: (x: number, y: number) => IRHitCandidate[];
+  pathCandidateForSource: (sourceIndex: number, x: number, y: number) => IRHitCandidate | null;
+};
+
 type HitEntry = {
-  nodeId: string;
+  value: IRHitCandidate;
   bbox: BBox;
   drawIndex: number;
   accepts: (x: number, y: number) => boolean;
 };
-
-/** Shared world transform and clip chain while walking the IR once. */
 type HitContext = { matrix: AffineMatrix; clip: HitClip | null; visible: HitBounds | null };
 
-/**
- * Find the topmost semantic candidate in canvas coordinates. Path candidates
- * use Rust paint bounds independently of their layout frames. Explicit clips,
- * including rounded corners, apply to their owner and descendants in clip
- * coordinates. Path fill/stroke holes still require native geometry refinement.
- * Trees with at least 16 draw-order entries use a spatial index.
- * @throws {FatalError} VALIDATION for Path output without schema-34 geometry.
- */
-export function hitTest(ir: IR, x: number, y: number): string | null {
-  const entries = collectHitEntries(ir);
-  if (ir.drawOrder.length >= 16) {
-    return buildFilteredSpatialIndex(
-      { x: 0, y: 0, w: ir.width, h: ir.height },
-      entries,
-    ).queryTopmost(x, y);
+function resolveNodeHitGeometry(
+  node: IRNode,
+  parent: HitContext | undefined,
+  { policy, canvas }: { policy: "interaction" | "inspection"; canvas: BBox },
+) {
+  const matrix = multiplyAffineMatrices(
+    parent?.matrix ?? createIdentityAffineMatrix(),
+    createResolvedTransformMatrix(node.type === "group" ? node.transform : undefined, node.bbox),
+  );
+  let clip = parent?.clip ?? null;
+  let visible = parent ? parent.visible : bboxHitBounds(canvas);
+  if (node.type === "group" && node.clip) {
+    clip = { parent: clip, matrix, geometry: node.clip };
+    visible =
+      visible && node.clip.kind === "boxContour"
+        ? intersectHitBounds(visible, worldHitBounds(matrix, bboxHitBounds(node.clip.bbox)))
+        : null;
   }
-  for (let entryIndex = entries.length - 1; entryIndex >= 0; entryIndex--) {
-    const entry = entries[entryIndex];
-    if (entry && pointInHitBBox({ x, y }, entry.bbox) && entry.accepts(x, y)) {
-      return entry.nodeId;
+
+  const local =
+    node.type === "path"
+      ? null
+      : policy === "inspection"
+        ? bboxHitBounds(node.bbox)
+        : localHitBounds(node);
+  const world =
+    node.type === "path" && policy === "interaction"
+      ? pathWorldHitBounds(node, matrix)
+      : worldHitBounds(matrix, local ?? bboxHitBounds(node.bbox));
+  const bounds = visible && world ? intersectHitBounds(visible, world) : null;
+  return {
+    context: { matrix, clip, visible },
+    geometry: {
+      bbox:
+        bounds && bounds.minX < bounds.maxX && bounds.minY < bounds.maxY
+          ? {
+              x: bounds.minX,
+              y: bounds.minY,
+              w: bounds.maxX - bounds.minX,
+              h: bounds.maxY - bounds.minY,
+            }
+          : null,
+      accepts(x: number, y: number) {
+        const point = { x, y };
+        const localPoint = applyInverseAffineMatrixToPoint(matrix, point);
+        return (
+          pointInHitBBox(point, canvas) &&
+          localPoint !== null &&
+          (node.type !== "group" || pointInHitBBox(localPoint, node.bbox)) &&
+          acceptsHitClips(clip, point)
+        );
+      },
+    },
+  };
+}
+
+/** Find the topmost source; native Path fill/stroke refinement remains a browser responsibility.
+ * @throws {FatalError} VALIDATION for invalid ownership or Path output geometry.
+ */
+export function hitTest(ir: IR, x: number, y: number): IRSourceRef | null {
+  return buildHitTestIndex(ir).queryTopmost(x, y);
+}
+
+/** Prepare interaction queries once per IR snapshot.
+ * @throws {FatalError} VALIDATION for invalid ownership or Path output geometry.
+ */
+export function buildHitTestIndex(ir: IR): IRHitIndex {
+  return prepareHitIndex(ir, "interaction");
+}
+
+/** Prepare the shared geometry with an interaction or inspection selection policy.
+ * @throws {FatalError} VALIDATION for invalid ownership or Path output geometry.
+ */
+export function prepareHitIndex(ir: IR, policy: "interaction" | "inspection"): IRHitIndex {
+  const sourceIndex = buildIRSourceIndex(ir);
+  const canvas = { x: 0, y: 0, w: ir.width, h: ir.height };
+  const contexts = new Map<number, HitContext>();
+  const geometry = new Map<
+    number,
+    { bbox: BBox | null; accepts: (x: number, y: number) => boolean }
+  >();
+  for (const occurrence of sourceIndex.nodes.values()) {
+    const parent =
+      occurrence.parentNodeIndex === null ? undefined : contexts.get(occurrence.parentNodeIndex);
+    const resolved = resolveNodeHitGeometry(occurrence.node, parent, { policy, canvas });
+    contexts.set(occurrence.nodeIndex, resolved.context);
+    geometry.set(occurrence.nodeIndex, resolved.geometry);
+  }
+  const entries: HitEntry[] = [];
+  const paths = new Map<
+    number,
+    { candidate: IRHitCandidate; accepts: (x: number, y: number) => boolean }
+  >();
+  for (const source of sourceIndex.sources.values()) {
+    if (
+      source.primaryNodeIndex === null &&
+      policy === "interaction" &&
+      (source.node.ownership.role !== "source" ||
+        !source.node.ownership.on ||
+        Object.keys(source.node.ownership.on).length === 0)
+    ) {
+      continue;
+    }
+    const geometryNodeIndex = source.primaryNodeIndex ?? source.source.sourceIndex;
+    const occurrence = sourceIndex.nodes.get(geometryNodeIndex);
+    const sourceOccurrence = sourceIndex.nodes.get(source.source.sourceIndex);
+    const resolved = geometry.get(geometryNodeIndex);
+    if (!occurrence || !sourceOccurrence || !resolved) {
+      continue;
+    }
+    const candidate = {
+      source: source.source,
+      geometryNodeIndex,
+      order:
+        source.primaryNodeIndex === null && policy === "interaction"
+          ? sourceOccurrence.leaveOrder
+          : occurrence.enterOrder,
+    };
+    if (resolved.bbox) {
+      entries.push({
+        value: candidate,
+        bbox: resolved.bbox,
+        drawIndex: candidate.order,
+        accepts: resolved.accepts,
+      });
+    }
+    if (occurrence.node.type === "path") {
+      paths.set(source.source.sourceIndex, { candidate, accepts: resolved.accepts });
     }
   }
-  return null;
-}
-
-/** Query a prebuilt hit index using the same clip gates as a linear hit test. */
-export function hitTestWithIndex(index: SpatialIndex, x: number, y: number): string | null {
-  return index.queryTopmost(x, y);
-}
-
-/** Return candidates front-to-back for native Path fill/stroke refinement. */
-export function hitTestCandidates(index: SpatialIndex, x: number, y: number): string[] {
-  return index.queryCandidates(x, y);
-}
-
-/**
- * Build an IR hit index once; queries reuse geometry and shared clip chains.
- * Ordinary entries added through `insert` remain generic bbox entries.
- * @throws {FatalError} VALIDATION for absent or malformed Path output metadata.
- */
-export function buildHitTestIndex(ir: IR): SpatialIndex {
-  return buildFilteredSpatialIndex(
-    { x: 0, y: 0, w: ir.width, h: ir.height },
-    collectHitEntries(ir),
-  );
+  const spatial = buildFilteredSpatialIndex(canvas, entries);
+  return {
+    sourceIndex,
+    queryTopmost(x, y) {
+      return spatial.queryCandidates(x, y)[0]?.source ?? null;
+    },
+    queryCandidates: spatial.queryCandidates,
+    pathCandidateForSource(sourceOrdinal, x, y) {
+      const path = paths.get(sourceOrdinal);
+      return path?.accepts(x, y) ? path.candidate : null;
+    },
+  };
 }
 
 /** Union text-unit samples without changing their layout/inspection frames. */
@@ -100,90 +210,4 @@ function localHitBounds(node: IRNode): HitBounds | null {
       : bounds;
   }
   return sampled;
-}
-
-/**
- * Collect geometry and entry-owned gates in semantic draw order. A paint child
- * with the layout group's id replaces that group's frame candidate, including
- * deletion for empty paint. The canvas is the outer clip for every query path.
- * @throws {FatalError} When a Path lacks canonical output geometry.
- */
-function collectHitEntries(ir: IR): HitEntry[] {
-  const canvas = { x: 0, y: 0, w: ir.width, h: ir.height };
-  const lookup = new Map<string, Omit<HitEntry, "drawIndex">>();
-  collectNode(ir.root, lookup, {
-    matrix: createIdentityAffineMatrix(),
-    clip: null,
-    visible: bboxHitBounds(canvas),
-  });
-  return ir.drawOrder.flatMap((nodeId, drawIndex) => {
-    const candidate = lookup.get(nodeId);
-    return candidate && !nodeId.endsWith(":bg") && !nodeId.endsWith(":border")
-      ? [{ ...candidate, drawIndex }]
-      : [];
-  });
-}
-
-/**
- * Walk the tree with one shared clip link per owner. Positive-area world AABBs
- * narrow the search; source-coordinate tests remove rotated and rounded cutouts.
- * @throws {FatalError} When a Path's derived output metadata is invalid.
- */
-function collectNode(
-  node: IRNode,
-  lookup: Map<string, Omit<HitEntry, "drawIndex">>,
-  context: HitContext,
-): void {
-  const matrix = multiplyAffineMatrices(
-    context.matrix,
-    createResolvedTransformMatrix(node.type === "group" ? node.transform : undefined, node.bbox),
-  );
-  let clip = context.clip;
-  let visible: HitBounds | null = context.visible;
-  if (node.type === "group" && node.clipPath) {
-    clip = { parent: clip, matrix, bbox: node.clipPath, radii: node.clipBorderRadius };
-    visible = visible
-      ? intersectHitBounds(visible, worldHitBounds(matrix, bboxHitBounds(node.clipPath)))
-      : null;
-  }
-  const local = node.type === "path" ? null : localHitBounds(node);
-  const world =
-    node.type === "path"
-      ? pathWorldHitBounds(node, matrix)
-      : local
-        ? worldHitBounds(matrix, local)
-        : null;
-  const bounds = visible && world ? intersectHitBounds(visible, world) : null;
-  if (bounds && bounds.minX < bounds.maxX && bounds.minY < bounds.maxY) {
-    const ownFrame = node.type === "group" && node.on ? node.bbox : null;
-    lookup.set(node.nodeId, {
-      nodeId: node.nodeId,
-      bbox: {
-        x: bounds.minX,
-        y: bounds.minY,
-        w: bounds.maxX - bounds.minX,
-        h: bounds.maxY - bounds.minY,
-      },
-      accepts(x, y) {
-        const point = { x, y };
-        const localPoint = applyInverseAffineMatrixToPoint(matrix, point);
-        return (
-          localPoint !== null &&
-          (!ownFrame || pointInHitBBox(localPoint, ownFrame)) &&
-          acceptsHitClips(clip, point)
-        );
-      },
-    });
-  } else {
-    lookup.delete(node.nodeId);
-  }
-  // Even a fully clipped subtree is visited so malformed output metadata
-  // cannot evade the schema-34 guard merely because this frame hides it.
-  for (const child of node.type === "group" ? (node.children ?? []) : []) {
-    collectNode(child, lookup, {
-      matrix,
-      clip,
-      visible,
-    });
-  }
 }

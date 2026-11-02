@@ -2,6 +2,7 @@
 
 mod path_bounds;
 mod path_tokens;
+mod transform_domain;
 
 pub use path_bounds::{PathBounds, PathBoundsParse, parse_path_bounds};
 
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Boolean composition applied to the child regions of a geometry node.
 pub enum BooleanOp {
     Union,
     Subtract,
@@ -36,6 +38,7 @@ pub struct DivideRegions {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Logical coordinate rectangle used to place and validate a geometry document.
 pub struct GeometryViewBox {
     #[serde(default)]
     pub x: f64,
@@ -45,24 +48,98 @@ pub struct GeometryViewBox {
     pub height: f64,
 }
 
+/// Authored affine channels composed as translate, origin-relative rotate, skew X/Y, then scale.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Transform2D {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_transform_channel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "f64"))]
     pub translate_x: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_transform_channel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "f64"))]
     pub translate_y: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_transform_channel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "f64"))]
     pub scale_x: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_transform_channel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "f64"))]
     pub scale_y: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_transform_channel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "f64"))]
     pub rotate_deg: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Horizontal shear in degrees, within -60..60.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_skew",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "f64"))]
+    pub skew_x_deg: Option<f64>,
+    /// Vertical shear in degrees, within -60..60.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_skew",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "f64"))]
+    pub skew_y_deg: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_transform_channel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "f64"))]
     pub origin_x: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_transform_channel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "f64"))]
     pub origin_y: Option<f64>,
+}
+
+fn deserialize_transform_channel<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    let channel = f64::deserialize(deserializer)?;
+    if !channel.is_finite() {
+        return Err(serde::de::Error::custom("transform channel must be finite"));
+    }
+    Ok(Some(channel))
+}
+
+fn deserialize_skew<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<f64>, D::Error> {
+    let channel = f64::deserialize(deserializer)?;
+    if !channel.is_finite() || channel.abs() >= 70.0 {
+        return Err(serde::de::Error::custom(
+            "skew execution angle must be inside -70..70",
+        ));
+    }
+    Ok(Some(channel))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,6 +148,7 @@ pub struct Transform2D {
     rename_all = "snake_case",
     rename_all_fields = "camelCase"
 )]
+/// Authored path, group, affine-transform, or boolean-composition node in a geometry tree.
 pub enum GeometryNode {
     Path {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -100,6 +178,7 @@ pub enum GeometryNode {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Geometry tree and its logical viewBox, before viewport placement or symbol resolution.
 pub struct GeometryDoc {
     pub view_box: GeometryViewBox,
     pub root: GeometryNode,
@@ -107,6 +186,7 @@ pub struct GeometryDoc {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+/// Whether a symbol segment stays fixed or stretches along its elastic axis.
 pub enum ElasticSegmentRole {
     FixedStart,
     Stretch,
@@ -115,6 +195,7 @@ pub enum ElasticSegmentRole {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Source-coordinate rectangle used to position or stretch one elastic symbol segment.
 pub struct ElasticFrame {
     pub x: f64,
     pub y: f64,
@@ -124,6 +205,7 @@ pub struct ElasticFrame {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Named fixed or stretchable segment of an elastic symbol definition.
 pub struct ElasticSegment {
     pub node_id: String,
     pub axis: String,
@@ -133,6 +215,7 @@ pub struct ElasticSegment {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Reusable geometry with optional elastic segments for size-dependent resolution.
 pub struct SymbolDefinition {
     pub geometry: GeometryDoc,
     #[serde(default)]
@@ -141,6 +224,7 @@ pub struct SymbolDefinition {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Fill and stroke defaults applied when compiling geometry parts.
 pub struct GeometryPaint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<String>,
@@ -166,6 +250,7 @@ pub struct GeometryPaint {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Destination rectangle used when placing a geometry document for compilation.
 pub struct GeometryViewport {
     pub width: f64,
     pub height: f64,
@@ -173,6 +258,7 @@ pub struct GeometryViewport {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// Stretch, meet, or slice policy for fitting a geometry viewBox into a viewport.
 pub enum GeometryPreserveAspectRatio {
     #[default]
     None,
@@ -182,6 +268,7 @@ pub enum GeometryPreserveAspectRatio {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Viewport fitting, paint defaults, and part-ID emission options for geometry compilation.
 pub struct CompileGeometryOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paint: Option<GeometryPaint>,
@@ -199,6 +286,7 @@ pub struct CompileGeometryOptions {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Requested width and height used when resolving elastic symbol geometry.
 pub struct SymbolResolutionOptions {
     pub width: f64,
     pub height: f64,
@@ -303,8 +391,12 @@ pub enum CurveSegment {
     },
 }
 
+/// Geometry parsing, composition, resource, and numeric-domain failures from the shape kernel.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ShapeError {
+    /// A skew-bearing transform chain or its physical geometry is outside the supported domain.
+    #[error("transform or geometry is outside the supported skew domain")]
+    InvalidTransform,
     #[error("boolean nodes require at least 2 children")]
     BooleanChildCount,
     #[error("invalid path data")]
@@ -626,6 +718,7 @@ fn evaluate_geometry_parts_with_default_fill_rule(
     default_fill_rule: Option<&str>,
 ) -> Result<Vec<EvaluatedPart>, ShapeError> {
     validate_geometry_tree_depth(&doc.root)?;
+    validate_skew_geometry(doc)?;
     validate_unique_part_ids(&doc.root)?;
     let mut parts = Vec::new();
     collect_parts(&doc.root, &mut Vec::new(), &mut parts, default_fill_rule)?;
@@ -729,6 +822,7 @@ fn collect_parts(
 /// boolean operation cannot be evaluated.
 pub fn evaluate_geometry(doc: &GeometryDoc) -> Result<Region, ShapeError> {
     validate_geometry_tree_depth(&doc.root)?;
+    validate_skew_geometry(doc)?;
     evaluate_geometry_node(&doc.root)
 }
 
@@ -1454,6 +1548,7 @@ pub fn resolve_symbol_geometry(
     options: &SymbolResolutionOptions,
 ) -> Result<GeometryDoc, ShapeError> {
     validate_geometry_tree_depth(&definition.geometry.root)?;
+    validate_skew_geometry(&definition.geometry)?;
     let width = if options.width > 0.0 {
         options.width
     } else {
@@ -1499,6 +1594,7 @@ pub fn resolve_symbol_geometry(
         root: apply_elastic_segments(&definition.geometry.root, &ctx),
     };
     validate_geometry_tree_depth(&geometry.root)?;
+    validate_skew_geometry(&geometry)?;
     Ok(geometry)
 }
 
@@ -1644,8 +1740,12 @@ pub fn compile_geometry_paths(
     options: Option<&CompileGeometryOptions>,
 ) -> Result<Vec<CompiledGeometryPart>, ShapeError> {
     validate_geometry_tree_depth(&geometry.root)?;
+    let skew_gain = validate_skew_geometry(geometry)?;
     validate_unique_part_ids(&geometry.root)?;
     let compiled_options = options.cloned().unwrap_or_default();
+    if let Some(skew_gain) = skew_gain {
+        transform_domain::validate_compile_options(geometry, &compiled_options, skew_gain)?;
+    }
     let default_fill_rule = compiled_options
         .paint
         .as_ref()
@@ -1665,9 +1765,10 @@ pub fn compile_geometry_paths(
      -> Result<Option<CompiledGeometryPart>, ShapeError> {
         let d = region_to_path(&region)?;
         let stroke_path = region_to_path(&stroke_region)?;
-        // A shape whose fill normalized to nothing (a line, a zero-area
-        // contour) still has a stroke to draw. Only a shape with neither is
-        // empty.
+        if skew_gain.is_some() {
+            transform_domain::validate_compiled_paths(&d, &stroke_path, &compiled_options)?;
+        }
+        // Empty fills may still carry authored open stroke geometry.
         if d.is_empty() && stroke_path.is_empty() {
             return Ok(None);
         }
@@ -1751,6 +1852,13 @@ pub fn compile_geometry_to_svg_document(
 /// Returns [`ShapeError::NonFiniteOutput`] when an emitted transform value is
 /// non-finite.
 pub fn transform_to_svg(transform: &Transform2D) -> Result<String, ShapeError> {
+    if [transform.skew_x_deg, transform.skew_y_deg]
+        .into_iter()
+        .flatten()
+        .any(|angle| !angle.is_finite() || angle.abs() > 60.0)
+    {
+        return Err(ShapeError::InvalidTransform);
+    }
     let mut commands = Vec::new();
     if transform.translate_x.unwrap_or(0.0) != 0.0 || transform.translate_y.unwrap_or(0.0) != 0.0 {
         commands.push(format!(
@@ -1770,7 +1878,9 @@ pub fn transform_to_svg(transform: &Transform2D) -> Result<String, ShapeError> {
             format_svg_number(origin_y)?
         ));
     }
-    if transform.scale_x.is_some() || transform.scale_y.is_some() {
+    let has_skew =
+        transform.skew_x_deg.unwrap_or(0.0) != 0.0 || transform.skew_y_deg.unwrap_or(0.0) != 0.0;
+    if has_skew || transform.scale_x.is_some() || transform.scale_y.is_some() {
         let scale_x = transform.scale_x.unwrap_or(1.0);
         let scale_y = transform.scale_y.unwrap_or(1.0);
         if origin_x != 0.0 || origin_y != 0.0 {
@@ -1779,22 +1889,50 @@ pub fn transform_to_svg(transform: &Transform2D) -> Result<String, ShapeError> {
                 format_svg_number(origin_x)?,
                 format_svg_number(origin_y)?
             ));
-            commands.push(format!(
-                "scale({} {})",
-                format_svg_number(scale_x)?,
-                format_svg_number(scale_y)?
-            ));
+            if transform.skew_x_deg.unwrap_or(0.0) != 0.0 {
+                commands.push(format!(
+                    "skewX({})",
+                    format_svg_number(transform.skew_x_deg.unwrap_or(0.0))?
+                ));
+            }
+            if transform.skew_y_deg.unwrap_or(0.0) != 0.0 {
+                commands.push(format!(
+                    "skewY({})",
+                    format_svg_number(transform.skew_y_deg.unwrap_or(0.0))?
+                ));
+            }
+            if transform.scale_x.is_some() || transform.scale_y.is_some() {
+                commands.push(format!(
+                    "scale({} {})",
+                    format_svg_number(scale_x)?,
+                    format_svg_number(scale_y)?
+                ));
+            }
             commands.push(format!(
                 "translate({} {})",
                 format_svg_number(-origin_x)?,
                 format_svg_number(-origin_y)?
             ));
         } else {
-            commands.push(format!(
-                "scale({} {})",
-                format_svg_number(scale_x)?,
-                format_svg_number(scale_y)?
-            ));
+            if transform.skew_x_deg.unwrap_or(0.0) != 0.0 {
+                commands.push(format!(
+                    "skewX({})",
+                    format_svg_number(transform.skew_x_deg.unwrap_or(0.0))?
+                ));
+            }
+            if transform.skew_y_deg.unwrap_or(0.0) != 0.0 {
+                commands.push(format!(
+                    "skewY({})",
+                    format_svg_number(transform.skew_y_deg.unwrap_or(0.0))?
+                ));
+            }
+            if transform.scale_x.is_some() || transform.scale_y.is_some() {
+                commands.push(format!(
+                    "scale({} {})",
+                    format_svg_number(scale_x)?,
+                    format_svg_number(scale_y)?
+                ));
+            }
         }
     }
     Ok(commands.join(" "))
@@ -7813,6 +7951,24 @@ fn transform_to_matrix(transform: &Transform2D) -> AffineMatrix {
     if let Some(rotate_deg) = transform.rotate_deg {
         matrix = multiply_matrices(matrix, AffineMatrix::rotate(rotate_deg, origin_x, origin_y));
     }
+    if transform.skew_x_deg.unwrap_or(0.0) != 0.0 || transform.skew_y_deg.unwrap_or(0.0) != 0.0 {
+        matrix = multiply_matrices(matrix, AffineMatrix::translate(origin_x, origin_y));
+        matrix = multiply_matrices(
+            matrix,
+            AffineMatrix {
+                c: transform.skew_x_deg.unwrap_or(0.0).to_radians().tan(),
+                ..AffineMatrix::identity()
+            },
+        );
+        matrix = multiply_matrices(
+            matrix,
+            AffineMatrix {
+                b: transform.skew_y_deg.unwrap_or(0.0).to_radians().tan(),
+                ..AffineMatrix::identity()
+            },
+        );
+        matrix = multiply_matrices(matrix, AffineMatrix::translate(-origin_x, -origin_y));
+    }
     if transform.scale_x.is_some() || transform.scale_y.is_some() {
         let scale_x = transform.scale_x.unwrap_or(1.0);
         let scale_y = transform.scale_y.unwrap_or(1.0);
@@ -7825,6 +7981,69 @@ fn transform_to_matrix(transform: &Transform2D) -> AffineMatrix {
         }
     }
     matrix
+}
+
+/// Validate skew-bearing geometry and return its noncontracting chain gain.
+///
+/// # Errors
+///
+/// Returns `InvalidTransform` for local coordinates, the viewBox, or transform chains outside the supported domain.
+pub fn validate_skew_geometry(geometry: &GeometryDoc) -> Result<Option<f64>, ShapeError> {
+    let gain = transform_domain::validate_geometry_skew(&geometry.root)?;
+    if gain.is_some()
+        && [
+            geometry.view_box.x,
+            geometry.view_box.y,
+            geometry.view_box.width,
+            geometry.view_box.height,
+        ]
+        .iter()
+        .any(|coordinate| {
+            !coordinate.is_finite() || coordinate.abs() > transform_domain::SKEW_COORDINATE_MAX
+        })
+    {
+        return Err(ShapeError::InvalidTransform);
+    }
+    Ok(gain)
+}
+
+/// Compose validated channels into SVG-order affine coefficients a, b, c, d, e, f.
+///
+/// # Errors
+///
+/// Returns `InvalidTransform` for non-finite skew-bearing coefficients or an execution skew angle outside (-70, 70).
+/// Non-skew calculations retain their existing downstream finite-output boundary.
+pub fn transform_to_affine(transform: &Transform2D) -> Result<[f64; 6], ShapeError> {
+    if transform_domain::has_skew(transform)
+        && ([
+            transform.translate_x,
+            transform.translate_y,
+            transform.origin_x,
+            transform.origin_y,
+            transform.rotate_deg,
+            transform.scale_x,
+            transform.scale_y,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|channel| !channel.is_finite())
+            || [transform.skew_x_deg, transform.skew_y_deg]
+                .into_iter()
+                .flatten()
+                .any(|angle| !angle.is_finite() || angle.abs() >= 70.0))
+    {
+        return Err(ShapeError::InvalidTransform);
+    }
+    let matrix = transform_to_matrix(transform);
+    let coefficients = [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f];
+    if transform_domain::has_skew(transform)
+        && coefficients
+            .iter()
+            .any(|coefficient| !coefficient.is_finite())
+    {
+        return Err(ShapeError::InvalidTransform);
+    }
+    Ok(coefficients)
 }
 
 fn multiply_matrices(left: AffineMatrix, right: AffineMatrix) -> AffineMatrix {
@@ -8693,6 +8912,9 @@ mod tests {
             }
             ShapeError::PathOffsetSampleLimit => {
                 "open_path_measurement::original_curve_offset_band_is_filled_and_budgeted"
+            }
+            ShapeError::InvalidTransform => {
+                "error_reachability::skew_transform_domain_has_a_runtime_origin"
             }
             ShapeError::NonFiniteOutput => {
                 "error_reachability::numeric_output_has_a_runtime_origin"

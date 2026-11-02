@@ -1,14 +1,18 @@
 // @boundsvg/core/scene — IR query and analysis operations
 
-export { buildHandlerMap } from "./ir/handler-map.js";
+export type { IRHitCandidate, IRHitIndex } from "./ir/hit-test.js";
 export {
   buildHitTestIndex,
   hitTest,
-  hitTestCandidates,
-  hitTestWithIndex,
 } from "./ir/hit-test.js";
-export { buildInspectHitTestIndex, inspectHitTestCandidates } from "./ir/inspect-hit-test.js";
-export { buildNodeTypeMap } from "./ir/node-type-map.js";
+export { buildInspectHitTestIndex } from "./ir/inspect-hit-test.js";
+export type {
+  IRNodeOccurrence,
+  IRSourceIndex,
+  IRSourceInfo,
+  IRSourceRef,
+} from "./ir/source-index.js";
+export { buildIRSourceIndex } from "./ir/source-index.js";
 export { createSpatialIndex, type SpatialIndex } from "./ir/spatial-index.js";
 export type { LineEntry, TextMap, TextNodeEntry } from "./ir/text-map.js";
 export {
@@ -37,6 +41,7 @@ export type {
   IRGroupNode,
   IRImageNode,
   IRNode,
+  IRNodeOwnership,
   IRNodeType,
   IRPathNode,
   IRRectNode,

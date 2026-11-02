@@ -99,12 +99,12 @@ function mainThreadCtx(engine: Engine): BoundSvgContextValue {
   };
 }
 
-function mount(ui: React.ReactNode, ctx: BoundSvgContextValue) {
+function mount(element: React.ReactNode, ctx: BoundSvgContextValue) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => {
-    root.render(<BoundSvgContext.Provider value={ctx}>{ui}</BoundSvgContext.Provider>);
+    root.render(<BoundSvgContext.Provider value={ctx}>{element}</BoundSvgContext.Provider>);
   });
   return {
     unmount() {
@@ -878,12 +878,13 @@ describe("animated SVG Worker hooks", () => {
   it("returns IR through the dedicated animated SVG + IR Worker method", async () => {
     const ir = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 100, h: 100 },
         children: [],
       },
-      drawOrder: ["root"],
+
       width: 100,
       height: 100,
       warnings: [],
@@ -1049,6 +1050,7 @@ describe("useRenderToPngAsync", () => {
 // useRenderToLayeredSvgAsync
 // ---------------------------------------------------------------------------
 
+/** Layered SVG response used to verify asynchronous result delivery. */
 const SAMPLE_LAYERED_SVG_RESULT: LayeredSvgResult = {
   width: 100,
   height: 100,
@@ -1056,7 +1058,7 @@ const SAMPLE_LAYERED_SVG_RESULT: LayeredSvgResult = {
     {
       id: "background",
       bbox: { x: 0, y: 0, width: 100, height: 100 },
-      nodeIds: ["bg"],
+      sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
       mode: "independent",
       paintOrder: 0,
       warnings: [],
@@ -1070,7 +1072,7 @@ const SAMPLE_LAYERED_SVG_RESULT: LayeredSvgResult = {
       {
         id: "background",
         bbox: { x: 0, y: 0, width: 100, height: 100 },
-        nodeIds: ["bg"],
+        sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
         mode: "independent",
         paintOrder: 0,
         warnings: [],
@@ -1128,6 +1130,7 @@ describe("useRenderToLayeredSvgAsync", () => {
 // useRenderToLayeredPngAsync
 // ---------------------------------------------------------------------------
 
+/** Layered PNG response used to verify asynchronous result delivery. */
 const SAMPLE_LAYERED_PNG_RESULT: LayeredPngResult = {
   width: 100,
   height: 100,
@@ -1137,7 +1140,7 @@ const SAMPLE_LAYERED_PNG_RESULT: LayeredPngResult = {
     {
       id: "background",
       bbox: { x: 0, y: 0, width: 100, height: 100 },
-      nodeIds: ["bg"],
+      sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
       mode: "independent",
       paintOrder: 0,
       warnings: [],
@@ -1146,7 +1149,7 @@ const SAMPLE_LAYERED_PNG_RESULT: LayeredPngResult = {
     {
       id: "text",
       bbox: { x: 0, y: 0, width: 100, height: 100 },
-      nodeIds: ["title"],
+      sources: [{ source: { sourceIndex: 1, nodeId: "title" }, layerSourceIndex: 1 }],
       mode: "independent",
       paintOrder: 1,
       warnings: [],
@@ -1162,7 +1165,7 @@ const SAMPLE_LAYERED_PNG_RESULT: LayeredPngResult = {
       {
         id: "background",
         bbox: { x: 0, y: 0, width: 100, height: 100 },
-        nodeIds: ["bg"],
+        sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
         mode: "independent",
         paintOrder: 0,
         warnings: [],
@@ -1170,7 +1173,7 @@ const SAMPLE_LAYERED_PNG_RESULT: LayeredPngResult = {
       {
         id: "text",
         bbox: { x: 0, y: 0, width: 100, height: 100 },
-        nodeIds: ["title"],
+        sources: [{ source: { sourceIndex: 1, nodeId: "title" }, layerSourceIndex: 1 }],
         mode: "independent",
         paintOrder: 1,
         warnings: [],

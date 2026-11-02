@@ -15,6 +15,7 @@ type ProtocolLocation = {
   path: string;
 };
 
+/** Boolean operation tags admitted by decoded geometry trees. */
 const GEOMETRY_BOOLEAN_OPERATIONS = new Set(["union", "subtract", "intersect", "xor"]);
 
 function describeReceived(value: unknown): string {
@@ -210,6 +211,8 @@ function validateTransform(
     "scaleX",
     "scaleY",
     "rotateDeg",
+    "skewXDeg",
+    "skewYDeg",
     "originX",
     "originY",
   ] as const) {
@@ -324,6 +327,7 @@ function parseJsonResult(raw: unknown, operation: StandaloneShapeOperation): unk
   }
 }
 
+/** Require a string payload from an SVG-producing shape operation, or throw a protocol failure. */
 export function decodeShapeRawString(
   raw: unknown,
   operation: "compileShapeSvg" | "renderShapeRegionSvg",
@@ -334,6 +338,7 @@ export function decodeShapeRawString(
   return raw;
 }
 
+/** Decode and validate part IDs and hit kinds returned by shape hit testing. */
 export function decodeShapeHits(raw: unknown): GeometryPartHit[] {
   const operation = "hitTestShapeParts";
   const parsed = parseJsonResult(raw, operation);
@@ -351,6 +356,7 @@ export function decodeShapeHits(raw: unknown): GeometryPartHit[] {
   return parsed as unknown as GeometryPartHit[];
 }
 
+/** Decode compiled geometry parts and validate path data, optional part IDs, and bounds. */
 export function decodeCompiledShapePaths(raw: unknown): CompiledShapePathPart[] {
   const operation = "compileShapePaths";
   const parsed = parseJsonResult(raw, operation);
@@ -369,6 +375,7 @@ export function decodeCompiledShapePaths(raw: unknown): CompiledShapePathPart[] 
   return parsed as unknown as CompiledShapePathPart[];
 }
 
+/** Decode a resolved geometry document, including every nested affine channel. */
 export function decodeResolvedShapeGeometry(raw: unknown): GeometryDoc {
   const operation = "resolveSymbolGeometry";
   const parsed = parseJsonResult(raw, operation);
@@ -376,6 +383,7 @@ export function decodeResolvedShapeGeometry(raw: unknown): GeometryDoc {
   return parsed as unknown as GeometryDoc;
 }
 
+/** Decode evaluated shape parts and their region geometry and identifiers. */
 export function decodeEvaluatedShapeParts(raw: unknown): GeometryPart[] {
   const operation = "evaluateShapeParts";
   const parsed = parseJsonResult(raw, operation);
@@ -398,6 +406,7 @@ export function decodeEvaluatedShapeParts(raw: unknown): GeometryPart[] {
   return parsed as unknown as GeometryPart[];
 }
 
+/** Decode an evaluated shape region and validate its contour representation. */
 export function decodeEvaluatedShapeRegion(raw: unknown): Region {
   const operation = "evaluateShapeRegion";
   const parsed = parseJsonResult(raw, operation);
@@ -405,6 +414,7 @@ export function decodeEvaluatedShapeRegion(raw: unknown): Region {
   return parsed as unknown as Region;
 }
 
+/** Decode the subtract/intersect region pair returned by shape division. */
 export function decodeDividedShapeRegions(raw: unknown): DivideRegions {
   const operation = "divideShapeRegions";
   const parsed = parseJsonResult(raw, operation);
@@ -415,6 +425,7 @@ export function decodeDividedShapeRegions(raw: unknown): DivideRegions {
   return parsed as unknown as DivideRegions;
 }
 
+/** Decode region-intersection locations and participating part identifiers. */
 export function decodeShapeIntersections(raw: unknown): GeometryIntersection[] {
   const operation = "computeShapeIntersections";
   const parsed = parseJsonResult(raw, operation);

@@ -16,6 +16,7 @@ import {
   decodeTextFlowWithExclusionsResult,
 } from "../../src/wasm/protocol-decoders.js";
 import type { RenderToIrEnvelope, WasmEngineInstance } from "../../src/wasm/types.js";
+import { circularClip } from "../helpers/box-clip.js";
 
 const bbox = { x: 0, y: 0, w: 100, h: 40 };
 
@@ -24,6 +25,11 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
   return {
     ir: {
       root: {
+        ownership: {
+          role: "source",
+          on: { onClick: "click", onPointerCancel: "cancel" },
+          meta: { role: "fixture" },
+        },
         type: "group",
         nodeId: "root",
         bbox,
@@ -40,13 +46,12 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
           iterations: "infinite",
           fill: "both",
         },
-        meta: { role: "fixture" },
+
         boxShadow: { dx: 1, dy: 2, blur: 3, spread: 4, color: "#0008" },
-        clipPath: bbox,
-        clipBorderRadius: { tl: 1, tr: 2, br: 3, bl: 4 },
-        on: { onClick: "click", onPointerCancel: "cancel" },
+
         children: [
           {
+            ownership: { role: "source" },
             type: "rect",
             nodeId: "rect",
             bbox,
@@ -66,9 +71,9 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
               ],
             },
             borderRadius: 4,
-            strokeScaling: "canvas",
           },
           {
+            ownership: { role: "source", on: { onPointerDown: "down" } },
             type: "text",
             nodeId: "text",
             bbox,
@@ -254,17 +259,17 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
                 sourceEnd: 1,
               },
             ],
-            on: { onPointerDown: "down" },
           },
           {
+            ownership: { role: "source", on: { onClick: "image" } },
             type: "image",
             nodeId: "image",
             bbox,
             src: "data:image/png;base64,AA==",
             preserveAspectRatio: "none",
-            on: { onClick: "image" },
           },
           {
+            ownership: { role: "source", on: { onMouseMove: "move" } },
             type: "path",
             nodeId: "path",
             bbox,
@@ -283,18 +288,18 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
             strokeDasharray: "1 1",
             strokeMiterlimit: 4,
             strokeScaling: "transform",
-            on: { onMouseMove: "move" },
           },
           {
+            ownership: { role: "source", on: { onTouchEnd: "end" } },
             type: "svg",
             nodeId: "svg",
             bbox,
             svgContent: "<path/>",
             svgViewBox: "0 0 1 1",
             preserveAspectRatio: "none",
-            on: { onTouchEnd: "end" },
           },
           {
+            ownership: { role: "source", on: { onPointerUp: "up" } },
             type: "shape",
             nodeId: "shape",
             bbox,
@@ -323,11 +328,11 @@ function createFullyPopulatedEnvelope(): RenderToIrEnvelope {
             strokeLinejoin: "bevel",
             strokeDasharray: "1 1",
             strokeMiterlimit: 4,
-            on: { onPointerUp: "up" },
           },
         ],
+        clip: circularClip(bbox, { tl: 1, tr: 2, br: 3, bl: 4 }),
       },
-      drawOrder: ["rect", "text", "image", "path", "svg", "shape", "root"],
+
       width: 100,
       height: 40,
       debug: true,
@@ -392,8 +397,14 @@ describe("WASM protocol decoders", () => {
     expect(
       decodeAnimationStateSamples(
         JSON.stringify([
-          { nodeId: "root" },
-          { nodeId: "child", opacity: 0.5, transform: { a: 1, b: 0, c: 0, d: 1, e: 2, f: 3 } },
+          { nodeIndex: 0, source: { sourceIndex: 0, nodeId: "root" }, nodeId: "root" },
+          {
+            nodeIndex: 1,
+            source: { sourceIndex: 1, nodeId: "child" },
+            nodeId: "child",
+            opacity: 0.5,
+            transform: { a: 1, b: 0, c: 0, d: 1, e: 2, f: 3 },
+          },
         ]),
       ),
     ).toHaveLength(2);
@@ -429,7 +440,7 @@ describe("WASM protocol decoders", () => {
     expectCode(() => decodeRenderToIrEnvelope("{"), "WASM_INVALID_IR_OUTPUT");
 
     const missingRequired = structuredClone(createFullyPopulatedEnvelope());
-    Reflect.deleteProperty(missingRequired.ir, "drawOrder");
+    Reflect.deleteProperty(missingRequired.ir.root, "ownership");
     expectCode(
       () => decodeRenderToIrEnvelope(JSON.stringify(missingRequired)),
       "WASM_INVALID_IR_OUTPUT",
@@ -548,8 +559,8 @@ describe("WASM protocol decoders", () => {
         JSON.stringify({
           svg: "<svg/>",
           ir: {
-            root: { type: "group", nodeId: "root", bbox },
-            drawOrder: [],
+            root: { ownership: { role: "source" }, type: "group", nodeId: "root", bbox },
+
             width: 100,
             height: 40,
           },

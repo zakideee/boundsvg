@@ -18,9 +18,13 @@ use crate::diagnostics::SerializedRecoverableError;
 use crate::text::types::Line;
 pub use crate::text::types::{TextShadowLayer, TextStrokeLayer};
 
+/// Maximum animated text paint units accepted in one scene.
 pub const MAX_TEXT_ANIMATION_UNITS: usize = 4_096;
+/// Maximum estimated animated text paint fragments accepted in one scene.
 pub const MAX_TEXT_ANIMATION_FRAGMENTS: usize = 8_192;
+/// Unit count above which text-animation resource usage produces a warning.
 pub const TEXT_ANIMATION_UNIT_WARNING_THRESHOLD: usize = 1_024;
+/// Estimated paint-fragment count above which text animation produces a warning.
 pub const TEXT_ANIMATION_FRAGMENT_WARNING_THRESHOLD: usize = 2_048;
 
 // ---------------------------------------------------------------------------
@@ -74,10 +78,25 @@ pub struct GradientStop {
     pub offset: f64,
 }
 
+/// Resolved linear-gradient endpoints in local gradient-box coordinates.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinearGradientGeometry {
+    /// Horizontal start coordinate in px.
+    pub start_x: f64,
+    /// Vertical start coordinate in px.
+    pub start_y: f64,
+    /// Horizontal end coordinate in px.
+    pub end_x: f64,
+    /// Vertical end coordinate in px.
+    pub end_y: f64,
+}
+
 /// Resolved radial-gradient geometry in local gradient-box coordinates.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RadialGradientGeometry {
     pub center_x: f64,
     pub center_y: f64,
@@ -85,22 +104,19 @@ pub struct RadialGradientGeometry {
     pub radius_y: f64,
 }
 
-/// Parsed CSS gradient.
-/// Serializes as the TS gradient union (`{ type: "linear" | "radial", ... }`).
+/// Resolved gradient paint; geometry is the only drawing authority.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Gradient {
+    /// Linear paint with resolved endpoints relative to its gradient box.
     Linear {
-        /// Angle in degrees (CSS convention: 0 = to top, 90 = to right).
-        angle: f64,
+        geometry: LinearGradientGeometry,
         stops: Vec<GradientStop>,
     },
+    /// Radial paint with resolved center and ellipse radii relative to its gradient box.
     Radial {
-        /// Present for gradients produced by the layout pipeline. Optional so
-        /// previously-authored IR keeps the CSS default geometry at emission.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        geometry: Option<RadialGradientGeometry>,
+        geometry: RadialGradientGeometry,
         stops: Vec<GradientStop>,
     },
 }
@@ -132,6 +148,41 @@ pub enum StrokeLinecap {
     Butt,
     Round,
     Square,
+}
+
+/// Physical radii of one resolved elliptical box corner.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CornerRadius {
+    /// Resolved horizontal radius in px, from zero through half the contour width.
+    #[cfg_attr(feature = "ir-schema", schemars(range(min = 0.0)))]
+    pub rx: f64,
+    /// Resolved vertical radius in px, from zero through half the contour height.
+    #[cfg_attr(feature = "ir-schema", schemars(range(min = 0.0)))]
+    pub ry: f64,
+}
+
+/// Resolved rectangle and clockwise corners, beginning at the top left.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BoxContour {
+    /// Rectangle in the owning group's coordinate system.
+    pub bbox: BBox,
+    /// Top-left, top-right, bottom-right, and bottom-left radii.
+    pub corners: [CornerRadius; 4],
+}
+
+/// Explicit box clipping geometry; omission on a group means unclipped.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum BoxClip {
+    /// Pass no paint or hit candidates.
+    Empty,
+    /// Clip to a resolved box contour.
+    BoxContour(BoxContour),
 }
 
 /// Stroke line join.
@@ -168,7 +219,7 @@ pub enum IrFillRule {
 /// The radius is half the effective stroke width at output scale one. Keeping
 /// the cap/join multiplier separate avoids overflowing a finite wire value.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathStrokeOutset {
     /// Nonnegative finite half-width, including SVG decimal rounding.
@@ -228,6 +279,7 @@ pub struct HandlersRef {
 
 impl HandlersRef {
     #[must_use]
+    /// Return whether this node has no registered event-handler references.
     pub fn is_empty(&self) -> bool {
         self.on_click.is_none()
             && self.on_double_click.is_none()
@@ -257,13 +309,40 @@ impl HandlersRef {
 // Glyph outline path (textPathMode: "glyphs")
 // ---------------------------------------------------------------------------
 
+/// Mutually exclusive solid color or index into the owning Text's gradient table.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, rename_all = "camelCase", deny_unknown_fields)]
+pub enum TextPaint {
+    /// Solid color string.
+    Solid(String),
+    /// A resolved gradient resource belonging to the parent Text.
+    Gradient {
+        #[serde(rename = "gradientIndex")]
+        gradient_index: u32,
+    },
+}
+
+/// One parsed text gradient in the parent Text's physical block coordinates.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextGradient {
+    /// Authored color identifying this resource within the Text.
+    pub color: String,
+    /// Shared final Text block, before node or unit animation transforms.
+    pub bbox: BBox,
+    /// Parsed gradient geometry and stops.
+    pub gradient: Gradient,
+}
+
 /// A text run resolved to glyph outline paths.
 /// Mirrors TS `TextOutlinePath` (`packages/core/src/text/types.ts`).
 #[derive(Debug, Clone)]
 pub struct TextOutlinePath {
     pub node_id: String,
     pub d: String,
-    pub fill: String,
+    pub fill: TextPaint,
     pub glyph_ids: Vec<u32>,
     pub text: String,
     pub bbox: BBox,
@@ -341,14 +420,21 @@ pub struct AnimationTransform2D {
     pub scale_x: Option<f64>,
     pub scale_y: Option<f64>,
     pub rotate_deg: Option<f64>,
+    /// Horizontal shear angle in degrees.
+    pub skew_x_deg: Option<f64>,
+    /// Vertical shear angle in degrees.
+    pub skew_y_deg: Option<f64>,
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema vocabulary for named easing functions accepted by animation input.
 pub(super) struct NamedAnimationEasingSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for NamedAnimationEasingSchema {
+    /// Stable definition name for the NamedAnimationEasingSchema string vocabulary.
     const NAME: &'static str = "NamedAnimationEasingSchema";
+    /// Accepted wire strings for the NamedAnimationEasingSchema vocabulary.
     const VALUES: &'static [&'static str] = &[
         "linear",
         "ease",
@@ -361,29 +447,38 @@ impl boundtext::schema::StringEnumSchemaDomain for NamedAnimationEasingSchema {
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema discriminator for a spring easing record.
 pub(super) struct AnimationSpringKindSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationSpringKindSchema {
+    /// Stable definition name for the AnimationSpringKindSchema string vocabulary.
     const NAME: &'static str = "AnimationSpringKindSchema";
+    /// Accepted wire strings for the AnimationSpringKindSchema vocabulary.
     const VALUES: &'static [&'static str] = &["spring"];
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema discriminator for a steps easing record.
 pub(super) struct AnimationStepsKindSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationStepsKindSchema {
+    /// Stable definition name for the AnimationStepsKindSchema string vocabulary.
     const NAME: &'static str = "AnimationStepsKindSchema";
+    /// Accepted wire strings for the AnimationStepsKindSchema vocabulary.
     const VALUES: &'static [&'static str] = &["steps"];
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema vocabulary for authored step discontinuity positions.
 pub(super) struct AnimationStepPositionSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationStepPositionSchema {
+    /// Stable definition name for the AnimationStepPositionSchema string vocabulary.
     const NAME: &'static str = "AnimationStepPositionSchema";
+    /// Accepted wire strings for the AnimationStepPositionSchema vocabulary.
     const VALUES: &'static [&'static str] = &["jump-start", "jump-end", "jump-none", "jump-both"];
 }
 
@@ -392,29 +487,38 @@ struct AnimationInfiniteSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationInfiniteSchema {
+    /// Stable definition name for the AnimationInfiniteSchema string vocabulary.
     const NAME: &'static str = "AnimationInfiniteSchema";
+    /// Accepted wire strings for the AnimationInfiniteSchema vocabulary.
     const VALUES: &'static [&'static str] = &["infinite"];
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema vocabulary for animation fill behavior.
 pub(super) struct AnimationFillSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for AnimationFillSchema {
+    /// Stable definition name for the AnimationFillSchema string vocabulary.
     const NAME: &'static str = "AnimationFillSchema";
+    /// Accepted wire strings for the AnimationFillSchema vocabulary.
     const VALUES: &'static [&'static str] = &["none", "both"];
 }
 
 #[cfg(feature = "ir-schema")]
+/// Schema discriminator for text laid out on a path.
 pub(super) struct TextLayoutKindSchema;
 
 #[cfg(feature = "ir-schema")]
 impl boundtext::schema::StringEnumSchemaDomain for TextLayoutKindSchema {
+    /// Stable definition name for the TextLayoutKindSchema string vocabulary.
     const NAME: &'static str = "TextLayoutKindSchema";
+    /// Accepted wire strings for the TextLayoutKindSchema vocabulary.
     const VALUES: &'static [&'static str] = &["path"];
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// One normalized animation stop carrying opacity or post-layout transform channels.
 pub struct AnimationKeyframe {
     pub at: f64,
     pub opacity: Option<f64>,
@@ -422,6 +526,7 @@ pub struct AnimationKeyframe {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Authored named, cubic-bezier, spring, or steps easing before validation.
 pub enum AnimationEasing {
     Named(String),
     CubicBezier([f64; 4]),
@@ -434,6 +539,7 @@ pub enum AnimationEasing {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Authored damped-spring parameters; omitted values use sampler defaults.
 pub struct AnimationSpring {
     pub kind: String,
     pub stiffness: Option<f64>,
@@ -442,6 +548,7 @@ pub struct AnimationSpring {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Authored step easing count and optional discontinuity position.
 pub struct AnimationSteps {
     pub kind: String,
     pub count: f64,
@@ -451,6 +558,7 @@ pub struct AnimationSteps {
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+/// Finite iteration count or the validated infinite marker at the IR boundary.
 pub enum AnimationIterations {
     Count(f64),
     Infinite(
@@ -465,6 +573,7 @@ pub enum AnimationIterations {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Authored node or text-unit animation retained until validation and sampling.
 pub struct AnimationSpec {
     pub keyframes: Vec<AnimationKeyframe>,
     pub duration_ms: f64,
@@ -477,6 +586,7 @@ pub struct AnimationSpec {
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// Logical or resolved visual order used to stagger text paint units.
 pub enum TextUnitAnimationOrder {
     Logical,
     Visual,
@@ -504,6 +614,7 @@ pub struct TextUnitAnimationSample {
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Path-text placement metadata retained alongside resolved glyph lines.
 pub struct TextPathMetadata {
     pub d: String,
     pub start_offset_px: f64,
@@ -556,6 +667,7 @@ use super::wire_input::LineWire;
 /// `type` discriminant) to match the TS `IRNode` shape.
 #[derive(Debug, Clone)]
 pub struct IrNode {
+    pub ownership: super::ownership::IrNodeOwnership,
     pub node_id: String,
     pub bbox: BBox,
     pub kind: IrNodeKind,
@@ -570,14 +682,11 @@ pub enum IrNodeKind {
     /// Container group (may clip children).
     Group {
         children: Vec<IrNode>,
-        clip_path: Option<BBox>,
-        clip_border_radius: Option<BorderRadius>,
+        clip: Option<BoxClip>,
         opacity: Option<f64>,
         box_shadow: Option<BoxShadow>,
-        meta: Option<std::collections::BTreeMap<String, String>>,
         transform: Option<boundshape::Transform2D>,
         animation: Option<AnimationSpec>,
-        on: Option<Box<HandlersRef>>,
     },
     /// Filled/stroked rectangle.
     Rect {
@@ -585,6 +694,7 @@ pub enum IrNodeKind {
         gradient: Option<Gradient>,
         stroke: Option<String>,
         stroke_width: Option<f64>,
+        /// Width scaling for this paint primitive, independent of layout.
         stroke_scaling: Option<StrokeScaling>,
         border_radius: Option<BorderRadius>,
         stroke_linecap: Option<StrokeLinecap>,
@@ -615,10 +725,12 @@ pub enum IrNodeKind {
         display_text: Option<String>,
         text_path: Option<Box<TextPathMetadata>>,
         glyph_paths: Option<Vec<TextOutlinePath>>,
+        /// Distinct gradient resources sharing the parent Text coordinate frame.
+        gradients: Option<Vec<TextGradient>>,
         /// Stable paint-unit metadata generated by boundtext for opt-in text.
         unit_map: Option<crate::text::unit_map::TextUnitMap>,
         /// Raw unit animation semantic retained across frame sampling.
-        unit_animation: Option<TextUnitAnimation>,
+        unit_animation: Option<Box<TextUnitAnimation>>,
         /// Per-unit actual outline bounds and sampled pose.
         unit_animation_samples: Option<Vec<TextUnitAnimationSample>>,
         // Stroke
@@ -632,14 +744,11 @@ pub enum IrNodeKind {
         strokes: Option<Vec<TextStrokeLayer>>,
         shadows: Option<Vec<TextShadowLayer>>,
         text_decorations: Option<Vec<crate::text::types::TextDecorationFragment>>,
-        // Event handlers
-        on: Option<Box<HandlersRef>>,
     },
     /// Raster image (base64 data URI).
     Image {
         src: String,
         preserve_aspect_ratio: String,
-        on: Option<HandlersRef>,
     },
     /// SVG path element.
     Path {
@@ -655,14 +764,12 @@ pub enum IrNodeKind {
         stroke_linejoin: Option<StrokeLinejoin>,
         stroke_dasharray: Option<String>,
         stroke_miterlimit: Option<f64>,
-        on: Option<HandlersRef>,
     },
     /// Nested SVG content.
     Svg {
         content: String,
         view_box: Option<String>,
         preserve_aspect_ratio: String,
-        on: Option<HandlersRef>,
     },
     /// Structural shape with viewport-baked part paths.
     Shape {
@@ -675,7 +782,6 @@ pub enum IrNodeKind {
         stroke_linejoin: Option<StrokeLinejoin>,
         stroke_dasharray: Option<String>,
         stroke_miterlimit: Option<f64>,
-        on: Option<HandlersRef>,
     },
 }
 
@@ -703,8 +809,6 @@ pub struct HitTarget {
 #[derive(Debug, Clone)]
 pub struct Ir {
     pub root: IrNode,
-    /// Node IDs in z-ascending order (back-to-front).
-    pub draw_order: Vec<String>,
     pub width: f64,
     pub height: f64,
     /// Declarative Canvas debug overlay default; omitted unless enabled.
@@ -722,7 +826,6 @@ pub struct StructuralIr<'a> {
         schemars(with = "super::wire_output::IrNodeOutput<'static>")
     )]
     pub root: &'a IrNode,
-    pub draw_order: &'a [String],
     pub width: f64,
     pub height: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -731,10 +834,10 @@ pub struct StructuralIr<'a> {
 
 impl Ir {
     #[must_use]
+    /// Borrow the public structural IR fields without diagnostics or cloning the node tree.
     pub fn structural(&self) -> StructuralIr<'_> {
         StructuralIr {
             root: &self.root,
-            draw_order: &self.draw_order,
             width: self.width,
             height: self.height,
             debug: self.debug,
@@ -760,6 +863,7 @@ impl Serialize for Ir {
 
 impl BBox {
     #[must_use]
+    /// Construct a bounding box from caller-provided coordinates and extents without normalization.
     pub fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
         Self { x, y, w, h }
     }
@@ -1242,6 +1346,10 @@ mod tests {
     #[test]
     fn ir_node_round_trips_through_serde() {
         let text_node = IrNode {
+            ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                on: None,
+                meta: None,
+            },
             node_id: "t1".to_string(),
             bbox: BBox::new(1.5, 2.0, 30.0, 12.0),
             kind: IrNodeKind::Text {
@@ -1271,10 +1379,11 @@ mod tests {
                 source_text: None,
                 display_text: None,
                 text_path: None,
+                gradients: None,
                 glyph_paths: Some(vec![TextOutlinePath {
                     node_id: "t1".to_string(),
                     d: "M0,0L1,1".to_string(),
-                    fill: "#111111".to_string(),
+                    fill: TextPaint::Solid("#111111".to_string()),
                     strokes: None,
                     shadows: None,
                     paint_range_index: None,
@@ -1316,15 +1425,22 @@ mod tests {
                 strokes: None,
                 shadows: None,
                 text_decorations: None,
-                on: None,
             },
         };
         let root = IrNode {
+            ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                on: None,
+                meta: None,
+            },
             node_id: "canvas".to_string(),
             bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
             kind: IrNodeKind::Group {
                 children: vec![
                     IrNode {
+                        ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                            on: None,
+                            meta: None,
+                        },
                         node_id: "canvas:bg".to_string(),
                         bbox: BBox::new(0.0, 0.0, 100.0, 50.0),
                         kind: IrNodeKind::Rect {
@@ -1342,14 +1458,14 @@ mod tests {
                     },
                     text_node,
                 ],
-                clip_path: Some(BBox::new(0.0, 0.0, 100.0, 50.0)),
-                clip_border_radius: None,
+                clip: Some(BoxClip::BoxContour(crate::ir::box_geometry::outer_contour(
+                    BBox::new(0.0, 0.0, 100.0, 50.0),
+                    None,
+                ))),
                 opacity: None,
                 box_shadow: None,
-                meta: None,
                 transform: None,
                 animation: None,
-                on: None,
             },
         };
 

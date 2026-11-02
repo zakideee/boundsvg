@@ -7,8 +7,10 @@ import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
 import { useDeferredValue, useMemo, useState, useTransition } from "react";
 import type { EventEffectOverlayDisplayOptions } from "../../../../playground-shared/inspect-hover.js";
+import { DEFAULT_INSPECTION_FRAME_MODE } from "../../../../playground-shared/inspection-frame.js";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
 import { CheckField, ColorField, NumberField, Section, SelectField } from "../../components/fields";
+import { InspectionFrameField } from "../../components/InspectionFrameField";
 import { RenderSurface } from "../../components/RenderSurface";
 import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspect } from "../../hooks/use-svg-inspect";
@@ -17,26 +19,18 @@ import type { RendererMode } from "../../types";
 import { TRANSFORM_PRESET_OPTIONS, TRANSFORM_PRESETS } from "./presets";
 import type { TransformPageState, TransformPresetKey } from "./types";
 
+/** Initial authored transform example. */
 const DEFAULT_PRESET: TransformPresetKey = "translate-only";
 
+/** Rendering surfaces available for transform examples. */
 const RENDERER_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "boundsvg", label: "BoundSvg" },
   { value: "svg-hook", label: "useRenderToSvg" },
   { value: "png-hook", label: "useRenderToPng" },
 ];
 
-const OVERLAY_MODE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "off", label: "Off" },
-  { value: "layout", label: "Layout BBox" },
-  { value: "transform", label: "Transform Box" },
-  { value: "visual", label: "Visual Bounds" },
-  { value: "all", label: "All" },
-];
-
 type ExtendedState = TransformPageState & {
   renderer: RendererMode;
-  overlayMode: NonNullable<EventEffectOverlayDisplayOptions["mode"]>;
-  showOrigin: boolean;
 };
 
 function initialStateFor(key: TransformPresetKey): ExtendedState {
@@ -59,8 +53,6 @@ function initialStateFor(key: TransformPresetKey): ExtendedState {
     ...preset.overrides,
     preset: key,
     renderer: "boundsvg",
-    overlayMode: "all",
-    showOrigin: true,
   };
 }
 
@@ -71,8 +63,11 @@ function buildVNode(state: ExtendedState): VNode {
 type ViewTab = "preview" | "svg" | "jsx" | "component";
 type CodeLayout = "tab" | "panel";
 
+/** Explore paint transforms and inspect their resolved frames independently. */
 export function TransformPage() {
   const { engine, status } = useBoundSvg();
+  const [inspectionMode, setInspectionMode] = useState(DEFAULT_INSPECTION_FRAME_MODE);
+  const [showOrigin, setShowOrigin] = useState(true);
   const [state, setState] = useState<ExtendedState>(() => initialStateFor(DEFAULT_PRESET));
   const [isPending, startTransition] = useTransition();
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
@@ -92,8 +87,6 @@ export function TransformPage() {
       setState((prev) => ({
         ...initialStateFor(nextKey),
         renderer: prev.renderer,
-        overlayMode: prev.overlayMode,
-        showOrigin: prev.showOrigin,
       }));
     });
   };
@@ -103,13 +96,17 @@ export function TransformPage() {
   const renderOptions = useMemo<CompileOptions & OutputCommonOptions>(() => ({}), []);
   const overlayDisplay = useMemo<EventEffectOverlayDisplayOptions>(
     () => ({
-      mode: deferred.overlayMode,
-      showOrigin: deferred.showOrigin,
+      mode: inspectionMode,
+      showOrigin,
     }),
-    [deferred.overlayMode, deferred.showOrigin],
+    [inspectionMode, showOrigin],
   );
 
   const activePreset = TRANSFORM_PRESETS[state.preset];
+  const isInspectionUnavailable =
+    status !== "ready" ||
+    state.renderer === "png-hook" ||
+    (codeLayout === "tab" && viewTab === "svg");
 
   const {
     highlightedSvg: highlightedRenderedSvg,
@@ -257,26 +254,21 @@ export function TransformPage() {
             options={RENDERER_OPTIONS}
             onChange={(v) => update("renderer", v as RendererMode)}
           />
-          <SelectField
-            id="transform-overlay-mode"
-            label="Overlay"
-            value={state.overlayMode}
-            options={OVERLAY_MODE_OPTIONS}
-            onChange={(v) => update("overlayMode", v as ExtendedState["overlayMode"])}
+          <InspectionFrameField
+            id="transform-inspection-frame"
+            mode={inspectionMode}
+            onChange={setInspectionMode}
+            disabled={isInspectionUnavailable}
           />
-          <CheckField
-            id="transform-show-origin"
-            label="Show origin anchor"
-            checked={state.showOrigin}
-            onChange={(v) => update("showOrigin", v)}
-          />
-          <p className="section-note">
-            Slate dashed = layout / Cyan = transform / Pink corners = visual bounds / Amber = origin
-          </p>
-          <p className="section-note">
-            Origin anchors appear for authored transforms. Leaf transforms retain their origin on
-            the generated wrapper group used by the inspection overlay.
-          </p>
+          <fieldset className="inspection-origin-control" disabled={isInspectionUnavailable}>
+            <CheckField
+              id="transform-show-origin"
+              label="Show origin anchor"
+              checked={showOrigin}
+              onChange={setShowOrigin}
+            />
+          </fieldset>
+          <p className="section-note">Origin anchors mark the element's own transform origin.</p>
         </Section>
       </aside>
 

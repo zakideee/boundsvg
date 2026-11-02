@@ -1,5 +1,6 @@
 import { collectInspectionBBoxes } from "@boundsvg/core/inspect";
-import type { IR } from "@boundsvg/core/scene";
+import type { IR, IRGroupNode } from "@boundsvg/core/scene";
+import { buildIRSourceIndex } from "@boundsvg/core/scene";
 import { describe, expect, it } from "vitest";
 import {
   buildNodeBBoxMap,
@@ -12,20 +13,23 @@ describe("buildNodeBBoxMap", () => {
     const ir: IR = {
       width: 100,
       height: 80,
-      drawOrder: ["transformed"],
+
       warnings: [],
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "auto:0",
         bbox: { x: 0, y: 0, w: 100, h: 80 },
         children: [
           {
+            ownership: { role: "source" },
             type: "group",
             nodeId: "transformed",
             bbox: { x: 10, y: 20, w: 40, h: 24 },
             transform: { translateX: 5, translateY: 7, originX: 20, originY: 12 },
             children: [
               {
+                ownership: { role: "content", ownerNodeId: "transformed" },
                 type: "rect",
                 nodeId: "transformed",
                 bbox: { x: 10, y: 20, w: 40, h: 24 },
@@ -38,87 +42,117 @@ describe("buildNodeBBoxMap", () => {
       },
     };
 
-    const matchingEntries = collectInspectionBBoxes(ir).filter(
+    const matchingEntries = collectInspectionBBoxes(buildIRSourceIndex(ir)).filter(
       (bbox) => bbox.nodeId === "transformed",
     );
     expect(matchingEntries.map((bbox) => bbox.type)).toEqual(["group", "rect"]);
     expect(matchingEntries[0]?.hasOwnTransform).toBe(true);
     expect(matchingEntries[1]?.hasOwnTransform).toBe(false);
 
-    const merged = buildNodeBBoxMap(ir).get("transformed");
+    const merged = buildNodeBBoxMap(ir).get(1);
     expect(merged?.hasOwnTransform).toBe(true);
     expect(merged?.origin).toEqual(matchingEntries[0]?.origin);
     expect(merged?.transformBox).toEqual(matchingEntries[0]?.transformBox);
     expect(merged?.visualBBox).toEqual(matchingEntries[0]?.visualBBox);
     expect(merged?.rx).toBe(6);
-    expect(merged?.semantics?.kind).toBe("Box");
+    expect(merged?.semantics?.kind).toBe("Rect");
   });
 });
 
 describe("resolveInspectOverlayParts", () => {
-  it("returns all overlay parts for all mode with origin", () => {
+  const layoutBBox = { x: 10, y: 20, w: 40, h: 24 };
+
+  function geometryForAncestor(transform?: NonNullable<IRGroupNode["transform"]>) {
+    const ir: IR = {
+      width: 100,
+      height: 80,
+
+      warnings: [],
+      root: {
+        ownership: { role: "source" },
+        type: "group",
+        nodeId: "parent",
+        bbox: { x: 0, y: 0, w: 100, h: 80 },
+        transform,
+        children: [
+          {
+            ownership: { role: "source" },
+            type: "rect",
+            nodeId: "child",
+            bbox: layoutBBox,
+            fill: "red",
+          },
+        ],
+      },
+    };
+    const geometry = buildNodeBBoxMap(ir).get(1);
+    expect(geometry).toBeDefined();
+    return geometry!;
+  }
+
+  it.each([
+    ["skew", { skewXDeg: -8 }, ["layout", "transform", "handles", "visual"]],
+    ["rotate", { rotateDeg: 15 }, ["layout", "transform", "handles", "visual"]],
+    ["translate", { translateX: 8 }, ["layout", "transform", "handles"]],
+    ["scale", { scaleX: 2, scaleY: 3 }, ["layout", "transform", "handles"]],
+    [
+      "both skew axes",
+      { skewXDeg: 12, skewYDeg: -7 },
+      ["layout", "transform", "handles", "visual"],
+    ],
+    ["no transform", undefined, ["layout"]],
+    ["same corner set", { scaleX: -1, originX: 30 }, ["layout"]],
+  ] as const)("uses resolved child geometry under ancestor %s", (_name, transform, expected) => {
+    const geometry = geometryForAncestor(transform);
+    expect(geometry.hasOwnTransform).toBe(false);
+    expect(geometry.origin).toBeNull();
     expect(
       resolveInspectOverlayParts({
         mode: "all",
         showOrigin: true,
-        hasOrigin: true,
+        hasOrigin: false,
+        ...geometry,
       }),
-    ).toEqual(["layout", "transform", "handles", "visual", "origin"]);
+    ).toEqual(expected);
   });
 
-  it("returns no parts for off mode", () => {
+  it("preserves explicit modes regardless of coincident geometry", () => {
+    const geometry = geometryForAncestor();
+    for (const [mode, expected] of [
+      ["layout", ["layout"]],
+      ["transform", ["transform", "handles"]],
+      ["visual", ["visual"]],
+      ["off", []],
+    ] as const) {
+      expect(
+        resolveInspectOverlayParts({
+          ...geometry,
+          mode,
+          showOrigin: true,
+          hasOrigin: false,
+        }),
+      ).toEqual(expected);
+    }
+  });
+
+  it("keeps the node's own origin independent of redundant box suppression", () => {
+    const geometry = geometryForAncestor();
     expect(
       resolveInspectOverlayParts({
+        ...geometry,
+        mode: "all",
+        showOrigin: true,
+        hasOrigin: true,
+      }),
+    ).toEqual(["layout", "origin"]);
+    expect(
+      resolveInspectOverlayParts({
+        ...geometry,
         mode: "off",
         showOrigin: true,
         hasOrigin: true,
       }),
     ).toEqual([]);
-  });
-
-  it("omits origin when the node has no own transform origin", () => {
-    expect(
-      resolveInspectOverlayParts({
-        mode: "transform",
-        showOrigin: true,
-        hasOrigin: false,
-      }),
-    ).toEqual(["transform", "handles"]);
-  });
-
-  it("draws only layout in all mode when the node has no own transform", () => {
-    expect(
-      resolveInspectOverlayParts({
-        mode: "all",
-        showOrigin: true,
-        hasOrigin: false,
-        hasOwnTransform: false,
-      }),
-    ).toEqual(["layout"]);
-  });
-
-  it("suppresses visual corners in all mode when the transform box is axis-aligned", () => {
-    expect(
-      resolveInspectOverlayParts({
-        mode: "all",
-        showOrigin: false,
-        hasOrigin: true,
-        hasOwnTransform: true,
-        isTransformAxisAligned: true,
-      }),
-    ).toEqual(["layout", "transform", "handles"]);
-  });
-
-  it("keeps visual corners in explicit visual mode even when axis-aligned", () => {
-    expect(
-      resolveInspectOverlayParts({
-        mode: "visual",
-        showOrigin: false,
-        hasOrigin: false,
-        hasOwnTransform: true,
-        isTransformAxisAligned: true,
-      }),
-    ).toEqual(["visual"]);
   });
 });
 
@@ -160,6 +194,19 @@ describe("isTransformBoxAxisAligned", () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it("does not suppress a small but resolved skew as axis-aligned", () => {
+    expect(
+      isTransformBoxAxisAligned({
+        points: [
+          { x: 0, y: 0 },
+          { x: 100, y: 0 },
+          { x: 100.00000001, y: 40 },
+          { x: 0.00000001, y: 40 },
+        ],
+      }),
+    ).toBe(false);
   });
 
   it("is false once the box is rotated off-axis", () => {

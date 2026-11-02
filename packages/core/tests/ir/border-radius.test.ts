@@ -141,7 +141,7 @@ describe("SVG emission — per-corner borderRadius", () => {
     expect(svg).toContain('fill="#00ff00"');
   });
 
-  it("per-corner borderRadius with border emits <path> with stroke", () => {
+  it("per-corner borderRadius paints the border as a clipped surface", () => {
     const svg = engine.renderToSvg(
       canvasWithBox({
         id: "border-path",
@@ -153,7 +153,8 @@ describe("SVG emission — per-corner borderRadius", () => {
       }),
     );
     expect(svg).toContain("<path ");
-    expect(svg).toContain('stroke="#000000"');
-    expect(svg).toContain('stroke-width="2"');
+    expect(svg).toContain('fill="#000000"');
+    expect(svg).toContain('fill-rule="evenodd"');
+    expect(svg).toMatch(/clip-path="url\(#clip-n\d+\)"/);
   });
 });

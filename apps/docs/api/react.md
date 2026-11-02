@@ -414,9 +414,11 @@ scaling, including pointer capture. Generic text/image hit testing remains
 based on positioned bounds. Use static rendering or an explicit `timeMs` for
 matching sampled paint and hit geometry; live SVG playback does not update the
 Core hit index at every animation instant.
+Pointer movement is coalesced to the latest position once per animation frame.
+Leaving or canceling the pointer, or replacing its container, clears queued movement.
 
 ```ts
-const { svg, ir, error, isReady, hoverNodeId, containerRef } =
+const { svg, ir, error, isReady, hoverSource, containerRef } =
   useInteractiveSvg(vnode, handlers, options?);
 ```
 
@@ -426,7 +428,7 @@ const { svg, ir, error, isReady, hoverNodeId, containerRef } =
 | `ir`           | `IR \| null`                             | Full IR for advanced consumers                    |
 | `error`        | `Error \| null`                          | Rendering error                                   |
 | `isReady`      | `boolean`                                | Whether rendering succeeded                       |
-| `hoverNodeId`  | `string \| null`                         | Currently hovered node ID                         |
+| `hoverSource`  | `IRSourceRef \| null`                    | Current snapshot-local source reference           |
 | `containerRef` | `(node: HTMLDivElement \| null) => void` | Ref callback for container div                    |
 | `textMap`      | `TextMap \| null`                        | Text structure map used by the text-copy features |
 
@@ -504,7 +506,7 @@ of live SVG animation.
   renderOptions={{ debug: true }}
   className="interactive-output"
   showPointerCursor={true}
-  onHoverChange={(nodeId) => console.log(nodeId)}
+  onHoverChange={(source) => console.log(source)}
   fallback={<Skeleton />}
 />
 ```
@@ -521,14 +523,14 @@ of live SVG animation.
 | `renderOptions`     | `RenderSvgOptions \| RenderAnimatedSvgOptions` | Must match `renderMode`; animated mode requires playback |
 | `className`         | `string`                                       | Wrapper div class                                        |
 | `showPointerCursor` | `boolean`                                      | Show cursor:pointer on interactive elements              |
-| `onHoverChange`     | `(nodeId: string \| null) => void`             | Callback when hover state changes                        |
+| `onHoverChange`     | `(source: IRSourceRef \| null) => void`        | Callback when hover state changes                        |
 | `fallback`          | `ReactNode`                                    | Fallback UI while engine is loading                      |
 | `errorFallback`     | `ReactNode \| (error: Error) => ReactNode`     | Fallback UI when rendering fails                         |
 | `onRender`          | `(ir: IR) => void`                             | Called with the IR after each render                     |
 | `enableTextCopy`    | `boolean`                                      | Enable the text-copy selection behaviour                 |
 | `onTextCopyMenu`    | `(info: TextCopyMenuInfo) => void`             | Called when the text-copy context menu opens             |
 
-Interactive rendering always emits `data-boundsvg-node-id` for hit testing,
+Interactive rendering always emits the source/occurrence association metadata for hit testing,
 even if the supplied SVG options request `nodeIdMetadata: "omit"`. Use a
 noninteractive static or animated component for final metadata-free export.
 
@@ -680,13 +682,13 @@ import {
 | `BoundSvgDebugOverlay` | Draws rich SVG bbox overlays with labels and controlled highlight targets             |
 | `NodeInspectorPanel`   | Renders a minimal definition-list panel for bbox, type, handler, and text information |
 
-`BoundSvgDebugOverlay` accepts `labelMode: "none" | "node-id" | "summary" | "metrics"`. The default summary label includes `nodeId`, node type, size, position, depth, and draw order index. Use `selectedNodeId`, `highlightedNodeIds`, or `highlightedBBoxes` to highlight a node or an arbitrary render-tree bbox without making the overlay intercept pointer events.
+`BoundSvgDebugOverlay` accepts `labelMode: "none" | "node-id" | "summary" | "metrics"`. The default summary label includes `nodeId`, node type, size, position, depth, and primitive paint ordinal. Use `selectedNodeIndex`, `highlightedNodeIndices`, or `highlightedBBoxes` to highlight a node or an arbitrary render-tree bbox without making the overlay intercept pointer events.
 
 ```tsx
 <BoundSvgDebugOverlay
   inspection={inspection}
   labelMode="metrics"
-  selectedNodeId={selectedNodeId}
+  selectedNodeIndex={selectedNodeIndex}
   highlightedBBoxes={[
     { id: "crop", label: "export crop", x: 24, y: 32, w: 240, h: 120 },
   ]}
@@ -918,3 +920,10 @@ export type {
   UseRenderAssetResult,
 };
 ```
+
+Debug selection uses physical `nodeIndex` values from the matching inspection snapshot. Interaction and text-copy callbacks carry source references; use their `nodeId` only as an application label. Rebuild bindings and clear selected references when replacing the IR.
+
+Text copy methods resolve source refs against the current `TextMap.sourceIndex`.
+After an IR/index replacement, old node/line/ancestor refs return `null` and
+copy methods return `false` without writing the clipboard. Reusing the same
+ordinal or node label does not make an old ref current.

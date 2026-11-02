@@ -53,13 +53,16 @@ export const PORTABLE_LAYOUT_TRANSITION_GOLDEN_BBOXES = {
   },
 } as const;
 
+/** The two named layout states in the shared transition fixture. */
 export type PortableLayoutState = "A" | "B";
 
+/** Fixture states and schedule before the public transition input is assembled. */
 export type FixtureLayoutTransitionInput = {
   states: Readonly<Record<string, SceneNode>>;
   checkpoints: readonly { timeMs: number; state: string }[];
 };
 
+/** Invalid transition input paired with its expected compatibility-failure category. */
 export type LayoutTransitionNegativeFixture = {
   name: string;
   expectedCategory:
@@ -248,6 +251,10 @@ export function createPortableLayoutTransitionState(slotHeight: 48 | 120): Scene
   };
 }
 
+/**
+ * Create the portable transition fixture with paint-only outlines that preserve its layout
+ * oracle.
+ */
 export function createPortableLayoutTransitionInput(): LayoutTransitionInput {
   return {
     states: {
@@ -415,7 +422,13 @@ export function createLayoutTransitionNegativeFixtures(): LayoutTransitionNegati
       const slot = requireBox(state, "slot");
       slot.borderWidth = 1;
       slot.borderColor = "#93c5fd";
-      slot.strokeScaling = "canvas";
+      slot.outline = {
+        stroke: slot.borderColor ?? "#ffffff",
+        strokeWidth: typeof slot.borderWidth === "number" ? slot.borderWidth : 2,
+        strokeScaling: "canvas",
+      };
+      delete slot.borderWidth;
+      delete slot.borderColor;
     }
     return inputFromStates(states);
   })();

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine } from "../../src/engine.js";
 import { hitTest } from "../../src/ir/hit-test.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import { fromSceneDocument, toSceneDocument } from "../../src/scene/from-vnode.js";
 import type { BoxSceneNode } from "../../src/scene/types.js";
 import { validate } from "../../src/validate/index.js";
@@ -38,9 +39,12 @@ function canvasWith(children: VNode[]): VNode {
   return createElement("Canvas", { width: 800, height: 600 }, ...children);
 }
 
-function bgOrder(drawOrder: readonly string[], ids: string[]): string[] {
-  const wanted = new Set(ids.map((id) => `${id}:bg`));
-  return drawOrder.filter((nodeId) => wanted.has(nodeId));
+function bgOrder(ir: import("../../src/ir/types.js").IR, ids: string[]): string[] {
+  return [...buildIRSourceIndex(ir).nodes.values()]
+    .filter(
+      (entry) => entry.node.ownership.role === "decoration" && ids.includes(entry.source.nodeId),
+    )
+    .map((entry) => entry.node.nodeId);
 }
 
 describe("zIndex paint ordering", () => {
@@ -52,7 +56,7 @@ describe("zIndex paint ordering", () => {
         box("c", 1, { x: 20, y: 0 }),
       ]),
     );
-    expect(bgOrder(ir.drawOrder, ["a", "b", "c"])).toEqual(["b:bg", "c:bg", "a:bg"]);
+    expect(bgOrder(ir, ["a", "b", "c"])).toEqual(["b:bg", "c:bg", "a:bg"]);
   });
 
   it("keeps source order for equal zIndex (stable)", () => {
@@ -64,7 +68,7 @@ describe("zIndex paint ordering", () => {
       ]),
     );
     // undefined = 0 paints first; ties a/c keep source order
-    expect(bgOrder(ir.drawOrder, ["a", "b", "c"])).toEqual(["b:bg", "a:bg", "c:bg"]);
+    expect(bgOrder(ir, ["a", "b", "c"])).toEqual(["b:bg", "a:bg", "c:bg"]);
   });
 
   it("paints negative zIndex below zero siblings but above the parent background", () => {
@@ -75,7 +79,9 @@ describe("zIndex paint ordering", () => {
       box("zero", undefined, { x: 10, y: 0 }),
     );
     const ir = engine.renderToIR(canvasWith([parent]));
-    const order = ir.drawOrder;
+    const order = [...buildIRSourceIndex(ir).nodes.values()]
+      .filter((entry) => entry.paintOrder !== null)
+      .map((entry) => entry.node.nodeId);
     expect(order.indexOf("parent:bg")).toBeLessThan(order.indexOf("neg:bg"));
     expect(order.indexOf("neg:bg")).toBeLessThan(order.indexOf("zero:bg"));
   });
@@ -98,11 +104,13 @@ describe("zIndex paint ordering", () => {
     });
     const ir = engine.renderToIR(canvasWith([parentA, parentB]));
     // inner has zIndex 100 but stays inside parentA, which paints before parentB
-    expect(ir.drawOrder.indexOf("inner:bg")).toBeLessThan(ir.drawOrder.indexOf("pb:bg"));
+    expect(bgOrder(ir, ["inner", "pb"]).indexOf("inner:bg")).toBeLessThan(
+      bgOrder(ir, ["inner", "pb"]).indexOf("pb:bg"),
+    );
   });
 
   it("does not change auto-generated node IDs when zIndex reorders painting", () => {
-    const twoBoxes = (z: [number | undefined, number | undefined]) =>
+    const twoBoxes = (zIndex: [number | undefined, number | undefined]) =>
       canvasWith([
         createElement("Box", {
           width: 100,
@@ -111,7 +119,7 @@ describe("zIndex paint ordering", () => {
           position: "absolute",
           left: 0,
           top: 0,
-          ...(z[0] === undefined ? {} : { zIndex: z[0] }),
+          ...(zIndex[0] === undefined ? {} : { zIndex: zIndex[0] }),
         }),
         createElement("Box", {
           width: 100,
@@ -120,12 +128,18 @@ describe("zIndex paint ordering", () => {
           position: "absolute",
           left: 10,
           top: 0,
-          ...(z[1] === undefined ? {} : { zIndex: z[1] }),
+          ...(zIndex[1] === undefined ? {} : { zIndex: zIndex[1] }),
         }),
       ]);
     const plain = engine.renderToIR(twoBoxes([undefined, undefined]));
     const flipped = engine.renderToIR(twoBoxes([5, 1]));
-    expect(new Set(flipped.drawOrder)).toEqual(new Set(plain.drawOrder));
+    expect(
+      new Set(
+        [...buildIRSourceIndex(flipped).sources.values()].map((entry) => entry.source.nodeId),
+      ),
+    ).toEqual(
+      new Set([...buildIRSourceIndex(plain).sources.values()].map((entry) => entry.source.nodeId)),
+    );
   });
 
   it("hit-test returns the zIndex-topmost sibling", () => {
@@ -144,7 +158,7 @@ describe("zIndex paint ordering", () => {
         top: 0,
       });
     const ir = engine.renderToIR(canvasWith([path("top", 5), path("under", 0)]));
-    expect(hitTest(ir, 50, 50)).toBe("top");
+    expect(hitTest(ir, 50, 50)?.nodeId ?? null).toBe("top");
   });
 });
 

@@ -69,9 +69,9 @@ describe("layout transition IR provenance", () => {
 
     expect(Object.keys(compiled)).toEqual(["width", "height", "textPathMode"]);
     expect(serializedIr).toBe(
-      '{"root":{"nodeId":"auto:0","bbox":{"x":0,"y":0,"w":100,"h":100},"type":"group","children":[{"nodeId":"auto:0.0","bbox":{"x":0,"y":0,"w":40,"h":30},"type":"group"}]},"drawOrder":[],"width":100,"height":100,"warnings":[]}',
+      '{"root":{"nodeId":"auto:0","bbox":{"x":0,"y":0,"w":100,"h":100},"ownership":{"role":"source"},"type":"group","children":[{"nodeId":"auto:0.0","bbox":{"x":0,"y":0,"w":40,"h":30},"ownership":{"role":"source"},"type":"group"}]},"width":100,"height":100,"warnings":[]}',
     );
-    expect(new TextEncoder().encode(serializedIr)).toHaveLength(219);
+    expect(new TextEncoder().encode(serializedIr)).toHaveLength(264);
     expect(serializedIr).not.toContain("semanticManifest");
     expect(serializedIr).not.toContain("authoredId");
   });

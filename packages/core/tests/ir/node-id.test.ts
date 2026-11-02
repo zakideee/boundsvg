@@ -155,7 +155,7 @@ describe("validateNodeIds", () => {
     ]);
   });
 
-  it("reports explicit id collisions with generated background ids", () => {
+  it("allows source labels that equal generated background labels", () => {
     const tree = createElement(
       "Canvas",
       { width: 100, height: 100 },
@@ -165,15 +165,11 @@ describe("validateNodeIds", () => {
 
     const result = validateNodeIds(tree);
 
-    expect(result.valid).toBe(false);
-    expect(result.duplicates[0]?.id).toBe("card:bg");
-    expect(result.duplicates[0]?.entries.map((entry) => entry.source)).toEqual([
-      "background",
-      "explicit",
-    ]);
+    expect(result.valid).toBe(true);
+    expect(result.duplicates).toEqual([]);
   });
 
-  it("reports explicit id collisions with generated border ids", () => {
+  it("allows source labels that equal generated border labels", () => {
     const tree = createElement(
       "Canvas",
       { width: 100, height: 100 },
@@ -187,6 +183,6 @@ describe("validateNodeIds", () => {
       createElement("Box", { id: "card:border", width: 10, height: 10 }),
     );
 
-    expect(() => assertUniqueNodeIds(tree)).toThrow('node id "card:border" collides');
+    expect(() => assertUniqueNodeIds(tree)).not.toThrow();
   });
 });

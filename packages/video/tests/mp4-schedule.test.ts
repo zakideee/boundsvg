@@ -29,12 +29,13 @@ function createStubEngine(frames: Frame[] = []): StubEngine {
       JSON.stringify({
         ir: {
           root: {
+            ownership: { role: "source" },
             type: "group",
             nodeId: "auto:0",
             bbox: { x: 0, y: 0, w: 64, h: 32 },
             children: [],
           },
-          drawOrder: [],
+
           width: 64,
           height: 32,
         },
@@ -61,6 +62,7 @@ function pngFrame(index: number): Frame {
   return { index, timeMs: index, format: "png", data: new Uint8Array([index]) };
 }
 
+/** Static scene used to drive the MP4 frame-scheduling contract. */
 const SCENE = { type: "canvas", props: { width: 64, height: 32 } } as unknown as Parameters<
   typeof renderToMp4
 >[1];

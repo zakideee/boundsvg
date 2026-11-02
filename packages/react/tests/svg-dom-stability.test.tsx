@@ -15,8 +15,12 @@ import type { BoundSvgContextValue, EventCallback } from "../src/types.js";
 import { makeEngineMock } from "./test-doubles.js";
 
 // Geometry and browser clocks are exercised separately in real browser tests.
-vi.mock("@boundsvg/browser/events", () => ({
-  resolveHitTarget: (_container: Element, candidates: string[]) => candidates[0] ?? null,
+vi.mock("@boundsvg/browser/events", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@boundsvg/browser/events")>()),
+  resolveHitTarget: (
+    _binding: unknown,
+    candidates: import("@boundsvg/core/scene").IRHitCandidate[],
+  ) => candidates[0]?.source ?? null,
   translateSvgCoords: (_svg: Element, clientX: number, clientY: number) => ({
     x: clientX,
     y: clientY,
@@ -52,18 +56,19 @@ function renderIr(nodeId = "path", handlerName = "path-click"): IR {
     width: 100,
     height: 100,
     warnings: [],
-    drawOrder: [nodeId],
+
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "root",
       bbox: { x: 0, y: 0, w: 100, h: 100 },
       children: [
         {
+          ownership: { role: "source", on: { onClick: handlerName } },
           type: "text",
           nodeId,
           bbox: { x: 0, y: 0, w: 100, h: 100 },
           lines: [],
-          on: { onClick: handlerName },
         },
       ],
     },
@@ -182,7 +187,7 @@ describe("displayed SVG DOM stability", () => {
       surface?.dispatchEvent(new PointerEvent("pointermove", { clientX: 20, clientY: 20 }));
       pendingFrame?.(0);
     });
-    expect(onHoverChange).toHaveBeenLastCalledWith("path");
+    expect(onHoverChange).toHaveBeenLastCalledWith({ sourceIndex: 1, nodeId: "path" });
     expect(
       (fixture.container.querySelector("svg") as SVGSVGElement | null)?.style.touchAction,
     ).toBe("none");

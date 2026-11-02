@@ -1,11 +1,14 @@
+/** Preset keys grouped under one navigation heading. */
 export type PresetGroupDef = {
   key: string;
   label: string;
   presetKeys: string[];
 };
 
+/** Scene selected before a user chooses a preset. */
 export const DEFAULT_PRESET_KEY = "fit";
 
+/** Visible preset navigation groups; entries reference the shared preset registry. */
 export const PRESET_GROUPS: PresetGroupDef[] = [
   {
     key: "basics",
@@ -48,7 +51,7 @@ export const PRESET_GROUPS: PresetGroupDef[] = [
   {
     key: "composition",
     label: "Composition",
-    presetKeys: ["transform", "z-index", "layered"],
+    presetKeys: ["transform", "design-expressions", "z-index", "layered"],
   },
   {
     key: "interaction",

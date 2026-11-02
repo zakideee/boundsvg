@@ -6,7 +6,7 @@
 //! serialized IR contract: outputs must stay deep-equal for the same
 //! transport payload.
 //!
-//! Draw order: background → border → children (depth-first).
+//! Draw order: background → border surface → children (depth-first) → outline.
 
 use std::collections::{HashMap, HashSet};
 
@@ -15,13 +15,14 @@ use boundshape::{
     GeometryViewport, SymbolResolutionOptions, Transform2D,
 };
 
-use super::gradient::{is_supported_gradient_function, parse_gradient_for_box};
+use super::gradient::{is_supported_gradient_function, resolve_gradient_for_box};
+use super::ownership::{IrNodeOwnership, WrapperPlacement};
 use super::svg_id_rewrite::rewrite_svg_ids;
 use super::svg_security::unsafe_svg_reason;
 use super::types::{
-    BBox, BorderRadii, BorderRadius, BorderRadiusInput, HandlersRef, Ir, IrFillRule, IrNode,
-    IrNodeKind, IrTextAlign, ShapePartBounds, ShapePartPaint, ShapePathPart, StrokeLinecap,
-    StrokeLinejoin, TEXT_ANIMATION_FRAGMENT_WARNING_THRESHOLD,
+    BBox, BorderRadii, BorderRadius, BorderRadiusInput, BoxClip, BoxContour, HandlersRef, Ir,
+    IrFillRule, IrNode, IrNodeKind, IrTextAlign, ShapePartBounds, ShapePartPaint, ShapePathPart,
+    StrokeLinecap, StrokeLinejoin, TEXT_ANIMATION_FRAGMENT_WARNING_THRESHOLD,
     TEXT_ANIMATION_UNIT_WARNING_THRESHOLD, TextShadowLayer, TextStrokeLayer, parse_box_shadow,
     resolve_border_radius,
 };
@@ -49,10 +50,18 @@ pub fn build_ir<S: std::hash::BuildHasher>(
     input_root: &LayoutNodeInput,
     outputs: &HashMap<String, LayoutNodeOutput, S>,
 ) -> Result<Ir, EngineError> {
-    let mut draw_order: Vec<String> = Vec::new();
+    fn validate_input(node: &LayoutNodeInput) -> Result<(), EngineError> {
+        crate::layout::box_style::validate_box_style(node)?;
+        for child in &node.children {
+            validate_input(child)?;
+        }
+        Ok(())
+    }
+    validate_input(input_root)?;
     let mut warnings: Vec<SerializedRecoverableError> = Vec::new();
 
-    let root = build_node(input_root, outputs, &mut draw_order, &mut warnings)?;
+    let mut root = build_node(input_root, outputs, &mut warnings)?;
+    super::text_paint::resolve_text_paints(&mut root)?;
     let root_bbox = node_bbox(input_root, outputs);
     let debug = (input_root.node_type == "canvas"
         && input_root
@@ -64,14 +73,53 @@ pub fn build_ir<S: std::hash::BuildHasher>(
 
     append_text_animation_budget_warnings(&root, &mut warnings)?;
 
-    Ok(Ir {
+    let ir = Ir {
         root,
-        draw_order,
         width: root_bbox.w,
         height: root_bbox.h,
         debug,
         warnings,
-    })
+    };
+    let mut geometry_gains = HashMap::new();
+    collect_geometry_gains(input_root, outputs, &mut geometry_gains)?;
+    super::numeric_envelope::validate_with_geometry(&ir, &geometry_gains)?;
+    Ok(ir)
+}
+
+fn collect_geometry_gains<S: std::hash::BuildHasher>(
+    input: &LayoutNodeInput,
+    outputs: &HashMap<String, LayoutNodeOutput, S>,
+    gains: &mut HashMap<String, f64>,
+) -> Result<(), EngineError> {
+    if let Some(visual) = &input.visual {
+        let geometry = visual.shape_geometry.as_ref().or_else(|| {
+            visual
+                .symbol_definition
+                .as_ref()
+                .map(|definition| &definition.geometry)
+        });
+        if let Some(geometry) = geometry
+            && let Some(gain) = boundshape::validate_skew_geometry(geometry)
+                .map_err(|error| EngineError::Validation(error.to_string()))?
+        {
+            let bbox = node_bbox(input, outputs);
+            let viewport_gain = (bbox.w / geometry.view_box.width)
+                .abs()
+                .max((bbox.h / geometry.view_box.height).abs())
+                .max(1.0);
+            let combined = gain * viewport_gain;
+            if !combined.is_finite() || combined > 65_536.0 {
+                return Err(EngineError::Validation(
+                    "Shape skew viewport gain exceeds 65536".to_string(),
+                ));
+            }
+            gains.insert(input.node_id.clone(), combined);
+        }
+    }
+    for child in &input.children {
+        collect_geometry_gains(child, outputs, gains)?;
+    }
+    Ok(())
 }
 
 fn append_text_animation_budget_warnings(
@@ -183,6 +231,8 @@ fn has_transform(transform: &Transform2D) -> bool {
     transform.translate_x.unwrap_or(0.0) != 0.0
         || transform.translate_y.unwrap_or(0.0) != 0.0
         || transform.rotate_deg.is_some()
+        || transform.skew_x_deg.unwrap_or(0.0) != 0.0
+        || transform.skew_y_deg.unwrap_or(0.0) != 0.0
         || transform.scale_x.is_some()
         || transform.scale_y.is_some()
 }
@@ -190,7 +240,6 @@ fn has_transform(transform: &Transform2D) -> bool {
 fn build_node<S: std::hash::BuildHasher>(
     input: &LayoutNodeInput,
     outputs: &HashMap<String, LayoutNodeOutput, S>,
-    draw_order: &mut Vec<String>,
     warnings: &mut Vec<SerializedRecoverableError>,
 ) -> Result<IrNode, EngineError> {
     let node_id = &input.node_id;
@@ -210,37 +259,38 @@ fn build_node<S: std::hash::BuildHasher>(
         bbox.h,
     );
 
+    let outer = super::box_geometry::outer_contour(
+        bbox,
+        if input.node_type == "canvas" {
+            None
+        } else {
+            border_radius
+        },
+    );
+    let widths = visual.border_width.map_or(
+        [0.0; 4],
+        super::super::layout::box_style::BorderWidths::widths,
+    );
+    let has_border = widths.iter().any(|width| *width > 0.0);
+    let inset = super::box_geometry::inset_clip(&outer, widths);
+
     // Background rect (solid color or gradient)
     if let Some(background) = visual.background.as_deref().filter(|text| !text.is_empty()) {
         let bg_node = build_background_rect(node_id, bbox, background, border_radius)?;
         children.push(bg_node);
-        draw_order.push(format!("{node_id}:bg"));
     }
 
-    // Border rect (Flex/Grid/Box only — the transport carries border props
-    // only for those node types)
-    if let (Some(border_width), Some(border_color)) = (
-        truthy_number(visual.border_width),
-        visual
+    if has_border
+        && let Some(color) = visual
             .border_color
             .as_deref()
-            .filter(|text| !text.is_empty()),
-    ) {
-        let border_node = build_border_rect(
-            node_id,
-            bbox,
-            border_width,
-            border_color,
-            border_radius,
-            visual,
-        );
-        children.push(border_node);
-        draw_order.push(format!("{node_id}:border"));
+            .filter(|color| !color.is_empty())
+    {
+        children.push(build_border_surface(node_id, bbox, color, &outer, &inset)?);
     }
+    let content_start = children.len();
 
     let handlers = collect_handlers(visual.handlers.as_ref());
-
-    let mut is_container = false;
 
     match input.node_type.as_str() {
         "text" | "textonpath" => {
@@ -254,91 +304,66 @@ fn build_node<S: std::hash::BuildHasher>(
                 visual,
                 node_id,
                 bbox,
-                handlers: handlers.clone(),
                 children: &mut children,
-                draw_order,
                 warnings,
             })?;
         }
         "image" => {
-            build_image_child(
-                visual,
-                node_id,
-                bbox,
-                handlers.clone(),
-                &mut children,
-                draw_order,
-                warnings,
-            );
+            build_image_child(visual, node_id, bbox, &mut children, warnings);
         }
         "path" => {
-            build_path_child(
-                visual,
-                node_id,
-                bbox,
-                handlers.clone(),
-                &mut children,
-                draw_order,
-            );
+            build_path_child(visual, node_id, bbox, &mut children);
         }
         "svg" => {
-            build_svg_child(
-                visual,
-                node_id,
-                bbox,
-                handlers.clone(),
-                &mut children,
-                draw_order,
-                warnings,
-            )?;
+            build_svg_child(visual, node_id, bbox, &mut children, warnings)?;
         }
         "shape" | "symbol" => {
-            build_shape_child(ShapeChildContext {
+            build_shape_child(&mut ShapeChildContext {
                 is_symbol: input.node_type == "symbol",
                 visual,
                 node_id,
                 bbox,
-                handlers: handlers.clone(),
                 children: &mut children,
-                draw_order,
                 warnings,
             })?;
         }
         _ => {
             // Container nodes (canvas/flex/grid/box): recurse in sibling-local
             // zIndex paint order (stable; ties keep source order).
-            is_container = true;
             for child_input in sort_children_by_z_index(&input.children) {
-                let child_node = build_node(child_input, outputs, draw_order, warnings)?;
+                let child_node = build_node(child_input, outputs, warnings)?;
                 children.push(child_node);
             }
         }
     }
 
-    // Overflow clipping
-    let mut clip_path = if visual.overflow.as_deref() == Some("clip") {
-        Some(bbox)
-    } else {
-        None
-    };
-    let mut clip_border_radius =
-        if clip_path.is_some() && matches!(input.node_type.as_str(), "box" | "flex" | "grid") {
-            border_radius
-        } else {
-            None
-        };
-
-    // Image borderRadius → rounded clipPath
-    if input.node_type == "image"
-        && let Some(raw_radius) = visual.border_radius.as_ref()
+    let mut clip =
+        (visual.overflow.as_deref() == Some("clip")).then(|| BoxClip::BoxContour(outer.clone()));
+    if input.node_type == "image" && visual.border_radius.is_some() {
+        clip = Some(BoxClip::BoxContour(outer.clone()));
+    }
+    if has_border && clip.is_some() && children.len() > content_start {
+        let content = children.split_off(content_start);
+        children.push(build_clip_group(
+            node_id,
+            format!("{node_id}:content"),
+            bbox,
+            content,
+            inset,
+        ));
+    }
+    if let Some(outline) = &visual.outline
+        && outline.stroke_width.unwrap_or(1.0) > 0.0
+        && !outline.stroke.is_empty()
     {
-        clip_path = Some(bbox);
-        clip_border_radius =
-            resolve_border_radius(Some(&to_border_radius_input(raw_radius)), bbox.w, bbox.h);
+        children.push(build_outline_path(node_id, bbox, &outer, outline)?);
     }
 
     let opacity = visual.opacity.filter(|value| *value != 1.0);
     let box_shadow = visual.box_shadow.as_deref().and_then(parse_box_shadow);
+    if let Some(meta) = &visual.meta {
+        super::ownership::validate_source_meta(node_id, meta)?;
+    }
     let meta = visual
         .meta
         .as_ref()
@@ -349,33 +374,28 @@ fn build_node<S: std::hash::BuildHasher>(
         .as_ref()
         .filter(|value| has_transform(value))
         .cloned();
-    let container_handlers = if is_container && handlers.is_some() {
-        // Container nodes with handlers join drawOrder for hit-testing
-        draw_order.push(node_id.clone());
-        handlers
-    } else {
-        None
-    };
 
     Ok(IrNode {
+        ownership: IrNodeOwnership::Source {
+            on: handlers.map(Box::new),
+            meta,
+        },
         node_id: node_id.clone(),
         bbox,
         kind: IrNodeKind::Group {
             children,
-            clip_path,
-            clip_border_radius,
+            clip,
             opacity,
             box_shadow,
-            meta,
+
             transform,
             animation: visual.animation.clone(),
-            on: container_handlers.map(Box::new),
         },
     })
 }
 
 // ---------------------------------------------------------------------------
-// Background & border rect builders
+// Background, border surface, and outline builders
 // ---------------------------------------------------------------------------
 
 fn build_background_rect(
@@ -384,7 +404,7 @@ fn build_background_rect(
     background: &str,
     border_radius: Option<BorderRadius>,
 ) -> Result<IrNode, EngineError> {
-    let gradient = parse_gradient_for_box(background, bbox.w, bbox.h);
+    let gradient = resolve_gradient_for_box(background, bbox.w, bbox.h);
     if gradient.is_none() && is_supported_gradient_function(background) {
         return Err(EngineError::Structured {
             code: "VALIDATION".to_string(),
@@ -402,6 +422,9 @@ fn build_background_rect(
     };
 
     Ok(IrNode {
+        ownership: IrNodeOwnership::Decoration {
+            owner_node_id: node_id.to_string(),
+        },
         node_id: format!("{node_id}:bg"),
         bbox,
         kind: IrNodeKind::Rect {
@@ -419,33 +442,123 @@ fn build_background_rect(
     })
 }
 
-fn build_border_rect(
-    node_id: &str,
+/// Keep generated clipping groups free of source transforms and compositing effects.
+fn build_clip_group(
+    owner_node_id: &str,
+    node_id: String,
     bbox: BBox,
-    border_width: f64,
-    border_color: &str,
-    border_radius: Option<BorderRadius>,
-    visual: &VisualInput,
+    children: Vec<IrNode>,
+    clip: BoxClip,
 ) -> IrNode {
     IrNode {
-        node_id: format!("{node_id}:border"),
+        ownership: IrNodeOwnership::Wrapper {
+            owner_node_id: owner_node_id.to_string(),
+            placement: WrapperPlacement::Inner,
+        },
+        node_id,
         bbox,
-        kind: IrNodeKind::Rect {
-            fill: None,
-            gradient: None,
-            stroke: Some(border_color.to_string()),
-            stroke_width: Some(border_width),
-            stroke_scaling: visual.stroke_scaling,
-            border_radius,
-            stroke_linecap: parse_linecap(visual.stroke_linecap.as_deref()),
-            stroke_linejoin: parse_linejoin(visual.stroke_linejoin.as_deref()),
-            stroke_dasharray: visual
-                .stroke_dasharray
-                .clone()
-                .filter(|text| !text.is_empty()),
-            stroke_miterlimit: visual.stroke_miterlimit,
+        kind: IrNodeKind::Group {
+            children,
+            clip: Some(clip),
+            opacity: None,
+            box_shadow: None,
+
+            transform: None,
+            animation: None,
         },
     }
+}
+
+fn build_border_surface(
+    node_id: &str,
+    bbox: BBox,
+    color: &str,
+    outer: &BoxContour,
+    inset: &BoxClip,
+) -> Result<IrNode, EngineError> {
+    let border_id = format!("{node_id}:border");
+    let mut path_data =
+        super::box_geometry::contour_path(&super::box_geometry::local_contour(outer, bbox))?;
+    if let BoxClip::BoxContour(inner) = inset {
+        path_data.push(' ');
+        path_data.push_str(&super::box_geometry::contour_path(
+            &super::box_geometry::local_contour(inner, bbox),
+        )?);
+    }
+    let paint = IrNode {
+        ownership: IrNodeOwnership::Decoration {
+            owner_node_id: node_id.to_string(),
+        },
+        node_id: border_id.clone(),
+        bbox,
+        kind: IrNodeKind::Path {
+            path_geometry: super::path_geometry::derive_path_geometry(
+                &path_data, None, None, None, None, None, None,
+            ),
+            path_data,
+            fill: Some(color.to_string()),
+            stroke: None,
+            stroke_width: None,
+            stroke_scaling: None,
+            fill_rule: Some(super::types::IrFillRule::Evenodd),
+            stroke_linecap: None,
+            stroke_linejoin: None,
+            stroke_dasharray: None,
+            stroke_miterlimit: None,
+        },
+    };
+    // The inset candidate need not be contained by the outer contour.
+    Ok(build_clip_group(
+        node_id,
+        border_id,
+        bbox,
+        vec![paint],
+        BoxClip::BoxContour(outer.clone()),
+    ))
+}
+
+fn build_outline_path(
+    node_id: &str,
+    bbox: BBox,
+    outer: &BoxContour,
+    outline: &crate::layout::box_style::BoxOutlineStyle,
+) -> Result<IrNode, EngineError> {
+    let path_data =
+        super::box_geometry::contour_path(&super::box_geometry::local_contour(outer, bbox))?;
+    let stroke_width = Some(outline.stroke_width.unwrap_or(1.0));
+    Ok(IrNode {
+        ownership: IrNodeOwnership::Decoration {
+            owner_node_id: node_id.to_string(),
+        },
+        node_id: format!("{node_id}:outline"),
+        bbox,
+        kind: IrNodeKind::Path {
+            path_geometry: super::path_geometry::derive_path_geometry(
+                &path_data,
+                Some(&outline.stroke),
+                stroke_width,
+                outline.stroke_scaling,
+                outline.stroke_linecap,
+                outline.stroke_linejoin,
+                outline.stroke_miterlimit,
+            ),
+            path_data,
+            fill: Some("none".to_string()),
+            stroke: Some(outline.stroke.clone()),
+            stroke_width,
+            stroke_scaling: outline
+                .stroke_scaling
+                .filter(|scaling| matches!(scaling, super::types::StrokeScaling::Canvas)),
+            fill_rule: None,
+            stroke_linecap: outline.stroke_linecap,
+            stroke_linejoin: outline.stroke_linejoin,
+            stroke_dasharray: outline
+                .stroke_dasharray
+                .clone()
+                .filter(|dash| !dash.is_empty()),
+            stroke_miterlimit: outline.stroke_miterlimit,
+        },
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -460,9 +573,7 @@ struct TextChildContext<'a> {
     visual: &'a VisualInput,
     node_id: &'a str,
     bbox: BBox,
-    handlers: Option<HandlersRef>,
     children: &'a mut Vec<IrNode>,
-    draw_order: &'a mut Vec<String>,
     warnings: &'a mut Vec<SerializedRecoverableError>,
 }
 
@@ -581,33 +692,39 @@ fn append_inline_box_decorations(
         if let Some(animation) = animation {
             let rect_node_id = format!("{decoration_id}:rect");
             let rect_node = IrNode {
+                ownership: IrNodeOwnership::Decoration {
+                    owner_node_id: context.node_id.to_string(),
+                },
                 node_id: rect_node_id.clone(),
                 bbox,
                 kind: rect_kind,
             };
             context.children.push(IrNode {
+                ownership: IrNodeOwnership::Wrapper {
+                    owner_node_id: context.node_id.to_string(),
+                    placement: WrapperPlacement::Inner,
+                },
                 node_id: decoration_id,
                 bbox,
                 kind: IrNodeKind::Group {
                     children: vec![rect_node],
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
+
                     transform: None,
                     animation: Some(animation),
-                    on: None,
                 },
             });
-            context.draw_order.push(rect_node_id);
         } else {
             context.children.push(IrNode {
+                ownership: IrNodeOwnership::Decoration {
+                    owner_node_id: context.node_id.to_string(),
+                },
                 node_id: decoration_id.clone(),
                 bbox,
                 kind: rect_kind,
             });
-            context.draw_order.push(decoration_id);
         }
     }
 }
@@ -640,6 +757,9 @@ fn append_inline_rects(
         };
         let rect_node_id = format!("{}:rect", inline_rect.fragment_id);
         let rect_node = IrNode {
+            ownership: IrNodeOwnership::Decoration {
+                owner_node_id: context.node_id.to_string(),
+            },
             node_id: rect_node_id.clone(),
             bbox,
             kind: IrNodeKind::Rect {
@@ -660,15 +780,18 @@ fn append_inline_rects(
             },
         };
         context.children.push(IrNode {
+            ownership: IrNodeOwnership::Wrapper {
+                owner_node_id: context.node_id.to_string(),
+                placement: WrapperPlacement::Inner,
+            },
             node_id: inline_rect.fragment_id.clone(),
             bbox,
             kind: IrNodeKind::Group {
                 children: vec![rect_node],
-                clip_path: None,
-                clip_border_radius: None,
+                clip: None,
                 opacity: (inline_rect.opacity != 1.0).then_some(inline_rect.opacity),
                 box_shadow: None,
-                meta: None,
+
                 transform: None,
                 animation: context
                     .visual
@@ -676,10 +799,8 @@ fn append_inline_rects(
                     .as_ref()
                     .and_then(|animations| animations.get(&inline_rect.fragment_id))
                     .cloned(),
-                on: None,
             },
         });
-        context.draw_order.push(rect_node_id);
     }
 }
 
@@ -968,6 +1089,9 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
         resolve_aligned_text_bbox(context.bbox, measured_bbox, is_vertical, text_align)
     };
     let text_node = IrNode {
+        ownership: IrNodeOwnership::Content {
+            owner_node_id: context.node_id.to_string(),
+        },
         node_id: node_id.clone(),
         bbox: resolved_text_bbox,
         kind: IrNodeKind::Text {
@@ -1028,8 +1152,9 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
                 })
             }),
             glyph_paths: None,
+            gradients: None,
             unit_map: layout.unit_map.clone(),
-            unit_animation: visual.unit_animation.clone(),
+            unit_animation: visual.unit_animation.clone().map(Box::new),
             unit_animation_samples: None,
             stroke,
             stroke_width,
@@ -1040,11 +1165,9 @@ fn build_text_child(mut context: TextChildContext) -> Result<(), EngineError> {
             strokes,
             shadows,
             text_decorations,
-            on: context.handlers.clone().map(Box::new),
         },
     };
     context.children.push(text_node);
-    context.draw_order.push(node_id);
     append_inline_rects(&mut context, layout, &placement, "front");
     Ok(())
 }
@@ -1057,9 +1180,7 @@ fn build_image_child(
     visual: &VisualInput,
     node_id: &str,
     bbox: BBox,
-    handlers: Option<HandlersRef>,
     children: &mut Vec<IrNode>,
-    draw_order: &mut Vec<String>,
     warnings: &mut Vec<SerializedRecoverableError>,
 ) {
     // The serializer already embedded byte sources as data URIs. A string
@@ -1089,6 +1210,9 @@ fn build_image_child(
                 "placeholder_rect",
             ));
             children.push(IrNode {
+                ownership: IrNodeOwnership::Content {
+                    owner_node_id: node_id.to_string(),
+                },
                 node_id: node_id.to_string(),
                 bbox,
                 kind: IrNodeKind::Rect {
@@ -1104,7 +1228,6 @@ fn build_image_child(
                     stroke_miterlimit: None,
                 },
             });
-            draw_order.push(node_id.to_string());
             return;
         }
     };
@@ -1118,15 +1241,16 @@ fn build_image_child(
     };
 
     children.push(IrNode {
+        ownership: IrNodeOwnership::Content {
+            owner_node_id: node_id.to_string(),
+        },
         node_id: node_id.to_string(),
         bbox,
         kind: IrNodeKind::Image {
             src: data_uri,
             preserve_aspect_ratio,
-            on: handlers,
         },
     });
-    draw_order.push(node_id.to_string());
 }
 
 // ---------------------------------------------------------------------------
@@ -1134,15 +1258,11 @@ fn build_image_child(
 // ---------------------------------------------------------------------------
 
 /// Preserve Path layout dimensions while deriving independent conservative paint geometry.
-fn build_path_child(
-    visual: &VisualInput,
-    node_id: &str,
-    bbox: BBox,
-    handlers: Option<HandlersRef>,
-    children: &mut Vec<IrNode>,
-    draw_order: &mut Vec<String>,
-) {
+fn build_path_child(visual: &VisualInput, node_id: &str, bbox: BBox, children: &mut Vec<IrNode>) {
     children.push(IrNode {
+        ownership: IrNodeOwnership::Content {
+            owner_node_id: node_id.to_string(),
+        },
         node_id: node_id.to_string(),
         bbox,
         kind: IrNodeKind::Path {
@@ -1168,10 +1288,8 @@ fn build_path_child(
                 .clone()
                 .filter(|text| !text.is_empty()),
             stroke_miterlimit: visual.stroke_miterlimit,
-            on: handlers,
         },
     });
-    draw_order.push(node_id.to_string());
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,9 +1301,7 @@ struct ShapeChildContext<'a> {
     visual: &'a VisualInput,
     node_id: &'a str,
     bbox: BBox,
-    handlers: Option<HandlersRef>,
     children: &'a mut Vec<IrNode>,
-    draw_order: &'a mut Vec<String>,
     warnings: &'a mut Vec<SerializedRecoverableError>,
 }
 
@@ -1296,8 +1412,8 @@ fn widest_compile_stroke(
     (compile_stroke, compile_stroke_width)
 }
 
-fn build_shape_child(context: ShapeChildContext) -> Result<(), EngineError> {
-    let geometry = resolve_shape_geometry(&context)?;
+fn build_shape_child(context: &mut ShapeChildContext) -> Result<(), EngineError> {
+    let geometry = resolve_shape_geometry(context)?;
     let visual = context.visual;
     let node_id = context.node_id;
 
@@ -1395,6 +1511,9 @@ fn build_shape_child(context: ShapeChildContext) -> Result<(), EngineError> {
         .collect();
 
     context.children.push(IrNode {
+        ownership: IrNodeOwnership::Content {
+            owner_node_id: context.node_id.to_string(),
+        },
         node_id: node_id.to_string(),
         bbox: context.bbox,
         kind: IrNodeKind::Shape {
@@ -1410,10 +1529,8 @@ fn build_shape_child(context: ShapeChildContext) -> Result<(), EngineError> {
                 .clone()
                 .filter(|text| !text.is_empty()),
             stroke_miterlimit: visual.stroke_miterlimit,
-            on: context.handlers,
         },
     });
-    context.draw_order.push(node_id.to_string());
     Ok(())
 }
 
@@ -1425,9 +1542,7 @@ fn build_svg_child(
     visual: &VisualInput,
     node_id: &str,
     bbox: BBox,
-    handlers: Option<HandlersRef>,
     children: &mut Vec<IrNode>,
-    draw_order: &mut Vec<String>,
     warnings: &mut Vec<SerializedRecoverableError>,
 ) -> Result<(), EngineError> {
     let Some(content) = visual.svg_content.as_deref() else {
@@ -1468,16 +1583,17 @@ fn build_svg_child(
     }
 
     children.push(IrNode {
+        ownership: IrNodeOwnership::Content {
+            owner_node_id: node_id.to_string(),
+        },
         node_id: node_id.to_string(),
         bbox,
         kind: IrNodeKind::Svg {
             content: inner_content,
             view_box,
             preserve_aspect_ratio: resolve_nested_svg_par(visual.preserve_aspect_ratio.as_deref()),
-            on: handlers,
         },
     });
-    draw_order.push(node_id.to_string());
     Ok(())
 }
 

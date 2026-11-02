@@ -7,6 +7,8 @@ import "prismjs/components/prism-markup";
 import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
+import type { OverlayDisplayMode } from "../../../../playground-shared/event-effects.js";
+import { DEFAULT_INSPECTION_FRAME_MODE } from "../../../../playground-shared/inspection-frame.js";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
 import {
   BBoxOverlayField,
@@ -16,6 +18,7 @@ import {
   Section,
   SelectField,
 } from "../../components/fields";
+import { InspectionFrameField } from "../../components/InspectionFrameField";
 import { RenderSurface } from "../../components/RenderSurface";
 import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspect } from "../../hooks/use-svg-inspect";
@@ -161,12 +164,17 @@ function TemplateCodeArea({
   );
 }
 
+/** Browse template scenes with independent rendering and inspection controls. */
 export function TemplatesPage() {
   const { engine, status } = useBoundSvg();
   const firstDef = TEMPLATE_DEFINITIONS[DEFAULT_TEMPLATE_KEY];
   if (!firstDef) {
     throw new Error("TEMPLATE_DEFINITIONS must contain the default template");
   }
+  const [inspectionMode, setInspectionMode] = useState<OverlayDisplayMode>(
+    DEFAULT_INSPECTION_FRAME_MODE,
+  );
+  const inspectionDisplay = useMemo(() => ({ mode: inspectionMode }), [inspectionMode]);
   const [templateKey, setTemplateKey] = useState<string>(DEFAULT_TEMPLATE_KEY);
   const [overrides, setOverrides] = useState<TemplateOverrides>(() =>
     extractTemplateDefaults(resolveVNode(firstDef, engine)),
@@ -266,7 +274,7 @@ export function TemplatesPage() {
     status,
     deferredVNode,
     baseRenderOptions,
-    undefined,
+    inspectionDisplay,
     template.animatedSvgOptions,
   );
 
@@ -376,6 +384,16 @@ export function TemplatesPage() {
                 ]}
               />
             )}
+            <InspectionFrameField
+              id="tpl-inspection-frame"
+              mode={inspectionMode}
+              onChange={setInspectionMode}
+              disabled={
+                status !== "ready" ||
+                overrides.renderer === "png-hook" ||
+                (codeLayout === "tab" && viewTab === "svg")
+              }
+            />
             <BBoxOverlayField
               id="tpl-debug"
               value={overrides.debugOverlayParts}

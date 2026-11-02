@@ -1,58 +1,143 @@
-/**
- * Build a map from nodeId to line range in formatted SVG source.
- *
- * Scans the output of `formatSvgCode()` for `data-boundsvg-node-id` attributes
- * and tracks opening/closing tag pairs to determine the line range of each node.
- */
+import type { IRSourceIndex } from "@boundsvg/core/scene";
 
+/** Inclusive line indices in the formatted SVG code panel. */
 export type NodeLineRange = { start: number; end: number };
 
-const NODE_ID_RE = /data-boundsvg-node-id="([^"]+)"/;
-const OPEN_TAG_RE = /^\s*<(\w+)/;
-const CLOSE_TAG_RE = /<\/(\w+)>\s*$/;
+type LineStack = Array<{
+  sourceIndex: number | null;
+  line: number;
+  tagName: string;
+  isOpaque: boolean;
+}>;
 
-/**
- * Build a map from nodeId → { start, end } line indices (0-based).
- * Only nodes with `data-boundsvg-node-id` attributes are included.
- */
-export function buildNodeLineMap(formattedSvg: string): Map<string, NodeLineRange> {
-  const lines = formattedSvg.split("\n");
-  const map = new Map<string, NodeLineRange>();
-  const stack: Array<{ nodeId: string; line: number; tagName: string }> = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] as string;
-
-    const nodeIdMatch = line.match(NODE_ID_RE);
-    if (nodeIdMatch) {
-      const nodeId = nodeIdMatch[1] as string;
-      const tagMatch = line.match(OPEN_TAG_RE);
-      const tagName = tagMatch?.[1] ?? "";
-      const trimmed = line.trimEnd();
-
-      // Self-closing or single-line element (e.g. <rect ... /> or <g ...>...</g>)
-      if (trimmed.endsWith("/>") || trimmed.includes(`</${tagName}>`)) {
-        map.set(nodeId, { start: i, end: i });
-      } else {
-        stack.push({ nodeId, line: i, tagName });
-      }
-      continue;
+type LineMapState = { map: Map<number, NodeLineRange>; stack: LineStack; nextIndex: number };
+function openElement(
+  tag: string,
+  tagName: string,
+  {
+    state,
+    index,
+    startLine,
+    endLine,
+  }: {
+    state: LineMapState;
+    index: IRSourceIndex;
+    startLine: number;
+    endLine: number;
+  },
+): void {
+  const parentOpaque = state.stack.at(-1)?.isOpaque ?? false;
+  const token = tag.match(/\sdata-boundsvg-node-index="(0|[1-9]\d*)"/u)?.[1];
+  const ordinal = token === undefined ? null : Number(token);
+  const occurrence =
+    !parentOpaque && ordinal === state.nextIndex ? index.nodes.get(state.nextIndex) : undefined;
+  const isEndpoint =
+    occurrence &&
+    tag.includes(`data-boundsvg-role="${occurrence.node.ownership.role}"`) &&
+    tag.includes(`data-boundsvg-source-index="${occurrence.source.sourceIndex}"`);
+  if (isEndpoint) {
+    state.nextIndex++;
+  }
+  const sourceIndex =
+    isEndpoint && occurrence.node.ownership.role === "source"
+      ? occurrence.source.sourceIndex
+      : null;
+  const isOpaque = parentOpaque || (isEndpoint && occurrence.node.type === "svg") === true;
+  if (tag.endsWith("/>")) {
+    if (sourceIndex !== null) {
+      state.map.set(sourceIndex, { start: startLine, end: endLine });
     }
+  } else {
+    state.stack.push({ sourceIndex, line: startLine, tagName, isOpaque });
+  }
+}
+function closeElement(tagName: string, line: number, state: LineMapState): boolean {
+  const entry = state.stack.at(-1);
+  if (!entry || entry.tagName !== tagName) {
+    return false;
+  }
+  state.stack.pop();
+  if (entry.sourceIndex !== null) {
+    state.map.set(entry.sourceIndex, { start: entry.line, end: line });
+  }
+  return true;
+}
 
-    // Check for closing tags that match an open node
-    const closeMatch = line.match(CLOSE_TAG_RE);
-    if (closeMatch && stack.length > 0) {
-      const closingTag = closeMatch[1] as string;
-      for (let j = stack.length - 1; j >= 0; j--) {
-        const entry = stack[j];
-        if (entry && entry.tagName === closingTag) {
-          stack.splice(j, 1);
-          map.set(entry.nodeId, { start: entry.line, end: i });
-          break;
-        }
-      }
+function countNewlines(text: string, start: number, end: number): number {
+  let count = 0;
+  for (let offset = start; offset < end; offset++) {
+    if (text[offset] === "\n") {
+      count++;
     }
   }
+  return count;
+}
 
-  return map;
+// Mixed content can close several elements on one formatted line. Read lexical
+// tags while preserving quoted attributes and skipping comment/CDATA contents.
+function readMarkup(text: string, start: number): { end: number; isTag: boolean } | null {
+  const delimiter = text.startsWith("<!--", start)
+    ? "-->"
+    : text.startsWith("<![CDATA[", start)
+      ? "]]>"
+      : text.startsWith("<?", start)
+        ? "?>"
+        : null;
+  if (delimiter !== null) {
+    const ending = text.indexOf(delimiter, start + 2);
+    return ending < 0 ? null : { end: ending + delimiter.length, isTag: false };
+  }
+  let quote: string | null = null;
+  for (let offset = start + 1; offset < text.length; offset++) {
+    const character = text[offset];
+    if (quote !== null) {
+      if (character === quote) {
+        quote = null;
+      }
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      return { end: offset + 1, isTag: !text.startsWith("<!", start) };
+    }
+  }
+  return null;
+}
+
+/** Map source anchor ranges by balanced tags; embedded Svg content stays opaque. */
+export function buildNodeLineMap(
+  formattedSvg: string,
+  index: IRSourceIndex,
+): Map<number, NodeLineRange> {
+  const state: LineMapState = { map: new Map(), stack: [], nextIndex: 0 };
+  let cursor = 0;
+  let line = 0;
+  while (cursor < formattedSvg.length) {
+    const start = formattedSvg.indexOf("<", cursor);
+    if (start < 0) {
+      break;
+    }
+    line += countNewlines(formattedSvg, cursor, start);
+    const markup = readMarkup(formattedSvg, start);
+    if (!markup) {
+      return new Map();
+    }
+    const endLine = line + countNewlines(formattedSvg, start, markup.end);
+    if (markup.isTag) {
+      const tag = formattedSvg.slice(start, markup.end);
+      const name = tag.match(/^<\/?([^\s/>]+)/u)?.[1];
+      if (!name) {
+        return new Map();
+      }
+      if (tag.startsWith("</")) {
+        if (!closeElement(name, endLine, state)) {
+          return new Map();
+        }
+      } else {
+        openElement(tag, name, { state, index, startLine: line, endLine });
+      }
+    }
+    cursor = markup.end;
+    line = endLine;
+  }
+  return state.nextIndex === index.nodes.size && state.stack.length === 0 ? state.map : new Map();
 }

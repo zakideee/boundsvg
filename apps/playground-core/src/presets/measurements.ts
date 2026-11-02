@@ -3,6 +3,7 @@ import { FONT_ALIAS as FA } from "../config";
 import { formatPx } from "../flow-helpers";
 import type { Preset } from "../types";
 
+/** Compare measured physical text frames with their rendered horizontal and vertical previews. */
 export const measurementsPreset: Preset = {
   title: "Measurements",
   description:
@@ -47,6 +48,17 @@ const intrinsic = engine.measureIntrinsicInlineSize({
   build: (engine?) => {
     const canvasWidth = 960;
     const canvasHeight = 420;
+    const previewPadding = 8;
+    const previewBorderWidth = 1;
+    const previewInset = previewPadding + previewBorderWidth;
+    const previewStyle = {
+      direction: "row" as const,
+      padding: previewPadding,
+      background: "#252526",
+      borderColor: "#475569",
+      borderWidth: previewBorderWidth,
+      borderRadius: 12,
+    };
     if (!engine) {
       return Canvas({ width: canvasWidth, height: canvasHeight, background: "#1a1a1a" });
     }
@@ -207,38 +219,27 @@ const intrinsic = engine.measureIntrinsicInlineSize({
     );
 
     children.push(
-      Box(
+      Flex(
         {
+          ...previewStyle,
           position: "absolute",
           left: 24,
           top: 44,
-          width: horizontalBlock.usedWidth + 16,
-          height: horizontalBlock.usedHeight + 16,
-          background: "#252526",
-          borderColor: "#475569",
-          borderWidth: 1,
-          borderRadius: 12,
+          width: horizontalBlock.usedWidth + previewInset * 2,
+          height: horizontalBlock.usedHeight + previewInset * 2,
         },
-        Flex(
+        Text(
           {
-            direction: "row",
-            width: horizontalBlock.usedWidth + 16,
-            height: horizontalBlock.usedHeight + 16,
-            padding: [8, 8, 8, 8],
+            font: FA,
+            fontSizePx: 18,
+            color: "#f8fafc",
+            lineHeight: 1.45,
+            wrap: "char",
+            language: "ja",
+            flexGrow: 1,
+            preferredFrame: { w: horizontalBlock.usedWidth },
           },
-          Text(
-            {
-              font: FA,
-              fontSizePx: 18,
-              color: "#f8fafc",
-              lineHeight: 1.45,
-              wrap: "char",
-              language: "ja",
-              flexGrow: 1,
-              preferredFrame: { w: horizontalBlock.usedWidth },
-            },
-            sample,
-          ),
+          sample,
         ),
       ),
     );
@@ -261,40 +262,29 @@ const intrinsic = engine.measureIntrinsicInlineSize({
       ),
     );
     children.push(
-      Box(
+      Flex(
         {
+          ...previewStyle,
           position: "absolute",
-          left: 448 - (verticalBlock.usedWidth + 16) / 2,
+          left: 448 - (verticalBlock.usedWidth + previewInset * 2) / 2,
           top: 44,
-          width: verticalBlock.usedWidth + 16,
-          height: verticalBlock.usedHeight + 16,
-          background: "#252526",
-          borderColor: "#475569",
-          borderWidth: 1,
-          borderRadius: 12,
+          width: verticalBlock.usedWidth + previewInset * 2,
+          height: verticalBlock.usedHeight + previewInset * 2,
         },
-        Flex(
+        Text(
           {
-            direction: "row",
-            width: verticalBlock.usedWidth + 16,
-            height: verticalBlock.usedHeight + 16,
-            padding: [8, 8, 8, 8],
+            font: FA,
+            fontSizePx: 18,
+            color: "#fde68a",
+            lineHeight: 1.45,
+            wrap: "char",
+            language: "ja",
+            writingMode: "vertical-rl",
+            textOrientation: "upright",
+            flexGrow: 1,
+            preferredFrame: { h: verticalBlock.usedHeight },
           },
-          Text(
-            {
-              font: FA,
-              fontSizePx: 18,
-              color: "#fde68a",
-              lineHeight: 1.45,
-              wrap: "char",
-              language: "ja",
-              writingMode: "vertical-rl",
-              textOrientation: "upright",
-              flexGrow: 1,
-              preferredFrame: { h: verticalBlock.usedHeight },
-            },
-            sample,
-          ),
+          sample,
         ),
       ),
     );
@@ -334,55 +324,44 @@ const intrinsic = engine.measureIntrinsicInlineSize({
             { font: FA, fontSizePx: 12, color: "#93c5fd", wrap: "char" },
             `rich vertical: min ${formatPx(richVerticalIntrinsic.minContentInlineSize)} / max ${formatPx(richVerticalIntrinsic.maxContentInlineSize)}`,
           ),
-          Box(
+          Flex(
             {
-              width: richPreviewWidth + 16,
-              height: richPreviewHeight + 16,
-              background: "#252526",
-              borderColor: "#475569",
-              borderWidth: 1,
-              borderRadius: 12,
+              ...previewStyle,
+              width: richPreviewWidth + previewInset * 2,
+              height: richPreviewHeight + previewInset * 2,
             },
-            Flex(
+            Text(
               {
-                direction: "row",
-                width: richPreviewWidth + 16,
-                height: richPreviewHeight + 16,
-                padding: [8, 8, 8, 8],
+                font: FA,
+                fontSizePx: 18,
+                color: "#f8fafc",
+                writingMode: "vertical-rl",
+                textOrientation: "upright",
+                lineHeight: 1.45,
+                wrap: "char",
+                language: "ja",
+                flexGrow: 1,
+                preferredFrame: { h: richPreviewHeight },
               },
-              Text(
-                {
-                  font: FA,
-                  fontSizePx: 18,
-                  color: "#f8fafc",
-                  writingMode: "vertical-rl",
-                  textOrientation: "upright",
-                  lineHeight: 1.45,
-                  wrap: "char",
-                  language: "ja",
-                  flexGrow: 1,
-                  preferredFrame: { h: richPreviewHeight },
-                },
-                Ruby(
-                  { rubyPosition: "over", rubyAlign: "center" },
-                  "春",
-                  Rt({ fontSizePx: 9, color: "#fca5a5" }, "はる"),
-                ),
-                "は",
-                Inline({ textCombineUpright: "all", color: "#93c5fd" }, "2026"),
-                InlineBox(
-                  {
-                    paddingInline: [4, 4],
-                    background: "#2d2d2d",
-                    borderColor: "#93c5fd",
-                    borderWidth: 1,
-                    borderRadius: 6,
-                    color: "#fde68a",
-                  },
-                  "年",
-                ),
-                "の設計です。",
+              Ruby(
+                { rubyPosition: "over", rubyAlign: "center" },
+                "春",
+                Rt({ fontSizePx: 9, color: "#fca5a5" }, "はる"),
               ),
+              "は",
+              Inline({ textCombineUpright: "all", color: "#93c5fd" }, "2026"),
+              InlineBox(
+                {
+                  paddingInline: [4, 4],
+                  background: "#2d2d2d",
+                  borderColor: "#93c5fd",
+                  borderWidth: 1,
+                  borderRadius: 6,
+                  color: "#fde68a",
+                },
+                "年",
+              ),
+              "の設計です。",
             ),
           ),
           Text(

@@ -1,3 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" data-boundsvg-node-id="nlp-canvas" viewBox="0 0 600 315" width="600" height="315">
-  <rect x="0" y="0" width="600" height="315" fill="#f8fafc"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 315" width="600" height="315">
+  <g data-boundsvg-role="source" data-boundsvg-node-index="0" data-boundsvg-source-index="0" data-boundsvg-node-id="nlp-canvas">
+    <rect x="0" y="0" width="600" height="315" data-boundsvg-role="decoration" data-boundsvg-node-index="1" data-boundsvg-source-index="0" fill="#f8fafc"/>
+  </g>
 </svg>

@@ -20,8 +20,13 @@ import { boundsvgMatchers } from "../src/vitest.js";
 
 function createIr(warningMessages: readonly string[] = []): IR {
   return {
-    root: { type: "group", nodeId: "root", bbox: { x: 0, y: 0, w: 1, h: 1 } },
-    drawOrder: [],
+    root: {
+      ownership: { role: "source" },
+      type: "group",
+      nodeId: "root",
+      bbox: { x: 0, y: 0, w: 1, h: 1 },
+    },
+
     width: 1,
     height: 1,
     warnings: warningMessages.map((message) => ({ message })),

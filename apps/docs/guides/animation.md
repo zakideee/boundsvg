@@ -535,9 +535,7 @@ of a camera's post-layout scale while retaining normal layout and geometry:
   <Box
     width={40}
     height={20}
-    borderWidth={1}
-    borderColor="#8b7cf6"
-    strokeScaling="canvas"
+    outline={{ stroke: "#8b7cf6", strokeWidth: 1, strokeScaling: "canvas" }}
   />
   <Path
     d="M1 1H39V19H1Z"

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { collectInspectionBBoxes, inspectScene } from "../../src/inspect.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import { Box, Canvas, Path, Text } from "../../src/vnode/components.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
@@ -26,15 +27,21 @@ describe("inspectScene", () => {
 
     expect(inspection.layout.root.nodeId).toBe("auto:0");
     expect(inspection.ir.width).toBe(200);
-    expect(inspection.textMap.nodes.get("title")?.text).toBe("Hello");
-    expect(inspection.handlerMap.get("title")?.onClick).toBe("click:title");
-    expect(inspection.nodeTypeMap.get("title")).toBe("text");
+    expect(inspection.textMap.nodes.get(1)?.text).toBe("Hello");
+    expect(
+      inspection.sourceIndex.sources.get(1)?.node.ownership.role === "source"
+        ? inspection.sourceIndex.sources.get(1)?.node.ownership.on?.onClick
+        : undefined,
+    ).toBe("click:title");
+    expect(
+      inspection.sourceIndex.nodes.get(
+        inspection.sourceIndex.sources.get(1)?.primaryNodeIndex ?? -1,
+      )?.node.type,
+    ).toBe("text");
     expect(inspection.nodeIds.valid).toBe(true);
     expect(inspection.bboxes.some((bbox) => bbox.nodeId === "title")).toBe(true);
-    expect(inspection.bboxes.find((bbox) => bbox.nodeId === "title")?.drawIndex).toBe(
-      inspection.ir.drawOrder.indexOf("title"),
-    );
-    expect(inspection.bboxes.find((bbox) => bbox.nodeId === "auto:0")?.drawIndex).toBeNull();
+    expect(inspection.bboxes.find((bbox) => bbox.nodeIndex === 2)?.paintOrder).toBe(0);
+    expect(inspection.bboxes.find((bbox) => bbox.nodeIndex === 0)?.paintOrder).toBeNull();
     // Real text metrics vary with the font; assert the layout box is present
     // and non-degenerate instead of pinning mock-derived numbers.
     const titleLayoutBBox = inspection.bboxes.find((bbox) => bbox.nodeId === "title")?.layoutBBox;
@@ -73,7 +80,7 @@ describe("inspectScene", () => {
       }),
     );
 
-    const bboxes = collectInspectionBBoxes(engine.renderToIR(vnode));
+    const bboxes = collectInspectionBBoxes(buildIRSourceIndex(engine.renderToIR(vnode)));
     const parent = bboxes.find((bbox) => bbox.nodeId === "parent");
     const child = bboxes.find((bbox) => bbox.nodeId === "child");
     const mirror = bboxes.find((bbox) => bbox.nodeId === "mirror");
@@ -104,8 +111,8 @@ describe("inspectScene", () => {
     expect(child?.visualBBox.w).toBeCloseTo(20);
     expect(child?.visualBBox.h).toBeCloseTo(40);
 
-    expect(mirror?.x).toBe(0);
-    expect(mirror?.y).toBe(60);
+    expect(mirror?.layoutBBox.x).toBe(0);
+    expect(mirror?.layoutBBox.y).toBe(60);
     expect(mirror?.layoutBBox).toEqual({ x: 0, y: 60, w: 40, h: 10 });
     expect(mirror?.visualBBox).toEqual({ x: 0, y: 60, w: 40, h: 10 });
     expect(mirror?.origin).toEqual({ x: 20, y: 60 });
@@ -123,8 +130,7 @@ describe("inspectScene", () => {
           id: "bordered",
           width: 40,
           height: 20,
-          border: { width: 2, color: "#111827" },
-          strokeScaling,
+          outline: { strokeWidth: 2, stroke: "#111827", strokeScaling },
           transform: { scaleX: 1.6, scaleY: 1.6 },
         }),
         Path({

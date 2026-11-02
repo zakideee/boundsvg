@@ -11,7 +11,9 @@ import {
   type InspectionRect,
   type InspectionTransformBox,
 } from "@boundsvg/core/inspect";
-import type { IR, IRGroupNode, IRNode } from "@boundsvg/core/scene";
+import { buildIRSourceIndex, type IR, type IRSourceRef } from "@boundsvg/core/scene";
+
+import { DEFAULT_INSPECTION_FRAME_MODE } from "./inspection-frame.js";
 
 type OverlayPoint = {
   x: number;
@@ -55,10 +57,15 @@ export const EVENT_COLORS: Record<string, string> = {
  * corners, and amber crosshair at the origin.
  */
 const LAYOUT_COLOR = "#94a3b8";
+/** Stroke color for transformed inspection quads. */
 const TRANSFORM_COLOR = "#22d3ee";
+/** Stroke color for visual AABB corner markers. */
 const VISUAL_COLOR = "#f472b6";
+/** Stroke color for transform origin markers. */
 const ORIGIN_COLOR = "#f59e0b";
+/** Background halo behind transform origin markers. */
 const ORIGIN_HALO_COLOR = "#0f172a";
+/** Fill color for transformed quad corner handles. */
 const HANDLE_FILL = "#0f172a";
 
 /** Events that trigger a brief flash effect (discrete events only). */
@@ -78,6 +85,7 @@ export const FLASH_EVENTS = new Set([
 // BBox map builder
 // ---------------------------------------------------------------------------
 
+/** Inspection geometry and tooltip metadata for one rendered node. */
 export type NodeBBox = {
   x: number;
   y: number;
@@ -93,11 +101,12 @@ export type NodeBBox = {
   semantics?: NodeSemantics;
 };
 
+/** Source element details shown by the inspection tooltip. */
 export type NodeSemantics = {
   /** Human element kind derived from the IR children: Text / Shape / Image / ... */
   kind: string;
-  /** Author-assigned id (absent for auto-generated node ids). */
-  explicitId?: string;
+  /** Semantic source label, including generated authoring IDs. */
+  nodeId: string;
   /** Text excerpt for text nodes. */
   text?: string;
   /** Addressable shape part ids (emitPartIds / partPaint). */
@@ -106,13 +115,16 @@ export type NodeSemantics = {
   meta?: Array<[string, string]>;
 };
 
+/** Select the inspection geometry to display. */
 export type OverlayDisplayMode = "off" | "layout" | "transform" | "visual" | "all";
 
+/** Inspection display overrides; transformed quads are shown by default. */
 export type EventEffectOverlayDisplayOptions = {
   mode?: OverlayDisplayMode;
   showOrigin?: boolean;
 };
 
+/** Drawable parts of an inspection highlight. */
 export type InspectOverlayPart = "layout" | "transform" | "handles" | "visual" | "origin";
 
 /**
@@ -123,32 +135,29 @@ export type InspectOverlayPart = "layout" | "transform" | "handles" | "visual" |
  *
  * `all` mode additionally suppresses redundant parts to keep the composite
  * readable:
- * - When the node has no own transform (`hasOwnTransform=false`), the
- *   transform quad, handles, and visual corners all coincide with layout, so
- *   only `layout` is drawn.
- * - When the transform quad is axis-aligned (pure translate/scale),
- *   `visualBBox` equals the quad, so visual corners are suppressed to avoid
- *   doubled outlines.
+ * - When the resolved transform quad coincides with layout, only layout is drawn.
+ * - When the quad is axis-aligned, visual corners coincide with it and are omitted.
+ * Ancestor transforms are already included in the supplied inspection geometry.
  */
 export function resolveInspectOverlayParts(options: {
   mode: OverlayDisplayMode;
   showOrigin: boolean;
   hasOrigin: boolean;
-  hasOwnTransform?: boolean;
-  isTransformAxisAligned?: boolean;
+  layoutBBox: InspectionRect;
+  transformBox: InspectionTransformBox;
 }): InspectOverlayPart[] {
   const parts: InspectOverlayPart[] = [];
   const inAll = options.mode === "all";
-  const hasOwnTransform = options.hasOwnTransform ?? true;
-  const isAxisAligned = options.isTransformAxisAligned ?? false;
+  const isLayoutMatch = isTransformBoxEqualToLayout(options.transformBox, options.layoutBBox);
+  const isAxisAligned = isTransformBoxAxisAligned(options.transformBox);
 
   if (options.mode === "layout" || inAll) {
     parts.push("layout");
   }
-  if (options.mode === "transform" || (inAll && hasOwnTransform)) {
+  if (options.mode === "transform" || (inAll && !isLayoutMatch)) {
     parts.push("transform", "handles");
   }
-  if (options.mode === "visual" || (inAll && hasOwnTransform && !isAxisAligned)) {
+  if (options.mode === "visual" || (inAll && !isAxisAligned)) {
     parts.push("visual");
   }
   if (options.showOrigin && options.hasOrigin && options.mode !== "off") {
@@ -158,136 +167,89 @@ export function resolveInspectOverlayParts(options: {
   return parts;
 }
 
-/**
- * Build a flat map of nodeId → bounding box from the IR tree.
- * Replicates the `collectBboxes` pattern in `@boundsvg/core/ir/hit-test.ts`
- * and additionally extracts borderRadius for overlay rendering.
- */
-export function buildNodeBBoxMap(ir: IR): Map<string, NodeBBox> {
-  const inspectionBBoxes = collectInspectionBBoxes(ir);
-  const borderRadiusMap = collectBorderRadiusMap(ir.root);
-  const semanticsMap = collectNodeSemantics(ir.root);
-  const map = new Map<string, NodeBBox>();
-  for (const bbox of inspectionBBoxes) {
-    const nextBBox: NodeBBox = {
-      semantics: semanticsMap.get(bbox.nodeId),
-      x: bbox.x,
-      y: bbox.y,
-      w: bbox.w,
-      h: bbox.h,
-      rx: borderRadiusMap.get(bbox.nodeId),
-      layoutBBox: { ...bbox.layoutBBox },
-      transformBox: {
-        points: bbox.transformBox.points.map((point) => ({
-          ...point,
-        })) as InspectionTransformBox["points"],
-      },
-      visualBBox: { ...bbox.visualBBox },
-      origin: bbox.origin ? { ...bbox.origin } : null,
-      hasOwnTransform: bbox.hasOwnTransform,
-    };
-    const existingBBox = map.get(bbox.nodeId);
-    map.set(
-      bbox.nodeId,
-      existingBBox === undefined ? nextBBox : mergeNodeBBox(existingBBox, nextBBox),
+function isTransformBoxEqualToLayout(
+  transformBox: InspectionTransformBox,
+  layoutBBox: InspectionRect,
+): boolean {
+  const { x, y, w, h } = layoutBBox;
+  const layoutPoints = [
+    { x, y },
+    { x: x + w, y },
+    { x: x + w, y: y + h },
+    { x, y: y + h },
+  ];
+  // Compare corner sets so a mirror or reordered quad can still describe the same box.
+  return (
+    layoutPoints.every((corner) =>
+      transformBox.points.some((point) => point.x === corner.x && point.y === corner.y),
+    ) &&
+    transformBox.points.every((point) =>
+      layoutPoints.some((corner) => corner.x === point.x && corner.y === point.y),
+    )
+  );
+}
+
+function buildNodeSemantics(
+  source: import("@boundsvg/core/scene").IRSourceInfo,
+  primary: import("@boundsvg/core/scene").IRNode | undefined,
+): NodeSemantics {
+  const semantics: NodeSemantics = {
+    kind: primary ? primary.type[0]?.toUpperCase() + primary.type.slice(1) : "Box",
+    nodeId: source.source.nodeId,
+  };
+  if (primary?.type === "text") {
+    semantics.text = primary.displayText ?? primary.lines.map((line) => line.text).join(" ");
+  }
+  if (primary?.type === "shape") {
+    semantics.partIds = primary.shapeParts.flatMap((part) =>
+      part.partId === undefined ? [] : [part.partId],
     );
   }
-  return map;
-}
-
-function mergeNodeBBox(existingBBox: NodeBBox, nextBBox: NodeBBox): NodeBBox {
-  return existingBBox.hasOwnTransform && !nextBBox.hasOwnTransform ? existingBBox : nextBBox;
-}
-
-function collectBorderRadiusMap(node: IRNode): Map<string, number> {
-  const map = new Map<string, number>();
-
-  const walk = (currentNode: IRNode): void => {
-    if (currentNode.type === "rect" && currentNode.borderRadius != null) {
-      if (typeof currentNode.borderRadius === "number") {
-        map.set(currentNode.nodeId, currentNode.borderRadius);
-      } else {
-        const { tl, tr, br, bl } = currentNode.borderRadius;
-        map.set(currentNode.nodeId, Math.max(tl, tr, br, bl));
-      }
-    }
-
-    for (const child of currentNode.type === "group" ? (currentNode.children ?? []) : []) {
-      walk(child);
-    }
-  };
-
-  walk(node);
-  return map;
+  if (source.node.ownership.role === "source" && source.node.ownership.meta) {
+    semantics.meta = Object.entries(source.node.ownership.meta);
+  }
+  return semantics;
 }
 
 /**
- * Derive DevTools-style semantics per source node: the element kind (from the
- * node's leaf children), a text excerpt, addressable shape part ids, and the
- * author metadata bag - so hover labels read like an element inspector
- * instead of raw auto:* node ids.
+ * Build a map of source occurrence ordinals to prepared inspection geometry from the IR tree.
+ * Uses resolved inspection geometry and adds corner radii and tooltip semantics
+ * without recomputing transforms.
  */
-function collectNodeSemantics(root: IRNode): Map<string, NodeSemantics> {
-  const map = new Map<string, NodeSemantics>();
-
-  const kindOfChildren = (node: IRGroupNode): string => {
-    const children = node.children ?? [];
-    const childTypes = new Set(children.map((child) => child.type));
-    if (childTypes.has("text")) {
-      return "Text";
+export function buildNodeBBoxMap(ir: IR): Map<number, NodeBBox> {
+  const sourceIndex = buildIRSourceIndex(ir);
+  const geometry = new Map(
+    collectInspectionBBoxes(sourceIndex).map((entry) => [entry.nodeIndex, entry]),
+  );
+  const map = new Map<number, NodeBBox>();
+  for (const source of sourceIndex.sources.values()) {
+    const bbox = geometry.get(source.primaryNodeIndex ?? source.source.sourceIndex);
+    const sourceBBox = geometry.get(source.source.sourceIndex);
+    if (!bbox) {
+      continue;
     }
-    if (childTypes.has("shape")) {
-      return "Shape";
-    }
-    if (childTypes.has("svg")) {
-      return "Svg";
-    }
-    if (childTypes.has("image")) {
-      return "Image";
-    }
-    if (childTypes.has("path")) {
-      return "Path";
-    }
-    if (children.some((child) => child.type === "group")) {
-      return "Box";
-    }
-    return node.type === "group" ? "Box" : node.type;
-  };
-
-  const semanticsForGroup = (node: IRGroupNode): NodeSemantics => {
-    const semantics: NodeSemantics = { kind: kindOfChildren(node) };
-    if (!node.nodeId.startsWith("auto:")) {
-      semantics.explicitId = node.nodeId;
-    }
-    for (const child of node.children ?? []) {
-      if (child.type === "text") {
-        semantics.text = child.lines.map((line) => line.text).join(" ");
-      }
-      if (child.type === "shape") {
-        const partIds = child.shapeParts.flatMap((part) =>
-          part.partId === undefined ? [] : [part.partId],
-        );
-        if (partIds.length > 0) {
-          semantics.partIds = partIds;
-        }
-      }
-    }
-    if (node.meta) {
-      semantics.meta = Object.entries(node.meta);
-    }
-    return semantics;
-  };
-
-  const walk = (node: IRNode): void => {
-    if (node.type === "group") {
-      map.set(node.nodeId, semanticsForGroup(node));
-    }
-    for (const child of node.type === "group" ? (node.children ?? []) : []) {
-      walk(child);
-    }
-  };
-
-  walk(root);
+    const primary =
+      source.primaryNodeIndex === null
+        ? undefined
+        : sourceIndex.nodes.get(source.primaryNodeIndex)?.node;
+    const semantics = buildNodeSemantics(source, primary);
+    const radius = primary?.type === "rect" ? primary.borderRadius : undefined;
+    map.set(source.source.sourceIndex, {
+      semantics,
+      ...bbox.layoutBBox,
+      rx:
+        typeof radius === "number"
+          ? radius
+          : radius
+            ? Math.max(radius.tl, radius.tr, radius.br, radius.bl)
+            : undefined,
+      layoutBBox: bbox.layoutBBox,
+      transformBox: bbox.transformBox,
+      visualBBox: bbox.visualBBox,
+      origin: sourceBBox?.origin ?? bbox.origin,
+      hasOwnTransform: sourceBBox?.hasOwnTransform ?? bbox.hasOwnTransform,
+    });
+  }
   return map;
 }
 
@@ -295,8 +257,10 @@ function collectNodeSemantics(root: IRNode): Map<string, NodeSemantics> {
 // Overlay manager
 // ---------------------------------------------------------------------------
 
+/** Namespace used for overlay elements. */
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+/** Host, scene dimensions, and inspection geometry for an overlay. */
 export type EventEffectOverlayOptions = {
   /** Container element wrapping the main SVG output. Must have position:relative. */
   container: HTMLElement;
@@ -305,35 +269,36 @@ export type EventEffectOverlayOptions = {
   /** Canvas height in SVG user units (from IR.height) */
   height: number;
   /** Map of nodeId → bbox, built from IR */
-  bboxMap: Map<string, NodeBBox>;
+  bboxMap: Map<number, NodeBBox>;
   display?: EventEffectOverlayDisplayOptions;
 };
 
+/** Manage inspection and event highlights without rerendering the scene. */
 export class EventEffectOverlay {
   private readonly overlaySvg: SVGSVGElement;
   private readonly wrapper: HTMLElement;
   private readonly width: number;
   private readonly height: number;
   private readonly tooltipEl: HTMLDivElement;
-  private readonly overlayMode: OverlayDisplayMode;
-  private readonly showOrigin: boolean;
+  private overlayMode: OverlayDisplayMode;
+  private showOrigin: boolean;
+  private readonly resizeObserver: ResizeObserver | null;
   /** True when this instance created the wrapper `<div>` around the SVG. */
   private readonly createdWrapper: boolean;
-  private bboxMap: Map<string, NodeBBox>;
+  private bboxMap: Map<number, NodeBBox>;
   private hoverRect: SVGElement | null = null;
-  private hoverNodeId: string | null = null;
-  private hoverColor = "#4ade80";
   private inspectRect: SVGElement | null = null;
-  private inspectNodeId: string | null = null;
+  private inspectSource: IRSourceRef | null = null;
   private tooltipHideTimeout: number | null = null;
   private pendingTimeouts: number[] = [];
   private originLayer: SVGElement | null = null;
 
+  /** Attach the overlay to its host; destroy it when the host is released. */
   constructor(options: EventEffectOverlayOptions) {
     this.width = options.width;
     this.height = options.height;
     this.bboxMap = options.bboxMap;
-    this.overlayMode = options.display?.mode ?? "layout";
+    this.overlayMode = options.display?.mode ?? DEFAULT_INSPECTION_FRAME_MODE;
     this.showOrigin = options.display?.showOrigin ?? false;
 
     // Determine the wrapper element for the overlay.
@@ -341,12 +306,12 @@ export class EventEffectOverlay {
     // use it directly. Otherwise, wrap the inner <svg> in a tight
     // position:relative container so the overlay aligns with the SVG,
     // not the (possibly larger/flex-centered) outer container.
+    const mainSvg = options.container.querySelector("svg");
     let wrapper: HTMLElement;
     let didCreateWrapper = false;
     if (options.container.style.position === "relative") {
       wrapper = options.container;
     } else {
-      const mainSvg = options.container.querySelector("svg");
       if (mainSvg && !mainSvg.dataset.effectWrapper) {
         wrapper = document.createElement("div");
         wrapper.style.cssText = "position:relative;display:inline-block";
@@ -370,6 +335,23 @@ export class EventEffectOverlay {
     wrapper.appendChild(svg);
     this.wrapper = wrapper;
     this.overlaySvg = svg;
+    if (mainSvg) {
+      const alignViewport = (): void => {
+        const sourceBounds = mainSvg.getBoundingClientRect();
+        const wrapperBounds = wrapper.getBoundingClientRect();
+        svg.style.left = `${sourceBounds.left - wrapperBounds.left - wrapper.clientLeft}px`;
+        svg.style.top = `${sourceBounds.top - wrapperBounds.top - wrapper.clientTop}px`;
+        svg.style.width = `${sourceBounds.width}px`;
+        svg.style.height = `${sourceBounds.height}px`;
+      };
+      // A wrapper can include baseline spacing or differ from the SVG by a CSS layout unit.
+      // Match the rendered viewport instead of stretching inspection geometry to the wrapper.
+      alignViewport();
+      this.resizeObserver = new ResizeObserver(alignViewport);
+      this.resizeObserver.observe(mainSvg);
+    } else {
+      this.resizeObserver = null;
+    }
     this.tooltipEl = this.createTooltipElement();
     wrapper.appendChild(this.tooltipEl);
     this.renderPersistentOrigins();
@@ -402,8 +384,8 @@ export class EventEffectOverlay {
    * Flash effect: brief colored rect that fades out over `durationMs`.
    * Used for discrete events (click, press, etc.).
    */
-  flashNode(nodeId: string, color: string, durationMs = 500): void {
-    const bbox = this.resolveBBox(nodeId);
+  flashNode(source: IRSourceRef, color: string, durationMs = 500): void {
+    const bbox = this.resolveBBox(source);
     if (!bbox) {
       return;
     }
@@ -439,20 +421,18 @@ export class EventEffectOverlay {
    * Hover glow: persistent pulsing outline while a node is hovered.
    * Pass `null` to clear the glow.
    */
-  setHoverGlow(nodeId: string | null, color = "#4ade80"): void {
+  setHoverGlow(source: IRSourceRef | null, color = "#4ade80"): void {
     // Remove existing glow
     if (this.hoverRect) {
       this.hoverRect.remove();
       this.hoverRect = null;
     }
-    this.hoverNodeId = nodeId;
-    this.hoverColor = color;
 
-    if (!nodeId) {
+    if (!source) {
       return;
     }
 
-    const bbox = this.resolveBBox(nodeId);
+    const bbox = this.resolveBBox(source);
     if (!bbox) {
       return;
     }
@@ -475,17 +455,17 @@ export class EventEffectOverlay {
   }
 
   /**
-   * DevTools-style inspect highlight: semi-transparent blue fill + solid outline.
-   * No animation. Pass `null` to clear.
+   * Highlight the selected inspection geometry without animation.
+   * Pass `null` to clear.
    */
-  setInspectHighlight(nodeId: string | null): void {
+  setInspectHighlight(source: IRSourceRef | null): void {
     if (this.inspectRect) {
       this.inspectRect.remove();
       this.inspectRect = null;
     }
-    this.inspectNodeId = nodeId;
+    this.inspectSource = source;
 
-    if (!nodeId) {
+    if (!source) {
       this.hideTooltip();
       return;
     }
@@ -495,7 +475,7 @@ export class EventEffectOverlay {
       return;
     }
 
-    const bbox = this.resolveBBox(nodeId);
+    const bbox = this.resolveBBox(source);
     if (!bbox) {
       this.hideTooltip();
       return;
@@ -507,20 +487,30 @@ export class EventEffectOverlay {
     this.showTooltip(bbox);
   }
 
-  /** Update the bbox map (e.g. after IR re-render). Preserves active effects. */
-  updateBBoxMap(bboxMap: Map<string, NodeBBox>): void {
+  /** Change inspection display in place, preserving the source SVG and active node. */
+  updateDisplay(display?: EventEffectOverlayDisplayOptions): void {
+    this.overlayMode = display?.mode ?? DEFAULT_INSPECTION_FRAME_MODE;
+    this.showOrigin = display?.showOrigin ?? false;
+    this.renderPersistentOrigins();
+    this.setInspectHighlight(this.inspectSource);
+  }
+
+  /** Replace snapshot geometry and clear effects whose references belong to the previous IR. */
+  updateBBoxMap(bboxMap: Map<number, NodeBBox>): void {
+    this.setHoverGlow(null);
+    this.setInspectHighlight(null);
+    for (const timeout of this.pendingTimeouts) {
+      clearTimeout(timeout);
+    }
+    this.pendingTimeouts.length = 0;
+    this.overlaySvg.replaceChildren();
     this.bboxMap = bboxMap;
     this.renderPersistentOrigins();
-    if (this.hoverNodeId) {
-      this.setHoverGlow(this.hoverNodeId, this.hoverColor);
-    }
-    if (this.inspectNodeId) {
-      this.setInspectHighlight(this.inspectNodeId);
-    }
   }
 
   /** Remove the overlay SVG, unwrap the main SVG if we wrapped it, and clean up timers. */
   destroy(): void {
+    this.resizeObserver?.disconnect();
     for (const tid of this.pendingTimeouts) {
       clearTimeout(tid);
     }
@@ -530,9 +520,8 @@ export class EventEffectOverlay {
       this.tooltipHideTimeout = null;
     }
     this.hoverRect = null;
-    this.hoverNodeId = null;
     this.inspectRect = null;
-    this.inspectNodeId = null;
+    this.inspectSource = null;
     if (this.overlaySvg.parentNode) {
       this.overlaySvg.remove();
     }
@@ -558,12 +547,10 @@ export class EventEffectOverlay {
   // -------------------------------------------------------------------------
 
   /**
-   * Resolve the bbox for a nodeId.
-   * If the nodeId itself isn't found, falls back to the `:bg` suffixed node
-   * (background rect created by the IR builder for Box/Flex containers).
+   * Resolve the prepared geometry for one source occurrence.
    */
-  private resolveBBox(nodeId: string): NodeBBox | null {
-    return this.bboxMap.get(nodeId) ?? this.bboxMap.get(`${nodeId}:bg`) ?? null;
+  private resolveBBox(source: IRSourceRef): NodeBBox | null {
+    return this.bboxMap.get(source.sourceIndex) ?? null;
   }
 
   private createModeRect(
@@ -603,8 +590,8 @@ export class EventEffectOverlay {
       mode: this.overlayMode,
       showOrigin: this.showOrigin,
       hasOrigin: bbox.origin != null,
-      hasOwnTransform: bbox.hasOwnTransform,
-      isTransformAxisAligned: isTransformBoxAxisAligned(bbox.transformBox),
+      layoutBBox: bbox.layoutBBox,
+      transformBox: bbox.transformBox,
     });
 
     for (const part of parts) {
@@ -615,7 +602,11 @@ export class EventEffectOverlay {
       } else if (part === "handles") {
         group.appendChild(this.createHandleGroup(bbox));
       } else if (part === "visual") {
-        group.appendChild(this.createVisualCorners(bbox));
+        group.appendChild(
+          this.overlayMode === "visual"
+            ? this.createModeRect(bbox.visualBBox, VISUAL_COLOR, false, "8 3")
+            : this.createVisualCorners(bbox),
+        );
       } else if (part === "origin" && bbox.origin) {
         group.appendChild(this.createOriginMarker(bbox.origin));
       }
@@ -653,7 +644,8 @@ export class EventEffectOverlay {
 
   private showTooltip(bbox: NodeBBox): void {
     const activeRect = this.getInteractiveRect(bbox);
-    const sizeLabel = `${formatTooltipNumber(activeRect.w)} x ${formatTooltipNumber(activeRect.h)} px`;
+    const geometryLabel = this.overlayMode === "layout" ? "Layout" : "AABB";
+    const sizeLabel = `${geometryLabel}: ${formatTooltipNumber(activeRect.w)} x ${formatTooltipNumber(activeRect.h)} px`;
     const semantics = bbox.semantics;
     const lines: string[] = [];
     const kind = semantics?.kind ?? "Node";
@@ -661,10 +653,8 @@ export class EventEffectOverlay {
     const titleParts = [
       `<span style="color:${kindColor};font-weight:700">${escapeTooltipText(kind)}</span>`,
     ];
-    if (semantics?.explicitId) {
-      titleParts.push(
-        `<span style="color:#7dd3fc">#${escapeTooltipText(semantics.explicitId)}</span>`,
-      );
+    if (semantics?.nodeId) {
+      titleParts.push(`<span style="color:#7dd3fc">#${escapeTooltipText(semantics.nodeId)}</span>`);
     }
     if (semantics?.text) {
       const excerpt =
@@ -880,8 +870,8 @@ export class EventEffectOverlay {
 
 /**
  * True when the four corners of a transform box coincide with the corners of
- * their own axis-aligned bounding box (i.e. pure translate / scale or 90°
- * rotation — no skew and no off-axis rotation). In those cases the transform
+ * their own axis-aligned bounding box. The comparison uses resolved coordinates
+ * exactly, retaining any residual skew or rotation. In those cases the transform
  * quad and the visual AABB are identical, so the `all`-mode overlay
  * suppresses the visual corner markers to avoid doubled outlines.
  */
@@ -892,10 +882,9 @@ export function isTransformBoxAxisAligned(box: InspectionTransformBox): boolean 
   const maxX = Math.max(...xCoordinates);
   const minY = Math.min(...yCoordinates);
   const maxY = Math.max(...yCoordinates);
-  const EPS = 1e-6;
   for (const point of box.points) {
-    const atCornerX = Math.abs(point.x - minX) < EPS || Math.abs(point.x - maxX) < EPS;
-    const atCornerY = Math.abs(point.y - minY) < EPS || Math.abs(point.y - maxY) < EPS;
+    const atCornerX = point.x === minX || point.x === maxX;
+    const atCornerY = point.y === minY || point.y === maxY;
     if (!atCornerX || !atCornerY) {
       return false;
     }

@@ -12,7 +12,7 @@ use crate::EmitIrInput;
 use crate::ir::types::StructuralIr;
 
 /// Version of the deterministic schema normalization applied after Schemars.
-pub const NORMALIZATION_VERSION: u32 = 2;
+pub const NORMALIZATION_VERSION: u32 = 3;
 
 /// Reviewed wire presence rows that determine omitted output Option fields.
 const OPTION_INVENTORY: &str = include_str!("../tests/fixtures/wire-option-contract.golden.txt");
@@ -70,6 +70,7 @@ pub fn generate_ir_schemas() -> Result<IrSchemas, IrSchemaGenerationError> {
     let mut structural_ir = serde_json::to_value(output_schema)?;
     let mut emit_ir_input = serde_json::to_value(emit_input_schema)?;
     normalize_output_schema(&mut structural_ir)?;
+    close_ownership_metadata(&mut emit_ir_input);
     normalize_numeric_formats(&mut emit_ir_input)?;
 
     Ok(IrSchemas {
@@ -120,6 +121,7 @@ fn output_schema_owner(owner: &str) -> &str {
         "TextUnitAnimationOutput" => "TextUnitAnimation",
         "TextUnitAnimationSampleOutput" => "TextUnitAnimationSample",
         "IrNodeOutput" => "IrNode",
+        "IrNodeOwnershipOutput" => "IrNodeOwnership",
         "AnimationEasingOutput" => "AnimationEasing",
         "IrNodeKindOutput" => "IrNodeKind",
         _ => owner,
@@ -182,6 +184,43 @@ fn normalize_output_schema(schema: &mut serde_json::Value) -> Result<(), IrSchem
         normalize_struct_fields(variant_schema, owner, fields.iter().copied())?;
     }
 
+    if let Some(node) = definitions
+        .get_mut("IrNode")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        node.insert(
+            "unevaluatedProperties".to_string(),
+            serde_json::json!(false),
+        );
+    }
+    if let Some(ownership) = definitions.get_mut("IrNodeOwnership") {
+        if let Some(variants) = ownership
+            .get_mut("oneOf")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for variant in variants {
+                variant
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("additionalProperties".to_string(), serde_json::json!(false));
+                if let Some(meta) = variant
+                    .pointer_mut("/properties/meta")
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    meta.insert("maxProperties".to_string(), serde_json::json!(16));
+                    meta.insert(
+                        "propertyNames".to_string(),
+                        serde_json::json!({"pattern":"^[a-z][a-z0-9-]{0,31}$"}),
+                    );
+                }
+            }
+        }
+    }
+    close_ownership_metadata(schema);
+    schema
+        .as_object_mut()
+        .unwrap()
+        .insert("additionalProperties".to_string(), serde_json::json!(false));
     normalize_numeric_formats(schema)?;
     // Empty Path paint has an explicit required null, rather than an omitted
     // layout substitute. All other output nulls remain prohibited.
@@ -263,7 +302,7 @@ fn find_tagged_variant_mut<'a>(
 ) -> Option<&'a mut serde_json::Value> {
     if schema
         .get("properties")
-        .and_then(|properties| properties.get("type"))
+        .and_then(|properties| properties.get("type").or_else(|| properties.get("role")))
         .and_then(|tag| tag.get("const"))
         .and_then(serde_json::Value::as_str)
         == Some(variant)
@@ -383,4 +422,31 @@ fn normalize_numeric_formats(
         _ => {}
     }
     Ok(())
+}
+
+/// Apply metadata constraints shared by both directional schema graphs.
+fn close_ownership_metadata(schema: &mut serde_json::Value) {
+    if let Some(variants) = schema
+        .pointer_mut("/$defs/IrNodeOwnership/oneOf")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for variant in variants {
+            if let Some(meta) = variant
+                .pointer_mut("/properties/meta")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                meta.insert("maxProperties".to_string(), serde_json::json!(16));
+                meta.insert(
+                    "propertyNames".to_string(),
+                    serde_json::json!({"pattern":"^[a-z][a-z0-9-]{0,31}$"}),
+                );
+            }
+        }
+    }
+    if let Some(handlers) = schema
+        .pointer_mut("/$defs/HandlersRef")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        handlers.insert("additionalProperties".to_string(), serde_json::json!(false));
+    }
 }

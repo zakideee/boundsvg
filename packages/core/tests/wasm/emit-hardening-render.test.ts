@@ -328,7 +328,7 @@ describe("textAlign", () => {
           engine.snapshotCompiledIR(compiled),
           firstPath?.bbox.x ?? 0,
           firstPath?.bbox.y ?? 0,
-        ),
+        )?.nodeId ?? null,
       ).toBe("aligned");
     } finally {
       engine.dispose();

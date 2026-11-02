@@ -1,14 +1,15 @@
 //! Borrowed produce-only projections for rendering-domain IR values.
 
+use super::ownership::{IrNodeOwnership, WrapperPlacement};
 use serde::{Serialize, Serializer};
 
 use super::types::{
     AnimationEasing, AnimationIterations, AnimationKeyframe, AnimationSpec, AnimationSpring,
-    AnimationSteps, AnimationTransform2D, BBox, BorderRadius, BoxShadow, Gradient, HandlersRef,
-    IrFillRule, IrNode, IrNodeKind, IrTextAlign, PathGeometry, ShapePartBounds, ShapePartPaint,
-    ShapePathPart, StrokeLinecap, StrokeLinejoin, StrokeScaling, TextOutlinePath, TextPathMetadata,
-    TextShadowLayer, TextStrokeLayer, TextUnitAnimation, TextUnitAnimationOrder,
-    TextUnitAnimationSample,
+    AnimationSteps, AnimationTransform2D, BBox, BorderRadius, BoxClip, BoxShadow, Gradient,
+    HandlersRef, IrFillRule, IrNode, IrNodeKind, IrTextAlign, PathGeometry, ShapePartBounds,
+    ShapePartPaint, ShapePathPart, StrokeLinecap, StrokeLinejoin, StrokeScaling, TextGradient,
+    TextOutlinePath, TextPaint, TextPathMetadata, TextShadowLayer, TextStrokeLayer,
+    TextUnitAnimation, TextUnitAnimationOrder, TextUnitAnimationSample,
 };
 #[cfg(feature = "ir-schema")]
 use super::types::{
@@ -86,7 +87,7 @@ pub(crate) struct TextOutlinePathOutput<'a> {
     // Identity and geometry
     pub node_id: &'a str,
     pub d: &'a str,
-    pub fill: &'a str,
+    pub fill: &'a TextPaint,
     pub glyph_ids: &'a [u32],
     pub text: &'a str,
     pub bbox: &'a BBox,
@@ -173,12 +174,19 @@ pub(crate) struct AnimationTransform2DOutput<'a> {
     pub scale_y: Option<&'a f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rotate_deg: Option<&'a f64>,
+    /// Horizontal shear angle in degrees.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skew_x_deg: Option<&'a f64>,
+    /// Vertical shear angle in degrees.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skew_y_deg: Option<&'a f64>,
 }
 
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationKeyframe"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Borrowed wire projection of a keyframe with omitted absent targets.
 pub(crate) struct AnimationKeyframeOutput<'a> {
     pub at: &'a f64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -191,6 +199,7 @@ pub(crate) struct AnimationKeyframeOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpring"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Borrowed wire projection of spring easing parameters.
 pub(crate) struct AnimationSpringOutput<'a> {
     #[cfg_attr(
         feature = "ir-schema",
@@ -212,6 +221,7 @@ pub(crate) struct AnimationSpringOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSteps"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Borrowed wire projection of steps easing parameters.
 pub(crate) struct AnimationStepsOutput<'a> {
     #[cfg_attr(
         feature = "ir-schema",
@@ -236,6 +246,7 @@ pub(crate) struct AnimationStepsOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpec"))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Borrowed wire projection of an authored animation retained in structural IR.
 pub(crate) struct AnimationSpecOutput<'a> {
     pub keyframes: Vec<AnimationKeyframeOutput<'a>>,
     pub duration_ms: &'a f64,
@@ -286,6 +297,58 @@ pub(crate) struct TextUnitAnimationSampleOutput<'a> {
     pub transform: Option<&'a boundshape::Transform2D>,
 }
 
+/// Borrowed source ownership; semantic fields are emitted only once.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "ir-schema", schemars(rename = "IrNodeOwnership"))]
+#[derive(Serialize)]
+#[serde(
+    tag = "role",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum IrNodeOwnershipOutput<'a> {
+    Source {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "ir-schema",
+            schemars(with = "Option<HandlersRefOutput<'a>>")
+        )]
+        on: Option<&'a HandlersRef>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        meta: Option<&'a std::collections::BTreeMap<String, String>>,
+    },
+    Content {
+        owner_node_id: &'a str,
+    },
+    Decoration {
+        owner_node_id: &'a str,
+    },
+    Wrapper {
+        owner_node_id: &'a str,
+        placement: WrapperPlacement,
+    },
+}
+
+impl<'a> From<&'a IrNodeOwnership> for IrNodeOwnershipOutput<'a> {
+    fn from(input: &'a IrNodeOwnership) -> Self {
+        match input {
+            IrNodeOwnership::Source { on, meta } => Self::Source {
+                on: on.as_deref(),
+                meta: meta.as_ref(),
+            },
+            IrNodeOwnership::Content { owner_node_id } => Self::Content { owner_node_id },
+            IrNodeOwnership::Decoration { owner_node_id } => Self::Decoration { owner_node_id },
+            IrNodeOwnership::Wrapper {
+                owner_node_id,
+                placement,
+            } => Self::Wrapper {
+                owner_node_id,
+                placement: *placement,
+            },
+        }
+    }
+}
+
 /// An IR node in the rendering tree.
 /// Serializes flat (kind fields inline next to `nodeId`/`bbox`, plus a
 /// `type` discriminant) to match the TS `IRNode` shape.
@@ -296,6 +359,7 @@ pub(crate) struct TextUnitAnimationSampleOutput<'a> {
 pub(crate) struct IrNodeOutput<'a> {
     pub node_id: &'a str,
     pub bbox: &'a BBox,
+    pub ownership: IrNodeOwnershipOutput<'a>,
     #[serde(flatten)]
     pub kind: IrNodeKindOutput<'a>,
 }
@@ -304,6 +368,7 @@ pub(crate) struct IrNodeOutput<'a> {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationEasing"))]
 #[derive(Serialize)]
 #[serde(untagged)]
+/// Borrowed wire alternatives for named and structured easing.
 pub(crate) enum AnimationEasingOutput<'a> {
     Named(
         #[cfg_attr(
@@ -341,21 +406,15 @@ pub(crate) enum IrNodeKindOutput<'a> {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         children: Vec<IrNodeOutput<'a>>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        clip_path: Option<&'a BBox>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        clip_border_radius: Option<&'a BorderRadius>,
+        clip: Option<&'a BoxClip>,
         #[serde(skip_serializing_if = "Option::is_none")]
         opacity: Option<&'a f64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         box_shadow: Option<&'a BoxShadow>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        meta: Option<&'a std::collections::BTreeMap<String, String>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         transform: Option<&'a boundshape::Transform2D>,
         #[serde(skip_serializing_if = "Option::is_none")]
         animation: Option<AnimationSpecOutput<'a>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        on: Option<HandlersRefOutput<'a>>,
     },
 
     /// Filled/stroked rectangle.
@@ -448,6 +507,8 @@ pub(crate) enum IrNodeKindOutput<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         glyph_paths: Option<Vec<TextOutlinePathOutput<'a>>>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        gradients: Option<&'a Vec<TextGradient>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         /// Stable paint-unit metadata generated by boundtext for opt-in text.
         unit_map: Option<&'a crate::text::unit_map::TextUnitMap>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -474,16 +535,12 @@ pub(crate) enum IrNodeKindOutput<'a> {
         shadows: Option<&'a [TextShadowLayer]>,
         #[serde(skip_serializing_if = "Option::is_none")]
         text_decorations: Option<&'a [crate::text::types::TextDecorationFragment]>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        on: Option<HandlersRefOutput<'a>>,
     },
 
     /// Raster image (base64 data URI).
     Image {
         src: &'a str,
         preserve_aspect_ratio: &'a str,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        on: Option<HandlersRefOutput<'a>>,
     },
 
     /// SVG path element.
@@ -509,8 +566,6 @@ pub(crate) enum IrNodeKindOutput<'a> {
         stroke_dasharray: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         stroke_miterlimit: Option<&'a f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        on: Option<HandlersRefOutput<'a>>,
     },
 
     /// Nested SVG content.
@@ -520,8 +575,6 @@ pub(crate) enum IrNodeKindOutput<'a> {
         #[serde(rename = "svgViewBox", skip_serializing_if = "Option::is_none")]
         view_box: Option<&'a str>,
         preserve_aspect_ratio: &'a str,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        on: Option<HandlersRefOutput<'a>>,
     },
 
     /// Structural shape with viewport-baked part paths.
@@ -543,8 +596,6 @@ pub(crate) enum IrNodeKindOutput<'a> {
         stroke_dasharray: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         stroke_miterlimit: Option<&'a f64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        on: Option<HandlersRefOutput<'a>>,
     },
 }
 
@@ -585,7 +636,7 @@ impl<'a> From<&'a TextOutlinePath> for TextOutlinePathOutput<'a> {
         Self {
             node_id: input.node_id.as_str(),
             d: input.d.as_str(),
-            fill: input.fill.as_str(),
+            fill: &input.fill,
             glyph_ids: input.glyph_ids.as_slice(),
             text: input.text.as_str(),
             bbox: &input.bbox,
@@ -635,6 +686,8 @@ impl<'a> From<&'a AnimationTransform2D> for AnimationTransform2DOutput<'a> {
             scale_x: input.scale_x.as_ref(),
             scale_y: input.scale_y.as_ref(),
             rotate_deg: input.rotate_deg.as_ref(),
+            skew_x_deg: input.skew_x_deg.as_ref(),
+            skew_y_deg: input.skew_y_deg.as_ref(),
         }
     }
 }
@@ -718,6 +771,7 @@ impl<'a> From<&'a IrNode> for IrNodeOutput<'a> {
         Self {
             node_id: input.node_id.as_str(),
             bbox: &input.bbox,
+            ownership: (&input.ownership).into(),
             kind: IrNodeKindOutput::from(&input.kind),
         }
     }
@@ -740,26 +794,18 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
         match input {
             IrNodeKind::Group {
                 children,
-                clip_path,
-                clip_border_radius,
+                clip,
                 opacity,
                 box_shadow,
-                meta,
                 transform,
                 animation,
-                on,
             } => Self::Group {
                 children: children.iter().map(IrNodeOutput::from).collect(),
-                clip_path: clip_path.as_ref(),
-                clip_border_radius: clip_border_radius.as_ref(),
+                clip: clip.as_ref(),
                 opacity: opacity.as_ref(),
                 box_shadow: box_shadow.as_ref(),
-                meta: meta.as_ref(),
                 transform: transform.as_ref(),
                 animation: animation.as_ref().map(AnimationSpecOutput::from),
-                on: on
-                    .as_ref()
-                    .map(|field| HandlersRefOutput::from(field.as_ref())),
             },
             IrNodeKind::Rect {
                 fill,
@@ -805,6 +851,7 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
                 display_text,
                 text_path,
                 glyph_paths,
+                gradients,
                 unit_map,
                 unit_animation,
                 unit_animation_samples,
@@ -817,7 +864,6 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
                 strokes,
                 shadows,
                 text_decorations,
-                on,
             } => Self::Text {
                 lines: lines.as_slice(),
                 font: font.as_str(),
@@ -845,8 +891,9 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
                 glyph_paths: glyph_paths
                     .as_ref()
                     .map(|field| field.iter().map(TextOutlinePathOutput::from).collect()),
+                gradients: gradients.as_ref(),
                 unit_map: unit_map.as_ref(),
-                unit_animation: unit_animation.as_ref().map(TextUnitAnimationOutput::from),
+                unit_animation: unit_animation.as_deref().map(TextUnitAnimationOutput::from),
                 unit_animation_samples: unit_animation_samples.as_ref().map(|field| {
                     field
                         .iter()
@@ -862,18 +909,13 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
                 strokes: strokes.as_ref().map(std::vec::Vec::as_slice),
                 shadows: shadows.as_ref().map(std::vec::Vec::as_slice),
                 text_decorations: text_decorations.as_ref().map(std::vec::Vec::as_slice),
-                on: on
-                    .as_ref()
-                    .map(|field| HandlersRefOutput::from(field.as_ref())),
             },
             IrNodeKind::Image {
                 src,
                 preserve_aspect_ratio,
-                on,
             } => Self::Image {
                 src: src.as_str(),
                 preserve_aspect_ratio: preserve_aspect_ratio.as_str(),
-                on: on.as_ref().map(HandlersRefOutput::from),
             },
             IrNodeKind::Path {
                 path_data,
@@ -887,7 +929,6 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
                 stroke_linejoin,
                 stroke_dasharray,
                 stroke_miterlimit,
-                on,
             } => Self::Path {
                 path_data: path_data.as_str(),
                 path_geometry,
@@ -900,18 +941,15 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
                 stroke_linejoin: stroke_linejoin.as_ref(),
                 stroke_dasharray: stroke_dasharray.as_ref().map(std::string::String::as_str),
                 stroke_miterlimit: stroke_miterlimit.as_ref(),
-                on: on.as_ref().map(HandlersRefOutput::from),
             },
             IrNodeKind::Svg {
                 content,
                 view_box,
                 preserve_aspect_ratio,
-                on,
             } => Self::Svg {
                 content: content.as_str(),
                 view_box: view_box.as_ref().map(std::string::String::as_str),
                 preserve_aspect_ratio: preserve_aspect_ratio.as_str(),
-                on: on.as_ref().map(HandlersRefOutput::from),
             },
             IrNodeKind::Shape {
                 shape_parts,
@@ -923,7 +961,6 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
                 stroke_linejoin,
                 stroke_dasharray,
                 stroke_miterlimit,
-                on,
             } => Self::Shape {
                 shape_parts: shape_parts.iter().map(ShapePathPartOutput::from).collect(),
                 fill: fill.as_ref().map(std::string::String::as_str),
@@ -934,7 +971,6 @@ impl<'a> From<&'a IrNodeKind> for IrNodeKindOutput<'a> {
                 stroke_linejoin: stroke_linejoin.as_ref(),
                 stroke_dasharray: stroke_dasharray.as_ref().map(std::string::String::as_str),
                 stroke_miterlimit: stroke_miterlimit.as_ref(),
-                on: on.as_ref().map(HandlersRefOutput::from),
             },
         }
     }
@@ -1030,6 +1066,10 @@ struct LineProjection<'a> {
 /// Serialize IR text lines the way the TS layout parser projects them:
 /// fragment `style` is omitted when it has no explicit color (the TS side
 /// drops color-less styles when parsing the layout transport).
+///
+/// # Errors
+///
+/// Propagates serializer failures while projecting line, fragment, or glyph fields.
 pub(super) fn serialize_lines_ts_projection<S: Serializer>(
     lines: &[Line],
     serializer: S,

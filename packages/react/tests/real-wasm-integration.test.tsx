@@ -160,7 +160,7 @@ describe("React hooks against a real WASM engine", () => {
       </BoundSvgContext.Provider>,
     );
 
-    expect(hookSvg).toContain("url(#pfx-clip-clipper)");
+    expect(hookSvg).toContain("url(#pfx-clip-n1)");
     expect(hookSvg).toContain('width="200"');
   });
 

@@ -2,15 +2,16 @@
  * Bidirectional conversion between VNode and SceneNode.
  */
 import { FatalError } from "../errors.js";
+import { validateContainerVisualProps } from "../layout/box-style.js";
 import { assertVNodeRichTextDepth } from "../text/rich-text-limits.js";
 import { assertValidTransform2D, type Transform2D } from "../transform.js";
 import { createElement } from "../vnode/create-element.js";
 import type {
   AnimationSpec,
   BorderRadius,
+  BoxOutlineStyle,
   CanvasProps,
   Spacing,
-  StrokeScaling,
   VNode,
   VNodeFor,
 } from "../vnode/types.js";
@@ -561,6 +562,7 @@ function convertChildren(children: Array<VNode | string>): SceneNode[] {
   return children.filter((child): child is VNode => typeof child !== "string").map(vnodeToScene);
 }
 
+/** TextOnPath inline style keys preserved when serializing its restricted child grammar. */
 const TEXT_PATH_INLINE_SHAPING_PROPS: ReadonlySet<string> = new Set([
   "font",
   "fallback",
@@ -1504,13 +1506,9 @@ type VisualBoxLike = {
   background?: string;
   boxShadow?: string;
   borderRadius?: BorderRadius;
-  borderWidth?: number;
+  borderWidth?: Spacing;
   borderColor?: string;
-  strokeScaling?: StrokeScaling;
-  strokeLinecap?: "butt" | "round" | "square";
-  strokeLinejoin?: "miter" | "round" | "bevel";
-  strokeDasharray?: string;
-  strokeMiterlimit?: number;
+  outline?: BoxOutlineStyle;
   overflow?: "visible" | "clip";
   opacity?: number;
   zIndex?: number;
@@ -1580,6 +1578,7 @@ function pickBoxModelProps<T extends BoxModelLike>(props: T): Partial<BoxModelLi
 }
 
 function pickVisualBoxProps<T extends VisualBoxLike>(props: T): Partial<VisualBoxLike> {
+  validateContainerVisualProps(props, "<container>");
   return pickDefined(
     props,
     "background",
@@ -1587,11 +1586,7 @@ function pickVisualBoxProps<T extends VisualBoxLike>(props: T): Partial<VisualBo
     "borderRadius",
     "borderWidth",
     "borderColor",
-    "strokeScaling",
-    "strokeLinecap",
-    "strokeLinejoin",
-    "strokeDasharray",
-    "strokeMiterlimit",
+    "outline",
     "overflow",
     "opacity",
     "zIndex",

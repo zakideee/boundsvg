@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use serde_json::{Map, Value, json};
 
 use crate::ir::types::{IrNode, IrNodeKind};
@@ -22,24 +20,26 @@ pub(super) const LAYOUT_NODE_TRANSPORT_KEYS: &[&str] = &[
 ];
 
 /// Reviewed visual keys used by canvas-stable stroke preflight.
-pub(super) const CANVAS_STROKE_SIGNATURE_KEYS: &[&str] = &[
-    "strokeScaling",
-    "borderWidth",
-    "borderColor",
-    "strokeWidth",
-    "stroke",
-];
+pub(super) const CANVAS_STROKE_SIGNATURE_KEYS: &[&str] =
+    &["strokeScaling", "outline", "strokeWidth", "stroke"];
 
+/// Separate content, paint, and animation facts used for semantic transition compatibility.
 pub(super) struct SemanticSourceSignatures {
     pub(super) content: Value,
     pub(super) paint: Value,
     pub(super) animation: Value,
 }
 
+/// Partition the layout transport into content, paint, and animation signatures.
+///
+/// # Errors
+///
+/// Returns a compatibility mismatch for non-object input or unknown top-level transport keys.
 pub(super) fn semantic_source_signatures(
     raw_node: &Value,
     node_id: &str,
 ) -> Result<SemanticSourceSignatures, CompatibilityMismatch> {
+    /// Visual transport fields that change source content rather than paint-only presentation.
     const CONTENT_VISUAL_KEYS: &[&str] = &[
         "src",
         "d",
@@ -52,6 +52,7 @@ pub(super) fn semantic_source_signatures(
         "symbolId",
         "emitPartIds",
     ];
+    /// Visual transport fields that belong to authored animation compatibility.
     const ANIMATION_VISUAL_KEYS: &[&str] = &[
         "animation",
         "unitAnimation",
@@ -106,6 +107,7 @@ pub(super) fn semantic_source_signatures(
     })
 }
 
+/// Detect a non-neutral authored transform recursively, including either skew channel.
 pub(super) fn signature_has_non_identity_transform(signature: &Value) -> bool {
     match signature {
         Value::Array(values) => values.iter().any(signature_has_non_identity_transform),
@@ -128,69 +130,48 @@ fn transform_value_is_non_identity(value: &Value) -> bool {
             return false;
         };
         match key.as_str() {
-            "translateX" | "translateY" | "rotateDeg" => number != 0.0,
+            "translateX" | "translateY" | "rotateDeg" | "skewXDeg" | "skewYDeg" => number != 0.0,
             "scaleX" | "scaleY" => number != 1.0,
             _ => false,
         }
     })
 }
 
+/// Detect Path or owner-outline paint that requires similarity-only transition wrappers.
 pub(super) fn signature_has_painted_canvas_stroke(signature: &Value) -> bool {
-    let Some(paint) = signature.as_object() else {
+    let [scaling_key, outline_key, _width_key, stroke_key] = CANVAS_STROKE_SIGNATURE_KEYS else {
         return false;
     };
-    let [
-        stroke_scaling,
-        border_width,
-        border_color,
-        _stroke_width,
-        stroke,
-    ] = CANVAS_STROKE_SIGNATURE_KEYS
-    else {
-        return false;
+    let painted_line = |paint: &Value| {
+        paint.get(*scaling_key).and_then(Value::as_str) == Some("canvas")
+            && paint
+                .get(*stroke_key)
+                .and_then(Value::as_str)
+                .is_some_and(|color| {
+                    !color.trim().is_empty() && !color.trim().eq_ignore_ascii_case("none")
+                })
     };
-    if paint.get(*stroke_scaling).and_then(Value::as_str) != Some("canvas") {
-        return false;
-    }
-    let border_is_painted = paint
-        .get(*border_width)
-        .and_then(Value::as_f64)
-        .is_some_and(|width| width > 0.0)
-        && paint
-            .get(*border_color)
-            .and_then(Value::as_str)
-            .is_some_and(|color| color != "none");
-    // Keep this in lockstep with scene::resolve_canvas_stroke: Path paint is
-    // selected by its stroke color, while every finite authored width
-    // (including zero) still enters canvas-stroke transform validation.
-    let path_is_painted = paint
-        .get(*stroke)
-        .and_then(Value::as_str)
-        .is_some_and(|color| {
-            let normalized_color = color.trim();
-            !normalized_color.is_empty() && !normalized_color.eq_ignore_ascii_case("none")
-        });
-    border_is_painted || path_is_painted
+    painted_line(signature)
+        || signature.get(*outline_key).is_some_and(|outline| {
+            outline
+                .get("strokeWidth")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                > 0.0
+                && painted_line(outline)
+        })
 }
 
-pub(super) fn text_flow_signature(
-    root: &IrNode,
-    owner_id: &str,
-    semantic_ids: &BTreeSet<String>,
-) -> Value {
-    fn collect(
-        node: &IrNode,
-        owner_id: &str,
-        semantic_ids: &BTreeSet<String>,
-        signatures: &mut Vec<Value>,
-    ) {
+/// Describe primary text flow inside this source scope, excluding decorative and nested-source text.
+pub(super) fn text_flow_signature(root: &IrNode) -> Value {
+    fn collect(node: &IrNode, is_root: bool, signatures: &mut Vec<Value>) {
+        if !is_root && node.ownership.is_source() {
+            return;
+        }
         match &node.kind {
             IrNodeKind::Group { children, .. } => {
-                if node.node_id != owner_id && semantic_ids.contains(&node.node_id) {
-                    return;
-                }
                 for child in children {
-                    collect(child, owner_id, semantic_ids, signatures);
+                    collect(child, false, signatures);
                 }
             }
             IrNodeKind::Text {
@@ -199,6 +180,12 @@ pub(super) fn text_flow_signature(
                 display_text,
                 ..
             } => {
+                if matches!(
+                    &node.ownership,
+                    crate::ir::ownership::IrNodeOwnership::Decoration { .. }
+                ) {
+                    return;
+                }
                 let line_signatures = lines
                     .iter()
                     .map(|line| {
@@ -238,6 +225,6 @@ pub(super) fn text_flow_signature(
     }
 
     let mut signatures = Vec::new();
-    collect(root, owner_id, semantic_ids, &mut signatures);
+    collect(root, true, &mut signatures);
     Value::Array(signatures)
 }

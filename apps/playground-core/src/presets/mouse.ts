@@ -2,14 +2,14 @@ import { Canvas, Flex, Path, Text } from "@boundsvg/core";
 import { FONT_ALIAS as FA } from "../config";
 import type { Preset } from "../types";
 
+/** Pointer-event scene demonstrating source handlers and text-copy targets. */
 export const mousePreset: Preset = {
   title: "Events",
   description:
     "21 event types: click, dblclick, contextMenu, pointerDown/Up/Move/Enter/Leave/Over/Out/Cancel, mouseDown/Up/Move/Enter/Leave/Over/Out, touchStart/End/Move.",
   source: `import { Canvas, Flex, Path, Text } from "@boundsvg/core";
 import {
-  buildHitTestIndex, buildHandlerMap,
-  hitTestWithIndex,
+  buildHitTestIndex,
 } from "@boundsvg/core/scene";
 
 // 1. Build VNode with event handler IDs
@@ -182,16 +182,17 @@ const { svg, ir } = engine.renderToSvgAndIR(vnode);
 
 // 3. Build hit-test index + handler map
 const index = buildHitTestIndex(ir);
-const handlers = buildHandlerMap(ir);
 
 // 4. Dispatch events via SVG coordinate hit-test
 const svgEl = document.querySelector("svg")!;
 svgEl.addEventListener("click", (e) => {
   const { x, y } = svgCoords(e);
-  const nodeId = hitTestWithIndex(index, x, y);
-  if (nodeId) {
-    const irHandlers = handlers.get(nodeId);
-    if (irHandlers?.onClick) console.log("click", nodeId, x, y);
+  const source = index.queryTopmost(x, y);
+  const node = source ? index.sourceIndex.sources.get(source.sourceIndex)?.node : undefined;
+  const handlers = node?.ownership.role === "source" ? node.ownership.on : undefined;
+  if (source) {
+    const irHandlers = handlers;
+    if (irHandlers?.onClick) console.log("click", source.nodeId, x, y);
   }
 });`,
   build: () =>

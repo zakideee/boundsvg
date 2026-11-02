@@ -13,6 +13,7 @@ import type {
   AnimationSpec,
   AnimationSpring,
   AnimationTransform2D,
+  BoxOutlineStyle,
   PartPaintOverride,
   TextFlowExclusion,
   TextFlowExclusionMarginPx,
@@ -20,6 +21,7 @@ import type {
 } from "../vnode/types.js";
 import type { SceneNode, TextOnPathInlineSceneNode } from "./types.js";
 
+/** Stable expectation labels reported when scene input fails structural decoding. */
 export type SceneDecodeExpected =
   | "scene-node"
   | "record"
@@ -52,6 +54,7 @@ export type SceneDecodeExpected =
   | "symbol-definition"
   | "part-paint";
 
+/** Container-specific child grammars shared by scene decoding and VNode construction. */
 export type SceneChildGrammar =
   | "scene"
   | "text"
@@ -61,6 +64,7 @@ export type SceneChildGrammar =
   | "ruby"
   | "rt";
 
+/** Structural scene-input rules; semantic layout and paint validation follows decoding. */
 export type SceneSchema =
   | { readonly kind: "string" }
   | { readonly kind: "boolean" }
@@ -79,12 +83,14 @@ export type SceneSchema =
   | { readonly kind: "scene-node" }
   | { readonly kind: "scene-child"; readonly grammar: SceneChildGrammar };
 
+/** One record field with its schema and explicit omission policy. */
 export type SceneFieldSchema = {
   readonly name: string;
   readonly schema: SceneSchema;
   readonly required: boolean;
 };
 
+/** Ordered record fields and their accepted-key set for rejecting unknown input. */
 export type SceneRecordSchema = {
   readonly fields: readonly SceneFieldSchema[];
   readonly fieldNames: ReadonlySet<string>;
@@ -92,8 +98,10 @@ export type SceneRecordSchema = {
 
 type SceneNodeType = SceneNode["type"];
 
+/** Named nested record contracts used by the scene decoder. */
 export type RecordSchemaName =
   | SceneNodeType
+  | "boxOutline"
   | "textPathInline"
   | "transform"
   | "animationTransform"
@@ -227,13 +235,9 @@ const visualBoxFields = [
   optional("background", stringSchema),
   optional("boxShadow", stringSchema),
   optional("borderRadius", borderRadiusSchema),
-  optional("borderWidth", numberSchema),
+  optional("borderWidth", spacingSchema),
   optional("borderColor", stringSchema),
-  optional("strokeScaling", enumSchema(["transform", "canvas"])),
-  optional("strokeLinecap", enumSchema(["butt", "round", "square"])),
-  optional("strokeLinejoin", enumSchema(["miter", "round", "bevel"])),
-  optional("strokeDasharray", stringSchema),
-  optional("strokeMiterlimit", numberSchema),
+  optional("outline", recordSchema("boxOutline")),
   optional("overflow", enumSchema(["visible", "clip"])),
   optional("opacity", numberSchema),
   optional("zIndex", numberSchema),
@@ -307,6 +311,7 @@ const shapePaintFields = [
   optional("strokeMiterlimit", numberSchema),
 ] as const;
 
+/** Complete component vocabulary accepted by the scene decoder. */
 const SCENE_NODE_TYPES = [
   "Canvas",
   "Flex",
@@ -345,6 +350,7 @@ const sceneNodeTypeName = {
   symbol: SCENE_NODE_TYPES[15],
 } as const satisfies Record<string, SceneNodeType>;
 
+/** Lookup set for recognizing component tags before selecting their record schema. */
 const SCENE_NODE_TYPE_SET: ReadonlySet<string> = new Set(SCENE_NODE_TYPES);
 const reflectApply = Reflect.apply;
 const setPrototypeHas = Set.prototype.has;
@@ -762,6 +768,7 @@ type NodeCatalogCheck<Type extends SceneNodeType> =
       : never
     : never;
 
+/** Compile-time witness that every SceneNode tag has a record schema. */
 const NODE_CATALOG_COMPLETENESS: { readonly [Type in SceneNodeType]: NodeCatalogCheck<Type> } = {
   [sceneNodeTypeName.canvas]: true,
   [sceneNodeTypeName.flex]: true,
@@ -809,12 +816,23 @@ function catalogRecord(recordFields: readonly SceneFieldSchema[]): SceneRecordSc
 }
 
 const nestedFields = {
+  boxOutline: fields([
+    required("stroke", stringSchema),
+    optional("strokeWidth", numberSchema),
+    optional("strokeScaling", enumSchema(["transform", "canvas"])),
+    optional("strokeDasharray", stringSchema),
+    optional("strokeLinecap", enumSchema(["butt", "round", "square"])),
+    optional("strokeLinejoin", enumSchema(["miter", "round", "bevel"])),
+    optional("strokeMiterlimit", numberSchema),
+  ]),
   transform: fields([
     optional("translateX", numberSchema),
     optional("translateY", numberSchema),
     optional("scaleX", numberSchema),
     optional("scaleY", numberSchema),
     optional("rotateDeg", numberSchema),
+    optional("skewXDeg", numberSchema),
+    optional("skewYDeg", numberSchema),
     optional("originX", numberSchema),
     optional("originY", numberSchema),
   ]),
@@ -824,6 +842,8 @@ const nestedFields = {
     optional("scaleX", numberSchema),
     optional("scaleY", numberSchema),
     optional("rotateDeg", numberSchema),
+    optional("skewXDeg", numberSchema),
+    optional("skewYDeg", numberSchema),
   ]),
   animationKeyframe: fields([
     required("at", numberSchema),
@@ -992,6 +1012,7 @@ const nestedFields = {
 } as const;
 
 type NestedRecordTypes = {
+  boxOutline: BoxOutlineStyle;
   textPathInline: TextOnPathInlineSceneNode;
   transform: Transform2D;
   animationTransform: AnimationTransform2D;
@@ -1031,9 +1052,11 @@ type NestedCatalogCheck<Name extends keyof NestedRecordTypes> =
       : never
     : never;
 
+/** Compile-time proof that every nested record has a field catalog. */
 const NESTED_CATALOG_COMPLETENESS: {
   readonly [Name in keyof NestedRecordTypes]: NestedCatalogCheck<Name>;
 } = {
+  boxOutline: true,
   textPathInline: true,
   transform: true,
   animationTransform: true,
@@ -1064,6 +1087,7 @@ const NESTED_CATALOG_COMPLETENESS: {
 
 void NESTED_CATALOG_COMPLETENESS;
 
+/** Runtime validators for all named nested scene records. */
 export const RECORD_SCHEMAS: Readonly<Record<RecordSchemaName, SceneRecordSchema>> = {
   [sceneNodeTypeName.canvas]: catalogRecord(nodeFields[sceneNodeTypeName.canvas]),
   [sceneNodeTypeName.flex]: catalogRecord(nodeFields[sceneNodeTypeName.flex]),
@@ -1081,6 +1105,7 @@ export const RECORD_SCHEMAS: Readonly<Record<RecordSchemaName, SceneRecordSchema
   [sceneNodeTypeName.svg]: catalogRecord(nodeFields[sceneNodeTypeName.svg]),
   [sceneNodeTypeName.shape]: catalogRecord(nodeFields[sceneNodeTypeName.shape]),
   [sceneNodeTypeName.symbol]: catalogRecord(nodeFields[sceneNodeTypeName.symbol]),
+  boxOutline: catalogRecord(nestedFields.boxOutline),
   textPathInline: catalogRecord(textPathInlineFields),
   transform: catalogRecord(nestedFields.transform),
   animationTransform: catalogRecord(nestedFields.animationTransform),
@@ -1109,6 +1134,7 @@ export const RECORD_SCHEMAS: Readonly<Record<RecordSchemaName, SceneRecordSchema
   partPaint: catalogRecord(nestedFields.partPaint),
 };
 
+/** Named unions whose branch is selected by a type or kind discriminator. */
 export type DiscriminatedSchemaName = "animationEasing" | "flowExclusion" | "geometryNode";
 
 type DiscriminatedSchema = {
@@ -1117,6 +1143,7 @@ type DiscriminatedSchema = {
   readonly variants: Readonly<Record<string, RecordSchemaName>>;
 };
 
+/** Branch tables for decoding easing, flow-exclusion, and geometry union records. */
 export const DISCRIMINATED_SCHEMAS: Readonly<Record<DiscriminatedSchemaName, DiscriminatedSchema>> =
   {
     animationEasing: {
@@ -1141,12 +1168,15 @@ export const DISCRIMINATED_SCHEMAS: Readonly<Record<DiscriminatedSchemaName, Dis
     },
   };
 
+/** Entry schema for recursively decoding a scene node. */
 export const SCENE_NODE_SCHEMA = { kind: "scene-node" } as const satisfies SceneSchema;
 
+/** Test whether a string names a component in the scene catalog. */
 export function isSceneNodeType(value: string): value is SceneNodeType {
   return reflectApply(setPrototypeHas, SCENE_NODE_TYPE_SET, [value]) as boolean;
 }
 
+/** Return the structural-error expectation associated with a child grammar. */
 export function childExpected(grammar: SceneChildGrammar): SceneDecodeExpected {
   switch (grammar) {
     case "scene":
@@ -1166,6 +1196,7 @@ export function childExpected(grammar: SceneChildGrammar): SceneDecodeExpected {
   }
 }
 
+/** Select the record allowed for a child tag, or undefined when that grammar rejects it. */
 export function childRecordName(
   grammar: SceneChildGrammar,
   type: SceneNodeType,

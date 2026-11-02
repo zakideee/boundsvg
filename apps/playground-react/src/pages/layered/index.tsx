@@ -7,6 +7,7 @@ import type {
   LayerWarning,
   VNode,
 } from "@boundsvg/core";
+import { createResourceIdPrefix } from "@boundsvg/core";
 import {
   useRenderToLayeredPngAsync,
   useRenderToLayeredSvgAsync,
@@ -21,10 +22,12 @@ import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
 import "prismjs/components/prism-json";
-import { useCallback, useMemo, useState, useTransition } from "react";
+import { useCallback, useId, useMemo, useState, useTransition } from "react";
 import type { EventEffectOverlayDisplayOptions } from "../../../../playground-shared/inspect-hover.js";
+import { DEFAULT_INSPECTION_FRAME_MODE } from "../../../../playground-shared/inspection-frame.js";
 import { getPrismGrammar } from "../../../../playground-shared/prism.js";
 import { BBoxOverlayField } from "../../components/fields";
+import { InspectionFrameField } from "../../components/InspectionFrameField";
 import { useMobileViewer, useResetPreviewForMobile } from "../../hooks/use-mobile-viewer";
 import { useSvgInspectFromData } from "../../hooks/use-svg-inspect";
 import { asset } from "../../lib/asset";
@@ -33,14 +36,6 @@ import { resolveDebugOverlayConfig } from "../../lib/debug-overlay";
 import { buildLayeredFixtures } from "./fixtures";
 
 type OverlayMode = NonNullable<EventEffectOverlayDisplayOptions["mode"]>;
-
-const OVERLAY_MODE_OPTIONS: Array<{ value: OverlayMode; label: string }> = [
-  { value: "off", label: "Off" },
-  { value: "layout", label: "Layout bbox" },
-  { value: "transform", label: "Transform box" },
-  { value: "visual", label: "Visual bounds" },
-  { value: "all", label: "All" },
-];
 
 // ---------------------------------------------------------------------------
 // Worker-enabled config (separate from the main app's non-Worker provider)
@@ -66,12 +61,18 @@ type Format = "svg" | "png";
 type ViewTab = "preview" | "rendered" | "jsx" | "manifest";
 type CodeLayout = "tab" | "panel";
 
+function isSvgPreviewVisible(format: Format, viewTab: ViewTab, codeLayout: CodeLayout): boolean {
+  return format === "svg" && (viewTab === "preview" || codeLayout === "panel");
+}
+
+/** Labels for the layered preview code tabs. */
 const CODE_TAB_LABELS: Record<Exclude<ViewTab, "preview">, string> = {
   rendered: "Rendered SVG",
   jsx: "Generated JSX",
   manifest: "Manifest JSON",
 };
 
+/** Depth spacing between tilted preview layers. */
 const LAYER_GAP_PX = 60;
 
 function layerKey(layer: { id: string; paintOrder: number }): string {
@@ -88,18 +89,30 @@ function useLayeredRenders(
   includeSingleSvg: boolean,
 ) {
   const { validate, debug } = opts;
+  const documentScope = useId();
+  const singleSvgOptions = useMemo(
+    () => ({ resourceIdPrefix: createResourceIdPrefix(`layered-${documentScope}-single`) }),
+    [documentScope],
+  );
   const layeredOptions = useMemo(
     () => (validate ? { debug, validateComposition: { enabled: true } } : { debug }),
     [validate, debug],
   );
+  const layeredSvgOptions = useMemo(
+    () => ({
+      ...layeredOptions,
+      resourceIdPrefix: createResourceIdPrefix(`layered-${documentScope}-stack`),
+    }),
+    [layeredOptions, documentScope],
+  );
 
   const pngVNode = includePng ? vnode : null;
   const singleSvgVNode = includeSingleSvg ? vnode : null;
-  const singleSvg = useRenderToSvgAndIrAsync(singleSvgVNode, undefined, {
+  const singleSvg = useRenderToSvgAndIrAsync(singleSvgVNode, singleSvgOptions, {
     retainPreviousResult: false,
   });
   const singlePng = useRenderToPngAsync(pngVNode, undefined, { retainPreviousResult: false });
-  const layeredSvg = useRenderToLayeredSvgAsync(vnode, layeredOptions, {
+  const layeredSvg = useRenderToLayeredSvgAsync(vnode, layeredSvgOptions, {
     retainPreviousResult: false,
   });
   const layeredPng = useRenderToLayeredPngAsync(pngVNode, layeredOptions, {
@@ -289,6 +302,7 @@ function LayeredPreviewBody({
   onFocusChange,
   currentLayeredIsRendering,
 }: LayeredPreviewBodyProps) {
+  const singleSvgMarkup = useMemo(() => ({ __html: stableSingleSvg ?? "" }), [stableSingleSvg]);
   return (
     <div className="preview-body">
       {showSingle && (
@@ -299,10 +313,7 @@ function LayeredPreviewBody({
           </div>
           {format === "svg" && stableSingleSvg ? (
             <div ref={setPreviewEl} className="preview-stage">
-              <div
-                className="rendered-content"
-                dangerouslySetInnerHTML={{ __html: stableSingleSvg }}
-              />
+              <div className="rendered-content" dangerouslySetInnerHTML={singleSvgMarkup} />
             </div>
           ) : (
             <div className="preview-stage">
@@ -427,7 +438,7 @@ function LayeredContent() {
   const [tilt, setTilt] = useState(true);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [focusKey, setFocusKey] = useState<string | null>(null);
-  const [overlayMode, setOverlayMode] = useState<OverlayMode>("layout");
+  const [overlayMode, setOverlayMode] = useState<OverlayMode>(DEFAULT_INSPECTION_FRAME_MODE);
   const [showOrigin, setShowOrigin] = useState(false);
 
   const [viewTab, setViewTab] = useState<ViewTab>("preview");
@@ -505,6 +516,11 @@ function LayeredContent() {
   );
 
   const showCode = viewTab !== "preview";
+  const canInspect =
+    !mobileViewer &&
+    stableSingleSvg !== null &&
+    stableSingleIr !== null &&
+    isSvgPreviewVisible(format, viewTab, codeLayout);
   const activeCodeTab: Exclude<ViewTab, "preview"> =
     viewTab === "preview" ? "rendered" : (viewTab as Exclude<ViewTab, "preview">);
 
@@ -570,27 +586,21 @@ function LayeredContent() {
               <span>3D stack view</span>
             </label>
 
-            <h3>Overlay</h3>
-            <label className="layered-control-row">
-              <span className="layered-control-label">Mode</span>
-              <select
-                value={overlayMode}
-                onChange={(event) => setOverlayMode(event.target.value as OverlayMode)}
-              >
-                {OVERLAY_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <h3>Inspection</h3>
+            <InspectionFrameField
+              id="layered-inspection-frame"
+              mode={overlayMode}
+              disabled={!canInspect}
+              onChange={setOverlayMode}
+            />
             <label className="layered-toggle">
               <input
                 type="checkbox"
                 checked={showOrigin}
+                disabled={!canInspect}
                 onChange={(event) => setShowOrigin(event.target.checked)}
               />
-              <span>Show origin anchor</span>
+              <span>Show origin anchor (amber)</span>
             </label>
             {showOrigin && !fixtureHasOrigins && (
               <p className="layered-hint-text">
@@ -598,10 +608,6 @@ function LayeredContent() {
                 anchors.
               </p>
             )}
-            <p className="layered-fixture-desc">
-              Slate dashed = layout / Cyan = transform / Pink corners = visual / Amber = origin
-            </p>
-
             <h3>Layers</h3>
             <LayerList
               layers={layerKeys}
@@ -751,6 +757,12 @@ function LayeredContent() {
 // Subcomponents
 // ---------------------------------------------------------------------------
 
+/** Keep each layer's SVG mounted while only its inspection or stacking controls change. */
+function LayeredSvgCanvas({ svg }: { svg: string }) {
+  const markup = useMemo(() => ({ __html: svg }), [svg]);
+  return <div className="layered-3d-canvas" dangerouslySetInnerHTML={markup} />;
+}
+
 function LayeredStage({
   format,
   svgResult,
@@ -789,9 +801,7 @@ function LayeredStage({
         hidden={hidden}
         focusKey={focusKey}
         onFocusChange={onFocusChange}
-        renderLayer={(layer) => (
-          <div className="layered-3d-canvas" dangerouslySetInnerHTML={{ __html: layer.svg }} />
-        )}
+        renderLayer={(layer) => <LayeredSvgCanvas svg={layer.svg} />}
       />
     );
   }
@@ -988,6 +998,7 @@ function describeWarning(warning: LayerWarning): string {
 // Page — wraps content in a Worker-enabled provider
 // ---------------------------------------------------------------------------
 
+/** Show layered exports with the Worker-enabled rendering provider. */
 export function LayeredPage() {
   return (
     <BoundSvgProvider

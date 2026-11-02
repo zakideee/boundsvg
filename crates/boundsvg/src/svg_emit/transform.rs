@@ -5,6 +5,7 @@
 //! `getTransformAttr`. Numbers format via ECMAScript `String(number)`
 //! (`formatSvgNumber` there is observably identical to `String`).
 
+use crate::error::EngineError;
 use boundshape::Transform2D;
 
 use super::num_format::format_js_number;
@@ -55,43 +56,6 @@ impl AffineMatrix {
     }
 }
 
-fn translate_matrix(tx: f64, ty: f64) -> AffineMatrix {
-    AffineMatrix {
-        e: tx,
-        f: ty,
-        ..AffineMatrix::identity()
-    }
-}
-
-fn rotate_matrix(angle_deg: f64, origin_x: f64, origin_y: f64) -> AffineMatrix {
-    let (sin, cos) = angle_deg.to_radians().sin_cos();
-    let rotation = AffineMatrix {
-        a: cos,
-        b: sin,
-        c: -sin,
-        d: cos,
-        e: 0.0,
-        f: 0.0,
-    };
-    translate_matrix(origin_x, origin_y)
-        .multiply(rotation)
-        .multiply(translate_matrix(-origin_x, -origin_y))
-}
-
-fn scale_matrix(scale_x: f64, scale_y: f64, origin_x: f64, origin_y: f64) -> AffineMatrix {
-    let scale = AffineMatrix {
-        a: scale_x,
-        b: 0.0,
-        c: 0.0,
-        d: scale_y,
-        e: 0.0,
-        f: 0.0,
-    };
-    translate_matrix(origin_x, origin_y)
-        .multiply(scale)
-        .multiply(translate_matrix(-origin_x, -origin_y))
-}
-
 /// Build the SVG `transform` attribute value for a transform.
 /// Mirrors TS `transformToSvg` — command order is translate → rotate →
 /// scale (with the origin translate sandwich when the origin is non-zero).
@@ -118,7 +82,9 @@ pub fn transform_to_svg(transform: &Transform2D) -> String {
             format_js_number(origin_y)
         ));
     }
-    if transform.scale_x.is_some() || transform.scale_y.is_some() {
+    let has_skew =
+        transform.skew_x_deg.unwrap_or(0.0) != 0.0 || transform.skew_y_deg.unwrap_or(0.0) != 0.0;
+    if has_skew || transform.scale_x.is_some() || transform.scale_y.is_some() {
         let scale_x = transform.scale_x.unwrap_or(1.0);
         let scale_y = transform.scale_y.unwrap_or(1.0);
         if origin_x != 0.0 || origin_y != 0.0 {
@@ -127,22 +93,50 @@ pub fn transform_to_svg(transform: &Transform2D) -> String {
                 format_js_number(origin_x),
                 format_js_number(origin_y)
             ));
-            commands.push(format!(
-                "scale({} {})",
-                format_js_number(scale_x),
-                format_js_number(scale_y)
-            ));
+            if transform.skew_x_deg.unwrap_or(0.0) != 0.0 {
+                commands.push(format!(
+                    "skewX({})",
+                    format_js_number(transform.skew_x_deg.unwrap_or(0.0))
+                ));
+            }
+            if transform.skew_y_deg.unwrap_or(0.0) != 0.0 {
+                commands.push(format!(
+                    "skewY({})",
+                    format_js_number(transform.skew_y_deg.unwrap_or(0.0))
+                ));
+            }
+            if transform.scale_x.is_some() || transform.scale_y.is_some() {
+                commands.push(format!(
+                    "scale({} {})",
+                    format_js_number(scale_x),
+                    format_js_number(scale_y)
+                ));
+            }
             commands.push(format!(
                 "translate({} {})",
                 format_js_number(-origin_x),
                 format_js_number(-origin_y)
             ));
         } else {
-            commands.push(format!(
-                "scale({} {})",
-                format_js_number(scale_x),
-                format_js_number(scale_y)
-            ));
+            if transform.skew_x_deg.unwrap_or(0.0) != 0.0 {
+                commands.push(format!(
+                    "skewX({})",
+                    format_js_number(transform.skew_x_deg.unwrap_or(0.0))
+                ));
+            }
+            if transform.skew_y_deg.unwrap_or(0.0) != 0.0 {
+                commands.push(format!(
+                    "skewY({})",
+                    format_js_number(transform.skew_y_deg.unwrap_or(0.0))
+                ));
+            }
+            if transform.scale_x.is_some() || transform.scale_y.is_some() {
+                commands.push(format!(
+                    "scale({} {})",
+                    format_js_number(scale_x),
+                    format_js_number(scale_y)
+                ));
+            }
         }
     }
     commands.join(" ")
@@ -155,6 +149,8 @@ pub fn has_transform(transform: &Transform2D) -> bool {
     transform.translate_x.unwrap_or(0.0) != 0.0
         || transform.translate_y.unwrap_or(0.0) != 0.0
         || transform.rotate_deg.is_some()
+        || transform.skew_x_deg.unwrap_or(0.0) != 0.0
+        || transform.skew_y_deg.unwrap_or(0.0) != 0.0
         || transform.scale_x.is_some()
         || transform.scale_y.is_some()
 }
@@ -189,37 +185,28 @@ pub fn node_transform_attr(transform: Option<&Transform2D>, bbox: BBox) -> Optio
 
 /// Resolve a node transform to the same affine matrix represented by the SVG
 /// transform attribute. Matrix composition follows the emitted command order.
-#[must_use]
-pub(crate) fn node_transform_matrix(transform: Option<&Transform2D>, bbox: BBox) -> AffineMatrix {
-    let Some(transform) = transform else {
-        return AffineMatrix::identity();
+///
+/// # Errors
+///
+/// Returns a validation error for unsafe skew channels or non-finite skew-bearing coefficients.
+pub(crate) fn node_transform_matrix(
+    transform: Option<&Transform2D>,
+    bbox: BBox,
+) -> Result<AffineMatrix, EngineError> {
+    let Some(transform) = transform.filter(|transform| has_transform(transform)) else {
+        return Ok(AffineMatrix::identity());
     };
-    if !has_transform(transform) {
-        return AffineMatrix::identity();
-    }
     let resolved = resolve_node_local_transform(transform, bbox);
-    let mut matrix = AffineMatrix::identity();
-    let translate_x = resolved.translate_x.unwrap_or(0.0);
-    let translate_y = resolved.translate_y.unwrap_or(0.0);
-    if translate_x != 0.0 || translate_y != 0.0 {
-        matrix = matrix.multiply(translate_matrix(translate_x, translate_y));
-    }
-    if let Some(rotate_deg) = resolved.rotate_deg {
-        matrix = matrix.multiply(rotate_matrix(
-            rotate_deg,
-            resolved.origin_x.unwrap_or(0.0),
-            resolved.origin_y.unwrap_or(0.0),
-        ));
-    }
-    if resolved.scale_x.is_some() || resolved.scale_y.is_some() {
-        matrix = matrix.multiply(scale_matrix(
-            resolved.scale_x.unwrap_or(1.0),
-            resolved.scale_y.unwrap_or(1.0),
-            resolved.origin_x.unwrap_or(0.0),
-            resolved.origin_y.unwrap_or(0.0),
-        ));
-    }
-    matrix
+    let coefficients = boundshape::transform_to_affine(&resolved)
+        .map_err(|error| EngineError::Validation(error.to_string()))?;
+    Ok(AffineMatrix {
+        a: coefficients[0],
+        b: coefficients[1],
+        c: coefficients[2],
+        d: coefficients[3],
+        e: coefficients[4],
+        f: coefficients[5],
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +239,8 @@ mod tests {
                 scale_y: values[4],
                 origin_x: values[5],
                 origin_y: values[6],
+                skew_x_deg: None,
+                skew_y_deg: None,
             };
             assert_eq!(
                 has_transform(&transform),
@@ -367,8 +356,11 @@ mod tests {
             scale_y: Some(2.0),
             origin_x: Some(1.0),
             origin_y: Some(2.0),
+            skew_x_deg: None,
+            skew_y_deg: None,
         };
-        let matrix = node_transform_matrix(Some(&transform), bbox(5.0, 7.0));
+        let matrix =
+            node_transform_matrix(Some(&transform), bbox(5.0, 7.0)).expect("valid transform");
         assert!((matrix.a - 0.0).abs() < 1e-12);
         assert!((matrix.b - 2.0).abs() < 1e-12);
         assert!((matrix.c + 2.0).abs() < 1e-12);
@@ -384,7 +376,11 @@ mod tests {
             d: 2.0,
             ..AffineMatrix::identity()
         };
-        let child = translate_matrix(3.0, 4.0);
+        let child = AffineMatrix {
+            e: 3.0,
+            f: 4.0,
+            ..AffineMatrix::identity()
+        };
         assert_eq!(
             parent.multiply(child),
             AffineMatrix {

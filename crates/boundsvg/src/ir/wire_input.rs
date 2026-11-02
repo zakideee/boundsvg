@@ -1,14 +1,15 @@
 //! Consume-only IR projections and their conversion into rendering-domain values.
 
+use super::ownership::{IrNodeOwnership, WrapperPlacement};
 use serde::Deserialize;
 
 use super::types::{
     AnimationEasing, AnimationIterations, AnimationKeyframe, AnimationSpec, AnimationSpring,
-    AnimationSteps, AnimationTransform2D, BBox, BorderRadius, BoxShadow, Gradient, HandlersRef,
-    IrFillRule, IrNode, IrNodeKind, IrTextAlign, ShapePartBounds, ShapePartPaint, ShapePathPart,
-    StrokeLinecap, StrokeLinejoin, StrokeScaling, TextOutlinePath, TextPathMetadata,
-    TextShadowLayer, TextStrokeLayer, TextUnitAnimation, TextUnitAnimationOrder,
-    TextUnitAnimationSample,
+    AnimationSteps, AnimationTransform2D, BBox, BorderRadius, BoxClip, BoxShadow, Gradient,
+    HandlersRef, IrFillRule, IrNode, IrNodeKind, IrTextAlign, ShapePartBounds, ShapePartPaint,
+    ShapePathPart, StrokeLinecap, StrokeLinejoin, StrokeScaling, TextGradient, TextOutlinePath,
+    TextPaint, TextPathMetadata, TextShadowLayer, TextStrokeLayer, TextUnitAnimation,
+    TextUnitAnimationOrder, TextUnitAnimationSample,
 };
 use crate::font::shaping::GlyphInfo;
 use crate::text::types::{Line, PositionedGlyph, TextRunStyle};
@@ -17,7 +18,7 @@ use crate::text::types::{Line, PositionedGlyph, TextRunStyle};
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "HandlersRef"))]
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[expect(
     clippy::struct_field_names,
     reason = "Field names match the event-handler wire contract."
@@ -165,7 +166,7 @@ pub(crate) struct TextOutlinePathInput {
     // Identity and geometry
     pub node_id: String,
     pub d: String,
-    pub fill: String,
+    pub fill: TextPaint,
     pub glyph_ids: Vec<u32>,
     pub text: String,
     pub bbox: BBox,
@@ -310,7 +311,7 @@ pub(crate) struct ShapePathPartInput {
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationTransform2D"))]
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AnimationTransform2DInput {
     #[serde(
         default,
@@ -342,12 +343,27 @@ pub(crate) struct AnimationTransform2DInput {
     )]
     #[cfg_attr(feature = "ir-schema", schemars(with = "f64"))]
     pub rotate_deg: Option<f64>,
+    /// Horizontal shear angle in degrees.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
+    #[cfg_attr(feature = "ir-schema", schemars(with = "f64"))]
+    pub skew_x_deg: Option<f64>,
+    /// Vertical shear angle in degrees.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
+    #[cfg_attr(feature = "ir-schema", schemars(with = "f64"))]
+    pub skew_y_deg: Option<f64>,
 }
 
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationKeyframe"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Wire keyframe with explicit omission rules for opacity and transform targets.
 pub(crate) struct AnimationKeyframeInput {
     pub at: f64,
     #[serde(
@@ -368,6 +384,7 @@ pub(crate) struct AnimationKeyframeInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpring"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Wire spring easing parameters, validated after decoding.
 pub(crate) struct AnimationSpringInput {
     #[serde(rename = "type")]
     pub kind: String,
@@ -395,6 +412,7 @@ pub(crate) struct AnimationSpringInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSteps"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Wire steps easing parameters, validated after decoding.
 pub(crate) struct AnimationStepsInput {
     #[serde(rename = "type")]
     pub kind: String,
@@ -412,6 +430,7 @@ pub(crate) struct AnimationStepsInput {
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationSpec"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Wire animation record decoded before semantic range and target validation.
 pub(crate) struct AnimationSpecInput {
     pub keyframes: Vec<AnimationKeyframeInput>,
     pub duration_ms: f64,
@@ -499,24 +518,111 @@ pub(crate) struct TextUnitAnimationSampleInput {
     pub transform: Option<boundshape::Transform2D>,
 }
 
-/// An IR node in the rendering tree.
-/// Serializes flat (kind fields inline next to `nodeId`/`bbox`, plus a
-/// `type` discriminant) to match the TS `IRNode` shape.
+/// Closed ownership input; source alone carries semantic metadata and handlers.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
-#[cfg_attr(feature = "ir-schema", schemars(rename = "IrNode"))]
+#[cfg_attr(feature = "ir-schema", schemars(rename = "IrNodeOwnership"))]
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(
+    tag = "role",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum IrNodeOwnershipInput {
+    Source {
+        #[serde(
+            default,
+            deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+        )]
+        #[cfg_attr(feature = "ir-schema", schemars(with = "Box<HandlersRefInput>"))]
+        on: Option<Box<HandlersRefInput>>,
+        #[serde(
+            default,
+            deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+        )]
+        #[cfg_attr(
+            feature = "ir-schema",
+            schemars(with = "std::collections::BTreeMap<String, String>")
+        )]
+        meta: Option<std::collections::BTreeMap<String, String>>,
+    },
+    Content {
+        owner_node_id: String,
+    },
+    Decoration {
+        owner_node_id: String,
+    },
+    Wrapper {
+        owner_node_id: String,
+        placement: WrapperPlacement,
+    },
+}
+
+/// Flat node input with a closed nested ownership descriptor.
+#[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "ir-schema",
+    schemars(rename = "IrNode", rename_all = "camelCase")
+)]
+#[derive(Debug, Clone)]
 pub(crate) struct IrNodeInput {
     pub node_id: String,
     pub bbox: BBox,
-    #[serde(flatten)]
+    pub ownership: IrNodeOwnershipInput,
+    #[cfg_attr(feature = "ir-schema", schemars(flatten))]
     pub kind: IrNodeKindInput,
+}
+
+impl<'de> Deserialize<'de> for IrNodeInput {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let mut fields = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        let node_id = fields
+            .remove("nodeId")
+            .ok_or_else(|| D::Error::missing_field("nodeId"))?;
+        let bbox = fields
+            .remove("bbox")
+            .ok_or_else(|| D::Error::missing_field("bbox"))?;
+        let ownership = fields
+            .remove("ownership")
+            .ok_or_else(|| D::Error::missing_field("ownership"))?;
+        Ok(Self {
+            node_id: serde_json::from_value(node_id).map_err(D::Error::custom)?,
+            bbox: serde_json::from_value(bbox).map_err(D::Error::custom)?,
+            ownership: serde_json::from_value(ownership).map_err(D::Error::custom)?,
+            kind: serde_json::from_value(serde_json::Value::Object(fields))
+                .map_err(D::Error::custom)?,
+        })
+    }
+}
+
+impl From<IrNodeOwnershipInput> for IrNodeOwnership {
+    fn from(input: IrNodeOwnershipInput) -> Self {
+        match input {
+            IrNodeOwnershipInput::Source { on, meta } => Self::Source {
+                on: on.map(|handlers| Box::new((*handlers).into())),
+                meta,
+            },
+            IrNodeOwnershipInput::Content { owner_node_id } => Self::Content { owner_node_id },
+            IrNodeOwnershipInput::Decoration { owner_node_id } => {
+                Self::Decoration { owner_node_id }
+            }
+            IrNodeOwnershipInput::Wrapper {
+                owner_node_id,
+                placement,
+            } => Self::Wrapper {
+                owner_node_id,
+                placement,
+            },
+        }
+    }
 }
 
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "ir-schema", schemars(rename = "AnimationEasing"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
+/// Accepted wire alternatives for named, cubic-bezier, spring, or steps easing.
 pub(crate) enum AnimationEasingInput {
     Named(String),
     CubicBezier([f64; 4]),
@@ -534,21 +640,23 @@ pub(crate) enum AnimationEasingInput {
 #[serde(
     tag = "type",
     rename_all = "lowercase",
-    rename_all_fields = "camelCase"
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
 )]
 pub(crate) enum IrNodeKindInput {
     /// Container group (may clip children).
     Group {
         #[serde(default)]
         children: Vec<IrNodeInput>,
-        clip_path: Option<BBox>,
-        clip_border_radius: Option<BorderRadius>,
+        #[serde(
+            default,
+            deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+        )]
+        clip: Option<BoxClip>,
         opacity: Option<f64>,
         box_shadow: Option<BoxShadow>,
-        meta: Option<std::collections::BTreeMap<String, String>>,
         transform: Option<boundshape::Transform2D>,
         animation: Option<AnimationSpecInput>,
-        on: Option<Box<HandlersRefInput>>,
     },
 
     /// Filled/stroked rectangle.
@@ -588,10 +696,15 @@ pub(crate) enum IrNodeKindInput {
         display_text: Option<String>,
         text_path: Option<Box<TextPathMetadata>>,
         glyph_paths: Option<Vec<TextOutlinePathInput>>,
+        #[serde(
+            default,
+            deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+        )]
+        gradients: Option<Vec<TextGradient>>,
         /// Stable paint-unit metadata generated by boundtext for opt-in text.
         unit_map: Option<crate::text::unit_map::TextUnitMap>,
         /// Raw unit animation semantic retained across frame sampling.
-        unit_animation: Option<TextUnitAnimationInput>,
+        unit_animation: Option<Box<TextUnitAnimationInput>>,
         /// Per-unit actual outline bounds and sampled pose.
         unit_animation_samples: Option<Vec<TextUnitAnimationSampleInput>>,
         stroke: Option<String>,
@@ -603,19 +716,20 @@ pub(crate) enum IrNodeKindInput {
         strokes: Option<Vec<TextStrokeLayer>>,
         shadows: Option<Vec<TextShadowLayer>>,
         text_decorations: Option<Vec<crate::text::types::TextDecorationFragment>>,
-        on: Option<Box<HandlersRefInput>>,
     },
 
     /// Raster image (base64 data URI).
     Image {
         src: String,
         preserve_aspect_ratio: String,
-        on: Option<HandlersRefInput>,
     },
 
     /// SVG path element.
     Path {
         path_data: String,
+        #[serde(default)]
+        #[cfg_attr(feature = "ir-schema", schemars(with = "serde_json::Value"))]
+        path_geometry: Option<serde::de::IgnoredAny>,
         fill: Option<String>,
         stroke: Option<String>,
         stroke_width: Option<f64>,
@@ -625,7 +739,6 @@ pub(crate) enum IrNodeKindInput {
         stroke_linejoin: Option<StrokeLinejoin>,
         stroke_dasharray: Option<String>,
         stroke_miterlimit: Option<f64>,
-        on: Option<HandlersRefInput>,
     },
 
     /// Nested SVG content.
@@ -635,7 +748,6 @@ pub(crate) enum IrNodeKindInput {
         #[serde(rename = "svgViewBox")]
         view_box: Option<String>,
         preserve_aspect_ratio: String,
-        on: Option<HandlersRefInput>,
     },
 
     /// Structural shape with viewport-baked part paths.
@@ -649,7 +761,6 @@ pub(crate) enum IrNodeKindInput {
         stroke_linejoin: Option<StrokeLinejoin>,
         stroke_dasharray: Option<String>,
         stroke_miterlimit: Option<f64>,
-        on: Option<HandlersRefInput>,
     },
 }
 
@@ -740,6 +851,8 @@ impl From<AnimationTransform2DInput> for AnimationTransform2D {
             scale_x: input.scale_x,
             scale_y: input.scale_y,
             rotate_deg: input.rotate_deg,
+            skew_x_deg: input.skew_x_deg,
+            skew_y_deg: input.skew_y_deg,
         }
     }
 }
@@ -820,6 +933,7 @@ impl From<IrNodeInput> for IrNode {
         Self {
             node_id: input.node_id,
             bbox: input.bbox,
+            ownership: input.ownership.into(),
             kind: input.kind.into(),
         }
     }
@@ -842,24 +956,18 @@ impl From<IrNodeKindInput> for IrNodeKind {
         match input {
             IrNodeKindInput::Group {
                 children,
-                clip_path,
-                clip_border_radius,
+                clip,
                 opacity,
                 box_shadow,
-                meta,
                 transform,
                 animation,
-                on,
             } => Self::Group {
                 children: children.into_iter().map(std::convert::Into::into).collect(),
-                clip_path,
-                clip_border_radius,
+                clip,
                 opacity,
                 box_shadow,
-                meta,
                 transform,
                 animation: animation.map(std::convert::Into::into),
-                on: on.map(|field| Box::new((*field).into())),
             },
             IrNodeKindInput::Rect {
                 fill,
@@ -905,6 +1013,7 @@ impl From<IrNodeKindInput> for IrNodeKind {
                 display_text,
                 text_path,
                 glyph_paths,
+                gradients,
                 unit_map,
                 unit_animation,
                 unit_animation_samples,
@@ -917,7 +1026,6 @@ impl From<IrNodeKindInput> for IrNodeKind {
                 strokes,
                 shadows,
                 text_decorations,
-                on,
             } => Self::Text {
                 lines: lines.into_iter().map(Line::from).collect(),
                 font,
@@ -940,8 +1048,9 @@ impl From<IrNodeKindInput> for IrNodeKind {
                 text_path,
                 glyph_paths: glyph_paths
                     .map(|field| field.into_iter().map(std::convert::Into::into).collect()),
+                gradients,
                 unit_map,
-                unit_animation: unit_animation.map(std::convert::Into::into),
+                unit_animation: unit_animation.map(|animation| Box::new((*animation).into())),
                 unit_animation_samples: unit_animation_samples
                     .map(|field| field.into_iter().map(std::convert::Into::into).collect()),
                 stroke,
@@ -953,19 +1062,17 @@ impl From<IrNodeKindInput> for IrNodeKind {
                 strokes,
                 shadows,
                 text_decorations,
-                on: on.map(|field| Box::new((*field).into())),
             },
             IrNodeKindInput::Image {
                 src,
                 preserve_aspect_ratio,
-                on,
             } => Self::Image {
                 src,
                 preserve_aspect_ratio,
-                on: on.map(std::convert::Into::into),
             },
             IrNodeKindInput::Path {
                 path_data,
+                path_geometry,
                 fill,
                 stroke,
                 stroke_width,
@@ -975,39 +1082,38 @@ impl From<IrNodeKindInput> for IrNodeKind {
                 stroke_linejoin,
                 stroke_dasharray,
                 stroke_miterlimit,
-                on,
-            } => Self::Path {
-                path_geometry: super::path_geometry::derive_path_geometry(
-                    &path_data,
-                    stroke.as_deref(),
+            } => {
+                let _ = path_geometry;
+                Self::Path {
+                    path_geometry: super::path_geometry::derive_path_geometry(
+                        &path_data,
+                        stroke.as_deref(),
+                        stroke_width,
+                        stroke_scaling,
+                        stroke_linecap,
+                        stroke_linejoin,
+                        stroke_miterlimit,
+                    ),
+                    path_data,
+                    fill,
+                    stroke,
                     stroke_width,
                     stroke_scaling,
+                    fill_rule,
                     stroke_linecap,
                     stroke_linejoin,
+                    stroke_dasharray,
                     stroke_miterlimit,
-                ),
-                path_data,
-                fill,
-                stroke,
-                stroke_width,
-                stroke_scaling,
-                fill_rule,
-                stroke_linecap,
-                stroke_linejoin,
-                stroke_dasharray,
-                stroke_miterlimit,
-                on: on.map(std::convert::Into::into),
-            },
+                }
+            }
             IrNodeKindInput::Svg {
                 content,
                 view_box,
                 preserve_aspect_ratio,
-                on,
             } => Self::Svg {
                 content,
                 view_box,
                 preserve_aspect_ratio,
-                on: on.map(std::convert::Into::into),
             },
             IrNodeKindInput::Shape {
                 shape_parts,
@@ -1019,7 +1125,6 @@ impl From<IrNodeKindInput> for IrNodeKind {
                 stroke_linejoin,
                 stroke_dasharray,
                 stroke_miterlimit,
-                on,
             } => Self::Shape {
                 shape_parts: shape_parts
                     .into_iter()
@@ -1033,7 +1138,6 @@ impl From<IrNodeKindInput> for IrNodeKind {
                 stroke_linejoin,
                 stroke_dasharray,
                 stroke_miterlimit,
-                on: on.map(std::convert::Into::into),
             },
         }
     }

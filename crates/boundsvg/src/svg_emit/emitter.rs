@@ -8,7 +8,7 @@
 //! defs inventory (ids + collection order) arrive fully resolved from the
 //! scene. What *is* computed here: the subtree of each def entry
 //! (feDropShadow-vs-blur/morphology filter branching and filter-region
-//! percentages, linear-vs-radial gradient branching and angle trigonometry,
+//! percentages and resolved linear/radial gradient geometry,
 //! clipPath per-corner/uniform/none content, rounded-rect path geometry),
 //! per-leaf paint attribute selection, the text
 //! effect-layer-vs-scalar-stroke grouping, and the tofu stroke-width
@@ -19,15 +19,15 @@ use crate::ir::animation_timeline::{
     CompiledCssEasing, CssIterationCount, DocumentAnimationPlan, DocumentKeyframe,
     MAX_TIMELINE_CSS_BYTES,
 };
-use crate::ir::gradient::angle_to_svg_coords;
 use crate::ir::types::{
     AnimationEasing, AnimationIterations, AnimationKeyframe, AnimationSpring, AnimationTransform2D,
-    BBox, BorderRadii, BorderRadius, Gradient, RadialGradientGeometry,
+    BBox, BorderRadii, BorderRadius, Gradient,
 };
 use crate::scene::{
     AnimationPlaybackStyle, ClipPathDef, DebugLineItem, DebugRectItem, DebugRectKind, FilterDef,
-    GradientDef, GroupOpenItem, ImageItem, NestedSvgItem, PaintItem, PaintScene, PathItem,
-    RectItem, ReducedMotionMode, ShapePartItem, SharedShapePathDef, TextGlyphItem, TextItem,
+    GradientDef, GroupOpenItem, ImageItem, NestedSvgItem, NodeAssociation, PaintItem, PaintScene,
+    PathItem, RectItem, ReducedMotionMode, ShapePartItem, SharedShapePathDef, TextGlyphItem,
+    TextItem,
 };
 use crate::svg_emit::identifier_namespace::{SvgIdentifierNamespace, SvgIdentifierRole};
 use crate::svg_emit::num_format::{format_js_number, format_number};
@@ -98,7 +98,7 @@ pub fn emit_svg_scene(scene: &PaintScene, options: SvgEmitOptions) -> Result<Str
 
     // Build <svg> opening tag. Always emit width/height so browser layout
     // does not resolve to 0x0 when only viewBox is present.
-    let mut svg_attrs: Vec<String> = vec![
+    let svg_attrs: Vec<String> = vec![
         "xmlns=\"http://www.w3.org/2000/svg\"".to_string(),
         format!(
             "viewBox=\"0 0 {} {}\"",
@@ -108,21 +108,6 @@ pub fn emit_svg_scene(scene: &PaintScene, options: SvgEmitOptions) -> Result<Str
         format!("width=\"{}\"", fmt2(scene.width * scene.scale)?),
         format!("height=\"{}\"", fmt2(scene.height * scene.scale)?),
     ];
-    if options.includes_node_ids() {
-        svg_attrs.insert(
-            1,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&scene.root_node_id)),
-        );
-    }
-    // The root group wrapper is skipped, so Canvas meta rides on the <svg>.
-    if let Some(meta) = &scene.root_meta {
-        for (key, value) in meta {
-            svg_attrs.push(format!(
-                "data-boundsvg-meta-{key}=\"{}\"",
-                escape_xml(value)
-            ));
-        }
-    }
     parts.push(format!("<svg {}>", svg_attrs.join(" ")));
 
     if let Some(generator) = &scene.generator {
@@ -221,27 +206,44 @@ fn emit_items(
 // Groups
 // ---------------------------------------------------------------------------
 
-fn emit_group_open(
-    open: &GroupOpenItem,
-    depth: usize,
-    options: SvgEmitOptions,
-) -> Result<String, EngineError> {
-    let mut attrs: Vec<String> = Vec::new();
-    if options.includes_node_ids()
-        && let Some(node_id) = &open.node_id
-    {
-        attrs.push(format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(node_id)));
+fn association_attrs(association: &NodeAssociation, options: SvgEmitOptions) -> Vec<String> {
+    let mut attrs = Vec::new();
+    if options.includes_node_ids() {
+        attrs.push(format!("data-boundsvg-role=\"{}\"", association.role));
+        attrs.push(format!(
+            "data-boundsvg-node-index=\"{}\"",
+            association.node_index
+        ));
+        attrs.push(format!(
+            "data-boundsvg-source-index=\"{}\"",
+            association.source_index
+        ));
+        if let Some(node_id) = &association.source_node_id {
+            attrs.push(format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(node_id)));
+        }
     }
-    if let Some(animation_class) = &open.animation_class {
-        attrs.push(format!("class=\"{}\"", escape_xml(animation_class)));
-    }
-    if let Some(meta) = &open.meta {
+    if let Some(meta) = &association.meta {
         for (key, value) in meta {
             attrs.push(format!(
                 "data-boundsvg-meta-{key}=\"{}\"",
                 escape_xml(value)
             ));
         }
+    }
+    attrs
+}
+
+fn emit_group_open(
+    open: &GroupOpenItem,
+    depth: usize,
+    options: SvgEmitOptions,
+) -> Result<String, EngineError> {
+    let mut attrs: Vec<String> = Vec::new();
+    if let Some(association) = &open.association {
+        attrs.extend(association_attrs(association, options));
+    }
+    if let Some(animation_class) = &open.animation_class {
+        attrs.push(format!("class=\"{}\"", escape_xml(animation_class)));
     }
     if let Some(transform) = &open.transform {
         attrs.push(format!("transform=\"{}\"", escape_xml(transform)));
@@ -272,11 +274,21 @@ fn emit_group_open(
 fn animation_transform_css(
     transform: &AnimationTransform2D,
     bbox: BBox,
+    includes_skew: bool,
 ) -> Result<String, EngineError> {
     let center_x = bbox.x + bbox.w / 2.0;
     let center_y = bbox.y + bbox.h / 2.0;
+    let skew = if includes_skew {
+        format!(
+            " skewX({}deg) skewY({}deg)",
+            format_js_number(transform.skew_x_deg.unwrap_or(0.0)),
+            format_js_number(transform.skew_y_deg.unwrap_or(0.0))
+        )
+    } else {
+        String::new()
+    };
     Ok(format!(
-        "translate({}px, {}px) translate({}px, {}px) rotate({}deg) scale({}, {}) translate({}px, {}px)",
+        "translate({}px, {}px) translate({}px, {}px) rotate({}deg){skew} scale({}, {}) translate({}px, {}px)",
         format_number(transform.translate_x.unwrap_or(0.0), 6)?,
         format_number(transform.translate_y.unwrap_or(0.0), 6)?,
         format_number(center_x, 6)?,
@@ -390,11 +402,16 @@ fn animation_iterations_css(
     }
 }
 
+fn animation_transform_has_skew(transform: &AnimationTransform2D) -> bool {
+    transform.skew_x_deg.unwrap_or(0.0) != 0.0 || transform.skew_y_deg.unwrap_or(0.0) != 0.0
+}
+
 fn emit_animation_keyframe(
     keyframe: &AnimationKeyframe,
     at: f64,
     bbox: BBox,
     indent: &str,
+    includes_skew: bool,
 ) -> Result<String, EngineError> {
     let mut declarations = Vec::new();
     if let Some(opacity) = keyframe.opacity {
@@ -403,7 +420,7 @@ fn emit_animation_keyframe(
     if let Some(transform) = &keyframe.transform {
         declarations.push(format!(
             "transform: {}",
-            animation_transform_css(transform, bbox)?
+            animation_transform_css(transform, bbox, includes_skew)?
         ));
     }
     Ok(format!(
@@ -436,6 +453,11 @@ fn emit_independent_animation_rule(
             node_id: None,
         });
     };
+    let includes_skew = spec
+        .keyframes
+        .iter()
+        .filter_map(|keyframe| keyframe.transform.as_ref())
+        .any(animation_transform_has_skew);
     let keyframes_name = escape_css_identifier(&animation.keyframes_name);
     let class_name = escape_css_identifier(&animation.class_name);
     let mut lines = vec![format!("    @keyframes {keyframes_name} {{")];
@@ -445,6 +467,7 @@ fn emit_independent_animation_rule(
             0.0,
             animation.bbox,
             "      ",
+            includes_skew,
         )?);
     }
     for keyframe in &spec.keyframes {
@@ -453,6 +476,7 @@ fn emit_independent_animation_rule(
             keyframe.at,
             animation.bbox,
             "      ",
+            includes_skew,
         )?);
     }
     if last.at < 1.0 {
@@ -461,6 +485,7 @@ fn emit_independent_animation_rule(
             1.0,
             animation.bbox,
             "      ",
+            includes_skew,
         )?);
     }
     lines.push("    }".to_string());
@@ -539,6 +564,7 @@ fn timeline_iterations_css(iterations: CssIterationCount) -> String {
 fn timeline_keyframe_declarations(
     keyframe: &DocumentKeyframe,
     bbox: BBox,
+    includes_skew: bool,
 ) -> Result<String, EngineError> {
     let mut declarations = Vec::new();
     if let Some(opacity) = keyframe.value.opacity {
@@ -547,7 +573,7 @@ fn timeline_keyframe_declarations(
     if let Some(transform) = &keyframe.value.transform {
         declarations.push(format!(
             "transform: {}",
-            animation_transform_css(transform, bbox)?
+            animation_transform_css(transform, bbox, includes_skew)?
         ));
     }
     if let Some(easing) = &keyframe.easing_to_next {
@@ -610,6 +636,11 @@ fn write_timeline_animation_rule_parts(
     output: &mut impl std::fmt::Write,
     rule: &TimelineAnimationRule<'_>,
 ) -> Result<(), EngineError> {
+    let includes_skew = rule
+        .keyframes
+        .iter()
+        .filter_map(|keyframe| keyframe.value.transform.as_ref())
+        .any(animation_transform_has_skew);
     let keyframes_name = escape_css_identifier(rule.keyframes_name);
     let class_name = escape_css_identifier(rule.class_name);
     write_timeline_css(output, format_args!("    @keyframes {keyframes_name} {{\n"))?;
@@ -619,7 +650,7 @@ fn write_timeline_animation_rule_parts(
             format_args!(
                 "      {}% {{ {}; }}\n",
                 format_js_number(keyframe.time_ms / rule.duration_ms * 100.0),
-                timeline_keyframe_declarations(keyframe, rule.bbox)?
+                timeline_keyframe_declarations(keyframe, rule.bbox, includes_skew)?
             ),
         )?;
     }
@@ -742,11 +773,11 @@ pub(crate) fn timeline_plan_css_byte_count(
     for track in &plan.tracks {
         let class_name = identifier_namespace.identifier(
             SvgIdentifierRole::AnimationClass,
-            &track.animation_name_owner,
+            &track.animation_resource_key,
         );
         let keyframes_name = identifier_namespace.identifier(
             SvgIdentifierRole::AnimationKeyframes,
-            &track.animation_name_owner,
+            &track.animation_resource_key,
         );
         write_timeline_animation_rule_parts(
             &mut counter,
@@ -769,7 +800,7 @@ pub(crate) fn timeline_plan_css_byte_count(
             plan.tracks.iter().map(|track| {
                 identifier_namespace.identifier(
                     SvgIdentifierRole::AnimationClass,
-                    &track.animation_name_owner,
+                    &track.animation_resource_key,
                 )
             }),
         )?;
@@ -949,9 +980,7 @@ fn emit_rect(rect: &RectItem, options: SvgEmitOptions) -> Result<String, EngineE
         format!("width=\"{}\"", fmt2(rect.bbox.w)?),
         format!("height=\"{}\"", fmt2(rect.bbox.h)?),
     ];
-    if options.includes_node_ids() && rect.emit_node_id_attr {
-        attrs.push(format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&rect.node_id)));
-    }
+    attrs.extend(association_attrs(&rect.association, options));
     if let Some(class_name) = &rect.canvas_stroke_class {
         attrs.push(format!("class=\"{}\"", escape_xml(class_name)));
     }
@@ -974,9 +1003,7 @@ fn emit_rounded_rect_path(
         "d=\"{}\"",
         rounded_rect_path_data(rect.bbox, radii)?
     )];
-    if options.includes_node_ids() && rect.emit_node_id_attr {
-        attrs.push(format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&rect.node_id)));
-    }
+    attrs.extend(association_attrs(&rect.association, options));
     if let Some(class_name) = &rect.canvas_stroke_class {
         attrs.push(format!("class=\"{}\"", escape_xml(class_name)));
     }
@@ -1054,12 +1081,7 @@ fn text_group_attrs(text: &TextItem, options: SvgEmitOptions) -> Vec<String> {
         "data-boundsvg-text=\"{}\"",
         escape_xml(&text.label)
     )];
-    if options.includes_node_ids() {
-        attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&text.node_id)),
-        );
-    }
+    attrs.extend(association_attrs(&text.association, options));
     if !text.label.is_empty() {
         attrs.push(format!("aria-label=\"{}\"", escape_xml(&text.label)));
     }
@@ -1071,6 +1093,7 @@ fn emit_text_fill_glyph(
     path_d: &str,
     text: &TextItem,
     indent: &str,
+    options: SvgEmitOptions,
 ) -> Result<String, EngineError> {
     let path = if glyph.missing {
         let stroke_width = fmt2(text.font_size_px * MISSING_GLYPH_STROKE_RATIO)?;
@@ -1086,13 +1109,15 @@ fn emit_text_fill_glyph(
             escape_xml(&glyph.fill)
         )
     };
-    emit_text_unit_path(glyph, &path, indent)
+    emit_text_unit_path(glyph, &path, indent, text, options)
 }
 
 fn emit_text_unit_path(
     glyph: &TextGlyphItem,
     path: &str,
     indent: &str,
+    text: &TextItem,
+    options: SvgEmitOptions,
 ) -> Result<String, EngineError> {
     let Some(unit_paint) = &glyph.unit_paint else {
         return Ok(format!("{indent}{path}"));
@@ -1109,6 +1134,12 @@ fn emit_text_unit_path(
     }
     if attrs.is_empty() {
         return Ok(format!("{indent}{path}"));
+    }
+    if options.includes_node_ids() {
+        attrs.push(format!(
+            "data-boundsvg-unit-source-index=\"{}\"",
+            text.association.source_index
+        ));
     }
     Ok(format!(
         "{indent}<g {}>\n{indent}  {path}\n{indent}</g>",
@@ -1148,7 +1179,13 @@ fn emit_text(
     append_text_decorations(&mut lines, text, false, &glyph_indent)?;
     for glyph in &text.glyphs {
         let path_d = compact_text_path(&glyph.d);
-        lines.push(emit_text_fill_glyph(glyph, &path_d, text, &glyph_indent)?);
+        lines.push(emit_text_fill_glyph(
+            glyph,
+            &path_d,
+            text,
+            &glyph_indent,
+            options,
+        )?);
     }
     append_text_decorations(&mut lines, text, true, &glyph_indent)?;
     lines.push(format!("{indent}</g>"));
@@ -1195,6 +1232,8 @@ fn emit_text_effect_layers(
                     glyph,
                     &format!("<path d=\"{}\"/>", escape_xml(&path_data[*glyph_index])),
                     &copy_indent,
+                    text,
+                    options,
                 )?);
             }
             lines.push(format!("{inner}</g>"));
@@ -1236,6 +1275,8 @@ fn emit_text_effect_layers(
                     glyph,
                     &format!("<path d=\"{}\"/>", escape_xml(&path_data[*glyph_index])),
                     &copy_indent,
+                    text,
+                    options,
                 )?);
             }
             lines.push(format!("{inner}</g>"));
@@ -1244,7 +1285,7 @@ fn emit_text_effect_layers(
 
     // Fill glyphs on top.
     for (glyph, path_d) in text.glyphs.iter().zip(&path_data) {
-        lines.push(emit_text_fill_glyph(glyph, path_d, text, &inner)?);
+        lines.push(emit_text_fill_glyph(glyph, path_d, text, &inner, options)?);
     }
     append_text_decorations(&mut lines, text, true, &inner)?;
     lines.push(format!("{indent}</g>"));
@@ -1286,12 +1327,7 @@ fn emit_image(image: &ImageItem, options: SvgEmitOptions) -> Result<String, Engi
         format!("width=\"{}\"", fmt2(image.bbox.w)?),
         format!("height=\"{}\"", fmt2(image.bbox.h)?),
     ];
-    if options.includes_node_ids() {
-        attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&image.node_id)),
-        );
-    }
+    attrs.extend(association_attrs(&image.association, options));
     if !image.preserve_aspect_ratio.is_empty() {
         attrs.push(format!(
             "preserveAspectRatio=\"{}\"",
@@ -1366,12 +1402,7 @@ fn emit_path(path: &PathItem, options: SvgEmitOptions) -> Result<String, EngineE
         format!("height=\"{}\"", fmt2(h)?),
         "overflow=\"visible\"".to_string(),
     ];
-    if options.includes_node_ids() {
-        svg_attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&path.node_id)),
-        );
-    }
+    svg_attrs.extend(association_attrs(&path.association, options));
     Ok([
         format!("<svg {}>", svg_attrs.join(" ")),
         format!("  <path {}/>", path_attrs.join(" ")),
@@ -1395,12 +1426,7 @@ fn emit_nested_svg(
         format!("width=\"{}\"", fmt2(nested.bbox.w)?),
         format!("height=\"{}\"", fmt2(nested.bbox.h)?),
     ];
-    if options.includes_node_ids() {
-        attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&nested.node_id)),
-        );
-    }
+    attrs.extend(association_attrs(&nested.association, options));
     if let Some(view_box) = &nested.view_box
         && !view_box.is_empty()
     {
@@ -1445,12 +1471,7 @@ fn emit_shape(
         format!("height=\"{}\"", fmt2(shape.bbox.h)?),
         "overflow=\"hidden\"".to_string(),
     ];
-    if options.includes_node_ids() {
-        svg_attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&shape.node_id)),
-        );
-    }
+    svg_attrs.extend(association_attrs(&shape.association, options));
 
     let mut lines: Vec<String> = vec![format!("{indent}<svg {}>", svg_attrs.join(" "))];
     for part in &shape.parts {
@@ -1573,42 +1594,25 @@ fn emit_shared_shape_path_def(shared: &SharedShapePathDef) -> String {
 }
 
 fn emit_clip_path_content(clip_path: &ClipPathDef) -> Result<String, EngineError> {
-    match clip_path.border_radius {
-        Some(BorderRadius::PerCorner(radii)) => Ok(format!(
+    match &clip_path.clip {
+        crate::ir::types::BoxClip::Empty => Ok("      <path d=\"\"/>".to_string()),
+        crate::ir::types::BoxClip::BoxContour(contour) => Ok(format!(
             "      <path d=\"{}\"/>",
-            rounded_rect_path_data(clip_path.bbox, radii)?
-        )),
-        Some(BorderRadius::Uniform(radius)) => Ok(format!(
-            "      <rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{}\" ry=\"{}\"/>",
-            fmt2(clip_path.bbox.x)?,
-            fmt2(clip_path.bbox.y)?,
-            fmt2(clip_path.bbox.w)?,
-            fmt2(clip_path.bbox.h)?,
-            fmt2(radius)?,
-            fmt2(radius)?
-        )),
-        None => Ok(format!(
-            "      <rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>",
-            fmt2(clip_path.bbox.x)?,
-            fmt2(clip_path.bbox.y)?,
-            fmt2(clip_path.bbox.w)?,
-            fmt2(clip_path.bbox.h)?
+            crate::ir::box_geometry::contour_path(contour)?
         )),
     }
 }
 
 fn emit_gradient_def(gradient_def: &GradientDef) -> Result<String, EngineError> {
     match &gradient_def.gradient {
-        Gradient::Linear { angle, stops } => {
-            let (local_x1, local_y1, local_x2, local_y2) =
-                angle_to_svg_coords(*angle, gradient_def.bbox.w, gradient_def.bbox.h);
+        Gradient::Linear { geometry, stops } => {
             let mut lines: Vec<String> = vec![format!(
                 "    <linearGradient id=\"{}\" gradientUnits=\"userSpaceOnUse\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">",
                 escape_xml(&gradient_def.id),
-                format_number(gradient_def.bbox.x + local_x1, 4)?,
-                format_number(gradient_def.bbox.y + local_y1, 4)?,
-                format_number(gradient_def.bbox.x + local_x2, 4)?,
-                format_number(gradient_def.bbox.y + local_y2, 4)?
+                format_number(gradient_def.bbox.x + geometry.start_x, 4)?,
+                format_number(gradient_def.bbox.y + geometry.start_y, 4)?,
+                format_number(gradient_def.bbox.x + geometry.end_x, 4)?,
+                format_number(gradient_def.bbox.y + geometry.end_y, 4)?
             )];
             for stop in stops {
                 lines.push(emit_gradient_stop(stop)?);
@@ -1617,19 +1621,13 @@ fn emit_gradient_def(gradient_def: &GradientDef) -> Result<String, EngineError> 
             Ok(lines.join("\n"))
         }
         Gradient::Radial { geometry, stops } => {
-            let resolved_geometry = geometry.unwrap_or_else(|| RadialGradientGeometry {
-                center_x: gradient_def.bbox.w * 0.5,
-                center_y: gradient_def.bbox.h * 0.5,
-                radius_x: gradient_def.bbox.w.abs() / std::f64::consts::SQRT_2,
-                radius_y: gradient_def.bbox.h.abs() / std::f64::consts::SQRT_2,
-            });
-            let center_x = gradient_def.bbox.x + resolved_geometry.center_x;
-            let center_y = gradient_def.bbox.y + resolved_geometry.center_y;
+            let center_x = gradient_def.bbox.x + geometry.center_x;
+            let center_y = gradient_def.bbox.y + geometry.center_y;
             let mut lines: Vec<String> = vec![format!(
                 "    <radialGradient id=\"{}\" gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\" gradientTransform=\"matrix({} 0 0 {} {} {})\">",
                 escape_xml(&gradient_def.id),
-                format_number(resolved_geometry.radius_x, 4)?,
-                format_number(resolved_geometry.radius_y, 4)?,
+                format_number(geometry.radius_x, 4)?,
+                format_number(geometry.radius_y, 4)?,
                 format_number(center_x, 4)?,
                 format_number(center_y, 4)?
             )];
@@ -1651,11 +1649,19 @@ fn emit_gradient_stop(stop: &crate::ir::types::GradientStop) -> Result<String, E
 }
 
 /// Emit an SVG `<filter>` for a box shadow (or text shadow layer).
-fn emit_filter_def(filter: &FilterDef) -> Result<String, EngineError> {
-    let mut lines: Vec<String> = Vec::new();
-
+/// Resolve the actual emitted filter rectangle in object-bounding-box percentages.
+///
+/// # Errors
+///
+/// Returns a structured numeric error if the percentage expansion overflows.
+pub(crate) fn filter_region_percent(
+    dx: f64,
+    dy: f64,
+    blur: f64,
+    spread: f64,
+) -> Result<(f64, f64), EngineError> {
     // Expand filter region to accommodate shadow offset + blur + spread
-    let expand = filter.dx.abs() + filter.dy.abs() + filter.blur * 2.0 + filter.spread.abs() * 2.0;
+    let expand = dx.abs() + dy.abs() + blur * 2.0 + spread.abs() * 2.0;
     // percentage + margin (the TS arithmetic is kept verbatim)
     let expand_pct = ((expand / 100.0) * 100.0 + 20.0).ceil();
     let region_min = -expand_pct;
@@ -1667,15 +1673,24 @@ fn emit_filter_def(filter: &FilterDef) -> Result<String, EngineError> {
             code: "INVALID_NUMBER".to_string(),
             message: format!(
                 "Box shadow filter region is not finite (dx={}, dy={}, blur={}, spread={})",
-                format_js_number(filter.dx),
-                format_js_number(filter.dy),
-                format_js_number(filter.blur),
-                format_js_number(filter.spread)
+                format_js_number(dx),
+                format_js_number(dy),
+                format_js_number(blur),
+                format_js_number(spread)
             ),
             stage: Some(crate::diagnostics::PipelineStage::Emit),
             node_id: None,
         });
     }
+
+    Ok((region_min, filter_size))
+}
+
+fn emit_filter_def(filter: &FilterDef) -> Result<String, EngineError> {
+    let mut lines: Vec<String> = Vec::new();
+
+    let (region_min, filter_size) =
+        filter_region_percent(filter.dx, filter.dy, filter.blur, filter.spread)?;
 
     lines.push(format!(
         "    <filter id=\"{}\" x=\"{}%\" y=\"{}%\" width=\"{}%\" height=\"{}%\">",
@@ -1743,7 +1758,13 @@ mod tests {
     #[test]
     fn positions_path_wrapper_without_clipping_its_paint() {
         let path = PathItem {
-            node_id: "arrow".to_string(),
+            association: NodeAssociation {
+                node_index: 0,
+                source_index: 0,
+                role: "source",
+                source_node_id: Some("arrow".to_string()),
+                meta: None,
+            },
             bbox: BBox {
                 x: 100.0,
                 y: 20.0,
@@ -1763,7 +1784,7 @@ mod tests {
         };
         let svg = emit_path(&path, SvgEmitOptions::default()).expect("Path emits");
         assert!(svg.starts_with(
-            "<svg data-boundsvg-node-id=\"arrow\" x=\"100\" y=\"20\" width=\"40\" height=\"40\" overflow=\"visible\">"
+            "<svg x=\"100\" y=\"20\" width=\"40\" height=\"40\" overflow=\"visible\" data-boundsvg-role=\"source\" data-boundsvg-node-index=\"0\" data-boundsvg-source-index=\"0\" data-boundsvg-node-id=\"arrow\">"
         ));
         assert!(svg.contains(
             "d=\"M-100 0L120 0L120 40Z\" fill=\"red\" stroke=\"black\" stroke-width=\"2\""
@@ -1871,10 +1892,12 @@ mod tests {
                 w: 200.0,
                 h: 100.0,
             },
-            gradient: Gradient::Linear {
-                angle: 45.0,
-                stops: red_blue_stops(),
-            },
+            gradient: crate::ir::gradient::resolve_gradient_for_box(
+                "linear-gradient(45deg, red, blue)",
+                200.0,
+                100.0,
+            )
+            .expect("linear paint"),
         };
 
         let emitted = emit_gradient_def(&gradient_def).expect("linear gradient emits");
@@ -1903,12 +1926,12 @@ mod tests {
                 h: 100.0,
             },
             gradient: Gradient::Radial {
-                geometry: Some(RadialGradientGeometry {
+                geometry: crate::ir::types::RadialGradientGeometry {
                     center_x: 200.0,
                     center_y: 100.0,
                     radius_x: 200.0_f64.hypot(100.0),
                     radius_y: 200.0_f64.hypot(100.0),
-                }),
+                },
                 stops: red_blue_stops(),
             },
         };
@@ -1983,4 +2006,38 @@ mod tests {
 
     /// Exact CSS easing oracle for the existing 400 ms spring sampling fixture.
     const SPRING_LINEAR_400MS_GOLDEN: &str = "linear(0.000000, 0.001912, 0.007487, 0.016481, 0.028654, 0.043765, 0.061581, 0.081870, 0.104405, 0.128966, 0.155335, 0.183304, 0.212670, 0.243237, 0.274817, 0.307229, 0.340300, 0.373864, 0.407765, 0.441854, 0.475990, 0.510042, 0.543885, 0.577404, 0.610493, 0.643051, 0.674987, 0.706219, 0.736671, 0.766275, 0.794970, 0.822702, 0.849426, 0.875100, 0.899692, 0.923173, 0.945522, 0.966724, 0.986767, 1.005646, 1.023360, 1.039912, 1.055310, 1.069565, 1.082694, 1.094714, 1.105648, 1.115519, 1.124355, 1.132184, 1.139039, 1.144953, 1.149959, 1.154094, 1.157396, 1.159901, 1.161650, 1.162681, 1.163033, 1.162747, 1.161862, 1.160418, 1.158454, 1.156010, 1.000000)";
+    #[test]
+    fn shared_gradient_resolution_preserves_background_svg_and_png_bytes() {
+        for (paint, opening, closing) in [
+            (
+                "linear-gradient(45deg, red, blue)",
+                "    <linearGradient id=\"paint\" gradientUnits=\"userSpaceOnUse\" x1=\"35\" y1=\"145\" x2=\"185\" y2=\"-5\">",
+                "    </linearGradient>",
+            ),
+            (
+                "radial-gradient(red, blue)",
+                "    <radialGradient id=\"paint\" gradientUnits=\"userSpaceOnUse\" cx=\"0\" cy=\"0\" r=\"1\" gradientTransform=\"matrix(141.4214 0 0 70.7107 110 70)\">",
+                "    </radialGradient>",
+            ),
+        ] {
+            let expected = format!(
+                "{opening}\n      <stop offset=\"0%\" stop-color=\"red\"/>\n      <stop offset=\"100%\" stop-color=\"blue\"/>\n{closing}"
+            );
+            let definition = GradientDef {
+                id: "paint".into(),
+                bbox: BBox::new(10.0, 20.0, 200.0, 100.0),
+                gradient: crate::ir::gradient::resolve_gradient_for_box(paint, 200.0, 100.0)
+                    .expect("paint"),
+            };
+            let actual = emit_gradient_def(&definition).expect("emit");
+            assert_eq!(actual, expected);
+            let actual_pixels = rasterize_test_gradient(&actual, "paint");
+            let expected_pixels = rasterize_test_gradient(&expected, "paint");
+            assert_eq!(actual_pixels.data(), expected_pixels.data());
+            assert_eq!(
+                actual_pixels.encode_png().expect("PNG"),
+                expected_pixels.encode_png().expect("reference PNG")
+            );
+        }
+    }
 }

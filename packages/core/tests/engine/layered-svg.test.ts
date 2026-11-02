@@ -199,9 +199,9 @@ describe("Engine.renderToLayeredSvg()", () => {
       "independent",
       "independent",
     ]);
-    expect(result.layers[0]?.nodeIds).toEqual(["bg"]);
-    expect(result.layers[1]?.nodeIds).toEqual(["panel"]);
-    expect(result.layers[2]?.nodeIds).toEqual(["title"]);
+    expect(result.layers[0]?.sources.map((entry) => entry.source.nodeId)).toEqual(["bg"]);
+    expect(result.layers[1]?.sources.map((entry) => entry.source.nodeId)).toEqual(["panel"]);
+    expect(result.layers[2]?.sources.map((entry) => entry.source.nodeId)).toEqual(["title"]);
     expect(result.layers[2]?.svg).toContain('data-boundsvg-node-id="title"');
     expect(result.manifest.layers).toHaveLength(3);
   });
@@ -322,8 +322,8 @@ describe("Engine.renderToLayeredSvg()", () => {
   it("reports paintOrder 0 for a layer that draws nothing, wherever it sits", () => {
     const engine = createTestEngine();
     // `overflow: "clip"` alone makes the box atomic without painting anything, so
-    // it owns a layer yet contributes no `ir.drawOrder` entry. `findPaintOrder`
-    // returns undefined for it and `buildManifestEntry` resolves that with `?? 0`.
+    // it owns a layer with no physical paint ordinal. The layer manifest uses 0
+    // for this empty island without changing the order of its painted neighbors.
     const ghost = () =>
       createElement("Box", {
         id: "ghost",
@@ -390,10 +390,8 @@ describe("Engine.renderToLayeredSvg()", () => {
 
     expect(result.layers).toHaveLength(1);
     expect(result.layers[0]?.id).toBe("text");
-    expect(result.layers[0]?.nodeIds).toEqual(["caret-text"]);
-    expect(result.layers[0]?.svg).toContain(
-      'data-boundsvg-node-id="caret-text:inline-rect:0:rect"',
-    );
+    expect(result.layers[0]?.sources.map((entry) => entry.source.nodeId)).toEqual(["caret-text"]);
+    expect(result.layers[0]?.svg).toContain('data-boundsvg-role="decoration"');
     expect(result.layers[0]?.svg).toContain('fill="#2563eb"');
   });
 
@@ -404,8 +402,10 @@ describe("Engine.renderToLayeredSvg()", () => {
 
     expect(result.layers).toHaveLength(1);
     expect(result.layers[0]?.id).toBe("text");
-    expect(result.layers[0]?.nodeIds).toEqual(["decorated-text"]);
-    expect(result.layers[0]?.svg).toContain('data-boundsvg-node-id="decorated-text:ibox0"');
+    expect(result.layers[0]?.sources.map((entry) => entry.source.nodeId)).toEqual([
+      "decorated-text",
+    ]);
+    expect(result.layers[0]?.svg).toContain('data-boundsvg-role="decoration"');
     expect(result.layers[0]?.svg).toContain('fill="#dc2626"');
   });
 
@@ -417,10 +417,12 @@ describe("Engine.renderToLayeredSvg()", () => {
     expect(result.layers).toHaveLength(1);
     expect(result.layers[0]?.id).toBe("text");
     expect(result.layers[0]?.mode).toBe("atomic");
-    expect(result.layers[0]?.nodeIds).toEqual(["decorated-text"]);
+    expect(result.layers[0]?.sources.map((entry) => entry.source.nodeId)).toEqual([
+      "decorated-text",
+    ]);
     expect(result.layers[0]?.collapsedFromLayers).toBeUndefined();
     expect(result.layers[0]?.warnings).toEqual([]);
-    expect(result.layers[0]?.svg).toContain('data-boundsvg-node-id="decorated-text:ibox0"');
+    expect(result.layers[0]?.svg).toContain('data-boundsvg-role="decoration"');
     expect(result.layers[0]?.svg).toContain('fill="#dc2626"');
   });
 
@@ -483,9 +485,9 @@ describe("Engine.renderToLayeredSvg()", () => {
     const result = engine.renderToLayeredSvg(vnode);
 
     expect(result.layers.map((layer) => layer.id)).toEqual(["textBox", "text", "default"]);
-    expect(result.layers[0]?.nodeIds).toEqual(["panel-bg"]);
-    expect(result.layers[1]?.nodeIds).toEqual(["title"]);
-    expect(result.layers[2]?.nodeIds).toEqual(["fallback"]);
+    expect(result.layers[0]?.sources.map((entry) => entry.source.nodeId)).toEqual(["panel-bg"]);
+    expect(result.layers[1]?.sources.map((entry) => entry.source.nodeId)).toEqual(["title"]);
+    expect(result.layers[2]?.sources.map((entry) => entry.source.nodeId)).toEqual(["fallback"]);
   });
 
   it("collapses cross-layer content under parent opacity into an atomic segment", () => {
@@ -523,7 +525,10 @@ describe("Engine.renderToLayeredSvg()", () => {
     expect(result.layers[0]?.id).toBe("textBox");
     expect(result.layers[0]?.mode).toBe("atomic");
     expect(result.layers[0]?.collapsedFromLayers).toEqual(["text"]);
-    expect(result.layers[0]?.nodeIds).toEqual(["panel", "title"]);
+    expect(result.layers[0]?.sources.map((entry) => entry.source.nodeId)).toEqual([
+      "panel",
+      "title",
+    ]);
     expect(result.layers[0]?.warnings).toEqual(
       expect.arrayContaining([
         {
@@ -659,11 +664,17 @@ describe("Engine.renderToLayeredSvg()", () => {
 
     const vectorLayer = result.manifest.layers.find((layer) => layer.id === "vector");
     expect(vectorLayer?.parts).toEqual([
-      { partId: "bg", nodeId: "badge" },
-      { partId: "a&b", nodeId: "badge" },
+      {
+        partId: "bg",
+        source: vectorLayer?.sources.find((entry) => entry.source.nodeId === "badge")?.source,
+      },
+      {
+        partId: "a&b",
+        source: vectorLayer?.sources.find((entry) => entry.source.nodeId === "badge")?.source,
+      },
     ]);
     // nodeIds contract is untouched and part-free layers omit the key
-    expect(vectorLayer?.nodeIds).toEqual(["badge"]);
+    expect(vectorLayer?.sources.map((entry) => entry.source.nodeId)).toEqual(["badge"]);
     const backgroundLayer = result.manifest.layers.find((layer) => layer.id === "background");
     expect(backgroundLayer?.parts).toBeUndefined();
   });
@@ -1018,11 +1029,9 @@ describe("Engine.renderToLayeredPng()", () => {
 
     expect(result.layers).toHaveLength(1);
     expect(result.layers[0]?.id).toBe("text");
-    expect(result.layers[0]?.nodeIds).toEqual(["caret-text"]);
+    expect(result.layers[0]?.sources.map((entry) => entry.source.nodeId)).toEqual(["caret-text"]);
     expect(svgToPngFn).toHaveBeenCalledOnce();
-    expect(svgToPngFn.mock.calls[0]?.[0]).toContain(
-      'data-boundsvg-node-id="caret-text:inline-rect:0:rect"',
-    );
+    expect(svgToPngFn.mock.calls[0]?.[0]).toContain('data-boundsvg-role="decoration"');
     expect(svgToPngFn.mock.calls[0]?.[0]).toContain('fill="#2563eb"');
   });
 
@@ -1034,9 +1043,11 @@ describe("Engine.renderToLayeredPng()", () => {
 
     expect(result.layers).toHaveLength(1);
     expect(result.layers[0]?.id).toBe("text");
-    expect(result.layers[0]?.nodeIds).toEqual(["decorated-text"]);
+    expect(result.layers[0]?.sources.map((entry) => entry.source.nodeId)).toEqual([
+      "decorated-text",
+    ]);
     expect(svgToPngFn).toHaveBeenCalledOnce();
-    expect(svgToPngFn.mock.calls[0]?.[0]).toContain('data-boundsvg-node-id="decorated-text:ibox0"');
+    expect(svgToPngFn.mock.calls[0]?.[0]).toContain('data-boundsvg-role="decoration"');
     expect(svgToPngFn.mock.calls[0]?.[0]).toContain('fill="#dc2626"');
   });
 

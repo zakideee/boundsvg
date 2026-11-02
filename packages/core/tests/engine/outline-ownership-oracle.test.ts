@@ -18,39 +18,39 @@ type OracleResult = {
 
 /** Frozen SVG, IR, outline hashes and structural counts for the current font stack. */
 const expectedOracle: Record<string, OracleResult> = {
-  "fallback-missing-transform-glyphs": {
-    svgSha256: "980cd8296e788ba5db378ced605228109af7a51537597377012f1e418c7e647a",
-    rootSha256: "fc6797778f6c99133320522568235212b92b25b7d71307b217e7ba54e192e1b5",
-    outlinesSha256: "346887eb4e25b2e97e0fe736dbd9006a018aaeea98a1f9a9a8683a257400e4d5",
-    glyphPathCount: 3,
+  "vertical-ruby-merged": {
+    svgSha256: "7b953e81b092c533462fc7772dc751482c77b3fd5f79aec8024972dda65cb577",
+    rootSha256: "279c602103c04106414b51ab3988931f91712f138af0448c7e95b4a104e1077f",
+    outlinesSha256: "3f5873cb647d9fbcb283e81f779f95a5b2d4f8142b66fe379a0c078fc322f2f2",
+    glyphPathCount: 2,
+    unitSampleCount: 0,
+  },
+  "vertical-ruby-glyphs": {
+    svgSha256: "eadaa57a5e5b0ac1a381a634d19b90561e35008463aa32aa886a908f6b28c6bb",
+    rootSha256: "5534c11f509299820a1c48e03220c06fa5e30c52f5014657ead64032e8313866",
+    outlinesSha256: "24d921ad4987e7be6e5744df81db5243f0c66379e89d9004d4fc7334b2ac2c99",
+    glyphPathCount: 53,
     unitSampleCount: 0,
   },
   "text-on-path-merged": {
-    svgSha256: "9549d9372a932fd91ea1ab97a5db412d1004fe4cc7d73bd100a8f191c67452a6",
-    rootSha256: "cea5c3e92a4943a079cc6661f45fcdcd137226ee15930fd06e75eb0ebae7dfa4",
-    outlinesSha256: "da6e6b4ea901e19e716e1eb3abf381e950d402faeafe1067cbdfafeebd842976",
+    svgSha256: "2140fffa2f90e43215d81faa188a74f5b1627afdfafd77db070d64a59ca1c928",
+    rootSha256: "cc2578ef8f4d4cd8332978a00699b64a10972046adcdcc54b293bf696996c86e",
+    outlinesSha256: "2a00aaafd4e2c443807e1f37d777f8850470647cfdfd968a4e614bcd91c3accf",
     glyphPathCount: 28,
     unitSampleCount: 35,
   },
   "unit-animation-glyphs": {
-    svgSha256: "e3dd59ea825591782b3566d3685c632e4c01fbc44ef5509ed9063006dd14585a",
-    rootSha256: "5c9eafaebc0880dd335cf1f179e690e2e681024417b93efb5fc112009d3583cd",
-    outlinesSha256: "757c28bed7ae458c494604fcca6672378b9889faa7d5bdb171915794f9905939",
+    svgSha256: "a7db1665916213c8cf1bb9f0b22710885f94551eb4d31b0cec8e2f0d21973fff",
+    rootSha256: "dc08a896908248b88f2d7fb86114a0d7c954e3a922140c514f1d1b3a9ebfad2d",
+    outlinesSha256: "cfec93479736ceca286dc9b68f3e415b7a4efd98b5a70fd5ba32cbe35ff59474",
     glyphPathCount: 48,
     unitSampleCount: 12,
   },
-  "vertical-ruby-glyphs": {
-    svgSha256: "342cece40606b15d8226a2914a7a152bb73cb5021f29dded16d522ad28e33ab9",
-    rootSha256: "77295a74705ae67d6a4d0dd6dbeb0ad13d7216a408e0a559ca9235ebc0fdcc90",
-    outlinesSha256: "0c5d56a6910ee90ceecf2157ec9dda4e2e7868d4a97bf93c4e29b48229ac8f56",
-    glyphPathCount: 53,
-    unitSampleCount: 0,
-  },
-  "vertical-ruby-merged": {
-    svgSha256: "c9d526e9ab58a6a353c930a2e23df240d6c3f2e9068ce09d7f14efe34f441fe3",
-    rootSha256: "e692ccbe49a3141a8d794d1eb2e6b815f9a07d2dc1ccf0cdd17dcd35e936dee2",
-    outlinesSha256: "e043aa6158835de07e08776f217af1fc93177ad8c02439a6c15f841b6444da54",
-    glyphPathCount: 2,
+  "fallback-missing-transform-glyphs": {
+    svgSha256: "d6aab1f36181e3549956a299a53c7e582e3a2fbcf9c406a29244cefd127874ad",
+    rootSha256: "354f7299ac7d200d9c744391b3ebd6a3c21ad6c4cb8ef62938b0677304c5781c",
+    outlinesSha256: "aa5e825e4e5f7b7fa7123c4ae54fd6632bfdef8a96bfa4c7d29e0d0b2b680f85",
+    glyphPathCount: 3,
     unitSampleCount: 0,
   },
 };

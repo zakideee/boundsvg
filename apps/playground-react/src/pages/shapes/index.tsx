@@ -609,7 +609,8 @@ function buildVNode(state: ShapesPageState): VNode {
       const display = { left: 70, top: 70, width: 420, height: 280 };
       const scaleX = display.width / 300;
       const scaleY = display.height / 200;
-      const partColors = ["#38bdf8", "#facc15", "#34d399"];
+      // A dense tuple indexed by Array.map's nonnegative integer modulo its length.
+      const partColors = ["#38bdf8", "#facc15", "#34d399"] as const;
       return toVNode(
         <Canvas width={CANVAS_WIDTH} height={420} background="#1a1a1a">
           <Text
@@ -646,9 +647,11 @@ function buildVNode(state: ShapesPageState): VNode {
                 top={display.top + part.bounds.y * scaleY}
                 width={part.bounds.width * scaleX}
                 height={part.bounds.height * scaleY}
-                borderWidth={1}
-                borderColor={partColors[index % partColors.length]}
-                strokeDasharray="5,4"
+                outline={{
+                  stroke: partColors[(index % partColors.length) as 0 | 1 | 2],
+                  strokeWidth: 1,
+                  strokeDasharray: "5,4",
+                }}
               />
             ) : null,
           )}
@@ -813,6 +816,7 @@ function buildVNode(state: ShapesPageState): VNode {
 type ViewTab = "preview" | "svg" | "jsx" | "component";
 type CodeLayout = "tab" | "panel";
 
+/** Interactive shape composition and part inspection with live source and output views. */
 export function ShapesPage() {
   const { engine, status } = useBoundSvg();
   const [state, setState] = useState(INITIAL_STATE);

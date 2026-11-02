@@ -1,12 +1,15 @@
-import { resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
+import {
+  bindIRToSvg,
+  type IRDomBinding,
+  resolveHitTarget,
+  translateSvgCoords,
+} from "@boundsvg/browser";
 import type { IR } from "@boundsvg/core";
 import {
   buildHitTestIndex,
-  buildNodeTypeMap,
   buildTextSelectionMap,
   findTextCaretAtPoint,
   getTextRangeQuads,
-  hitTestCandidates,
   type TextSelectionMap,
   type TextSelectionQuad,
 } from "@boundsvg/core/scene";
@@ -18,7 +21,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "../../components/Tooltip";
 import {
   type EditorLayer,
@@ -31,6 +34,7 @@ import {
 } from "./editor-model";
 import { type EditorAction, resolveLayerSelection } from "./editor-reducer";
 
+/** Matching SVG and IR from one editor render, or no current output. */
 export type EditorArtifacts = { svg: string; ir: IR } | null;
 
 type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
@@ -90,8 +94,11 @@ type CanvasPoint = { x: number; y: number };
 type TextSelectionStart = { selection: EditorTextSelection; drag: DragState };
 type MutableValueRef<T> = { current: T };
 
+/** Minimum layer width and height accepted by resize gestures, in canvas pixels. */
 const MIN_LAYER_SIZE = 20;
+/** Pointer travel in viewport pixels required before a transform becomes a drag. */
 const DRAG_THRESHOLD_VIEWPORT_PX = 4;
+/** Accessible descriptions for the editor's eight resize handles. */
 const RESIZE_HANDLE_LABELS: Record<ResizeHandle, string> = {
   nw: "Resize from top left",
   n: "Resize from top",
@@ -187,6 +194,7 @@ function flushPendingEditorDrag(
   applyDrag(drag, point, state, selectionMap, dispatch);
 }
 
+/** Render and inspect the current editor document without changing its authored IDs. */
 export function EditorCanvas({
   engine,
   vnode,
@@ -204,6 +212,12 @@ export function EditorCanvas({
     [document.layers, state.present.selectedLayerIds],
   );
   const containerRef = useRef<HTMLFieldSetElement>(null);
+  const bindingRef = useRef<IRDomBinding | null>(null);
+  const [renderContainer, setRenderContainer] = useState<HTMLDivElement | null>(null);
+  const bindRenderContainer = useCallback((node: HTMLDivElement | null) => {
+    bindingRef.current = null;
+    setRenderContainer(node);
+  }, []);
   const keyboardTargetRef = useRef<HTMLButtonElement>(null);
   const textEditorRef = useRef<HTMLTextAreaElement>(null);
   const compositionBeforeRef = useRef<EditorPresent | null>(null);
@@ -237,16 +251,23 @@ export function EditorCanvas({
     }
   }, [engine, vnode, showDebug]);
   const artifacts = renderResult.artifacts;
+  const svgMarkup = useMemo(() => ({ __html: artifacts?.svg ?? "" }), [artifacts]);
   const interaction = useMemo(() => {
     if (!artifacts) {
       return null;
     }
-    return {
-      hitIndex: buildHitTestIndex(artifacts.ir),
-      nodeTypeMap: buildNodeTypeMap(artifacts.ir),
-      textSelectionMap: buildTextSelectionMap(artifacts.ir),
-    };
+    const hitIndex = buildHitTestIndex(artifacts.ir);
+    return { hitIndex, textSelectionMap: buildTextSelectionMap(hitIndex.sourceIndex) };
   }, [artifacts]);
+
+  useLayoutEffect(() => {
+    const root = renderContainer?.querySelector<SVGSVGElement>(":scope > svg");
+    bindingRef.current =
+      root && interaction ? bindIRToSvg(root, interaction.hitIndex.sourceIndex) : null;
+    return () => {
+      bindingRef.current = null;
+    };
+  }, [renderContainer, interaction]);
 
   useEffect(() => {
     onArtifacts(artifacts);
@@ -305,28 +326,23 @@ export function EditorCanvas({
   );
 
   const pointFromEvent = (event: CanvasPointEvent): CanvasPoint | null => {
-    const svg = containerRef.current?.querySelector("svg[data-boundsvg-node-id]");
+    const svg = bindingRef.current?.root;
     if (!svg) {
       return null;
     }
-    return translateSvgCoords(svg as SVGSVGElement, event.clientX, event.clientY);
+    return translateSvgCoords(svg, event.clientX, event.clientY);
   };
 
   const hitFromEvent = (
     event: CanvasPointEvent,
     point: { x: number; y: number },
   ): string | null => {
-    if (!interaction || !containerRef.current) {
+    const binding = bindingRef.current;
+    if (!interaction || binding?.sourceIndex !== interaction.hitIndex.sourceIndex) {
       return null;
     }
-    const candidates = hitTestCandidates(interaction.hitIndex, point.x, point.y);
-    return resolveHitTarget(
-      containerRef.current,
-      candidates,
-      interaction.nodeTypeMap,
-      event.clientX,
-      event.clientY,
-    );
+    const candidates = interaction.hitIndex.queryCandidates(point.x, point.y);
+    return resolveHitTarget(binding, candidates, event.clientX, event.clientY)?.nodeId ?? null;
   };
 
   const enterTextEdit = (layer: EditorTextLayer, caret?: GlobalCaret) => {
@@ -541,11 +557,7 @@ export function EditorCanvas({
     }
     event.preventDefault();
     event.stopPropagation();
-    const artboard = containerRef.current?.querySelector("svg[data-boundsvg-node-id]");
-    if (!artboard) {
-      return;
-    }
-    const point = translateSvgCoords(artboard as SVGSVGElement, event.clientX, event.clientY);
+    const point = pointFromEvent(event);
     if (!point) {
       return;
     }
@@ -595,11 +607,7 @@ export function EditorCanvas({
     }
     event.preventDefault();
     event.stopPropagation();
-    const artboard = containerRef.current?.querySelector("svg[data-boundsvg-node-id]");
-    if (!artboard) {
-      return;
-    }
-    const point = translateSvgCoords(artboard as SVGSVGElement, event.clientX, event.clientY);
+    const point = pointFromEvent(event);
     if (!point) {
       return;
     }
@@ -663,7 +671,12 @@ export function EditorCanvas({
       );
     if (layer?.type === "text") {
       const selectionNodeId =
-        nodeId && interaction?.textSelectionMap.nodes.has(nodeId) ? nodeId : null;
+        nodeId &&
+        [...(interaction?.textSelectionMap.nodes.values() ?? [])].some(
+          (entry) => entry.source.nodeId === nodeId,
+        )
+          ? nodeId
+          : null;
       const caret =
         selectionNodeId && interaction
           ? resolveGlobalCaret(interaction.textSelectionMap, selectionNodeId, point)
@@ -738,8 +751,9 @@ export function EditorCanvas({
           >
             {artifacts ? (
               <div
+                ref={bindRenderContainer}
                 className="visual-editor-render"
-                dangerouslySetInnerHTML={{ __html: artifacts.svg }}
+                dangerouslySetInnerHTML={svgMarkup}
               />
             ) : (
               <div className="visual-editor-render-error">Render failed: {renderResult.error}</div>
@@ -826,7 +840,7 @@ export function EditorCanvas({
             >
               {selectionQuads.map((quad, index) => (
                 <polygon
-                  key={`${quad.nodeId}:${quad.sourceStart}:${index}`}
+                  key={`${quad.source.sourceIndex}:${quad.sourceStart}:${index}`}
                   points={quad.points.map((point) => `${point.x},${point.y}`).join(" ")}
                 />
               ))}
@@ -1656,9 +1670,9 @@ function applyDrag(
   const dx = point.x - drag.startX;
   const dy = point.y - drag.startY;
   if (drag.mode === "text-select" && selectionMap && drag.anchor !== undefined) {
-    const candidateNodeIds = Array.from(selectionMap.nodes.keys()).filter(
-      (nodeId) => resolveLayerId(nodeId, state.present.document.layers) === drag.layer.id,
-    );
+    const candidateNodeIds = Array.from(selectionMap.nodes.values())
+      .map((entry) => entry.source.nodeId)
+      .filter((nodeId) => resolveLayerId(nodeId, state.present.document.layers) === drag.layer.id);
     const hit = candidateNodeIds
       .map((nodeId) => resolveGlobalCaret(selectionMap, nodeId, point))
       .find((caret): caret is GlobalCaret => caret !== null);
@@ -1759,6 +1773,7 @@ function applyRotationDrag(
   });
 }
 
+/** Rotate a group about its center and clamp translation on axes where the result fits. */
 export function rotateLayerSelection(
   layers: EditorLayer[],
   bounds: SelectionBounds,
@@ -1787,6 +1802,7 @@ export function rotateLayerSelection(
   return transformedLayerPatches(clampLayerSelection(transformedLayers, canvas));
 }
 
+/** Scale group frames from a shared resize handle while respecting minimum layer sizes. */
 export function scaleLayerSelection(
   layers: EditorLayer[],
   bounds: SelectionBounds,
@@ -1943,6 +1959,7 @@ function resizeFrame(layer: EditorLayer, handle: ResizeHandle, dx: number, dy: n
   return { x, y, width, height };
 }
 
+/** Resolve an authored layer hit, including visible box frames above the painted target. */
 export function resolvePointerLayerId(
   nodeId: string | null,
   point: CanvasPoint,
@@ -2000,10 +2017,12 @@ function resolveTextSelectionStart(options: {
     return null;
   }
   const selectionNodeId =
-    (nodeId && textSelectionMap.nodes.has(nodeId) ? nodeId : undefined) ??
-    Array.from(textSelectionMap.nodes.keys()).find(
-      (candidateNodeId) => resolveLayerId(candidateNodeId, layers) === layer.id,
-    );
+    (nodeId && [...textSelectionMap.nodes.values()].some((entry) => entry.source.nodeId === nodeId)
+      ? nodeId
+      : undefined) ??
+    Array.from(textSelectionMap.nodes.values())
+      .map((entry) => entry.source.nodeId)
+      .find((candidateNodeId) => resolveLayerId(candidateNodeId, layers) === layer.id);
   if (!selectionNodeId) {
     return null;
   }
@@ -2049,7 +2068,16 @@ function resolveGlobalCaret(
   nodeId: string,
   point: { x: number; y: number },
 ): GlobalCaret | null {
-  const caret = findTextCaretAtPoint(selectionMap, nodeId, { svgX: point.x, svgY: point.y });
+  const source = [...selectionMap.nodes.values()].find(
+    (entry) => entry.source.nodeId === nodeId,
+  )?.source;
+  if (!source) {
+    return null;
+  }
+  const caret = findTextCaretAtPoint(selectionMap, source.sourceIndex, {
+    svgX: point.x,
+    svgY: point.y,
+  });
   if (!caret) {
     return null;
   }
@@ -2074,12 +2102,16 @@ function resolveSelectionQuads(
   }
   const start = Math.min(selection.anchor, selection.focus);
   const end = Math.max(selection.anchor, selection.focus);
-  return Array.from(selectionMap.nodes.keys()).flatMap((nodeId) => {
+  return Array.from(selectionMap.nodes.values()).flatMap(({ source }) => {
+    const nodeId = source.nodeId;
     if (resolveLayerId(nodeId, state.present.document.layers) !== selection.layerId) {
       return [];
     }
     const base = flowSourceStart(nodeId);
-    return getTextRangeQuads(selectionMap, nodeId, { start: start - base, end: end - base });
+    return getTextRangeQuads(selectionMap, source.sourceIndex, {
+      start: start - base,
+      end: end - base,
+    });
   });
 }
 
@@ -2096,6 +2128,7 @@ function resolveSelectionBounds(quads: TextSelectionQuad[]): SelectionBounds | n
   };
 }
 
+/** Enclose the selected layers' rotated corners in a canvas-space rectangle. */
 export function resolveLayerSelectionBounds(layers: EditorLayer[]): SelectionBounds | null {
   if (layers.length === 0) {
     return null;
@@ -2109,6 +2142,7 @@ export function resolveLayerSelectionBounds(layers: EditorLayer[]): SelectionBou
   };
 }
 
+/** Clamp group translation to the canvas; an oversized selection cannot move on that axis. */
 export function resolveSelectionMoveDelta(
   layers: EditorLayer[],
   canvas: { width: number; height: number },
@@ -2127,10 +2161,12 @@ export function resolveSelectionMoveDelta(
   };
 }
 
+/** Allow grouped transforms only for a nonempty selection with every member unlocked. */
 export function canMoveLayerSelection(layers: EditorLayer[]): boolean {
   return layers.length > 0 && layers.every((layer) => !layer.locked);
 }
 
+/** Select visible layers whose rotated quads intersect the canvas-space marquee. */
 export function resolveMarqueeLayerIds(layers: EditorLayer[], bounds: SelectionBounds): string[] {
   return layers
     .filter((layer) => layer.visible && quadIntersectsBounds(resolveLayerQuad(layer), bounds))
@@ -2322,10 +2358,10 @@ function resolveCaretSegment(
   }
 
   const glyphs = Array.from(selectionMap.nodes.values()).flatMap((node) => {
-    if (resolveLayerId(node.nodeId, state.present.document.layers) !== selection.layerId) {
+    if (resolveLayerId(node.source.nodeId, state.present.document.layers) !== selection.layerId) {
       return [];
     }
-    const sourceBase = flowSourceStart(node.nodeId);
+    const sourceBase = flowSourceStart(node.source.nodeId);
     return node.glyphs
       .filter((glyph) => glyph.sourceRole !== "rubyAnnotation")
       .map((glyph) => ({
@@ -2367,7 +2403,7 @@ function resolveCaretSegment(
   const nearbyCrossSizes = glyphs
     .filter(
       (entry) =>
-        entry.node.nodeId === fallbackGlyph.node.nodeId &&
+        entry.node.source.sourceIndex === fallbackGlyph.node.source.sourceIndex &&
         entry.sourceStart <= offset + 8 &&
         entry.sourceEnd >= offset - 8,
     )
@@ -2383,7 +2419,7 @@ function resolveCaretSegment(
     Math.max(pointDistance(start, end), ...nearbyCrossSizes),
   );
   return {
-    nodeId: fallbackGlyph.node.nodeId,
+    nodeId: fallbackGlyph.node.source.nodeId,
     offset,
     start: adjustedStart,
     end: adjustedEnd,

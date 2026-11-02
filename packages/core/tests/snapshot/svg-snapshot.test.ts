@@ -58,7 +58,8 @@ describe("SVG Snapshot Tests", () => {
     const normalized = normalizeSvg(svg);
 
     expect(normalized).toContain('fill="#ff0000"');
-    expect(normalized).toContain('stroke="#000000"');
+    expect(normalized).toContain('fill="#000000"');
+    expect(normalized).toContain('fill-rule="evenodd"');
     expect(normalized).toContain('rx="8"');
     expect(normalized).toMatchSnapshot();
   });
@@ -132,11 +133,13 @@ describe("SVG Snapshot Tests", () => {
       handle,
       {
         root: {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "root",
           bbox: { x: 0, y: 0, w: 200, h: 120 },
           children: [
             {
+              ownership: { role: "source" },
               type: "text",
               nodeId: "txt1",
               bbox: { x: 20, y: 10, w: 80, h: 40 },
@@ -167,7 +170,7 @@ describe("SVG Snapshot Tests", () => {
             },
           ],
         },
-        drawOrder: ["txt1"],
+
         width: 200,
         height: 120,
         warnings: [],
@@ -210,11 +213,13 @@ describe("SVG Snapshot Tests", () => {
     for (const path of malformedPaths) {
       const svg = emitSvgFromIrViaHandle(handle, {
         root: {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "root",
           bbox: { x: 0, y: 0, w: 40, h: 40 },
           children: [
             {
+              ownership: { role: "source" },
               type: "text",
               nodeId: "txt1",
               bbox: { x: 0, y: 0, w: 40, h: 40 },
@@ -238,7 +243,7 @@ describe("SVG Snapshot Tests", () => {
             },
           ],
         },
-        drawOrder: ["txt1"],
+
         width: 40,
         height: 40,
         warnings: [],

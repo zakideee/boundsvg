@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine } from "../../src/engine.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import type { IRNode } from "../../src/ir/types.js";
 import { mapToLayoutStyle } from "../../src/layout/taffy-style-mapper.js";
 import { validate } from "../../src/validate/index.js";
@@ -8,6 +9,7 @@ import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
+/** Closed star used by Path paint and hit-test integration fixtures. */
 const STAR_PATH = "M50,0 L65,35 L100,40 L75,65 L80,100 L50,80 L20,100 L25,65 L0,40 L35,35 Z";
 
 let handle: WasmEngineHandle;
@@ -176,7 +178,11 @@ describe("Path component — IR builder", () => {
     );
 
     const ir = engine.renderToIR(tree);
-    expect(ir.drawOrder).toContain("star");
+    expect(
+      [...buildIRSourceIndex(ir).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId),
+    ).toContain("star");
 
     // A Path with an id renders as a wrapping group "star" holding the path leaf.
     const starGroup = findNodeById(ir.root, "star");

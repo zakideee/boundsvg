@@ -2,6 +2,7 @@ import type { TimelineAuthoredDomainOwner } from "../engine/timeline-domain-tran
 import { FatalError } from "../errors.js";
 import type { NodePosition } from "../ir/internal.js";
 import { assertNodeIdIsWellFormedUnicode, generateNodeId } from "../ir/node-id.js";
+import { validateContainerVisualProps } from "../layout/box-style.js";
 import { assertLayoutTreeDepth } from "../layout/limits.js";
 import { assertUniqueNodeIds } from "../node-ids.js";
 import type { VNode, VNodeType } from "../vnode/types.js";
@@ -153,7 +154,10 @@ function validateNode(
   validateColorProp(node, "background", { allowGradient: true, nodeId: nid });
   validateColorProp(node, "borderColor", { nodeId: nid });
   if (node.type !== "InlineRect") {
-    validateColorProp(node, "color", { nodeId: nid });
+    validateColorProp(node, "color", {
+      allowGradient: node.type === "Text" || node.type === "Inline",
+      nodeId: nid,
+    });
   }
   validateColorProp(node, "fill", {
     allowNone: node.type === "Path" || node.type === "Shape" || node.type === "Symbol",
@@ -174,6 +178,14 @@ function validateNode(
   validateMetaProp(node, nid);
   validateLayoutNumberProps(node, nid);
   const props = node.props as Record<string, unknown>;
+  if (node.type === "Box" || node.type === "Flex" || node.type === "Grid") {
+    validateContainerVisualProps(props, nid);
+  } else if (props.outline !== undefined) {
+    throw new FatalError("VALIDATION", "outline is supported only by Box, Flex, and Grid.", {
+      stage: "validate",
+      nodeId: nid,
+    });
+  }
   validateVisualNumberProps(props, nid);
   validateLayoutEnumAndGridProps(node, nid);
   validateBoxShadowProp(props, nid);
@@ -243,6 +255,7 @@ function validateNode(
   }
 }
 
+/** Containers whose child grammar permits direct string content. */
 const TEXT_BEARING_TYPES = new Set<VNodeType>([
   "Text",
   "TextOnPath",
@@ -277,10 +290,13 @@ const Z_INDEX_SUPPORTED_TYPES = new Set<VNodeType>([
   "Symbol",
 ]);
 
+/** Allowed authoring metadata keys, also used by the raw IR source contract. */
 const META_KEY_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
+/** Maximum metadata entries on one authored source. */
 const META_MAX_KEYS = 16;
 
+/** Maximum UTF-16 code units in one authored metadata value. */
 const META_MAX_VALUE_LENGTH = 256;
 
 function validateMetaProp(node: VNode, nid: string): void {

@@ -211,9 +211,12 @@ describe("textDecoration real WASM rendering", () => {
       );
     }
     expect(() =>
-      engine.renderToSvg(canvasWithText(["metadata"], { meta: { textDecoration: "metadata" } }), {
-        skipValidation: true,
-      }),
+      engine.renderToSvg(
+        canvasWithText(["metadata"], { meta: { "text-decoration": "metadata" } }),
+        {
+          skipValidation: true,
+        },
+      ),
     ).not.toThrow();
     expect(() =>
       engine.renderToSvg(

@@ -122,12 +122,11 @@ fn serializes_flat_nodes_with_type_tag_and_omits_unset_fields() {
     assert_eq!(
         ir,
         json!({
-            "root": {
+            "root": { "ownership": { "role": "source" },
                 "type": "group",
                 "nodeId": "root",
                 "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0 },
             },
-            "drawOrder": [],
             "width": 100.0,
             "height": 50.0,
             "warnings": [],
@@ -136,7 +135,7 @@ fn serializes_flat_nodes_with_type_tag_and_omits_unset_fields() {
 }
 
 #[test]
-fn builds_background_and_border_rects_in_draw_order() {
+fn builds_background_then_intrinsically_clipped_border_surface() {
     let ir = build_json(
         json!({
             "nodeId": "root",
@@ -150,7 +149,7 @@ fn builds_background_and_border_rects_in_draw_order() {
                     "borderWidth": 2.0,
                     "borderColor": "#333",
                     "borderRadius": 4.0,
-                    "strokeDasharray": "5,5",
+
                 },
             }],
         }),
@@ -160,11 +159,11 @@ fn builds_background_and_border_rects_in_draw_order() {
         ],
     );
 
-    assert_eq!(ir["drawOrder"], json!(["box:bg", "box:border"]));
+    assert!(ir.get("drawOrder").is_none());
     let box_children = &ir["root"]["children"][0]["children"];
     assert_eq!(
         box_children[0],
-        json!({
+        json!({ "ownership": { "role": "decoration", "ownerNodeId": "box" },
             "type": "rect",
             "nodeId": "box:bg",
             "bbox": { "x": 10.0, "y": 10.0, "w": 50.0, "h": 40.0 },
@@ -172,13 +171,16 @@ fn builds_background_and_border_rects_in_draw_order() {
             "borderRadius": 4.0,
         })
     );
-    assert_eq!(box_children[1]["stroke"], json!("#333"));
-    assert_eq!(box_children[1]["strokeWidth"], json!(2.0));
-    assert_eq!(box_children[1]["strokeDasharray"], json!("5,5"));
+    assert_eq!(box_children[1]["type"], "group");
+    assert_eq!(box_children[1]["clip"]["kind"], "boxContour");
+    let surface = &box_children[1]["children"][0];
+    assert_eq!(surface["fill"], "#333");
+    assert_eq!(surface["fillRule"], "evenodd");
+    assert!(surface.get("stroke").is_none());
 }
 
 #[test]
-fn carries_canvas_stroke_scaling_only_to_the_border_rect() {
+fn generates_outline_path_after_the_border_surface() {
     let ir = build_json(
         json!({
             "nodeId": "root",
@@ -191,7 +193,7 @@ fn carries_canvas_stroke_scaling_only_to_the_border_rect() {
                     "background": "#fff",
                     "borderWidth": 1.0,
                     "borderColor": "#333",
-                    "strokeScaling": "canvas",
+                    "outline": {"stroke":"#333", "strokeScaling":"canvas", "strokeWidth":1},
                 },
             }],
         }),
@@ -203,7 +205,10 @@ fn carries_canvas_stroke_scaling_only_to_the_border_rect() {
 
     let box_children = &ir["root"]["children"][0]["children"];
     assert!(box_children[0].get("strokeScaling").is_none());
-    assert_eq!(box_children[1]["strokeScaling"], json!("canvas"));
+    assert!(box_children[1].get("strokeScaling").is_none());
+    assert_eq!(box_children[2]["type"], "path");
+    assert_eq!(box_children[2]["nodeId"], "box:outline");
+    assert_eq!(box_children[2]["strokeScaling"], json!("canvas"));
 }
 
 #[test]
@@ -302,9 +307,9 @@ fn parses_gradient_backgrounds() {
         vec![output("root", 0.0, 0.0, 100.0, 100.0)],
     );
 
-    let bg = &ir["root"]["children"][0];
-    assert_eq!(bg["gradient"]["type"], json!("linear"));
-    assert!(bg.get("fill").is_none());
+    let background_rect = &ir["root"]["children"][0];
+    assert_eq!(background_rect["gradient"]["type"], json!("linear"));
+    assert!(background_rect.get("fill").is_none());
 }
 
 #[test]
@@ -319,9 +324,15 @@ fn resolves_gradient_geometry_from_the_layout_box() {
         vec![output("linear", 0.0, 0.0, 160.0, 90.0)],
     );
     let linear = &linear_ir["root"]["children"][0]["gradient"];
-    assert!(
-        (linear["angle"].as_f64().expect("linear angle") - 29.357_753_542_791_276).abs() < 1e-10
-    );
+    let geometry = &linear["geometry"];
+    let start_x = geometry["startX"].as_f64().expect("start x");
+    let start_y = geometry["startY"].as_f64().expect("start y");
+    let end_x = geometry["endX"].as_f64().expect("end x");
+    let end_y = geometry["endY"].as_f64().expect("end y");
+    assert!((start_x + end_x - 160.0).abs() < 1e-10);
+    assert!((start_y + end_y - 90.0).abs() < 1e-10);
+    assert!(((end_x - start_x) / (start_y - end_y) - 90.0 / 160.0).abs() < 1e-10);
+    assert!(linear.get("angle").is_none());
 
     let radial_ir = build_json(
         json!({
@@ -428,14 +439,13 @@ fn attaches_meta_transform_opacity_and_interactive_handlers_to_groups() {
 
     let card = &ir["root"]["children"][0];
     assert_eq!(card["opacity"], json!(0.5));
-    assert_eq!(card["meta"], json!({ "role": "card" }));
+    assert_eq!(card["ownership"]["meta"], json!({ "role": "card" }));
     assert_eq!(
         card["transform"],
         json!({ "rotateDeg": 45.0, "originX": 10.0, "originY": 10.0 })
     );
-    assert_eq!(card["on"], json!({ "onClick": "select" }));
-    // Interactive containers join drawOrder after their children
-    assert_eq!(ir["drawOrder"], json!(["card"]));
+    assert_eq!(card["ownership"]["on"], json!({ "onClick": "select" }));
+    assert!(ir.get("drawOrder").is_none());
 }
 
 #[test]
@@ -498,16 +508,16 @@ fn container_clip_uses_background_radius_only_for_clipped_box_flex_grid() {
                 let card = &ir["root"]["children"][0];
                 if overflow == "clip" {
                     assert_eq!(
-                        card["clipPath"],
+                        card["clip"]["bbox"],
                         json!({"x":10.0,"y":10.0,"w":100.0,"h":100.0})
                     );
+                    assert_eq!(card["clip"]["kind"], "boxContour");
                     assert_eq!(
-                        card["clipBorderRadius"],
-                        card["children"][0]["borderRadius"]
+                        card["clip"]["corners"].as_array().expect("corners").len(),
+                        4
                     );
                 } else {
-                    assert!(card.get("clipPath").is_none());
-                    assert!(card.get("clipBorderRadius").is_none());
+                    assert!(card.get("clip").is_none());
                 }
             }
         }
@@ -523,8 +533,15 @@ fn canvas_overflow_does_not_adopt_container_radius() {
         }),
         vec![output("root", 0.0, 0.0, 100.0, 100.0)],
     );
-    assert!(ir["root"]["clipPath"].is_object());
-    assert!(ir["root"].get("clipBorderRadius").is_none());
+    assert!(ir["root"]["clip"]["bbox"].is_object());
+    assert_eq!(
+        ir["root"]["clip"]["corners"],
+        json!(
+            (0..4)
+                .map(|_| json!({"rx":0.0,"ry":0.0}))
+                .collect::<Vec<_>>()
+        )
+    );
 }
 
 #[test]
@@ -551,12 +568,12 @@ fn clips_overflow_and_rounded_images() {
 
     let group = &ir["root"]["children"][0];
     assert_eq!(
-        group["clipPath"],
+        group["clip"]["bbox"],
         json!({ "x": 0.0, "y": 0.0, "w": 40.0, "h": 40.0 })
     );
     assert_eq!(
-        group["clipBorderRadius"],
-        json!({ "tl": 1.0, "tr": 2.0, "br": 3.0, "bl": 4.0 })
+        group["clip"]["corners"],
+        json!([{"rx":1.0,"ry":1.0},{"rx":2.0,"ry":2.0},{"rx":3.0,"ry":3.0},{"rx":4.0,"ry":4.0}])
     );
 }
 
@@ -774,7 +791,7 @@ fn builds_text_node_with_aligned_bbox_and_layout_box() {
     );
     // lineHeightPx fallback: measured h / line count = 18 / 1
     assert_eq!(text["lineHeightPx"], json!(18.0));
-    assert_eq!(ir["drawOrder"], json!(["txt"]));
+    assert!(ir.get("drawOrder").is_none());
 }
 
 #[test]
@@ -1074,7 +1091,7 @@ fn emits_inline_box_decorations_before_text() {
     );
 
     // Invisible decoration (no background, no border color) is skipped
-    assert_eq!(ir["drawOrder"], json!(["txt:ibox0", "txt"]));
+    assert!(ir.get("drawOrder").is_none());
     let decoration = &ir["root"]["children"][0]["children"][0];
     assert_eq!(decoration["nodeId"], json!("txt:ibox0"));
     assert_eq!(
@@ -1431,8 +1448,12 @@ fn emits_inline_rects_in_fixed_paint_order_with_fragment_animation() {
         json!({ "type": "steps", "count": 1.0, "position": "jump-end" })
     );
     assert_eq!(
-        ir["drawOrder"],
-        json!(["txt:inline-rect:0:rect", "txt", "txt:inline-rect:1:rect"])
+        [
+            children[0]["ownership"]["role"].as_str(),
+            children[1]["ownership"]["role"].as_str(),
+            children[2]["ownership"]["role"].as_str()
+        ],
+        [Some("wrapper"), Some("content"), Some("wrapper")]
     );
 }
 
@@ -1896,7 +1917,7 @@ fn compiles_shape_parts_baked_to_the_node_box() {
     assert_eq!(parts.len(), 1);
     assert!(parts[0].get("partId").is_none());
     assert!(parts[0]["d"].as_str().is_some_and(|d| !d.is_empty()));
-    assert_eq!(ir["drawOrder"], json!(["shp"]));
+    assert!(ir.get("drawOrder").is_none());
 }
 
 #[test]

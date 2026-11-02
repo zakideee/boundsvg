@@ -34,7 +34,9 @@ function makeVNode(width = 10): VNode {
   };
 }
 
+/** Shared scene reference for PNG object-URL lifetime assertions. */
 const STABLE_VNODE = makeVNode();
+/** Stable PNG settings used to distinguish rerenders from new output. */
 const STABLE_OPTIONS: RenderPngOptions = { scale: 2 };
 
 function vnodeWidth(vnode: VNode): number {
@@ -44,12 +46,13 @@ function vnodeWidth(vnode: VNode): number {
 function makeStructuralIr(width: number): Omit<IR, "warnings"> {
   return {
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "auto:0",
       bbox: { x: 0, y: 0, w: width, h: 10 },
       children: [],
     },
-    drawOrder: [],
+
     width,
     height: 10,
   };
@@ -97,12 +100,14 @@ function context(engine: Engine): BoundSvgContextValue {
   };
 }
 
-function mount(ui: React.ReactNode, engine: Engine) {
+function mount(element: React.ReactNode, engine: Engine) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => {
-    root.render(<BoundSvgContext.Provider value={context(engine)}>{ui}</BoundSvgContext.Provider>);
+    root.render(
+      <BoundSvgContext.Provider value={context(engine)}>{element}</BoundSvgContext.Provider>,
+    );
   });
   return {
     unmount() {

@@ -1,6 +1,7 @@
-import type { IR } from "@boundsvg/core/scene";
+import type { IR, IRSourceRef } from "@boundsvg/core/scene";
 import type { CodeTab, PresetDefinition } from "./types";
 
+/** Mutable CLI playground state shared by rendering and inspection controls. */
 export const cliState = {
   currentCodeTab: "component" as CodeTab,
   cachedSvgString: "",
@@ -16,5 +17,5 @@ export const cliState = {
   activePresetForPreview: null as PresetDefinition | null,
   prevPngUrl: null as string | null,
   activeInspectCleanup: null as (() => void) | null,
-  inspectHighlight: null as ((nodeId: string | null) => void) | null,
+  inspectHighlight: null as ((source: IRSourceRef | null) => void) | null,
 };

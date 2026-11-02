@@ -1,4 +1,5 @@
 import type { IR } from "@boundsvg/core";
+import type { IRSourceRef } from "@boundsvg/core/scene";
 import { Box, Canvas, Flex, Path, Text, toVNode } from "@boundsvg/react";
 import {
   InteractiveBoundSvg,
@@ -43,10 +44,15 @@ type ToastInfo = {
   top: number;
 };
 
+/** Maximum callback deliveries retained in the visible event log. */
 const MAX_LOG = 50;
+/** Pointer-to-toast spacing in viewport pixels. */
 const TOAST_OFFSET_PX = 12;
+/** Maximum clipboard-menu toast width in viewport pixels. */
 const TOAST_MAX_WIDTH_PX = 220;
+/** Height used to keep clipboard-menu feedback inside the viewport. */
 const TOAST_ESTIMATED_HEIGHT_PX = 36;
+/** Clearance between transient clipboard UI and the viewport edge. */
 const VIEWPORT_PADDING_PX = 16;
 
 function visibleLogEntries(log: readonly LogEntry[], mobileViewer: boolean): readonly LogEntry[] {
@@ -65,6 +71,7 @@ function now(): string {
 // Code snippet
 // ---------------------------------------------------------------------------
 
+/** Interactive scene and callback wiring shown alongside the live example. */
 const CODE_SNIPPET = `import {
   InteractiveBoundSvg,
   type PointerEventInfo,
@@ -222,6 +229,7 @@ type CodeLayout = "tab" | "panel";
 // Component
 // ---------------------------------------------------------------------------
 
+/** Demonstrate pointer callbacks, text copying and inspection of the rendered scene. */
 export function InteractivePage() {
   const { engine, status } = useBoundSvg();
   const mobileViewer = useMobileViewer();
@@ -262,18 +270,18 @@ export function InteractivePage() {
     (event: string) => (info: PointerEventInfo) => {
       addLog(event, info);
       if (FLASH_EVENTS.has(event)) {
-        overlayRef.current?.flashNode(info.nodeId, EVENT_COLORS[event] ?? "#fff");
+        overlayRef.current?.flashNode(info.source, EVENT_COLORS[event] ?? "#fff");
       }
     },
     [addLog],
   );
 
   // Hover change — update DOM directly (no React re-render) + overlay glow
-  const handleHoverChange = useCallback((nodeId: string | null) => {
+  const handleHoverChange = useCallback((source: IRSourceRef | null) => {
     if (hoverDisplayRef.current) {
-      hoverDisplayRef.current.textContent = nodeId ?? "none";
+      hoverDisplayRef.current.textContent = source?.nodeId ?? "none";
     }
-    overlayRef.current?.setHoverGlow(nodeId);
+    overlayRef.current?.setHoverGlow(source);
   }, []);
 
   // Create overlay once, then update bboxMap on subsequent renders

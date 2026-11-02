@@ -55,6 +55,7 @@ import { cloneRecoverableError } from "./ir/clone.js";
 import { hitTest } from "./ir/hit-test.js";
 import type { NodePosition } from "./ir/internal.js";
 import { generateNodeId } from "./ir/node-id.js";
+import { buildIRSourceIndex, type IRSourceRef } from "./ir/source-index.js";
 import type { IR, IRNode } from "./ir/types.js";
 import { snapshotLayerSourceMetadata } from "./layer-source-metadata.js";
 import type {
@@ -840,6 +841,10 @@ export type AnimationAffineMatrix = {
 
 /** One node's resolved animation values at a sampled time. */
 export type AnimationStateSample = {
+  /** Physical animated-group occurrence in the sampled snapshot. */
+  nodeIndex: number;
+  /** Semantic owner in the same snapshot. */
+  source: IRSourceRef;
   nodeId: string;
   opacity: number | null;
   transform: AnimationAffineMatrix | null;
@@ -2288,11 +2293,29 @@ export class Engine {
     } catch (error) {
       throw wrapWasmRenderError(error);
     }
-    return decodeAnimationStateSamples(json).map((sample) => ({
-      nodeId: sample.nodeId,
-      opacity: sample.opacity ?? null,
-      transform: sample.transform ?? null,
-    }));
+    const index = buildIRSourceIndex(ir);
+    return decodeAnimationStateSamples(json).map((sample) => {
+      const occurrence = index.nodes.get(sample.nodeIndex);
+      if (
+        !occurrence ||
+        occurrence.node.nodeId !== sample.nodeId ||
+        occurrence.source.sourceIndex !== sample.source.sourceIndex ||
+        occurrence.source.nodeId !== sample.source.nodeId
+      ) {
+        throw new FatalError(
+          "VALIDATION",
+          "Animation state sample does not match its IR snapshot.",
+          { stage: "ir" },
+        );
+      }
+      return {
+        nodeIndex: sample.nodeIndex,
+        source: occurrence.source,
+        nodeId: sample.nodeId,
+        opacity: sample.opacity ?? null,
+        transform: sample.transform ?? null,
+      };
+    });
   }
 
   /** Create an immutable, unsampled scene artifact owned by this Engine for repeated emission. */
@@ -2984,7 +3007,6 @@ export class Engine {
     const envelope = decodeRenderToIrEnvelope(envelopeJson);
     const resolvedIr: IR = {
       ...envelope.ir,
-      drawOrder: ir.drawOrder,
       warnings: ir.warnings,
     };
     return resolvedIr;
@@ -3015,7 +3037,6 @@ export class Engine {
     const envelope = decodeRenderToIrEnvelope(envelopeJson);
     return {
       ...envelope.ir,
-      drawOrder: sourceIr.drawOrder,
       warnings: sourceIr.warnings,
     };
   }
@@ -3324,7 +3345,7 @@ export class Engine {
       showMissingGlyphs: options?.showMissingGlyphs,
       preserveResolvedUnitOutlines: !options?.showMissingGlyphs,
     });
-    return projectResolvedTextOutlines(resolvedIr.root);
+    return projectResolvedTextOutlines(resolvedIr);
   }
 
   /** Authenticate a compiled scene and rasterize PNG with a callback-safe resource snapshot. */
@@ -3542,8 +3563,8 @@ export class Engine {
     return pngOptions;
   }
 
-  /** Return the hit node identifier at canvas coordinates, or null when no node is hit. */
-  hitTest(ir: IR, x: number, y: number): string | null {
+  /** Return the snapshot-local source hit at canvas coordinates, or null when no source is hit. */
+  hitTest(ir: IR, x: number, y: number): IRSourceRef | null {
     return hitTest(ir, x, y);
   }
 

@@ -18,6 +18,7 @@ import { TEMPLATE_IMAGE_DATA_URL, TERMINAL_TEMPLATE } from "./terminal-assets";
 import { TEXT_MOTION_TEMPLATE_DEFINITIONS } from "./text-motion-templates";
 import type { TemplateDef } from "./types";
 
+/** JSX scenes offered by the template selector; paired scenes match the core presets. */
 export const TEMPLATE_DEFINITIONS: Record<string, TemplateDef> = {
   terminal: {
     title: "Terminal Prism",
@@ -25,6 +26,42 @@ export const TEMPLATE_DEFINITIONS: Record<string, TemplateDef> = {
       "Split-pane terminal with syntax-highlighted source and char-wrapped output for narrow panes.",
     licenseNotice: TERMINAL_TEMPLATE.licenseNotice,
     vnode: TERMINAL_TEMPLATE.vnode,
+  },
+  "design-expressions": {
+    title: "Gradient + Skew + Border",
+    description: "A fitted card with four border edges, an outer dashed frame, and gradient text.",
+    vnode: toVNode(
+      <Canvas width={920} height={420} background="#101827">
+        <Flex width={920} height={420} padding={64} justifyContent="center">
+          <Flex
+            direction="column"
+            gap={16}
+            padding={28}
+            background="#1d2942"
+            borderWidth={[12, 6, 18, 6]}
+            borderColor="#45577b"
+            borderRadius={28}
+            outline={{ stroke: "#a6b8f0", strokeWidth: 2, strokeDasharray: "10,6" }}
+            overflow="clip"
+            transform={{ skewXDeg: -8 }}
+            boxShadow="8 8 10 0 #00000066"
+          >
+            <Text
+              font="NotoSansJP-woff2"
+              fontSizePx={48}
+              color="linear-gradient(90deg, #9f88ff, #55dfff)"
+              textStrokes={[{ color: "#101827", widthPx: 2 }]}
+              textShadows={[{ dx: 2, dy: 3, blurPx: 2, color: "#00000099" }]}
+            >
+              One shared <Inline color="radial-gradient(#fff4d1, #ff8eb4)">paint frame</Inline>
+            </Text>
+            <Text font="NotoSansJP-woff2" fontSizePx={20} color="#d5def2" wrap="word">
+              The border reserves space. The dashed outline follows this card's automatic size.
+            </Text>
+          </Flex>
+        </Flex>
+      </Canvas>,
+    ),
   },
   fit: {
     title: "Fit + Stroke",
@@ -39,11 +76,13 @@ export const TEMPLATE_DEFINITIONS: Record<string, TemplateDef> = {
             flexGrow={1}
             padding={24}
             background="#252526"
-            borderWidth={1}
-            borderColor="#474747"
+            outline={{
+              stroke: "#474747",
+              strokeWidth: 1,
+              strokeDasharray: "8,4",
+              strokeLinecap: "round",
+            }}
             borderRadius={16}
-            strokeDasharray="8,4"
-            strokeLinecap="round"
             overflow="clip"
           >
             <Text
@@ -1085,8 +1124,10 @@ type TemplateGroupDef = {
   templateKeys: string[];
 };
 
+/** Template selected before a user chooses a scene. */
 export const DEFAULT_TEMPLATE_KEY = "terminal";
 
+/** Navigation groups for the selectable template scenes. */
 export const TEMPLATE_GROUPS: TemplateGroupDef[] = [
   {
     key: "featured",
@@ -1096,7 +1137,12 @@ export const TEMPLATE_GROUPS: TemplateGroupDef[] = [
   {
     key: "layout-basics",
     label: "Layout Basics",
-    templateKeys: ["fit", "grid", "media"],
+    templateKeys: ["fit", "grid"],
+  },
+  {
+    key: "composition",
+    label: "Composition",
+    templateKeys: ["media", "design-expressions"],
   },
   {
     key: "text-basics",

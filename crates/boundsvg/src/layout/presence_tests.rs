@@ -508,7 +508,22 @@ fn visual_input_preserves_optional_presence() {
     assert_optional_field::<VisualInput>(&fixture, "borderWidth", |input| {
         input.border_width.is_none()
     });
-    assert_numeric_field::<VisualInput>(&fixture, "borderWidth", NumericWireType::Float64);
+    for width in [
+        serde_json::json!(-1.0),
+        serde_json::json!(1_048_576.000_1),
+        serde_json::json!([1, 2]),
+    ] {
+        let mut invalid = fixture.clone();
+        invalid["borderWidth"] = width;
+        assert!(serde_json::from_value::<VisualInput>(invalid).is_err());
+    }
+    let mut maximum = fixture.clone();
+    maximum["borderWidth"] = serde_json::json!([0, 1_048_576, -0.0, 1e-50]);
+    let decoded: VisualInput = serde_json::from_value(maximum).expect("bounded widths");
+    assert_eq!(
+        decoded.border_width.expect("present").widths(),
+        [0.0, 1_048_576.0, 0.0, 0.0]
+    );
     assert_optional_field::<VisualInput>(&fixture, "borderColor", |input| {
         input.border_color.is_none()
     });

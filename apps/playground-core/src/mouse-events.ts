@@ -1,15 +1,19 @@
-import { resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
 import {
-  buildNodeTypeMap,
+  bindIRToSvg,
+  nativePathCandidates,
+  resolveHitTarget,
+  translateSvgCoords,
+} from "@boundsvg/browser";
+import {
   buildTextMap,
   findLineAtPoint,
   getAllText,
   getAncestorText,
   getNodeText,
   type HandlersRef,
-  hitTestCandidates,
   type IR,
-  type SpatialIndex,
+  type IRHitIndex,
+  type IRSourceRef,
   type TextMap,
 } from "@boundsvg/core/scene";
 import { getElement } from "../../playground-shared/dom.js";
@@ -19,6 +23,11 @@ import {
   EventEffectOverlay,
   FLASH_EVENTS,
 } from "../../playground-shared/event-effects.js";
+
+import type {
+  EventEffectOverlayDisplayOptions,
+  InspectHoverHandle,
+} from "../../playground-shared/inspect-hover.js";
 
 function addEventLogEntry(event: string, nodeId: string, x: number, y: number): void {
   const logEl = getElement("event-log-entries");
@@ -74,29 +83,28 @@ async function writeClipboard(text: string): Promise<boolean> {
 
 function buildCopyMenuItems(
   textMap: TextMap,
-  drawOrder: readonly string[],
-  textNodeId: string,
+  textSource: IRSourceRef,
   svgX: number,
   svgY: number,
 ): Array<{ label: string; text: string }> {
   const items: Array<{ label: string; text: string }> = [];
 
-  const lineEntry = findLineAtPoint(textMap, textNodeId, { svgX, svgY });
+  const lineEntry = findLineAtPoint(textMap, textSource, { svgX, svgY });
   if (lineEntry) {
     items.push({ label: `Copy line: ${truncate(lineEntry.text, 24)}`, text: lineEntry.text });
   }
 
-  const nodeText = getNodeText(textMap, textNodeId);
+  const nodeText = getNodeText(textMap, textSource);
   if (nodeText) {
     items.push({ label: `Copy text: ${truncate(nodeText, 24)}`, text: nodeText });
   }
 
-  const ancestorText = getAncestorText(textMap, textNodeId);
+  const ancestorText = getAncestorText(textMap, textSource);
   if (ancestorText) {
     items.push({ label: "Copy parent text", text: ancestorText });
   }
 
-  const allText = getAllText(textMap, drawOrder);
+  const allText = getAllText(textMap);
   if (allText) {
     items.push({ label: "Copy all text", text: allText });
   }
@@ -158,7 +166,9 @@ function showCopyMenu(
   menuEl.style.display = "block";
 }
 
+/** Spacing between copy feedback and the pointer. */
 const TOAST_OFFSET_PX = 12;
+/** Time copy feedback remains visible. */
 const TOAST_DURATION_MS = 1200;
 
 function showToast(state: CopyMenuState, clientX: number, clientY: number, message: string): void {
@@ -218,20 +228,32 @@ function destroyCopyMenuState(state: CopyMenuState): void {
 // Main setup
 // ---------------------------------------------------------------------------
 
+/** Connect event effects and inspection to the mouse sample SVG. */
 export function setupMouseEvents(
   svgContainer: HTMLElement,
   ir: IR,
-  index: SpatialIndex,
-  handlerMap: Map<string, HandlersRef>,
-): () => void {
+  index: IRHitIndex,
+  display: EventEffectOverlayDisplayOptions,
+  onInspectChange: (source: IRSourceRef | null) => void,
+): InspectHoverHandle {
   const svgEl = svgContainer.querySelector("svg") as SVGSVGElement | null;
   if (!svgEl) {
-    return () => {};
+    return { cleanup: () => {}, highlight: () => {}, updateDisplay: () => {} };
   }
 
-  const nodeTypeMap = buildNodeTypeMap(ir);
-  const textMap = buildTextMap(ir);
-  let lastHovered: string | null = null;
+  const binding = bindIRToSvg(svgEl, index.sourceIndex);
+  function handlersFor(source: IRSourceRef): HandlersRef | undefined {
+    const node = index.sourceIndex.sources.get(source.sourceIndex)?.node;
+    return node?.ownership.role === "source" ? node.ownership.on : undefined;
+  }
+  function primaryType(source: IRSourceRef) {
+    const info = index.sourceIndex.sources.get(source.sourceIndex);
+    return info?.primaryNodeIndex === null || info?.primaryNodeIndex === undefined
+      ? undefined
+      : index.sourceIndex.nodes.get(info.primaryNodeIndex)?.node.type;
+  }
+  const textMap = buildTextMap(index.sourceIndex);
+  let lastHovered: IRSourceRef | null = null;
   const hoverEl = getElement("event-log-hover");
 
   // Event effect overlay (constructor wraps <svg> in a tight position:relative container)
@@ -241,24 +263,47 @@ export function setupMouseEvents(
     width: ir.width,
     height: ir.height,
     bboxMap,
+    display,
   });
 
   // Text copy menu state
   const copyMenuState = createCopyMenuState();
 
-  const resolveHit = (e: MouseEvent | PointerEvent): string | null => {
+  const resolveHit = (e: MouseEvent | PointerEvent): IRSourceRef | null => {
     const { x, y } = getSvgCoords(svgEl, e);
-    const candidates = hitTestCandidates(index, x, y);
-    return resolveHitTarget(svgEl, candidates, nodeTypeMap, e.clientX, e.clientY);
+    const candidates = index.queryCandidates(x, y);
+    for (const candidate of nativePathCandidates(binding, index, {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      x,
+      y,
+    })) {
+      if (!candidates.some((entry) => entry.source === candidate.source)) {
+        candidates.push(candidate);
+      }
+    }
+    candidates.sort((left, right) => right.order - left.order);
+    return resolveHitTarget(binding, candidates, e.clientX, e.clientY);
   };
 
   /** Resolve text node for context menu, falling through group wrappers. */
-  const resolveTextTarget = (e: MouseEvent | PointerEvent): string | null => {
+  const resolveTextTarget = (e: MouseEvent | PointerEvent): IRSourceRef | null => {
     const { x, y } = getSvgCoords(svgEl, e);
-    const candidates = hitTestCandidates(index, x, y);
-    const resolved = resolveHitTarget(svgEl, candidates, nodeTypeMap, e.clientX, e.clientY);
+    const candidates = index.queryCandidates(x, y);
+    for (const candidate of nativePathCandidates(binding, index, {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      x,
+      y,
+    })) {
+      if (!candidates.some((entry) => entry.source === candidate.source)) {
+        candidates.push(candidate);
+      }
+    }
+    candidates.sort((left, right) => right.order - left.order);
+    const resolved = resolveHitTarget(binding, candidates, e.clientX, e.clientY);
 
-    const resolvedType = resolved ? nodeTypeMap.get(resolved) : undefined;
+    const resolvedType = resolved ? primaryType(resolved) : undefined;
     if (resolvedType === "text") {
       return resolved;
     }
@@ -268,8 +313,8 @@ export function setupMouseEvents(
     }
     // Group wrapper: find first text leaf in candidates
     for (const candidate of candidates) {
-      if (nodeTypeMap.get(candidate) === "text") {
-        return candidate;
+      if (primaryType(candidate.source) === "text") {
+        return candidate.source;
       }
     }
     return null;
@@ -277,77 +322,77 @@ export function setupMouseEvents(
 
   /** Fire a log entry + visual effect if handler exists on the hit node. */
   function fireIfHandler(
-    nodeId: string,
+    source: IRSourceRef,
     eventKey: keyof HandlersRef,
     logName: string,
     x: number,
     y: number,
   ): void {
-    const irHandlers = handlerMap.get(nodeId);
+    const irHandlers = handlersFor(source);
     if (irHandlers?.[eventKey]) {
-      addEventLogEntry(logName, nodeId, x, y);
+      addEventLogEntry(logName, source.nodeId, x, y);
       if (FLASH_EVENTS.has(logName)) {
-        overlay.flashNode(nodeId, EVENT_COLORS[logName] ?? "#fff");
+        overlay.flashNode(source, EVENT_COLORS[logName] ?? "#fff");
       }
     }
   }
 
   const onClick = (e: MouseEvent) => {
-    const nodeId = resolveHit(e);
-    if (nodeId) {
+    const source = resolveHit(e);
+    if (source) {
       const { x, y } = getSvgCoords(svgEl, e);
-      const irHandlers = handlerMap.get(nodeId);
+      const irHandlers = handlersFor(source);
       if (irHandlers?.onClick) {
         if (irHandlers.onClick === "github-open") {
           window.open("https://github.com/zakideee/boundsvg", "_blank", "noopener,noreferrer");
         }
-        addEventLogEntry("click", nodeId, x, y);
-        overlay.flashNode(nodeId, EVENT_COLORS.click ?? "#22d3ee");
+        addEventLogEntry("click", source.nodeId, x, y);
+        overlay.flashNode(source, EVENT_COLORS.click ?? "#22d3ee");
       }
     }
   };
 
   const onDblClick = (e: MouseEvent) => {
-    const nodeId = resolveHit(e);
-    if (nodeId) {
+    const source = resolveHit(e);
+    if (source) {
       const { x, y } = getSvgCoords(svgEl, e);
-      fireIfHandler(nodeId, "onDoubleClick", "dblclick", x, y);
+      fireIfHandler(source, "onDoubleClick", "dblclick", x, y);
     }
   };
 
   const onContextMenu = (e: MouseEvent) => {
     e.preventDefault();
-    const nodeId = resolveHit(e);
+    const source = resolveHit(e);
 
     // User-defined onContextMenu handler takes priority
-    if (nodeId) {
-      const irHandlers = handlerMap.get(nodeId);
+    if (source) {
+      const irHandlers = handlersFor(source);
       if (irHandlers?.onContextMenu) {
         const { x, y } = getSvgCoords(svgEl, e);
-        addEventLogEntry("contextMenu", nodeId, x, y);
+        addEventLogEntry("contextMenu", source.nodeId, x, y);
         if (FLASH_EVENTS.has("contextMenu")) {
-          overlay.flashNode(nodeId, EVENT_COLORS.contextMenu ?? "#fff");
+          overlay.flashNode(source, EVENT_COLORS.contextMenu ?? "#fff");
         }
         return;
       }
     }
 
     // Text copy menu
-    const textNodeId = resolveTextTarget(e);
-    if (!textNodeId) {
+    const textSource = resolveTextTarget(e);
+    if (!textSource) {
       return;
     }
 
     // Check text node doesn't have its own onContextMenu
-    const textHandlers = handlerMap.get(textNodeId);
+    const textHandlers = handlersFor(textSource);
     if (textHandlers?.onContextMenu) {
       const { x, y } = getSvgCoords(svgEl, e);
-      addEventLogEntry("contextMenu", textNodeId, x, y);
+      addEventLogEntry("contextMenu", textSource.nodeId, x, y);
       return;
     }
 
     const { x: svgX, y: svgY } = getSvgCoords(svgEl, e);
-    const items = buildCopyMenuItems(textMap, ir.drawOrder, textNodeId, svgX, svgY);
+    const items = buildCopyMenuItems(textMap, textSource, svgX, svgY);
     if (items.length > 0) {
       showCopyMenu(copyMenuState, e.clientX, e.clientY, items);
     }
@@ -366,70 +411,72 @@ export function setupMouseEvents(
   // -----------------------------------------------------------------------
 
   const onPointerDown = (e: PointerEvent) => {
-    const nodeId = resolveHit(e);
-    if (nodeId) {
+    const source = resolveHit(e);
+    if (source) {
       const { x, y } = getSvgCoords(svgEl, e);
-      fireIfHandler(nodeId, "onPointerDown", "pointerDown", x, y);
+      fireIfHandler(source, "onPointerDown", "pointerDown", x, y);
       if (e.pointerType === "touch") {
-        fireIfHandler(nodeId, "onTouchStart", "touchStart", x, y);
+        fireIfHandler(source, "onTouchStart", "touchStart", x, y);
       }
     }
   };
 
   const onPointerUp = (e: PointerEvent) => {
-    const nodeId = resolveHit(e);
-    if (nodeId) {
+    const source = resolveHit(e);
+    if (source) {
       const { x, y } = getSvgCoords(svgEl, e);
-      fireIfHandler(nodeId, "onPointerUp", "pointerUp", x, y);
+      fireIfHandler(source, "onPointerUp", "pointerUp", x, y);
       if (e.pointerType === "touch") {
-        fireIfHandler(nodeId, "onTouchEnd", "touchEnd", x, y);
+        fireIfHandler(source, "onTouchEnd", "touchEnd", x, y);
       }
     }
   };
 
   const onMouseDown = (e: MouseEvent) => {
-    const nodeId = resolveHit(e);
-    if (nodeId) {
+    const source = resolveHit(e);
+    if (source) {
       const { x, y } = getSvgCoords(svgEl, e);
-      fireIfHandler(nodeId, "onMouseDown", "mouseDown", x, y);
+      fireIfHandler(source, "onMouseDown", "mouseDown", x, y);
     }
   };
 
   const onMouseUp = (e: MouseEvent) => {
-    const nodeId = resolveHit(e);
-    if (nodeId) {
+    const source = resolveHit(e);
+    if (source) {
       const { x, y } = getSvgCoords(svgEl, e);
-      fireIfHandler(nodeId, "onMouseUp", "mouseUp", x, y);
+      fireIfHandler(source, "onMouseUp", "mouseUp", x, y);
     }
   };
 
   const onMouseMove = (e: MouseEvent) => {
-    const nodeId = resolveHit(e);
+    const source = resolveHit(e);
     const { x, y } = getSvgCoords(svgEl, e);
 
     // Hover transition: fire enter/leave + over/out for both pointer and mouse
-    if (nodeId !== lastHovered) {
+    if (source !== lastHovered) {
       if (lastHovered) {
         fireIfHandler(lastHovered, "onPointerLeave", "pointerLeave", x, y);
         fireIfHandler(lastHovered, "onPointerOut", "pointerOut", x, y);
         fireIfHandler(lastHovered, "onMouseLeave", "mouseLeave", x, y);
         fireIfHandler(lastHovered, "onMouseOut", "mouseOut", x, y);
       }
-      lastHovered = nodeId;
-      if (nodeId) {
-        fireIfHandler(nodeId, "onPointerEnter", "pointerEnter", x, y);
-        fireIfHandler(nodeId, "onPointerOver", "pointerOver", x, y);
-        fireIfHandler(nodeId, "onMouseEnter", "mouseEnter", x, y);
-        fireIfHandler(nodeId, "onMouseOver", "mouseOver", x, y);
+      lastHovered = source;
+      if (source) {
+        fireIfHandler(source, "onPointerEnter", "pointerEnter", x, y);
+        fireIfHandler(source, "onPointerOver", "pointerOver", x, y);
+        fireIfHandler(source, "onMouseEnter", "mouseEnter", x, y);
+        fireIfHandler(source, "onMouseOver", "mouseOver", x, y);
       }
-      overlay.setHoverGlow(nodeId);
-      hoverEl.textContent = nodeId ?? "none";
+      overlay.setHoverGlow(source);
+      overlay.setInspectHighlight(source);
+      onInspectChange(source);
+      hoverEl.textContent = source?.nodeId ?? "none";
     }
 
     // Continuous move handlers
-    if (nodeId) {
-      fireIfHandler(nodeId, "onPointerMove", "pointerMove", x, y);
-      fireIfHandler(nodeId, "onMouseMove", "mouseMove", x, y);
+    if (source) {
+      fireIfHandler(source, "onPointerMove", "pointerMove", x, y);
+      fireIfHandler(source, "onMouseMove", "mouseMove", x, y);
     }
   };
 
@@ -438,10 +485,10 @@ export function setupMouseEvents(
     if (e.pointerType !== "touch") {
       return; // mouse/pen handled by onMouseMove
     }
-    const nodeId = resolveHit(e);
-    if (nodeId) {
+    const source = resolveHit(e);
+    if (source) {
       const { x, y } = getSvgCoords(svgEl, e);
-      fireIfHandler(nodeId, "onTouchMove", "touchMove", x, y);
+      fireIfHandler(source, "onTouchMove", "touchMove", x, y);
     }
   };
 
@@ -453,6 +500,8 @@ export function setupMouseEvents(
       fireIfHandler(lastHovered, "onMouseOut", "mouseOut", 0, 0);
       lastHovered = null;
       overlay.setHoverGlow(null);
+      overlay.setInspectHighlight(null);
+      onInspectChange(null);
       hoverEl.textContent = "none";
     }
   };
@@ -472,7 +521,7 @@ export function setupMouseEvents(
   svgEl.style.userSelect = "none";
   svgEl.style.setProperty("-webkit-user-select", "none");
 
-  return () => {
+  const cleanup = (): void => {
     overlay.destroy();
     destroyCopyMenuState(copyMenuState);
     svgEl.removeEventListener("click", onClick);
@@ -489,5 +538,10 @@ export function setupMouseEvents(
     svgEl.style.touchAction = "";
     svgEl.style.userSelect = "";
     svgEl.style.setProperty("-webkit-user-select", "");
+  };
+  return {
+    cleanup,
+    highlight: (source) => overlay.setInspectHighlight(source),
+    updateDisplay: (nextDisplay) => overlay.updateDisplay(nextDisplay),
   };
 }

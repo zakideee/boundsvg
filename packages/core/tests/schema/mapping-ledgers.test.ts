@@ -100,8 +100,8 @@ function buildMappingFixture() {
           padding: [1, 2, 3, 4],
           margin: 1,
           borderRadius: 2,
-          strokeScaling: "canvas",
           onPointerCancel: "box-cancel",
+          outline: { stroke: "none", strokeScaling: "canvas" },
         }),
       ),
     ),
@@ -215,20 +215,20 @@ describe("semantic mapping ledgers", () => {
         (fieldCount, nodeLedger) => fieldCount + Object.keys(nodeLedger).length,
         0,
       ),
-    ).toBe(684);
+    ).toBe(672);
     expect(
       Object.values(SCENE_TO_WASM_MAPPING).reduce(
         (fieldCount, nodeLedger) => fieldCount + Object.keys(nodeLedger).length,
         0,
       ),
-    ).toBe(710);
+    ).toBe(698);
     expect(Object.keys(RUST_IR_TO_PUBLIC_IR_MAPPING)).toHaveLength(8);
     expect(
       Object.values(RUST_IR_TO_PUBLIC_IR_MAPPING).reduce(
         (fieldCount, nodeLedger) => fieldCount + Object.keys(nodeLedger).length,
         0,
       ),
-    ).toBe(108);
+    ).toBe(107);
     expect(RUST_IR_TO_PUBLIC_IR_MAPPING.path.pathGeometry).toBe("derived-output");
   });
 
@@ -268,7 +268,7 @@ describe("semantic mapping ledgers", () => {
     });
     expect(wireNodesById.get("box")?.visual).toMatchObject({
       borderRadius: 2,
-      strokeScaling: "canvas",
+      outline: { stroke: "none", strokeScaling: "canvas" },
       handlers: { onPointerCancel: "box-cancel" },
     });
     expect(wireNodesById.get("text")?.text).toMatchObject({

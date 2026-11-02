@@ -3,6 +3,7 @@ import type { IRGroupNode, IRNode, IRRectNode, IRTextNode } from "../../dist/ind
 const bbox = { x: 0, y: 0, w: 120, h: 40 };
 
 const rectNode: IRRectNode = {
+  ownership: { role: "source" },
   type: "rect",
   nodeId: "rect",
   bbox,
@@ -10,6 +11,7 @@ const rectNode: IRRectNode = {
 };
 
 const textNode: IRTextNode = {
+  ownership: { role: "source" },
   type: "text",
   nodeId: "text",
   bbox,
@@ -23,6 +25,7 @@ const textNode: IRTextNode = {
 };
 
 const groupNode: IRGroupNode = {
+  ownership: { role: "source" },
   type: "group",
   nodeId: "group",
   bbox,
@@ -34,6 +37,7 @@ const nodes: IRNode[] = [groupNode, rectNode, textNode];
 void nodes;
 
 const invalidLeafTransform: IRRectNode = {
+  ownership: { role: "source" },
   type: "rect",
   nodeId: "invalid-transform",
   bbox,
@@ -44,6 +48,7 @@ void invalidLeafTransform;
 
 // @ts-expect-error text variants require the Rust-emitted text payload
 const incompleteText: IRTextNode = {
+  ownership: { role: "source" },
   type: "text",
   nodeId: "incomplete-text",
   bbox,

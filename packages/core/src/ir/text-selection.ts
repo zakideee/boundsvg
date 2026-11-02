@@ -6,12 +6,14 @@ import {
   multiplyAffineMatrices,
   type Point2D,
 } from "../transform.js";
-import type { IR, IRNode } from "./types.js";
+import type { IRSourceIndex, IRSourceRef } from "./source-index.js";
 
+/** Source-range roles distinguishing ordinary content from ruby base and annotation. */
 export type TextSourceRole = "content" | "rubyBase" | "rubyAnnotation";
 
+/** Canvas-space glyph quad associated with a semantic source range. */
 export type TextSelectionQuad = {
-  nodeId: string;
+  source: IRSourceRef;
   sourceStart: number;
   sourceEnd: number;
   sourceRole: TextSourceRole;
@@ -19,42 +21,58 @@ export type TextSelectionQuad = {
   points: [Point2D, Point2D, Point2D, Point2D];
 };
 
+/** Selectable primary text geometry for one source occurrence. */
 export type TextSelectionNode = {
-  nodeId: string;
+  source: IRSourceRef;
   writingMode: "horizontal-tb" | "vertical-rl";
   glyphs: readonly TextSelectionQuad[];
 };
 
+/** Snapshot-local primary text geometry keyed by source ordinal. */
 export type TextSelectionMap = {
-  nodes: ReadonlyMap<string, TextSelectionNode>;
+  nodes: ReadonlyMap<number, TextSelectionNode>;
 };
 
+/** Logical caret in one source occurrence, including ruby source role. */
 export type TextCaret = {
-  nodeId: string;
+  source: IRSourceRef;
   offset: number;
   affinity: "before" | "after";
   sourceRole: TextSourceRole;
 };
 
+/** Logical source offsets selected within one primary text occurrence. */
 export type TextSelectionRange = {
   start: number;
   end: number;
 };
 
 /**
- * Build canvas-space glyph quads from an IR returned by renderToSvgAndIR with
- * textPathMode="glyphs". IRs without per-glyph paths produce empty entries.
+ * Project canvas-space glyph quads from a prepared source index.
+ * Use renderToSvgAndIR with textPathMode="glyphs"; snapshots without per-glyph
+ * paths produce no selectable quads.
  */
-export function buildTextSelectionMap(ir: IR): TextSelectionMap {
-  const nodes = new Map<string, TextSelectionNode>();
+export function buildTextSelectionMap(sourceIndex: IRSourceIndex): TextSelectionMap {
+  const nodes = new Map<number, TextSelectionNode>();
 
-  function walk(node: IRNode, ancestorMatrix: AffineMatrix): void {
+  const matrices = new Map<number, AffineMatrix>();
+  for (const occurrence of sourceIndex.nodes.values()) {
+    const node = occurrence.node;
+    const ancestorMatrix =
+      occurrence.parentNodeIndex === null
+        ? createIdentityAffineMatrix()
+        : (matrices.get(occurrence.parentNodeIndex) ?? createIdentityAffineMatrix());
     const worldMatrix = multiplyAffineMatrices(
       ancestorMatrix,
       createResolvedTransformMatrix(node.type === "group" ? node.transform : undefined, node.bbox),
     );
+    matrices.set(occurrence.nodeIndex, worldMatrix);
 
-    if (node.type === "text") {
+    if (
+      node.type === "text" &&
+      sourceIndex.sources.get(occurrence.source.sourceIndex)?.primaryNodeIndex ===
+        occurrence.nodeIndex
+    ) {
       const glyphs = (node.glyphPaths ?? []).flatMap((glyphPath) => {
         if (
           glyphPath.sourceStart === undefined ||
@@ -66,7 +84,7 @@ export function buildTextSelectionMap(ir: IR): TextSelectionMap {
         const { x, y, w, h } = glyphPath.bbox;
         return [
           {
-            nodeId: node.nodeId,
+            source: occurrence.source,
             sourceStart: glyphPath.sourceStart,
             sourceEnd: glyphPath.sourceEnd,
             sourceRole: glyphPath.sourceRole,
@@ -81,30 +99,24 @@ export function buildTextSelectionMap(ir: IR): TextSelectionMap {
         ];
       });
       if (glyphs.length > 0) {
-        nodes.set(node.nodeId, {
-          nodeId: node.nodeId,
+        nodes.set(occurrence.source.sourceIndex, {
+          source: occurrence.source,
           writingMode: node.writingMode ?? "horizontal-tb",
           glyphs,
         });
       }
     }
-
-    for (const child of node.type === "group" ? (node.children ?? []) : []) {
-      walk(child, worldMatrix);
-    }
   }
-
-  walk(ir.root, createIdentityAffineMatrix());
   return { nodes };
 }
 
 /** Resolve the nearest logical caret boundary to a canvas-space point. */
 export function findTextCaretAtPoint(
   selectionMap: TextSelectionMap,
-  nodeId: string,
+  sourceIndex: number,
   point: { svgX: number; svgY: number },
 ): TextCaret | null {
-  const node = selectionMap.nodes.get(nodeId);
+  const node = selectionMap.nodes.get(sourceIndex);
   if (!node || node.glyphs.length === 0) {
     return null;
   }
@@ -129,7 +141,7 @@ export function findTextCaretAtPoint(
     ? point.svgY < bounds.y + bounds.h / 2
     : point.svgX < bounds.x + bounds.w / 2;
   return {
-    nodeId,
+    source: node.source,
     offset: before ? bestGlyph.sourceStart : bestGlyph.sourceEnd,
     affinity: before ? "before" : "after",
     sourceRole: bestGlyph.sourceRole,
@@ -139,10 +151,10 @@ export function findTextCaretAtPoint(
 /** Return transformed glyph quads overlapping a logical source range. */
 export function getTextRangeQuads(
   selectionMap: TextSelectionMap,
-  nodeId: string,
+  sourceIndex: number,
   range: TextSelectionRange,
 ): TextSelectionQuad[] {
-  const node = selectionMap.nodes.get(nodeId);
+  const node = selectionMap.nodes.get(sourceIndex);
   if (!node) {
     return [];
   }
@@ -160,11 +172,11 @@ function quadBounds(points: TextSelectionQuad["points"]): {
   w: number;
   h: number;
 } {
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const x = Math.min(...xs);
-  const y = Math.min(...ys);
-  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+  const xCoordinates = points.map((point) => point.x);
+  const yCoordinates = points.map((point) => point.y);
+  const x = Math.min(...xCoordinates);
+  const y = Math.min(...yCoordinates);
+  return { x, y, w: Math.max(...xCoordinates) - x, h: Math.max(...yCoordinates) - y };
 }
 
 function distanceToRect(

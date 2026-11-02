@@ -24,11 +24,20 @@ export type HandlersRef = GeneratedHandlersRef;
 /** Intermediate Representation node, discriminated by `type`. */
 export type IRNode = GeneratedIrNode;
 
+/** Explicit structural role and source-owned event/application metadata. */
+export type IRNodeOwnership = IRNode["ownership"];
+
 /** Public IR node discriminants. */
 export type IRNodeType = IRNode["type"];
 
 /** Container group IR node. */
 export type IRGroupNode = Extract<IRNode, { type: "group" }>;
+
+/** Explicit empty or resolved elliptical box clipping region. */
+export type BoxClip = NonNullable<IRGroupNode["clip"]>;
+
+/** Rectangle and clockwise elliptical corners in owner coordinates. */
+export type BoxContour = Extract<BoxClip, { kind: "boxContour" }>;
 
 /** Filled or stroked rectangle IR node. */
 export type IRRectNode = Extract<IRNode, { type: "rect" }>;

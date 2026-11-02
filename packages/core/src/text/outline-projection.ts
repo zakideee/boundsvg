@@ -1,4 +1,5 @@
-import type { IRNode, IRTextNode } from "../ir/types.js";
+import { buildIRSourceIndex, type IRNodeOccurrence } from "../ir/source-index.js";
+import type { IR, IRTextNode } from "../ir/types.js";
 import {
   type AffineMatrix,
   createIdentityAffineMatrix,
@@ -12,45 +13,44 @@ import type { TextOutlineNode } from "./types.js";
  * view. This function does not select glyphs, resolve fonts, create paths,
  * group paths, or compute bounds.
  */
-export function projectResolvedTextOutlines(root: IRNode): TextOutlineNode[] {
+export function projectResolvedTextOutlines(ir: IR): TextOutlineNode[] {
+  const index = buildIRSourceIndex(ir);
   const outlines: TextOutlineNode[] = [];
-  walkTree(root, createIdentityAffineMatrix(), (node, worldMatrix) => {
-    if (node.type !== "text" || node.lines.length === 0) {
-      return;
+  const matrices = new Map<number, AffineMatrix>();
+  for (const occurrence of index.nodes.values()) {
+    const node = occurrence.node;
+    const ancestor =
+      occurrence.parentNodeIndex === null ? undefined : matrices.get(occurrence.parentNodeIndex);
+    const matrix = multiplyAffineMatrices(
+      ancestor ?? createIdentityAffineMatrix(),
+      createResolvedTransformMatrix(node.type === "group" ? node.transform : undefined, node.bbox),
+    );
+    matrices.set(occurrence.nodeIndex, matrix);
+    if (node.type === "text") {
+      outlines.push(projectTextNode(node, matrix, occurrence));
     }
-    outlines.push(projectTextNode(node, worldMatrix));
-  });
+  }
   return outlines;
 }
 
-function projectTextNode(node: IRTextNode, worldMatrix: AffineMatrix): TextOutlineNode {
+function projectTextNode(
+  node: IRTextNode,
+  worldMatrix: AffineMatrix,
+  occurrence: IRNodeOccurrence,
+): TextOutlineNode {
   const worldTransform = isIdentityMatrix(worldMatrix) ? undefined : worldMatrix;
   return {
+    nodeIndex: occurrence.nodeIndex,
+    source: occurrence.source,
+    ownership: node.ownership,
     nodeId: node.nodeId,
     text: node.lines.map((line) => line.text).join("\n"),
     bbox: node.bbox,
     writingMode: node.writingMode,
     paths: node.glyphPaths ?? [],
+    ...(node.gradients ? { gradients: node.gradients } : {}),
     ...(worldTransform ? { worldTransform } : {}),
   };
-}
-
-function walkTree(
-  node: IRNode,
-  ancestorMatrix: AffineMatrix,
-  visit: (node: IRNode, worldMatrix: AffineMatrix) => void,
-): void {
-  const worldMatrix = multiplyAffineMatrices(
-    ancestorMatrix,
-    createResolvedTransformMatrix(node.type === "group" ? node.transform : undefined, node.bbox),
-  );
-  visit(node, worldMatrix);
-  if (node.type !== "group") {
-    return;
-  }
-  for (const child of node.children ?? []) {
-    walkTree(child, worldMatrix, visit);
-  }
 }
 
 function isIdentityMatrix(matrix: AffineMatrix): boolean {

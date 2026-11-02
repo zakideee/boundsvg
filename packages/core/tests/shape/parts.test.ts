@@ -276,7 +276,7 @@ describe("structural shape emit", () => {
     } as CanvasSceneNode);
 
     // Positioned wrapper, structural paths - not a re-parsed compiled document.
-    expect(svg).toContain('<svg data-boundsvg-node-id="medal" x="0" y="0" width="300"');
+    expect(svg).toContain('<svg x="0" y="0" width="300"');
     expect((svg.match(/xmlns=/g) ?? []).length).toBe(1);
     expect((svg.match(/data-boundsvg-part-id=/g) ?? []).length).toBe(3);
     expect((svg.match(/fill="#1e293b"/g) ?? []).length).toBe(3);
@@ -495,7 +495,7 @@ describe("layered manifest parts", () => {
     expect(result.layers[0]?.svg).toContain('data-boundsvg-part-id="wire"');
     expect(result.manifest.layers[0]?.parts?.[0]).toMatchObject({
       partId: "wire",
-      nodeId: "line",
+      source: { sourceIndex: 1, nodeId: "line" },
       bbox: { height: 0 },
     });
     expect(result.manifest.layers[0]?.parts?.[0]?.bbox?.width).toBeGreaterThan(150);
@@ -524,9 +524,21 @@ describe("layered manifest parts", () => {
 
     expect(result.manifest.layers).toHaveLength(1);
     expect(result.manifest.layers[0]?.parts).toEqual([
-      { partId: "bg", nodeId: "medal", bbox: { x: 0, y: 0, width: 300, height: 200 } },
-      { partId: "ribbon", nodeId: "medal", bbox: { x: 20, y: 70, width: 260, height: 50 } },
-      { partId: "part:2", nodeId: "medal", bbox: { x: 250, y: 20, width: 40, height: 40 } },
+      {
+        partId: "bg",
+        source: { sourceIndex: 1, nodeId: "medal" },
+        bbox: { x: 0, y: 0, width: 300, height: 200 },
+      },
+      {
+        partId: "ribbon",
+        source: { sourceIndex: 1, nodeId: "medal" },
+        bbox: { x: 20, y: 70, width: 260, height: 50 },
+      },
+      {
+        partId: "part:2",
+        source: { sourceIndex: 1, nodeId: "medal" },
+        bbox: { x: 250, y: 20, width: 40, height: 40 },
+      },
     ]);
   });
 

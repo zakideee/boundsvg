@@ -19,7 +19,11 @@ type RustDto = {
   variants: RustVariant[];
   serdeAttributes: string[];
 };
-type RustInventory = { deriveCount: number; dtos: Map<string, RustDto> };
+type RustInventory = {
+  deriveCount: number;
+  manualDeserializeCount: number;
+  dtos: Map<string, RustDto>;
+};
 
 type TypeTarget = {
   file: string;
@@ -59,6 +63,7 @@ const textTypesFile = "packages/core/src/text/types.ts";
 
 /** Rust DTO declarations paired with their TypeScript structural mirrors. */
 const typeTargets: Record<string, TypeTarget[]> = {
+  IrSourceRef: [{ file: "packages/core/src/ir/source-index.ts", typeName: "IRSourceRef" }],
   PathGeometry: [{ file: generatedIrTypesFile, typeName: "PathGeometry" }],
   PathStrokeOutset: [{ file: generatedIrTypesFile, typeName: "PathStrokeOutset" }],
   AnimationKeyframe: [{ file: "packages/core/src/vnode/types.ts", typeName: "AnimationKeyframe" }],
@@ -112,11 +117,16 @@ const typeTargets: Record<string, TypeTarget[]> = {
   // IR output DTOs (serialize direction — the public TS IR contract)
   BBox: [{ file: textTypesFile, typeName: "BBox" }],
   BorderRadii: [{ file: irTypesFile, typeName: "BorderRadii" }],
+  BoxContour: [
+    { file: irTypesFile, typeName: "BoxContour", intentionallyIgnoredTsFields: ["kind"] },
+  ],
+  CornerRadius: [{ file: generatedIrTypesFile, typeName: "CornerRadius" }],
+  BoxOutlineStyle: [{ file: "packages/core/src/vnode/types.ts", typeName: "BoxOutlineStyle" }],
+  TextGradient: [{ file: generatedIrTypesFile, typeName: "TextGradient" }],
   BoxShadow: [{ file: irTypesFile, typeName: "IRNode", path: ["boxShadow"] }],
   GradientStop: [{ file: irTypesFile, typeName: "IRNode", path: ["gradient", "stops", "[]"] }],
-  RadialGradientGeometry: [
-    { file: irTypesFile, typeName: "IRNode", path: ["gradient", "geometry"] },
-  ],
+  LinearGradientGeometry: [{ file: generatedIrTypesFile, typeName: "LinearGradientGeometry" }],
+  RadialGradientGeometry: [{ file: generatedIrTypesFile, typeName: "RadialGradientGeometry" }],
   HandlersRef: [{ file: irTypesFile, typeName: "HandlersRef" }],
   StructuralIr: [{ file: generatedIrTypesFile, typeName: "GeneratedStructuralIr" }],
   SerializedFatalError: [{ file: "packages/core/src/errors.ts", typeName: "SerializedFatalError" }],
@@ -170,9 +180,8 @@ const typeTargets: Record<string, TypeTarget[]> = {
     {
       file: irTypesFile,
       typeName: "IR",
-      // drawOrder/warnings are not read by SVG emission; the Rust input DTO
-      // deliberately omits them.
-      intentionallyIgnoredTsFields: ["drawOrder", "warnings"],
+      // Diagnostics travel separately from the structural rendering input.
+      intentionallyIgnoredTsFields: ["warnings"],
     },
   ],
   LineWire: [{ file: textTypesFile, typeName: "Line" }],
@@ -352,6 +361,7 @@ const unitEnumTargets: Record<string, TypeTarget> = {
     typeName: "PngRenderOptions",
     path: ["oversizeBehavior"],
   },
+  WrapperPlacement: { file: generatedIrTypesFile, typeName: "WrapperPlacement" },
   // IR output enums (serialize direction)
   FatalSeverity: {
     file: "packages/core/src/errors.ts",
@@ -609,7 +619,37 @@ function parseRustDtos(): RustInventory {
       dtos.set(dto.name, dto);
     }
   }
-  return { deriveCount, dtos };
+  const inputText = readFileSync(resolve(rustRoot, "ir/wire_input.rs"), "utf8");
+  const nodeDeclaration = /struct IrNodeInput[^{]*\{/.exec(inputText);
+  if (!nodeDeclaration || nodeDeclaration.index === undefined) {
+    throw new TypeError("Missing manual IrNodeInput declaration");
+  }
+  const open = nodeDeclaration.index + nodeDeclaration[0].lastIndexOf("{");
+  const close = findMatchingBrace(inputText, open);
+  const fields = parseRustFields(inputText.slice(open + 1, close), "deserialize", "camelCase");
+  const decoder = /impl<'de> Deserialize<'de> for IrNodeInput\s*\{/.exec(inputText);
+  if (!decoder || decoder.index === undefined) {
+    throw new TypeError("Missing manual IrNodeInput decoder");
+  }
+  const decoderOpen = decoder.index + decoder[0].lastIndexOf("{");
+  const decoderBody = inputText.slice(decoderOpen + 1, findMatchingBrace(inputText, decoderOpen));
+  const peeled = [...decoderBody.matchAll(/fields\s*\.remove\("([^"]+)"\)/gu)]
+    .map((match) => match[1])
+    .sort();
+  expect(peeled).toEqual(
+    fields
+      .filter((field) => field.name !== "kind")
+      .map((field) => field.name)
+      .sort(),
+  );
+  dtos.set("IrNodeInput", {
+    name: "IrNodeInput",
+    direction: "deserialize",
+    fields,
+    variants: [],
+    serdeAttributes: [],
+  });
+  return { deriveCount, manualDeserializeCount: 1, dtos };
 }
 
 function createTypeProgram(): { checker: ts.TypeChecker; program: ts.Program } {
@@ -871,24 +911,30 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       "FlowExclusionMargin",
       "FlowExclusionShape",
       "Gradient",
+      "BoxClip",
+      "TextPaint",
+      "RawWidths",
       "IrNodeInput",
       "IrNodeOutput",
       "IrNodeKindInput",
       "IrNodeKindOutput",
+      "IrNodeOwnershipInput",
+      "IrNodeOwnershipOutput",
     ].sort();
-    expect(rustInventory.deriveCount, "every boundsvg serde derive must be parsed").toBe(
-      rustDtos.size,
-    );
+    expect(
+      rustInventory.deriveCount + rustInventory.manualDeserializeCount,
+      "every derived or explicit manual wire DTO must be parsed",
+    ).toBe(rustDtos.size);
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(152);
+    expect(rustDtos.size).toBe(164);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(1042);
-    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(95);
+    ).toBe(1070);
+    expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(111);
   });
 
   it("keeps struct wire fields and requiredness directionally compatible", () => {
@@ -917,7 +963,7 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
     );
     const rustStringArray = (constantName: string): string[] => {
       const match = rustSource.match(
-        new RegExp(`const ${constantName}: &\\[&str\\] = &\\[([\\s\\S]*?)\\];`, "u"),
+        new RegExp(`const ${constantName}: &\\[&str\\] =\\s*&\\[([\\s\\S]*?)\\];`, "u"),
       );
       expect(match?.[1], `missing Rust constant ${constantName}`).toBeDefined();
       return [...(match?.[1] ?? "").matchAll(/"([^"]+)"/gu)]
@@ -934,7 +980,7 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
 
     expect(rustStringArray("LAYOUT_NODE_TRANSPORT_KEYS")).toEqual(transportFields);
     expect(rustStringArray("CANVAS_STROKE_SIGNATURE_KEYS")).toEqual(
-      ["strokeScaling", "borderWidth", "borderColor", "strokeWidth", "stroke"].sort(),
+      ["strokeScaling", "outline", "strokeWidth", "stroke"].sort(),
     );
   });
 
@@ -969,7 +1015,12 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
     "Output",
   ] as const)("keeps each %s IR node kind aligned with its TS variant", (direction) => {
     const irNode = rustDtos.get(`IrNode${direction}`);
-    expect(irNode?.fields.map((field) => field.name).sort()).toEqual(["bbox", "kind", "nodeId"]);
+    expect(irNode?.fields.map((field) => field.name).sort()).toEqual([
+      "bbox",
+      "kind",
+      "nodeId",
+      "ownership",
+    ]);
 
     const kind = rustDtos.get(`IrNodeKind${direction}`);
     expect(kind?.serdeAttributes.some((attribute) => /\btag = "type"/.test(attribute))).toBe(true);
@@ -1014,7 +1065,42 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
         },
         `IR${variant.name[0]?.toUpperCase()}${variant.name.slice(1)}Node`,
         variantShape,
-        direction === "Input" && variant.name === "path" ? ["pathGeometry"] : [],
+        [],
+      );
+    }
+  });
+
+  it.each([
+    "Input",
+    "Output",
+  ] as const)("keeps each %s ownership role aligned with its TS variant", (direction) => {
+    const ownership = rustDtos.get(`IrNodeOwnership${direction}`);
+    expect(ownership).toBeDefined();
+    const types = declarationType(program, checker, {
+      file: irTypesFile,
+      typeName: "IRNodeOwnership",
+    });
+    for (const variant of ownership?.variants ?? []) {
+      const matches = types.filter((type) => {
+        const role = checker.getPropertyOfType(type, "role");
+        const location = role?.valueDeclaration ?? role?.declarations?.[0];
+        return (
+          role &&
+          location &&
+          stringLiterals([checker.getTypeOfSymbolAtLocation(role, location)]).includes(variant.name)
+        );
+      });
+      expect(matches).toHaveLength(1);
+      compareFields(
+        {
+          name: `Ownership.${variant.name}`,
+          direction: direction === "Input" ? "deserialize" : "serialize",
+          fields: [{ name: "role", required: true }, ...variant.fields],
+          variants: [],
+          serdeAttributes: [],
+        },
+        variant.name,
+        fieldShape(matches, checker),
       );
     }
   });

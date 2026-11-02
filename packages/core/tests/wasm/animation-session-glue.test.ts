@@ -24,13 +24,21 @@ function sceneIr(svg: string, width = 8, height = 4): string {
   return JSON.stringify({
     width,
     height,
-    drawOrder: [],
+
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "root",
       bbox,
       children: [
-        { type: "svg", nodeId: "svg", bbox, svgContent: svg, preserveAspectRatio: "xMidYMid meet" },
+        {
+          ownership: { role: "source" },
+          type: "svg",
+          nodeId: "svg",
+          bbox,
+          svgContent: svg,
+          preserveAspectRatio: "xMidYMid meet",
+        },
       ],
     },
   });
@@ -134,7 +142,7 @@ for (const target of ["node", "web"] as const) {
     }
 
     it("exports the four-argument scalar ABI and rejects coerced open inputs", () => {
-      expect(module.wasm_schema_version()).toBe(35);
+      expect(module.wasm_schema_version()).toBe(37);
       expect(engine.push_animated_raster_frame.length).toBe(4);
       const session = open();
       try {

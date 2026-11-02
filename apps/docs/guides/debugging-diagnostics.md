@@ -12,7 +12,7 @@ The fastest first check is the render-time debug overlay:
 
 <!--@include: ../_generated/debug-bbox.md-->
 
-This uses the same WASM layout and IR path as normal rendering. It is useful for checking element bounds, nesting depth, overflow, and whether generated IDs are stable enough to target later.
+This uses the same WASM layout and IR path as normal rendering. It is useful for checking element bounds, nesting depth, overflow, and the source occurrences associated with painted elements.
 
 ## Programmatic Inspection
 
@@ -28,20 +28,20 @@ if (!inspection.nodeIds.valid) {
 }
 
 console.table(
-  inspection.bboxes.map(({ nodeId, type, x, y, w, h, depth, drawIndex }) => ({
-    nodeId,
-    type,
-    x,
-    y,
-    w,
-    h,
-    depth,
-    drawIndex,
-  })),
+  inspection.bboxes.map(
+    ({ nodeId, nodeIndex, source, type, layoutBBox, depth, paintOrder }) => ({
+      nodeId,
+      type,
+      ...layoutBBox,
+      depth,
+      paintOrder,
+      nodeIndex,
+    }),
+  ),
 );
 ```
 
-`inspectScene()` returns the layout tree, IR, `textMap`, `handlerMap`, `nodeTypeMap`, bbox list, recoverable warnings, and summary stats. It does not run a TypeScript-side text engine; it reads the result produced by the normal WASM render pipeline.
+`inspectScene()` returns the layout tree, IR, `textMap`, `sourceIndex`, occurrence bbox list, recoverable warnings, and summary stats. It does not run a TypeScript-side text engine; it reads the result produced by the normal WASM render pipeline.
 
 ## Diagnostic fields and ownership
 
@@ -267,7 +267,7 @@ import {
 } from "@boundsvg/react/debug";
 import { useBoundSvgInspection } from "@boundsvg/react/inspect";
 
-function PreviewInspector({ vnode, selectedNodeId }) {
+function PreviewInspector({ vnode, selectedNodeIndex }) {
   const { inspection, error, isReady } = useBoundSvgInspection(vnode);
 
   if (error) {
@@ -281,7 +281,7 @@ function PreviewInspector({ vnode, selectedNodeId }) {
         <BoundSvgDebugOverlay
           inspection={inspection}
           labelMode="summary"
-          selectedNodeId={selectedNodeId}
+          selectedNodeIndex={selectedNodeIndex}
           highlightedBBoxes={[
             {
               id: "export",
@@ -296,7 +296,7 @@ function PreviewInspector({ vnode, selectedNodeId }) {
       )}
       <NodeInspectorPanel
         inspection={inspection}
-        selectedNodeId={selectedNodeId}
+        selectedNodeIndex={selectedNodeIndex}
       />
     </div>
   );
@@ -348,7 +348,14 @@ boundsvg doctor \
   --font NotoSansJP:400:normal:./fonts/NotoSansJP-Regular.ttf
 ```
 
-- `inspect` prints render stats, node ID status, warnings, missing glyph counts, overflow counts, bboxes, and draw order.
+- `inspect` prints render stats, node ID status, warnings, missing glyph counts, overflow counts, occurrence bboxes, source references, and physical paint order.
 - `export --inspect` prints the same JSON report to stderr while still writing the rendered output.
 - `export --report <file>` writes the JSON report for CI artifacts.
 - `doctor` checks Node WASM initialization, the font registrations passed on the command line, and whether an ffmpeg is available for MP4 export.
+
+Inspection entries include physical `nodeIndex`, `nodeId`, `ownership`, and a
+`source` reference. Wrappers are transparent in the geometry list and its
+depth; paint ordinals come from tree order. `layoutBBox` is the frame before
+transforms, `transformBox` its four transformed corners, and `visualBBox` their
+axis-aligned enclosing rectangle. Resolve handlers and primary kinds from
+`inspection.sourceIndex.sources`; paint entries do not copy handler flags.

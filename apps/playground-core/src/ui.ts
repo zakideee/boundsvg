@@ -1,5 +1,10 @@
 import type { DebugOverlayPart, Engine } from "@boundsvg/core";
 import { getElement } from "../../playground-shared/dom.js";
+import type { OverlayDisplayMode } from "../../playground-shared/event-effects.js";
+import {
+  INSPECTION_FRAME_LABEL,
+  INSPECTION_FRAME_OPTIONS,
+} from "../../playground-shared/inspection-frame.js";
 import { installPlaygroundLocatorCopy } from "../../playground-shared/locator-copy.js";
 import { updateCodePanel } from "./code-panel";
 import { DEFAULT_PRESET_KEY, PRESET_GROUPS, type PresetGroupDef } from "./presets/groups";
@@ -26,6 +31,35 @@ function formatBBoxOverlaySummary(parts: readonly DebugOverlayPart[]): string {
   return `BBox Overlay: ${parts.map((part) => labels[part]).join(", ")}`;
 }
 
+function initInspectionControls(): void {
+  const select = getElement("inspection-frame") as HTMLSelectElement;
+  const origin = getElement("inspection-origin") as HTMLInputElement;
+  const description = getElement("inspection-frame-description");
+  getElement("inspection-frame-label").textContent = INSPECTION_FRAME_LABEL;
+  for (const [mode, option] of Object.entries(INSPECTION_FRAME_OPTIONS)) {
+    select.add(new Option(option.label, mode));
+  }
+  select.value = coreState.inspectionMode;
+  origin.checked = coreState.showInspectionOrigin;
+  const updateDisplay = (): void => {
+    description.textContent = INSPECTION_FRAME_OPTIONS[coreState.inspectionMode].description;
+    coreState.inspectHandle?.updateDisplay({
+      mode: coreState.inspectionMode,
+      showOrigin: coreState.showInspectionOrigin,
+    });
+  };
+  select.addEventListener("change", () => {
+    coreState.inspectionMode = select.value as OverlayDisplayMode;
+    updateDisplay();
+  });
+  origin.addEventListener("change", () => {
+    coreState.showInspectionOrigin = origin.checked;
+    updateDisplay();
+  });
+  updateDisplay();
+}
+
+/** Build preset navigation and connect output and inspection controls. */
 export function buildUI(engine: Engine): void {
   if (import.meta.env.DEV) {
     installPlaygroundLocatorCopy({ playground: "playground-core" });
@@ -75,6 +109,8 @@ export function buildUI(engine: Engine): void {
     });
     categoriesContainer.appendChild(btn);
   }
+
+  initInspectionControls();
 
   // BBox overlay parts
   const bboxOverlaySelector = 'input[name="bbox-overlay-part"]';

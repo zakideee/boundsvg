@@ -11,21 +11,32 @@ use super::types::{
 };
 use crate::error::EngineError;
 
+/// CSS ease control points used when an animation omits its easing.
 const DEFAULT_EASING: [f64; 4] = [0.25, 0.1, 0.25, 1.0];
 
+/// Spring stiffness used when the authored parameter is omitted.
 const SPRING_DEFAULT_STIFFNESS: f64 = 100.0;
+/// Spring damping used when the authored parameter is omitted.
 const SPRING_DEFAULT_DAMPING: f64 = 10.0;
+/// Spring mass used when the authored parameter is omitted.
 const SPRING_DEFAULT_MASS: f64 = 1.0;
+/// Inclusive lower bound on authored spring stiffness.
 const SPRING_STIFFNESS_MIN: f64 = 1.0;
+/// Inclusive upper bound on authored spring stiffness.
 const SPRING_STIFFNESS_MAX: f64 = 1000.0;
+/// Inclusive lower bound on authored spring damping.
 const SPRING_DAMPING_MIN: f64 = 1.0;
+/// Inclusive upper bound on authored spring damping.
 const SPRING_DAMPING_MAX: f64 = 100.0;
+/// Inclusive lower bound on authored spring mass.
 const SPRING_MASS_MIN: f64 = 0.1;
+/// Inclusive upper bound on authored spring mass.
 const SPRING_MASS_MAX: f64 = 10.0;
 /// Damping ratios within this distance of 1 use the critically damped closed form.
 const SPRING_CRITICAL_EPSILON: f64 = 1.0e-9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Validated step discontinuity policy used by the native sampler.
 pub(super) enum AnimationStepPosition {
     Start,
     End,
@@ -34,6 +45,7 @@ pub(super) enum AnimationStepPosition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Validated easing coefficients and parameters shared by sampling and timeline compilation.
 pub(super) enum ResolvedEasing {
     Cubic([f64; 4]),
     Steps {
@@ -184,6 +196,8 @@ fn validate_transform(
         transform.scale_x,
         transform.scale_y,
         transform.rotate_deg,
+        transform.skew_x_deg,
+        transform.skew_y_deg,
     ]
     .into_iter()
     .flatten()
@@ -194,6 +208,16 @@ fn validate_transform(
                 &format!("keyframe {index} transform values must be finite"),
             ));
         }
+    }
+    if [transform.skew_x_deg, transform.skew_y_deg]
+        .into_iter()
+        .flatten()
+        .any(|angle| angle.abs() > 60.0)
+    {
+        return Err(animation_error(
+            node_id,
+            "skew angles must be in -60..60 degrees",
+        ));
     }
     Ok(())
 }
@@ -320,6 +344,11 @@ pub(crate) fn sample_spring_progress(
     apply_spring_easing(progress, omega0, zeta, segment_duration_ms)
 }
 
+/// Resolve omitted, named, or structured easing into sampler parameters.
+///
+/// # Errors
+///
+/// Returns `ANIMATION_INVALID_SPEC` for unsupported names or invalid easing parameters.
 pub(super) fn resolve_easing(
     easing: Option<&AnimationEasing>,
     node_id: &str,
@@ -460,6 +489,8 @@ fn apply_step_easing(
     current_step / jumps
 }
 
+/// Sample validated easing at segment progress, using the before-side flag for step
+/// discontinuities.
 pub(super) fn apply_easing(
     progress: f64,
     easing: ResolvedEasing,
@@ -582,9 +613,26 @@ fn sample_transform(
         )),
         origin_x: Some(bbox_width / 2.0),
         origin_y: Some(bbox_height / 2.0),
+        skew_x_deg: Some(lerp(
+            from.skew_x_deg.unwrap_or(0.0),
+            to.skew_x_deg.unwrap_or(0.0),
+            progress,
+        ))
+        .filter(|angle| *angle != 0.0),
+        skew_y_deg: Some(lerp(
+            from.skew_y_deg.unwrap_or(0.0),
+            to.skew_y_deg.unwrap_or(0.0),
+            progress,
+        ))
+        .filter(|angle| *angle != 0.0),
     }
 }
 
+/// Sample one validated track, resolving its transform origin to the node center.
+///
+/// # Errors
+///
+/// Returns a structured animation error for invalid easing, keyframes, or unsafe sampled skew.
 pub(super) fn sample_spec(
     spec: &AnimationSpec,
     node_id: &str,
@@ -636,6 +684,17 @@ pub(super) fn sample_spec(
         )),
         _ => None,
     };
+    if transform.as_ref().is_some_and(|transform| {
+        [transform.skew_x_deg, transform.skew_y_deg]
+            .into_iter()
+            .flatten()
+            .any(|angle| !angle.is_finite() || angle.abs() >= 70.0)
+    }) {
+        return Err(animation_error(
+            node_id,
+            "sampled skew angle exceeds the execution envelope",
+        ));
+    }
     Ok((opacity, transform))
 }
 
@@ -875,6 +934,12 @@ fn validate_node_with_hooks(
     Ok(())
 }
 
+/// Validate text-animation budgets, then visit each node before and after its own animation
+/// validation.
+///
+/// # Errors
+///
+/// Propagates budget, animation-spec, or caller hook failures without sampling or mutating the IR.
 pub(super) fn validate_animations_with_node_hooks(
     ir: &Ir,
     before_node: &mut impl FnMut(&IrNode) -> Result<(), EngineError>,
@@ -912,6 +977,8 @@ pub fn has_animations(ir: &Ir) -> bool {
     node_has_animations(&ir.root)
 }
 
+/// Count animated text units and estimated paint fragments, including per-range stroke and shadow
+/// layers.
 pub(crate) fn text_animation_budget_counts(root: &IrNode) -> (usize, usize) {
     fn text_fragment_count(
         lines: &[crate::text::types::Line],
@@ -1002,6 +1069,11 @@ pub(crate) fn text_animation_budget_counts(root: &IrNode) -> (usize, usize) {
     (unit_count, fragment_count)
 }
 
+/// Reject unit or paint-fragment counts above the scene animation limits.
+///
+/// # Errors
+///
+/// Returns `TEXT_ANIMATION_UNIT_LIMIT_EXCEEDED` or `TEXT_ANIMATION_FRAGMENT_LIMIT_EXCEEDED`.
 pub(crate) fn validate_text_animation_budget_counts(
     unit_count: usize,
     fragment_count: usize,
@@ -1029,6 +1101,11 @@ pub(crate) fn validate_text_animation_budget_counts(
     Ok(())
 }
 
+/// Validate the animated text units and estimated paint fragments in an IR subtree.
+///
+/// # Errors
+///
+/// Returns the unit-limit or fragment-limit failure produced by the count validator.
 pub(crate) fn validate_text_animation_budgets(root: &IrNode) -> Result<(), EngineError> {
     let (unit_count, fragment_count) = text_animation_budget_counts(root);
     validate_text_animation_budget_counts(unit_count, fragment_count)
@@ -1042,6 +1119,11 @@ pub(crate) fn validate_text_animation_budgets(root: &IrNode) -> Result<(), Engin
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnimationStateSample {
+    /// Physical preorder occurrence of this animated group.
+    pub node_index: usize,
+    /// Structurally resolved source in the sampled snapshot.
+    pub source: super::ownership::IrSourceRef,
+    /// Physical node label, which may repeat.
     pub node_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
@@ -1067,32 +1149,24 @@ pub struct AffineMatrixDto {
 /// inspector would disagree with what is drawn. The origin must already be
 /// rebased onto the node's bbox: `sample_transform` stores a node-local centre
 /// (`w / 2`, `h / 2`), while the emitter paints about the absolute centre.
-fn transform_to_affine(transform: &Transform2D) -> AffineMatrixDto {
-    let translate_x = transform.translate_x.unwrap_or(0.0);
-    let translate_y = transform.translate_y.unwrap_or(0.0);
-    let scale_x = transform.scale_x.unwrap_or(1.0);
-    let scale_y = transform.scale_y.unwrap_or(1.0);
-    let origin_x = transform.origin_x.unwrap_or(0.0);
-    let origin_y = transform.origin_y.unwrap_or(0.0);
-    let radians = transform.rotate_deg.unwrap_or(0.0).to_radians();
-    let (sin, cos) = radians.sin_cos();
-
-    // Linear part is rotate * scale.
-    let matrix_a = cos * scale_x;
-    let matrix_b = sin * scale_x;
-    let matrix_c = -sin * scale_y;
-    let matrix_d = cos * scale_y;
-    AffineMatrixDto {
-        a: matrix_a,
-        b: matrix_b,
-        c: matrix_c,
-        d: matrix_d,
-        e: translate_x + origin_x - (matrix_a * origin_x + matrix_c * origin_y),
-        f: translate_y + origin_y - (matrix_b * origin_x + matrix_d * origin_y),
-    }
+fn transform_to_affine(transform: &Transform2D) -> Result<AffineMatrixDto, EngineError> {
+    let coefficients = boundshape::transform_to_affine(transform)
+        .map_err(|error| EngineError::Validation(error.to_string()))?;
+    Ok(AffineMatrixDto {
+        a: coefficients[0],
+        b: coefficients[1],
+        c: coefficients[2],
+        d: coefficients[3],
+        e: coefficients[4],
+        f: coefficients[5],
+    })
 }
 
-fn collect_animation_state(node: &IrNode, samples: &mut Vec<AnimationStateSample>) {
+fn collect_animation_state(
+    node: &IrNode,
+    index: &super::ownership::IrSourceIndex,
+    samples: &mut Vec<AnimationStateSample>,
+) -> Result<(), EngineError> {
     if let IrNodeKind::Group {
         children,
         opacity,
@@ -1102,25 +1176,38 @@ fn collect_animation_state(node: &IrNode, samples: &mut Vec<AnimationStateSample
     } = &node.kind
     {
         if animation.is_some() {
+            let occurrence = index.occurrence(node);
             samples.push(AnimationStateSample {
+                node_index: occurrence.node_index,
+                source: super::ownership::IrSourceRef {
+                    source_index: occurrence.source_index,
+                    node_id: index.nodes[occurrence.source_index].node.node_id.clone(),
+                },
                 node_id: node.node_id.clone(),
                 opacity: *opacity,
-                transform: transform.as_ref().map(|sampled| {
-                    // Same rebase the emitter applies before painting.
-                    transform_to_affine(&crate::svg_emit::transform::resolve_node_local_transform(
-                        sampled, node.bbox,
-                    ))
-                }),
+                transform: transform
+                    .as_ref()
+                    .map(|sampled| {
+                        // Same rebase the emitter applies before painting.
+                        transform_to_affine(
+                            &crate::svg_emit::transform::resolve_node_local_transform(
+                                sampled, node.bbox,
+                            ),
+                        )
+                    })
+                    .transpose()?,
             });
         }
         for child in children {
-            collect_animation_state(child, samples);
+            collect_animation_state(child, index, samples)?;
         }
     }
+    Ok(())
 }
 
 /// Sample every animated node's resolved opacity and transform at `time_ms`.
 ///
+/// Samples are in physical preorder and carry occurrence/source references.
 /// Only nodes carrying a node-level `animation` track appear. Text unit tracks
 /// resolve per paint unit rather than per node, so they have no single
 /// opacity/transform to report and are deliberately absent.
@@ -1135,7 +1222,8 @@ pub fn sample_animation_state(
 ) -> Result<Vec<AnimationStateSample>, EngineError> {
     let sampled = sample_animation(ir, time_ms)?;
     let mut samples = Vec::new();
-    collect_animation_state(&sampled.root, &mut samples);
+    let index = super::ownership::build_source_index(&sampled.root)?;
+    collect_animation_state(&sampled.root, &index, &mut samples)?;
     crate::wire::finite::FiniteOutput::try_new(&samples)
         .map_err(|error| error.into_engine_error("sample_animation_state"))?;
     Ok(samples)
@@ -1157,6 +1245,7 @@ pub fn sample_animation(ir: &Ir, time_ms: f64) -> Result<Ir, EngineError> {
         });
     }
     validate_animations(ir)?;
+    super::numeric_envelope::validate(ir)?;
     let mut sampled = ir.clone();
     sample_node(&mut sampled.root, time_ms)?;
     Ok(sampled)
@@ -1198,21 +1287,21 @@ mod tests {
     fn ir(fill: &str, iterations: f64) -> Ir {
         Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(10.0, 20.0, 80.0, 40.0),
                 kind: IrNodeKind::Group {
                     children: Vec::new(),
-                    clip_path: None,
-                    clip_border_radius: None,
+                    clip: None,
                     opacity: Some(0.75),
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: Some(spec(fill, iterations)),
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
             width: 100.0,
             height: 100.0,
             debug: None,
@@ -1261,8 +1350,8 @@ mod tests {
     }
 
     fn text_unit_ir(order: &str) -> Ir {
-        let root =
-            serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(serde_json::json!({
+        let root = serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(
+            serde_json::json!({ "ownership": { "role": "source" },
                 "nodeId": "text",
                     "bbox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
                     "type": "text",
@@ -1324,12 +1413,12 @@ mod tests {
                             "bbox": { "x": 10.0, "y": 0.0, "w": 10.0, "h": 10.0 }
                         }
                     ]
-            }))
-            .map(IrNode::from)
-            .expect("text unit node fixture deserializes");
+            }),
+        )
+        .map(IrNode::from)
+        .expect("text unit node fixture deserializes");
         Ir {
             root,
-            draw_order: vec!["text".to_string()],
             width: 20.0,
             height: 10.0,
             debug: None,
@@ -1807,7 +1896,6 @@ mod tests {
         assert_eq!(unit_opacity(&logical, "second"), Some(0.0));
         assert_eq!(unit_opacity(&visual, "first"), Some(0.0));
         assert!(unit_opacity(&visual, "second").is_some_and(|value| (value - 0.25).abs() < 1.0e-6));
-        assert_eq!(logical.draw_order, visual.draw_order);
     }
     #[test]
     fn animation_state_reports_only_animated_nodes() {
@@ -1856,8 +1944,10 @@ mod tests {
             rotate_deg: Some(90.0),
             origin_x: Some(50.0),
             origin_y: Some(20.0),
+            skew_x_deg: None,
+            skew_y_deg: None,
         };
-        let matrix = transform_to_affine(&transform);
+        let matrix = transform_to_affine(&transform).expect("valid transform");
 
         // The origin itself only moves by the user translation.
         let origin_x = matrix.a * 50.0 + matrix.c * 20.0 + matrix.e;
@@ -1874,7 +1964,7 @@ mod tests {
 
     #[test]
     fn affine_matrix_is_identity_for_an_untouched_transform() {
-        let matrix = transform_to_affine(&Transform2D::default());
+        let matrix = transform_to_affine(&Transform2D::default()).expect("identity");
 
         assert_eq!(
             matrix,

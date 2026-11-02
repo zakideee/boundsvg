@@ -9,6 +9,7 @@
     { "path": "packages/extras" },
     { "path": "packages/shape" },
     { "path": "packages/bench" },
+    { "path": "apps/playground-core" },
     { "path": "apps/playground-react" },
     { "path": "apps/playground-cli" }
   ]

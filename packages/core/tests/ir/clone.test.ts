@@ -12,41 +12,45 @@ import type {
   IRSvgNode,
   IRTextNode,
 } from "../../src/ir/types.js";
+import { circularClip } from "../helpers/box-clip.js";
 
+/** Exhaustive mutable group fields covered by the clone fixture. */
 const GROUP_FIELDS = {
   type: true,
   nodeId: true,
+  ownership: true,
   bbox: true,
   children: true,
   opacity: true,
   transform: true,
   animation: true,
-  meta: true,
   boxShadow: true,
-  clipPath: true,
-  clipBorderRadius: true,
-  on: true,
+  clip: true,
 } satisfies Record<keyof IRGroupNode, true>;
 
+/** Exhaustive rectangle fields covered by the clone fixture. */
 const RECT_FIELDS = {
   type: true,
   nodeId: true,
+  ownership: true,
   bbox: true,
   fill: true,
   stroke: true,
   strokeWidth: true,
+  strokeScaling: true,
   strokeLinecap: true,
   strokeLinejoin: true,
   strokeDasharray: true,
   strokeMiterlimit: true,
   gradient: true,
   borderRadius: true,
-  strokeScaling: true,
 } satisfies Record<keyof IRRectNode, true>;
 
+/** Exhaustive text fields, including resolved paint resources, covered by the clone fixture. */
 const TEXT_FIELDS = {
   type: true,
   nodeId: true,
+  ownership: true,
   bbox: true,
   lines: true,
   font: true,
@@ -68,6 +72,7 @@ const TEXT_FIELDS = {
   sourceText: true,
   displayText: true,
   glyphPaths: true,
+  gradients: true,
   unitMap: true,
   unitAnimation: true,
   unitAnimationSamples: true,
@@ -80,22 +85,23 @@ const TEXT_FIELDS = {
   strokes: true,
   shadows: true,
   textDecorations: true,
-  on: true,
 } satisfies Record<keyof IRTextNode, true>;
 
+/** Image-specific fields exercised by clone mutation isolation. */
 const IMAGE_FIELDS = {
   type: true,
   nodeId: true,
+  ownership: true,
   bbox: true,
   src: true,
   preserveAspectRatio: true,
-  on: true,
 } satisfies Record<keyof IRImageNode, true>;
 
 /** Canonical Path fields whose nested values must be copied without mutable aliases. */
 const PATH_FIELDS = {
   type: true,
   nodeId: true,
+  ownership: true,
   bbox: true,
   fill: true,
   stroke: true,
@@ -108,22 +114,24 @@ const PATH_FIELDS = {
   pathData: true,
   pathGeometry: true,
   strokeScaling: true,
-  on: true,
 } satisfies Record<keyof IRPathNode, true>;
 
+/** Embedded-SVG fields exercised by clone mutation isolation. */
 const SVG_FIELDS = {
   type: true,
   nodeId: true,
+  ownership: true,
   bbox: true,
   svgContent: true,
   svgViewBox: true,
   preserveAspectRatio: true,
-  on: true,
 } satisfies Record<keyof IRSvgNode, true>;
 
+/** Shape-specific fields exercised by clone mutation isolation. */
 const SHAPE_FIELDS = {
   type: true,
   nodeId: true,
+  ownership: true,
   bbox: true,
   fill: true,
   stroke: true,
@@ -134,7 +142,6 @@ const SHAPE_FIELDS = {
   strokeDasharray: true,
   strokeMiterlimit: true,
   shapeParts: true,
-  on: true,
 } satisfies Record<keyof IRShapeNode, true>;
 
 const handlers = { onClick: "click", onPointerMove: "move" } as const;
@@ -151,12 +158,14 @@ const animation = {
 } as const;
 
 const radialRect: IRRectNode = {
+  ownership: { role: "source" },
   type: "rect",
   nodeId: "rect",
   bbox: { x: 1, y: 2, w: 30, h: 40 },
   fill: "#fff",
   stroke: "#000",
   strokeWidth: 2,
+  strokeScaling: "transform",
   strokeLinecap: "round",
   strokeLinejoin: "bevel",
   strokeDasharray: "2 1",
@@ -170,10 +179,24 @@ const radialRect: IRRectNode = {
     ],
   },
   borderRadius: { tl: 1, tr: 2, br: 3, bl: 4 },
-  strokeScaling: "canvas",
 };
 
 const textNode: IRTextNode = {
+  ownership: { role: "source", on: handlers },
+  gradients: [
+    {
+      color: "linear-gradient(90deg, red, blue)",
+      bbox: { x: 0, y: 0, w: 80, h: 24 },
+      gradient: {
+        type: "linear",
+        geometry: { startX: 0, startY: 12, endX: 80, endY: 12 },
+        stops: [
+          { color: "red", offset: 0 },
+          { color: "blue", offset: 1 },
+        ],
+      },
+    },
+  ],
   type: "text",
   nodeId: "text",
   bbox: { x: 0, y: 0, w: 80, h: 24 },
@@ -368,10 +391,10 @@ const textNode: IRTextNode = {
       sourceEnd: 1,
     },
   ],
-  on: handlers,
 };
 
 const groupNode: IRGroupNode = {
+  ownership: { role: "source", on: handlers, meta: { label: "group" } },
   type: "group",
   nodeId: "group",
   bbox: { x: 0, y: 0, w: 100, h: 100 },
@@ -379,24 +402,24 @@ const groupNode: IRGroupNode = {
   opacity: 0.5,
   transform: { translateX: 1, scaleY: 2, originX: 3, originY: 4 },
   animation,
-  meta: { label: "group" },
+
   boxShadow: { dx: 1, dy: 2, blur: 3, spread: 4, color: "#000" },
-  clipPath: { x: 0, y: 0, w: 90, h: 90 },
-  clipBorderRadius: { tl: 1, tr: 2, br: 3, bl: 4 },
-  on: handlers,
+
+  clip: circularClip({ x: 0, y: 0, w: 90, h: 90 }, { tl: 1, tr: 2, br: 3, bl: 4 }),
 };
 
 const imageNode: IRImageNode = {
+  ownership: { role: "source", on: handlers },
   type: "image",
   nodeId: "image",
   bbox: { x: 0, y: 0, w: 10, h: 10 },
   src: "data:image/png;base64,AA==",
   preserveAspectRatio: "xMidYMid meet",
-  on: handlers,
 };
 
-/** Complete schema-34 Path fixture with separate layout and paint geometry. */
+/** Complete Path fixture with separate layout and paint geometry. */
 const pathNode: IRPathNode = {
+  ownership: { role: "source", on: handlers },
   type: "path",
   nodeId: "path",
   bbox: { x: 0, y: 0, w: 10, h: 10 },
@@ -415,20 +438,20 @@ const pathNode: IRPathNode = {
     isComplete: true,
   },
   strokeScaling: "canvas",
-  on: handlers,
 };
 
 const svgNode: IRSvgNode = {
+  ownership: { role: "source", on: handlers },
   type: "svg",
   nodeId: "svg",
   bbox: { x: 0, y: 0, w: 10, h: 10 },
   svgContent: '<path d="M0 0H10"/>',
   svgViewBox: "0 0 10 10",
   preserveAspectRatio: "xMidYMid meet",
-  on: handlers,
 };
 
 const shapeNode: IRShapeNode = {
+  ownership: { role: "source", on: handlers },
   type: "shape",
   nodeId: "shape",
   bbox: { x: 0, y: 0, w: 10, h: 10 },
@@ -457,7 +480,6 @@ const shapeNode: IRShapeNode = {
       },
     },
   ],
-  on: handlers,
 };
 
 function collectObjectReferences(value: unknown, references = new Set<object>()): Set<object> {
@@ -523,7 +545,7 @@ describe("cloneIRForLayeredTransform", () => {
       ...radialRect,
       gradient: {
         type: "linear",
-        angle: 45,
+        geometry: { startX: -2.5, startY: 37.5, endX: 32.5, endY: 2.5 },
         stops: [
           { color: "red", offset: 0 },
           { color: "blue", offset: 1 },
@@ -543,7 +565,7 @@ describe("cloneRenderMutableIR", () => {
     });
     const source: IR = {
       root: { ...groupNode, children: [textNode] },
-      drawOrder: ["text"],
+
       width: 100,
       height: 100,
       debug: true,
@@ -555,7 +577,7 @@ describe("cloneRenderMutableIR", () => {
 
     expect(clone).toEqual(source);
     expect(clone.warnings).not.toBe(source.warnings);
-    expect(clone.drawOrder).toBe(source.drawOrder);
+    expect(clone.root.ownership).toBe(source.root.ownership);
     expect(clone.root).not.toBe(source.root);
     expect(clonedText?.type).toBe("text");
     if (clonedText?.type !== "text") {
@@ -598,7 +620,7 @@ describe("cloneIR", () => {
     });
     const source: IR = {
       root: { ...groupNode, children: [textNode, imageNode, pathNode, svgNode, shapeNode] },
-      drawOrder: ["text", "image", "path", "svg", "shape"],
+
       width: 100,
       height: 100,
       debug: true,

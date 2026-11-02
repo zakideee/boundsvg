@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type AnimationStateSample,
   type CompiledScene,
   createAnimatedRasterCollector,
   createEngineAsync,
@@ -14,6 +15,7 @@ import {
   type LayoutTransitionInput,
   type SceneNode,
 } from "@boundsvg/core";
+import { buildIRSourceIndex } from "@boundsvg/core/scene";
 import { createWasmEngineInstance } from "@boundsvg/core/wasm";
 import {
   collectSceneNodeDepths,
@@ -40,8 +42,6 @@ const DEFAULT_OUTPUT_PATH = resolve(
   REPOSITORY_ROOT,
   "_build/bench/layout-transition/node-main.json",
 );
-/** Descriptions of generated binding wrappers recorded in the benchmark report. */
-const GENERATED_WRAPPER_PROVENANCE = "layout-transition-wrapper";
 /** Maximum point error used by the existing near-identity transition comparison. */
 const NEAR_IDENTITY_THRESHOLD = 0.001;
 
@@ -114,7 +114,6 @@ type SizeMetrics = WrapperMetrics & {
 
 type BBox = { x: number; y: number; width: number; height: number };
 type AffineMatrix = { a: number; b: number; c: number; d: number; e: number; f: number };
-type RawAnimationStateSample = { nodeId: string; transform?: AffineMatrix };
 
 type ErrorMetrics = {
   endpointMaxErrorPx: number;
@@ -396,8 +395,7 @@ function maxTransformIdentityDeviation(node: IRNode): number {
 
 function wrapperMetrics(ir: IR, sourceDepths: ReadonlyMap<string, number>): WrapperMetrics {
   const wrappers = allIrNodes(ir.root).filter(
-    (node) =>
-      node.type === "group" && node.meta?.["boundsvg.generated"] === GENERATED_WRAPPER_PROVENANCE,
+    (node) => node.ownership.role === "wrapper" && node.ownership.placement === "outer",
   );
   const wrapperCountBySourceDepth: Record<string, number> = {};
   let nearIdentityWrapperCount = 0;
@@ -405,7 +403,8 @@ function wrapperMetrics(ir: IR, sourceDepths: ReadonlyMap<string, number>): Wrap
     if (wrapper.type !== "group") {
       continue;
     }
-    const sourceNodeId = wrapper.meta?.["boundsvg.sourceNodeId"];
+    const sourceNodeId =
+      wrapper.ownership.role === "wrapper" ? wrapper.ownership.ownerNodeId : undefined;
     const depth = typeof sourceNodeId === "string" ? sourceDepths.get(sourceNodeId) : undefined;
     const depthKey = depth === undefined ? "unknown" : String(depth);
     wrapperCountBySourceDepth[depthKey] = (wrapperCountBySourceDepth[depthKey] ?? 0) + 1;
@@ -480,18 +479,30 @@ function sampleGeneratedBBoxes(ir: IR, timeMs: number): Map<string, BBox> {
   const handle = createWasmEngineInstance();
   try {
     const samples = JSON.parse(
-      handle.sampleAnimationState(JSON.stringify(ir), timeMs),
-    ) as RawAnimationStateSample[];
-    const transforms = new Map(
-      samples
-        .filter((sample) => sample.nodeId.startsWith("__boundsvg:layout-transition-wrapper:"))
-        .map((sample) => [sample.nodeId, sample.transform ?? identityMatrix()]),
-    );
+      handle.sampleAnimationState(
+        JSON.stringify({ root: ir.root, width: ir.width, height: ir.height, debug: ir.debug }),
+        timeMs,
+      ),
+    ) as AnimationStateSample[];
+    const index = buildIRSourceIndex(ir);
+    const transforms = new Map<IRNode, AffineMatrix>();
+    for (const sample of samples) {
+      const occurrence = index.nodes.get(sample.nodeIndex);
+      if (!occurrence || occurrence.source.sourceIndex !== sample.source.sourceIndex) {
+        throw new Error("Animation sample does not match its source occurrence.");
+      }
+      if (
+        occurrence.node.ownership.role === "wrapper" &&
+        occurrence.node.ownership.placement === "outer"
+      ) {
+        transforms.set(occurrence.node, sample.transform ?? identityMatrix());
+      }
+    }
     const bboxes = new Map<string, BBox>();
     const walk = (node: IRNode, ancestorMatrix: AffineMatrix): void => {
       const worldMatrix = multiplyMatrices(
         ancestorMatrix,
-        transforms.get(node.nodeId) ?? identityMatrix(),
+        transforms.get(node) ?? identityMatrix(),
       );
       const corners = [
         transformPoint(worldMatrix, node.bbox.x, node.bbox.y),

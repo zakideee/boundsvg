@@ -1,8 +1,7 @@
 //! Compile two compatible layout states into one post-layout transition IR.
 //!
-//! Semantic provenance is reconstructed from the private layout transport and
-//! remains scoped to this operation. The public IR intentionally carries only
-//! the generated wrapper provenance needed by downstream inspection.
+//! Authored state correspondence uses the layout transport. Structural IR
+//! ownership distinguishes semantic source groups from generated outer wrappers.
 
 mod affine;
 mod manifest;
@@ -21,7 +20,7 @@ use crate::layout::LayoutInput;
 
 use manifest::SemanticManifest;
 pub(crate) use plan::LayoutTransitionPlanInput;
-use wrapper::{inject_generated_wrappers, validate_reserved_wrapper_namespace};
+use wrapper::inject_generated_wrappers;
 
 #[cfg(test)]
 use affine::{AxisAlignedAffine, bbox_world_delta};
@@ -30,12 +29,10 @@ use manifest::describe_parent;
 #[cfg(test)]
 use signature::{signature_has_non_identity_transform, signature_has_painted_canvas_stroke};
 #[cfg(test)]
-use wrapper::{
-    GENERATED_PROVENANCE_KEY, GENERATED_PROVENANCE_VALUE, GENERATED_SOURCE_NODE_ID_KEY,
-    GENERATED_WRAPPER_ID_PREFIX,
-};
+use wrapper::GENERATED_WRAPPER_ID_PREFIX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Stable category used to report incompatible authored transition states.
 pub(crate) enum CompatibilityCategory {
     Id,
     Canvas,
@@ -51,6 +48,7 @@ pub(crate) enum CompatibilityCategory {
 }
 
 impl CompatibilityCategory {
+    /// Return the public diagnostic category token.
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Id => "id",
@@ -69,6 +67,7 @@ impl CompatibilityCategory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// First incompatible source fact, with expected and observed descriptions.
 pub(crate) struct CompatibilityMismatch {
     pub(crate) category: CompatibilityCategory,
     pub(crate) node_id: String,
@@ -84,6 +83,11 @@ pub(crate) struct CompiledTransitionState {
 }
 
 impl CompiledTransitionState {
+    /// Associate authored source entries with exactly one resolved source group.
+    ///
+    /// # Errors
+    ///
+    /// Returns a mismatch for absent transport roots or ambiguous/missing source groups.
     pub(crate) fn from_layout_input(
         input: &LayoutInput,
         raw_input: &Value,
@@ -103,6 +107,11 @@ impl CompiledTransitionState {
         })
     }
 
+    /// Compare canvas size and authored source signatures against the target state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first incompatible canvas, source, paint, content or animation fact.
     pub(crate) fn validate_compatibility(
         &self,
         target: &Self,
@@ -119,6 +128,11 @@ impl CompiledTransitionState {
             .validate_compatibility(&target.semantic_manifest)
     }
 
+    /// Consume compatible states and place outer animation wrappers around source groups.
+    ///
+    /// # Errors
+    ///
+    /// Returns a mismatch for incompatible states, an invalid schedule or missing wrapper targets.
     pub(crate) fn into_transition_ir(
         mut self,
         target: Self,
@@ -126,8 +140,6 @@ impl CompiledTransitionState {
     ) -> Result<Ir, CompatibilityMismatch> {
         self.validate_compatibility(&target)?;
         plan.validate(&self.ir.root.node_id)?;
-        validate_reserved_wrapper_namespace(&self.ir.root)?;
-        validate_reserved_wrapper_namespace(&target.ir.root)?;
         let mut wrapper_specs = self
             .semantic_manifest
             .generated_wrapper_specs(&target.semantic_manifest, plan)?;
@@ -146,11 +158,13 @@ impl CompiledTransitionState {
     }
 
     #[cfg(test)]
+    /// Count authored source entries represented by this compiled state.
     pub(crate) fn semantic_node_count(&self) -> usize {
         self.semantic_manifest.entries.len()
     }
 
     #[cfg(test)]
+    /// Borrow the compiled reference snapshot for transition assertions.
     pub(crate) fn ir(&self) -> &Ir {
         &self.ir
     }
