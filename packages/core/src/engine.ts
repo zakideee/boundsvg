@@ -3563,7 +3563,7 @@ export class Engine {
     return pngOptions;
   }
 
-  /** Return the hit node identifier at canvas coordinates, or null when no node is hit. */
+  /** Return the snapshot-local source hit at canvas coordinates, or null when no source is hit. */
   hitTest(ir: IR, x: number, y: number): import("./ir/source-index.js").IRSourceRef | null {
     return hitTest(ir, x, y);
   }
