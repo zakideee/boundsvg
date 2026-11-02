@@ -1,5 +1,3 @@
-import { isGeneratedBoxNodeId } from "./node-id.js";
-
 /**
  * Quadtree spatial index for O(log N) point queries on bounding boxes.
  *
@@ -16,8 +14,8 @@ type BBox = {
 };
 
 /** One positioned item with draw precedence and an optional entry-owned hit gate. */
-type Entry = {
-  nodeId: string;
+type Entry<T> = {
+  value: T;
   bbox: BBox;
   /** Draw order index (higher = more to front) */
   drawIndex: number;
@@ -31,20 +29,20 @@ const MAX_DEPTH = 5;
 const MAX_ITEMS = 8;
 
 /** One subdivision retaining items that cross its child boundaries. */
-type QuadNode = {
+type QuadNode<T> = {
   readonly bounds: BBox;
   readonly depth: number;
-  items: Entry[];
-  children: QuadNode[] | null;
+  items: Entry<T>[];
+  children: QuadNode<T>[] | null;
 };
 
 /** Allocate an empty subdivision at the requested depth. */
-function createQuadNode(bounds: BBox, depth: number): QuadNode {
+function createQuadNode<T>(bounds: BBox, depth: number): QuadNode<T> {
   return { bounds, depth, items: [], children: null };
 }
 
 /** Descend into a fully containing child, retaining crossing items at their current node. */
-function insertIntoNode(node: QuadNode, entry: Entry): void {
+function insertIntoNode<T>(node: QuadNode<T>, entry: Entry<T>): void {
   if (node.children) {
     for (const child of node.children) {
       if (contains(child.bounds, entry.bbox)) {
@@ -64,7 +62,11 @@ function insertIntoNode(node: QuadNode, entry: Entry): void {
 }
 
 /** Collect point-containing entries after applying each entry's own optional hit gate. */
-function queryNode(node: QuadNode, point: { x: number; y: number }, results: Entry[]): void {
+function queryNode<T>(
+  node: QuadNode<T>,
+  point: { x: number; y: number },
+  results: Entry<T>[],
+): void {
   if (!pointInBBox(point.x, point.y, node.bounds)) {
     return;
   }
@@ -86,7 +88,7 @@ function queryNode(node: QuadNode, point: { x: number; y: number }, results: Ent
 }
 
 /** Partition into four children and move only fully contained items into them. */
-function splitNode(node: QuadNode): void {
+function splitNode<T>(node: QuadNode<T>): void {
   const { x, y, w, h } = node.bounds;
   const hw = w / 2;
   const hh = h / 2;
@@ -99,7 +101,7 @@ function splitNode(node: QuadNode): void {
     createQuadNode({ x: x + hw, y: y + hh, w: hw, h: hh }, childDepth),
   ];
 
-  const remaining: Entry[] = [];
+  const remaining: Entry<T>[] = [];
   for (const item of node.items) {
     let placed = false;
     for (const child of node.children) {
@@ -131,95 +133,52 @@ function contains(outer: BBox, inner: BBox): boolean {
   );
 }
 
-/** Generic positioned-box queries; returned ids follow draw precedence. */
+/** Generic positioned-box queries; IDs are opaque and never classified by suffix. */
 export type SpatialIndex = {
   insert: (nodeId: string, bbox: BBox, drawIndex: number) => void;
   queryTopmost: (x: number, y: number) => string | null;
   queryCandidates: (x: number, y: number) => string[];
 };
 
-/**
- * Create a spatial index wrapping a Quadtree for fast point queries.
- */
-export function createSpatialIndex(bounds: BBox): SpatialIndex {
-  const root = createQuadNode(bounds, 0);
-  return wrapSpatialIndex(root);
-}
-
-/** Wrap one tree; each entry retains its own optional IR gate when ids repeat. */
-function wrapSpatialIndex(root: QuadNode): SpatialIndex {
+/** Shared quadtree query projection used by generic boxes and IR-owned candidates. */
+export function buildFilteredSpatialIndex<T>(
+  bounds: BBox,
+  entries: Entry<T>[],
+): {
+  queryCandidates: (x: number, y: number) => T[];
+} {
+  const root = createQuadNode<T>(bounds, 0);
+  for (const entry of entries) {
+    insertIntoNode(root, entry);
+  }
   return {
-    insert(nodeId: string, bbox: BBox, drawIndex: number): void {
-      insertIntoNode(root, { nodeId, bbox, drawIndex });
-    },
-
-    queryTopmost(x: number, y: number): string | null {
-      const results: Entry[] = [];
+    queryCandidates(x, y) {
+      const results: Entry<T>[] = [];
       queryNode(root, { x, y }, results);
-
-      if (results.length === 0) {
-        return null;
-      }
-
-      let best: Entry | null = null;
-      for (const entry of results) {
-        if (isGeneratedBoxNodeId(entry.nodeId)) {
-          continue;
-        }
-        if (best === null || entry.drawIndex > best.drawIndex) {
-          best = entry;
-        }
-      }
-
-      return best?.nodeId ?? null;
-    },
-
-    queryCandidates(x: number, y: number): string[] {
-      const results: Entry[] = [];
-      queryNode(root, { x, y }, results);
-
-      if (results.length === 0) {
-        return [];
-      }
-
       return results
-        .filter((entry) => !isGeneratedBoxNodeId(entry.nodeId))
-        .sort((a, b) => b.drawIndex - a.drawIndex)
-        .map((entry) => entry.nodeId);
+        .sort((left, right) => right.drawIndex - left.drawIndex)
+        .map((entry) => entry.value);
     },
   };
 }
 
-/**
- * Build the internal IR hit index with entry-owned shape gates. Public insert
- * remains generic: newly inserted entries never inherit an IR clip by id.
- * This helper is not exported from the package's public entry points.
- */
-export function buildFilteredSpatialIndex(bounds: BBox, entries: Entry[]): SpatialIndex {
-  const root = createQuadNode(bounds, 0);
-  for (const entry of entries) {
-    insertIntoNode(root, entry);
+/** Create an insertable index for arbitrary caller-provided IDs and bounding boxes. */
+export function createSpatialIndex(bounds: BBox): SpatialIndex {
+  const root = createQuadNode<string>(bounds, 0);
+  function queryCandidates(x: number, y: number): string[] {
+    const results: Entry<string>[] = [];
+    queryNode(root, { x, y }, results);
+    return results
+      .sort((left, right) => right.drawIndex - left.drawIndex)
+      .map((entry) => entry.value);
   }
-  return wrapSpatialIndex(root);
-}
-
-/**
- * Build a spatial index from an IR's drawOrder and node bboxes.
- */
-export function buildSpatialIndex(
-  bounds: { width: number; height: number },
-  drawOrder: string[],
-  bboxMap: Map<string, BBox>,
-): SpatialIndex {
-  const { width, height } = bounds;
-  const index = createSpatialIndex({ x: 0, y: 0, w: width, h: height });
-
-  for (const [i, nodeId] of drawOrder.entries()) {
-    const bbox = bboxMap.get(nodeId);
-    if (bbox) {
-      index.insert(nodeId, bbox, i);
-    }
-  }
-
-  return index;
+  return {
+    insert(nodeId, bbox, drawIndex) {
+      insertIntoNode(root, { value: nodeId, bbox, drawIndex });
+    },
+    queryTopmost(x, y) {
+      return queryCandidates(x, y)[0] ?? null;
+    },
+    queryCandidates,
+  };
 }

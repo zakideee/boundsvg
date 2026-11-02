@@ -16,12 +16,13 @@ const workerEngineMethods = vi.hoisted(() => ({
     svg: '<svg data-mode="static-ir"/>',
     ir: {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 10, h: 10 },
         children: [],
       },
-      drawOrder: ["root"],
+
       width: 10,
       height: 10,
       warnings: [],
@@ -31,12 +32,13 @@ const workerEngineMethods = vi.hoisted(() => ({
     svg: '<svg data-mode="animated-ir"/>',
     ir: {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 10, h: 10 },
         children: [],
       },
-      drawOrder: ["root"],
+
       width: 10,
       height: 10,
       warnings: [],

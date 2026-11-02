@@ -15,6 +15,8 @@ import type { WorkerEngine } from "@boundsvg/worker";
 
 /** Information passed to event handler callbacks */
 export type PointerEventInfo = {
+  /** Source occurrence in the event's rendered IR snapshot. */
+  source: import("@boundsvg/core/scene").IRSourceRef;
   /** The handler name string (auto-generated ID or user-specified string) */
   handlerName: string;
   /** The nodeId of the IR node that was hit */

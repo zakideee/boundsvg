@@ -293,12 +293,13 @@ describe("generated directional IR schemas", () => {
   it("accepts an exact SerializedIR with a non-empty top-level warning list", () => {
     const serializedIr = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 10, h: 10 },
         children: [],
       },
-      drawOrder: ["root"],
+
       width: 10,
       height: 10,
       warnings: [
@@ -315,7 +316,7 @@ describe("generated directional IR schemas", () => {
     };
 
     expect(validateSerializedIR(serializedIr)).toBe(true);
-    expect(validateStructuralIr(serializedIr)).toBe(true);
+    expect(validateStructuralIr(serializedIr)).toBe(false);
     expect(validateSerializedIR({ ...serializedIr, warnings: [] })).toBe(true);
     expect(
       validateSerializedIR({
@@ -404,7 +405,7 @@ describe("generated directional IR schemas", () => {
     visit(sourceFile);
 
     expect(sourceFile.parseDiagnostics).toEqual([]);
-    expect(knownFieldCount).toBe(362);
+    expect(knownFieldCount).toBe(365);
     expect(forbiddenFields).toEqual([]);
   });
 
@@ -477,7 +478,9 @@ describe("generated IR validator against real WASM output", () => {
     const fullGraphIr = engine.renderToSvgAndIR(fullGraphScene(imageBytes), {
       timeMs: 100,
     }).ir;
-    actualCorpus = [...conformanceIr, fullGraphIr] as GeneratedStructuralIr[];
+    actualCorpus = [...conformanceIr, fullGraphIr].map(
+      ({ warnings: _warnings, ...structural }) => structural,
+    );
   });
 
   afterAll(() => {

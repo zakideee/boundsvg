@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createEngineAsync, type Engine } from "../../src/engine.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import type { IRNode } from "../../src/ir/types.js";
 import { initNodeWasm } from "../../src/node.js";
 import { createElement } from "../../src/vnode/create-element.js";
@@ -144,7 +145,7 @@ describe("Real WASM pipeline", () => {
 
     const linear = renderBackground("linear", "linear-gradient(45deg, red, blue)");
     expect(linear).toContain(
-      '<linearGradient id="grad-linear:bg" gradientUnits="userSpaceOnUse" x1="21" y1="129" x2="171" y2="-21">',
+      '<linearGradient id="grad-n2" gradientUnits="userSpaceOnUse" x1="21" y1="129" x2="171" y2="-21">',
     );
 
     const radialDefault = renderBackground("radial-default", "radial-gradient(red, blue)");
@@ -200,7 +201,11 @@ describe("Real WASM pipeline", () => {
     expect(ir.width).toBe(400);
     expect(ir.height).toBe(300);
     expect(ir.root.type).toBe("group");
-    expect(ir.drawOrder.length).toBeGreaterThan(0);
+    expect(
+      [...buildIRSourceIndex(ir).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId).length,
+    ).toBeGreaterThan(0);
     expect(ir.warnings).toHaveLength(0);
   });
 
@@ -2196,7 +2201,7 @@ describe("Real WASM pipeline", () => {
 
     const ir = engine.renderToIR(vnode);
     // Text node should be at approximately (0,0) and have some size
-    const hit = engine.hitTest(ir, 5, 5);
+    const hit = engine.hitTest(ir, 5, 5)?.nodeId ?? null;
     expect(hit).toBe("clickable-text");
   });
 

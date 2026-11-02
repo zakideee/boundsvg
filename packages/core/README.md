@@ -105,11 +105,11 @@ import { replaceTextById, withNodeIdPrefix } from "@boundsvg/core/vnode";
 const inspection = inspectScene(engine, vnode);
 const bboxes = collectInspectionBBoxes(inspection.ir);
 console.table(
-  inspection.bboxes.map(({ nodeId, drawIndex, w, h }) => ({
+  inspection.bboxes.map(({ nodeId, nodeIndex, paintOrder, layoutBBox }) => ({
     nodeId,
-    drawIndex,
-    w,
-    h,
+    paintOrder,
+    nodeIndex,
+    ...layoutBBox,
   })),
 );
 const localized = replaceTextById(vnode, "headline", "Hello");
@@ -156,3 +156,10 @@ Full documentation: <https://github.com/zakideee/boundsvg>
 ## License
 
 MIT OR Apache-2.0
+
+Inspection entries include physical `nodeIndex`, `nodeId`, `ownership`, and a
+`source` reference. Wrappers are transparent in the geometry list and its
+depth; paint ordinals come from tree order. `layoutBBox` is the frame before
+transforms, `transformBox` its four transformed corners, and `visualBBox` their
+axis-aligned enclosing rectangle. Resolve handlers and primary kinds from
+`inspection.sourceIndex.sources`; paint entries do not copy handler flags.

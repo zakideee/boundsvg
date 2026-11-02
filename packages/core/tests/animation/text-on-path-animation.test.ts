@@ -7,6 +7,7 @@ import type { AnimationSpec, TextUnitAnimation, VNode } from "../../src/vnode/ty
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
+/** Keyframes used to verify sampled and declarative TextOnPath unit paint. */
 const PATH_UNIT_TRACK: AnimationSpec = {
   keyframes: [
     {
@@ -25,6 +26,7 @@ const PATH_UNIT_TRACK: AnimationSpec = {
   fill: "both",
 };
 
+/** Cluster animation shared by the path-unit ordering fixtures. */
 const CLUSTER_ANIMATION: TextUnitAnimation = {
   by: "cluster",
   animation: PATH_UNIT_TRACK,
@@ -536,7 +538,7 @@ describe("TextOnPath animation hardening", () => {
     expect(hidden.unitAnimationSamples?.every((sample) => sample.bbox === undefined)).toBe(true);
     expect(hidden.glyphPaths).toEqual([]);
     expect(hidden.bbox).toEqual({ x: 0, y: 0, w: 0, h: 0 });
-    expect(engine.hitTest(hiddenIr, 230, 110)).toBeNull();
+    expect(engine.hitTest(hiddenIr, 230, 110)?.nodeId ?? null).toBeNull();
     const svg = engine.renderToAnimatedSvg(hiddenScene, {
       playback: { mode: "independent" },
       timeMs: 200,
@@ -744,9 +746,10 @@ describe("TextOnPath animation hardening", () => {
     expect(artifacts.svg).toContain(`aria-label="${content}"`);
     expect(artifacts.svg).toContain("@keyframes");
     expect(artifacts.svg).toContain('stroke="#ef4444"');
-    expect(artifacts.svg).toContain('filter="url(#filter-path-units:ts0)"');
+    expect(artifacts.svg).toContain('filter="url(#filter-n3:ts0)"');
     expect(
-      engine.hitTest(artifacts.ir, text.bbox.x + text.bbox.w / 2, text.bbox.y + text.bbox.h / 2),
+      engine.hitTest(artifacts.ir, text.bbox.x + text.bbox.w / 2, text.bbox.y + text.bbox.h / 2)
+        ?.nodeId ?? null,
     ).toBe("path-units");
     const renderOptions = { timeMs: 180 };
     expect(engine.renderCompiledToSvg(engine.compile(scene), renderOptions)).toBe(
@@ -766,8 +769,8 @@ describe("TextOnPath animation hardening", () => {
       showMissingGlyphs: true,
       onWarning: (warning) => warnings.push(warning.code),
     });
-    const firstShadowIndex = svg.indexOf('filter="url(#filter-path-units:ts0)"');
-    const secondShadowIndex = svg.indexOf('filter="url(#filter-path-units:ts1)"');
+    const firstShadowIndex = svg.indexOf('filter="url(#filter-n3:ts0)"');
+    const secondShadowIndex = svg.indexOf('filter="url(#filter-n3:ts1)"');
     const firstStrokeIndex = svg.indexOf('stroke="#ef4444"');
     const secondStrokeIndex = svg.indexOf('stroke="#38bdf8"');
     const fillIndex = svg.indexOf('fill="#f8fafc"');

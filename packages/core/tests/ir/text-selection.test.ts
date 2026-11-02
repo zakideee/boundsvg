@@ -29,13 +29,14 @@ function glyph(
 function makeIR(textNode: IRNode, rootTransform?: IRNode["transform"]): IR {
   return {
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "root",
       bbox: { x: 0, y: 0, w: 400, h: 300 },
       transform: rootTransform,
       children: [textNode],
     },
-    drawOrder: [textNode.nodeId],
+
     width: 400,
     height: 300,
     warnings: [],
@@ -46,6 +47,7 @@ describe("text selection map", () => {
   it("resolves horizontal carets and reverse ranges across lines", () => {
     const map = buildTextSelectionMap(
       makeIR({
+        ownership: { role: "source" },
         type: "text",
         nodeId: "text",
         bbox: { x: 10, y: 10, w: 40, h: 40 },
@@ -58,14 +60,15 @@ describe("text selection map", () => {
       }),
     );
 
-    expect(findTextCaretAtPoint(map, "text", { svgX: 11, svgY: 12 })?.offset).toBe(0);
-    expect(findTextCaretAtPoint(map, "text", { svgX: 29, svgY: 12 })?.offset).toBe(2);
-    expect(getTextRangeQuads(map, "text", { start: 3, end: 1 })).toHaveLength(2);
+    expect(findTextCaretAtPoint(map, 1, { svgX: 11, svgY: 12 })?.offset).toBe(0);
+    expect(findTextCaretAtPoint(map, 1, { svgX: 29, svgY: 12 })?.offset).toBe(2);
+    expect(getTextRangeQuads(map, 1, { start: 3, end: 1 })).toHaveLength(2);
   });
 
   it("uses the block axis correctly for vertical text and preserves ligature ranges", () => {
     const map = buildTextSelectionMap(
       makeIR({
+        ownership: { role: "source" },
         type: "text",
         nodeId: "text",
         bbox: { x: 40, y: 20, w: 24, h: 48 },
@@ -74,13 +77,14 @@ describe("text selection map", () => {
       }),
     );
 
-    expect(findTextCaretAtPoint(map, "text", { svgX: 45, svgY: 22 })?.offset).toBe(0);
-    expect(findTextCaretAtPoint(map, "text", { svgX: 45, svgY: 42 })?.offset).toBe(2);
+    expect(findTextCaretAtPoint(map, 1, { svgX: 45, svgY: 22 })?.offset).toBe(0);
+    expect(findTextCaretAtPoint(map, 1, { svgX: 45, svgY: 42 })?.offset).toBe(2);
   });
 
   it("keeps ruby roles and base ranges in range queries", () => {
     const map = buildTextSelectionMap(
       makeIR({
+        ownership: { role: "source" },
         type: "text",
         nodeId: "text",
         bbox: { x: 10, y: 10, w: 40, h: 30 },
@@ -92,15 +96,18 @@ describe("text selection map", () => {
       }),
     );
 
-    expect(
-      getTextRangeQuads(map, "text", { start: 0, end: 2 }).map((quad) => quad.sourceRole),
-    ).toEqual(["rubyBase", "rubyAnnotation", "rubyAnnotation"]);
+    expect(getTextRangeQuads(map, 1, { start: 0, end: 2 }).map((quad) => quad.sourceRole)).toEqual([
+      "rubyBase",
+      "rubyAnnotation",
+      "rubyAnnotation",
+    ]);
   });
 
   it("returns canvas-space quads after ancestor scale and translation", () => {
     const map = buildTextSelectionMap(
       makeIR(
         {
+          ownership: { role: "source" },
           type: "text",
           nodeId: "text",
           bbox: { x: 10, y: 5, w: 10, h: 10 },
@@ -110,7 +117,7 @@ describe("text selection map", () => {
       ),
     );
 
-    const quad = getTextRangeQuads(map, "text", { start: 0, end: 1 })[0];
+    const quad = getTextRangeQuads(map, 1, { start: 0, end: 1 })[0];
     expect(quad?.points).toEqual([
       { x: 120, y: 30 },
       { x: 140, y: 30 },

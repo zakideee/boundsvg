@@ -62,7 +62,7 @@ function cloneAnimationEasing(easing: IRAnimationEasing): IRAnimationEasing {
 }
 
 /** Clone the nested mutable values of an IR-retained animation specification. */
-export function cloneAnimationSpecForIR(animation: IRAnimationSpec): IRAnimationSpec {
+function cloneAnimationSpecForIR(animation: IRAnimationSpec): IRAnimationSpec {
   return {
     ...animation,
     keyframes: animation.keyframes.map((keyframe) => ({
@@ -145,14 +145,24 @@ function cloneShapePathPart(part: ShapePathPart): ShapePathPart {
   };
 }
 
+function cloneOwnership(ownership: IRNode["ownership"]): IRNode["ownership"] {
+  return ownership.role === "source"
+    ? {
+        ...ownership,
+        ...(ownership.on ? { on: cloneHandlers(ownership.on) } : {}),
+        ...(ownership.meta ? { meta: { ...ownership.meta } } : {}),
+      }
+    : { ...ownership };
+}
+
 function cloneIRGroupForLayeredTransform(node: IRGroupNode): IRGroupNode {
   return {
     ...node,
+    ownership: cloneOwnership(node.ownership),
     bbox: cloneBBox(node.bbox),
     ...(node.children ? { children: node.children.map(cloneIRForLayeredTransform) } : {}),
     ...(node.transform ? { transform: { ...node.transform } } : {}),
     ...(node.animation ? { animation: cloneAnimationSpecForIR(node.animation) } : {}),
-    ...(node.meta ? { meta: { ...node.meta } } : {}),
     ...(node.boxShadow ? { boxShadow: { ...node.boxShadow } } : {}),
     ...(node.clip
       ? {
@@ -171,7 +181,6 @@ function cloneIRGroupForLayeredTransform(node: IRGroupNode): IRGroupNode {
                 },
         }
       : {}),
-    ...(node.on ? { on: cloneHandlers(node.on) } : {}),
   };
 }
 
@@ -195,6 +204,7 @@ function cloneGradient(
 function cloneIRRectForLayeredTransform(node: IRRectNode): IRRectNode {
   return {
     ...node,
+    ownership: cloneOwnership(node.ownership),
     bbox: cloneBBox(node.bbox),
     ...(node.gradient ? { gradient: cloneGradient(node.gradient) } : {}),
     ...(node.borderRadius && typeof node.borderRadius === "object"
@@ -206,6 +216,7 @@ function cloneIRRectForLayeredTransform(node: IRRectNode): IRRectNode {
 function cloneIRTextForLayeredTransform(node: IRTextNode): IRTextNode {
   return {
     ...node,
+    ownership: cloneOwnership(node.ownership),
     bbox: cloneBBox(node.bbox),
     lines: node.lines.map(cloneLine),
     ...(node.fontFallback ? { fontFallback: [...node.fontFallback] } : {}),
@@ -247,15 +258,14 @@ function cloneIRTextForLayeredTransform(node: IRTextNode): IRTextNode {
     ...(node.textDecorations
       ? { textDecorations: node.textDecorations.map(cloneTextDecorationFragment) }
       : {}),
-    ...(node.on ? { on: cloneHandlers(node.on) } : {}),
   };
 }
 
 function cloneIRImageForLayeredTransform(node: IRImageNode): IRImageNode {
   return {
     ...node,
+    ownership: cloneOwnership(node.ownership),
     bbox: cloneBBox(node.bbox),
-    ...(node.on ? { on: cloneHandlers(node.on) } : {}),
   };
 }
 
@@ -263,30 +273,30 @@ function cloneIRImageForLayeredTransform(node: IRImageNode): IRImageNode {
 function cloneIRPathForLayeredTransform(node: IRPathNode): IRPathNode {
   return {
     ...node,
+    ownership: cloneOwnership(node.ownership),
     bbox: cloneBBox(node.bbox),
     pathGeometry: {
       ...node.pathGeometry,
       bounds: node.pathGeometry.bounds ? { ...node.pathGeometry.bounds } : null,
       strokeOutset: { ...node.pathGeometry.strokeOutset },
     },
-    ...(node.on ? { on: cloneHandlers(node.on) } : {}),
   };
 }
 
 function cloneIRSvgForLayeredTransform(node: IRSvgNode): IRSvgNode {
   return {
     ...node,
+    ownership: cloneOwnership(node.ownership),
     bbox: cloneBBox(node.bbox),
-    ...(node.on ? { on: cloneHandlers(node.on) } : {}),
   };
 }
 
 function cloneIRShapeForLayeredTransform(node: IRShapeNode): IRShapeNode {
   return {
     ...node,
+    ownership: cloneOwnership(node.ownership),
     bbox: cloneBBox(node.bbox),
     shapeParts: node.shapeParts.map(cloneShapePathPart),
-    ...(node.on ? { on: cloneHandlers(node.on) } : {}),
   };
 }
 
@@ -327,13 +337,12 @@ export function cloneRecoverableError(warning: RecoverableError): RecoverableErr
 /**
  * Deep-clone a complete public IR for detached inspection.
  *
- * Every mutable node field, draw-order entry, warning instance, and nested
+ * Every mutable node field, ownership value, warning instance, and nested
  * warning context belongs exclusively to the returned snapshot.
  */
 export function cloneIR(ir: IR): IR {
   return {
     root: cloneIRForLayeredTransform(ir.root),
-    drawOrder: [...ir.drawOrder],
     width: ir.width,
     height: ir.height,
     ...(ir.debug === undefined ? {} : { debug: ir.debug }),
@@ -385,7 +394,6 @@ function cloneRenderMutableNode(node: IRNode): IRNode {
 export function cloneRenderMutableIR(ir: IR): IR {
   return {
     root: cloneRenderMutableNode(ir.root),
-    drawOrder: ir.drawOrder,
     width: ir.width,
     height: ir.height,
     ...(ir.debug === undefined ? {} : { debug: ir.debug }),

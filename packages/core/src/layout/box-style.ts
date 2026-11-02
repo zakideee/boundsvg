@@ -1,6 +1,5 @@
 import { parseColor } from "../color.js";
 import { FatalError } from "../errors.js";
-import type { Spacing } from "../vnode/types.js";
 
 /** Largest authored border or outline length in px. */
 const BOX_LENGTH_MAX = 1_048_576;
@@ -14,17 +13,6 @@ const OUTLINE_FIELDS = new Set([
   "strokeLinejoin",
   "strokeMiterlimit",
 ]);
-
-/** Normalize the four layout widths exactly as the native f32 boundary does. */
-export function resolveBorderWidths(width: Spacing | undefined): [number, number, number, number] {
-  const widths = typeof width === "number" ? [width, width, width, width] : (width ?? [0, 0, 0, 0]);
-  return [
-    Math.fround(widths[0] ?? 0),
-    Math.fround(widths[1] ?? 0),
-    Math.fround(widths[2] ?? 0),
-    Math.fround(widths[3] ?? 0),
-  ];
-}
 
 function isBoxLength(value: unknown, minimum = 0): value is number {
   return (

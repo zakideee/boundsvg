@@ -1,12 +1,13 @@
 import type { Engine, EngineInput, RenderIrOptions } from "./engine.js";
 import type { RecoverableError } from "./errors.js";
+import { buildIRSourceIndex, type IRSourceIndex, type IRSourceRef } from "./ir/source-index.js";
 import type { TextMap } from "./ir/text-map.js";
-import type { HandlersRef, IR, IRGroupNode, IRNode, IRNodeType, IRTextNode } from "./ir/types.js";
+import type { IR, IRGroupNode, IRNode, IRNodeType, IRTextNode } from "./ir/types.js";
 import type { LayoutNode, LayoutResult } from "./layout/types.js";
 import type { NodeIdValidationResult } from "./node-ids.js";
 import { validateNodeIds } from "./node-ids.js";
 import { resolveSceneOrVNodeInput } from "./scene/from-vnode.js";
-import { buildHandlerMap, buildNodeTypeMap, buildTextMap } from "./scene.js";
+import { buildTextMap } from "./scene.js";
 import {
   applyAffineMatrixToPoint,
   createIdentityAffineMatrix,
@@ -36,18 +37,12 @@ export type InspectionTransformBox = {
 export type InspectionBBox = {
   nodeId: string;
   type: IRNodeType;
-  /** Pre-transform layout x. Use visualBBox.x for canvas-space position. */
-  x: number;
-  /** Pre-transform layout y. Use visualBBox.y for canvas-space position. */
-  y: number;
-  /** Pre-transform layout width. Use visualBBox.w for the transformed AABB width. */
-  w: number;
-  /** Pre-transform layout height. Use visualBBox.h for the transformed AABB height. */
-  h: number;
+  nodeIndex: number;
+  source: IRSourceRef;
+  ownership: IRNode["ownership"];
   depth: number;
-  /** Zero-based position in IR draw order; null for nodes that are not painted directly. */
-  drawIndex: number | null;
-  hasHandlers: boolean;
+  /** Primitive ordinal in tree order; groups have no paint order. */
+  paintOrder: number | null;
   /** The IR bbox before applying this node's or any ancestor transform. */
   layoutBBox: InspectionRect;
   /** Four layout-box corners after composing this node's and all ancestor transforms. */
@@ -85,8 +80,7 @@ export type SceneInspection = {
   layout: LayoutResult;
   ir: IR;
   textMap: TextMap;
-  handlerMap: Map<string, HandlersRef>;
-  nodeTypeMap: Map<string, IRNodeType>;
+  sourceIndex: IRSourceIndex;
   bboxes: InspectionBBox[];
   warnings: RecoverableError[];
   stats: InspectionStats;
@@ -105,10 +99,9 @@ export function inspectScene(
     options?.skipValidation === undefined ? undefined : { skipValidation: options.skipValidation };
   const layout = engine.renderToLayoutTree(vnode, layoutOptions);
   const ir = engine.renderToIR(vnode, options);
-  const bboxes = collectInspectionBBoxes(ir);
-  const textMap = buildTextMap(ir);
-  const handlerMap = buildHandlerMap(ir);
-  const nodeTypeMap = buildNodeTypeMap(ir);
+  const sourceIndex = buildIRSourceIndex(ir);
+  const bboxes = collectInspectionBBoxes(ir, sourceIndex);
+  const textMap = buildTextMap(ir, sourceIndex);
   const nodeIds = validateNodeIds(vnode);
 
   return {
@@ -116,24 +109,28 @@ export function inspectScene(
     layout,
     ir,
     textMap,
-    handlerMap,
-    nodeTypeMap,
+    sourceIndex,
     bboxes,
     warnings: ir.warnings,
-    stats: buildInspectionStats({ ir, layout, bboxes }),
+    stats: buildInspectionStats({ ir, layout, bboxes, sourceIndex }),
   };
 }
 
-/** Collect source and paint geometry while keeping generated clip wrappers transparent. */
-export function collectInspectionBBoxes(ir: IR): InspectionBBox[] {
+/** Collect source and paint geometry while keeping generated clip wrappers transparent.
+ * @throws {FatalError} VALIDATION for malformed source ownership.
+ */
+export function collectInspectionBBoxes(
+  ir: IR,
+  sourceIndex = buildIRSourceIndex(ir),
+): InspectionBBox[] {
   const bboxes: InspectionBBox[] = [];
-  const drawIndexByNodeId = new Map(ir.drawOrder.map((nodeId, drawIndex) => [nodeId, drawIndex]));
-
-  function walk(
-    node: IRNode,
-    depth: number,
-    ancestorMatrix: ReturnType<typeof createIdentityAffineMatrix>,
-  ): void {
+  const matrices = new Map<number, ReturnType<typeof createIdentityAffineMatrix>>();
+  for (const occurrence of sourceIndex.nodes.values()) {
+    const node = occurrence.node;
+    const ancestorMatrix =
+      occurrence.parentNodeIndex === null
+        ? createIdentityAffineMatrix()
+        : (matrices.get(occurrence.parentNodeIndex) ?? createIdentityAffineMatrix());
     const layoutBBox = {
       x: node.bbox.x,
       y: node.bbox.y,
@@ -149,22 +146,18 @@ export function collectInspectionBBoxes(ir: IR): InspectionBBox[] {
       node.type === "group" && hasOwnTransform
         ? buildTransformedOrigin(node, effectiveMatrix)
         : null;
-    const handlers = node.type === "rect" ? undefined : node.on;
-
-    const isGeneratedClipGroup =
-      node.type === "group" &&
-      (node.nodeId.endsWith(":content") || node.nodeId.endsWith(":border"));
-    if (!isGeneratedClipGroup) {
+    matrices.set(occurrence.nodeIndex, effectiveMatrix);
+    const source = sourceIndex.sources.get(occurrence.source.sourceIndex);
+    const isWrapper = node.ownership.role === "wrapper";
+    if (!isWrapper) {
       bboxes.push({
         nodeId: node.nodeId,
         type: node.type,
-        x: layoutBBox.x,
-        y: layoutBBox.y,
-        w: layoutBBox.w,
-        h: layoutBBox.h,
-        depth,
-        drawIndex: drawIndexByNodeId.get(node.nodeId) ?? null,
-        hasHandlers: handlers != null && Object.keys(handlers).length > 0,
+        nodeIndex: occurrence.nodeIndex,
+        source: occurrence.source,
+        ownership: node.ownership,
+        depth: (source?.depth ?? 0) + (node.ownership.role === "source" ? 0 : 1),
+        paintOrder: occurrence.paintOrder,
         layoutBBox,
         transformBox,
         visualBBox: buildVisualBBox(transformBox),
@@ -172,12 +165,7 @@ export function collectInspectionBBoxes(ir: IR): InspectionBBox[] {
         hasOwnTransform,
       });
     }
-    for (const child of node.type === "group" ? (node.children ?? []) : []) {
-      walk(child, depth + (isGeneratedClipGroup ? 0 : 1), effectiveMatrix);
-    }
   }
-
-  walk(ir.root, 0, createIdentityAffineMatrix());
   return bboxes;
 }
 
@@ -185,18 +173,23 @@ function buildInspectionStats({
   ir,
   layout,
   bboxes,
+  sourceIndex,
 }: {
   ir: IR;
   layout: LayoutResult;
   bboxes: InspectionBBox[];
+  sourceIndex: IRSourceIndex;
 }): InspectionStats {
   return {
     width: ir.width,
     height: ir.height,
     nodeCount: bboxes.length,
-    drawNodeCount: ir.drawOrder.length,
+    drawNodeCount: bboxes.filter((bbox) => bbox.paintOrder !== null).length,
     textNodeCount: bboxes.filter((bbox) => bbox.type === "text").length,
-    handlerNodeCount: bboxes.filter((bbox) => bbox.hasHandlers).length,
+    handlerNodeCount: [...sourceIndex.sources.values()].filter(
+      ({ node }) =>
+        node.ownership.role === "source" && Object.keys(node.ownership.on ?? {}).length > 0,
+    ).length,
     missingGlyphCount: countMissingGlyphsInIr(ir.root),
     overflowTextNodeCount: countOverflowTextNodes(layout.root),
     warningCount: ir.warnings.length,

@@ -145,13 +145,12 @@ await renderCompiledToMp4(engine, compiled, {
 });
 ```
 
-The detached IR returned by `engine.snapshotCompiledIR(compiled)` carries the
-generated wrapper groups the compiler injects; each is marked with the meta
-keys published as `LAYOUT_TRANSITION_WRAPPER_META`, whose `sourceNodeIdKey`
-names the authored node a wrapper moves. Consumers that need to map generated
-motion back to authored nodes match those constants rather than copying the
-strings. This snapshot is editable inspection data and cannot be rendered as a
-compiled artifact.
+The detached IR returned by `engine.snapshotCompiledIR(compiled)` carries
+generated groups with `ownership: { role: "wrapper", placement: "outer",
+ownerNodeId }`. Each has one direct source child. Use the common source index
+to identify that occurrence; wrapper labels and business metadata are not
+provenance markers. This snapshot is editable inspection data and cannot be
+rendered as a compiled artifact.
 
 The compiled option types drop `skipValidation` and `textPathMode`: both are
 compile-time choices that are already fixed inside the `CompiledScene`.

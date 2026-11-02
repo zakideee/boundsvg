@@ -1717,6 +1717,28 @@ function isLayerWarning(value: unknown): boolean {
   return isObjectLike(value) && typeof getStringProperty(value, "code") === "string";
 }
 
+/** Check the layer-local mapping to a source occurrence in the original snapshot. */
+function isLayerSource(value: unknown): boolean {
+  if (!isObjectLike(value)) {
+    return false;
+  }
+  const source = getProperty(value, "source");
+  const layerSourceIndex = getNumberProperty(value, "layerSourceIndex");
+  if (!isObjectLike(source)) {
+    return false;
+  }
+  const sourceIndex = getNumberProperty(source, "sourceIndex");
+  return (
+    layerSourceIndex !== undefined &&
+    Number.isSafeInteger(layerSourceIndex) &&
+    layerSourceIndex >= 0 &&
+    sourceIndex !== undefined &&
+    Number.isSafeInteger(sourceIndex) &&
+    sourceIndex >= 0 &&
+    getStringProperty(source, "nodeId") !== undefined
+  );
+}
+
 function isLayerManifestEntry(value: unknown): value is object {
   if (!isObjectLike(value)) {
     return false;
@@ -1724,13 +1746,15 @@ function isLayerManifestEntry(value: unknown): value is object {
   const id = getStringProperty(value, "id");
   const mode = getStringProperty(value, "mode");
   const paintOrder = getNumberProperty(value, "paintOrder");
-  const nodeIds = getProperty(value, "nodeIds");
+  const sources = getProperty(value, "sources");
   const warnings = getProperty(value, "warnings");
   return (
     id !== undefined &&
     (mode === "independent" || mode === "atomic") &&
     paintOrder !== undefined &&
-    isDenseArrayOf(nodeIds, (nodeId): nodeId is string => typeof nodeId === "string") &&
+    getProperty(value, "nodeIds") === undefined &&
+    getProperty(value, "nodeMeta") === undefined &&
+    isDenseArrayOf(sources, (source): source is object => isLayerSource(source)) &&
     isDenseArrayOf(warnings, (warning): warning is object => isLayerWarning(warning))
   );
 }

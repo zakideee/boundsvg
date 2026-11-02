@@ -35,6 +35,7 @@ import { type EditorAction, editorReducer } from "./editor-reducer";
 
 type OutputTab = "svg" | "jsx" | "component";
 
+/** Compose the scene editor, authored layer tree and export controls. */
 export function PlaygroundPage() {
   const { engine, status } = useBoundSvg();
   const mobileViewer = useMobileViewer();
@@ -776,7 +777,13 @@ function InspectorPanel({
         <NodeInspectorPanel
           className="editor-node-inspector"
           inspection={inspection}
-          selectedNodeId={layer?.id ?? null}
+          selectedNodeIndex={
+            inspection
+              ? ([...inspection.sourceIndex.sources.values()].find(
+                  (entry) => entry.source.nodeId === layer?.id,
+                )?.source.sourceIndex ?? null)
+              : null
+          }
         />
       </Section>
     </aside>

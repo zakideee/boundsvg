@@ -106,7 +106,7 @@ function edgePathScene(scale: number) {
   );
 }
 
-async function readStrokeStyle(page: Page, svg: string, selector = ".bsvg-vstroke-hairline") {
+async function readStrokeStyle(page: Page, svg: string, selector = ".bsvg-vstroke-n3") {
   await page.setContent(`<main>${svg}</main>`);
   expect(await page.evaluate(() => CSS.supports("vector-effect", "non-scaling-stroke"))).toBe(true);
   const stroke = page.locator(selector);
@@ -195,7 +195,7 @@ test("canvas-stable Path stroke stays 1px under static and animated camera trans
     const unitSvg = engine.renderToSvg(pathScene(1));
     const zoomedSvg = engine.renderToSvg(pathScene(1.6));
     const highResolutionSvg = engine.renderToSvg(pathScene(1.6), { scale: 2 });
-    const selector = ".bsvg-vstroke-path-hairline";
+    const selector = ".bsvg-vstroke-n3";
     const svgs = [
       unitSvg,
       zoomedSvg,
@@ -250,12 +250,14 @@ test("generic IR Rect and Path canvas strokes share browser non-scaling paint", 
       width: 96,
       height: 64,
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "camera",
         bbox: { x: 0, y: 0, w: 96, h: 64 },
         transform: { scaleX: 1.6, scaleY: 1.6, originX: 0, originY: 0 },
         children: [
           {
+            ownership: { role: "source" },
             type: "rect",
             nodeId: "rectangle",
             bbox: { x: 8, y: 8, w: 40, h: 20 },
@@ -264,6 +266,7 @@ test("generic IR Rect and Path canvas strokes share browser non-scaling paint", 
             strokeScaling: "canvas",
           },
           {
+            ownership: { role: "source" },
             type: "path",
             nodeId: "path",
             bbox: { x: 8, y: 8, w: 40, h: 20 },
@@ -278,6 +281,7 @@ test("generic IR Rect and Path canvas strokes share browser non-scaling paint", 
     const ir = {
       ...camera,
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 96, h: 64 },
@@ -286,7 +290,7 @@ test("generic IR Rect and Path canvas strokes share browser non-scaling paint", 
     };
     const svg = handle.emitSvgFromIr(JSON.stringify(ir), "{}");
     expect(svg.match(/stroke-width="0.625"/g)).toHaveLength(2);
-    for (const selector of [".bsvg-vstroke-rectangle", ".bsvg-vstroke-path"]) {
+    for (const selector of [".bsvg-vstroke-n2", ".bsvg-vstroke-n3"]) {
       expect(await readStrokeStyle(page, svg, selector)).toEqual({
         strokeWidth: "1px",
         vectorEffect: "non-scaling-stroke",

@@ -33,6 +33,7 @@ type CompareViewTab = "preview" | "jsx" | "svg" | "html";
 type CodeLayout = "tab" | "panel";
 type CompareOverlayPart = "svg-box" | "svg-text" | "html-box" | "html-text";
 
+/** Selectable overlay displays in the layout comparison page. */
 const COMPARE_OVERLAY_OPTIONS: Array<{ value: CompareOverlayPart; label: string }> = [
   { value: "svg-box", label: "SVG boxes" },
   { value: "svg-text", label: "SVG text" },
@@ -86,6 +87,7 @@ function resolveCompareScale(
   return Math.min(1, contentWidth / canvasWidth);
 }
 
+/** Compare authored DOM layout with the corresponding resolved scene. */
 export function LayoutComparePage() {
   const { engine, status } = useBoundSvg();
   const mobileViewer = useMobileViewer();
@@ -155,8 +157,10 @@ export function LayoutComparePage() {
 
   const visibleSvgBBoxes = useMemo(
     () =>
-      svgInspection?.bboxes.filter((bbox) =>
-        selectedOverlayParts.has(getCompareSvgOverlayPart(bbox)),
+      svgInspection?.bboxes.filter(
+        (bbox) =>
+          bbox.ownership.role === "source" &&
+          selectedOverlayParts.has(getCompareSvgOverlayPart(bbox)),
       ) ?? [],
     [svgInspection, selectedOverlayParts],
   );
@@ -394,9 +398,24 @@ export function LayoutComparePage() {
                     <BoundSvgDebugOverlay
                       inspection={svgInspection}
                       labelMode="summary"
-                      filter={(bbox) => selectedOverlayParts.has(getCompareSvgOverlayPart(bbox))}
-                      selectedNodeId={selectedNodeId}
-                      highlightedNodeIds={hoveredNodeId != null ? [hoveredNodeId] : []}
+                      filter={(bbox) =>
+                        bbox.ownership.role === "source" &&
+                        selectedOverlayParts.has(getCompareSvgOverlayPart(bbox))
+                      }
+                      selectedNodeIndex={
+                        svgInspection?.bboxes.find(
+                          (entry) =>
+                            entry.ownership.role === "source" && entry.nodeId === selectedNodeId,
+                        )?.nodeIndex ?? null
+                      }
+                      highlightedNodeIndices={
+                        svgInspection?.bboxes
+                          .filter(
+                            (entry) =>
+                              entry.ownership.role === "source" && entry.nodeId === hoveredNodeId,
+                          )
+                          .map((entry) => entry.nodeIndex) ?? []
+                      }
                     />
                   )}
                 </div>
@@ -545,10 +564,10 @@ function getInspectionKind(bbox: InspectionBBox): MeasuredRect["kind"] {
 }
 
 function formatInspectionBBox(bbox: InspectionBBox): string {
-  const drawLabel = bbox.drawIndex == null ? "#-" : `#${bbox.drawIndex}`;
-  return `${bbox.type} ${formatDebugNumber(bbox.w)}x${formatDebugNumber(
-    bbox.h,
-  )} @ ${formatDebugNumber(bbox.x)},${formatDebugNumber(bbox.y)} d${bbox.depth} ${drawLabel}`;
+  const drawLabel = bbox.paintOrder == null ? "#-" : `#${bbox.paintOrder}`;
+  return `${bbox.type} ${formatDebugNumber(bbox.layoutBBox.w)}x${formatDebugNumber(
+    bbox.layoutBBox.h,
+  )} @ ${formatDebugNumber(bbox.layoutBBox.x)},${formatDebugNumber(bbox.layoutBBox.y)} d${bbox.depth} ${drawLabel}`;
 }
 
 function formatDebugNumber(value: number): string {

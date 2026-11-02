@@ -1,4 +1,11 @@
-import { cloneAnimationSpecForIR, cloneIRForLayeredTransform } from "./ir/clone.js";
+import { FatalError } from "./errors.js";
+import { cloneIRForLayeredTransform } from "./ir/clone.js";
+import {
+  buildIRSourceIndex,
+  type IRNodeOccurrence,
+  type IRSourceIndex,
+  type IRSourceRef,
+} from "./ir/source-index.js";
 import type { IR, IRGroupNode, IRNode } from "./ir/types.js";
 import {
   DEFAULT_LAYER_ID,
@@ -6,7 +13,6 @@ import {
   type SourceNodeInfo,
 } from "./layer-source-metadata.js";
 import type { BBox } from "./layout/types.js";
-import { LAYOUT_TRANSITION_WRAPPER_META } from "./layout-transition.js";
 import { toCssSafeResourceId } from "./svg/resource-id.js";
 import type { DebugOverlayConfig } from "./svg/types.js";
 import {
@@ -14,7 +20,6 @@ import {
   applyAffineMatrixToPoint,
   createIdentityAffineMatrix,
   createResolvedTransformMatrix,
-  hasTransform,
   multiplyAffineMatrices,
 } from "./transform.js";
 
@@ -33,18 +38,17 @@ export type LayerWarning =
 export type LayerManifestPart = {
   partId: string;
   /** Source Shape/Symbol (or embedded Svg) node this part belongs to. */
-  nodeId: string;
+  source: IRSourceRef;
   /** Baked part bounds in canvas coordinates (structural shape parts only). */
   bbox?: BBox;
 };
 
-/** One composited layer, its source IDs, canvas bounds, paint order, and separation warnings. */
+/** One composited layer, its sources, layout-space bounds, paint order and separation warnings. */
 export type LayerManifestEntry = {
   id: string;
   bbox: BBox;
-  nodeIds: string[];
-  /** meta of the layer's nodes, keyed by nodeId (only nodes that carry meta). */
-  nodeMeta?: Record<string, Record<string, string>>;
+  /** Original source occurrence and its index in this layer's extracted tree. */
+  sources: { source: IRSourceRef; layerSourceIndex: number; meta?: Record<string, string> }[];
   /**
    * Addressable shape parts painted by this layer, transcribed from
    * `data-boundsvg-part-id` attributes in embedded svg content
@@ -134,23 +138,11 @@ type RenderLayeredSvgOptions = {
   };
 };
 
-type LayerFragment = {
-  id: string;
-  mode: LayerMode;
-  node: IRNode;
-  bbox: BBox;
-  nodeIds: Set<string>;
-  paintOrder: number | undefined;
-  collapsedFromLayers: Set<string>;
-  warnings: LayerWarning[];
-};
-
 type LayerSegment = {
   id: string;
   mode: LayerMode;
-  nodes: IRNode[];
+  selected: Set<number>;
   bbox: BBox;
-  nodeIds: Set<string>;
   paintOrder: number | undefined;
   collapsedFromLayers: Set<string>;
   warnings: LayerWarning[];
@@ -181,28 +173,6 @@ type RenderLayeredSvgInput = {
    */
   emitLayerSvg: (layerIr: IR, emitOptions: LayerEmitOptions) => string;
 };
-
-type TransformAncestor = {
-  nodeId: string;
-  bbox: IRNode["bbox"];
-  transform?: NonNullable<IRGroupNode["transform"]>;
-  animation?: NonNullable<IRGroupNode["animation"]>;
-};
-
-/** Reserved background-paint suffix used to recover the source layer owner. */
-const BG_NODE_SUFFIX = ":bg";
-/** Reserved border-paint suffix used to recover the source layer owner. */
-const BORDER_NODE_SUFFIX = ":border";
-/** Generated inline-box fragment IDs whose paint belongs to the source span. */
-const INLINE_DECORATION_PATTERN = /^(.*):ibox\d+$/u;
-/** Generated inline-rectangle fragment IDs whose paint belongs to the source node. */
-const INLINE_RECT_FRAGMENT_PATTERN = /^(.*):inline-rect:\d+(?::rect)?$/u;
-/** Metadata value identifying transparent generated transition wrappers. */
-const GENERATED_LAYOUT_TRANSITION_PROVENANCE = LAYOUT_TRANSITION_WRAPPER_META.generatedValue;
-/** Metadata key used to distinguish generated wrappers from authored source nodes. */
-const GENERATED_PROVENANCE_KEY = LAYOUT_TRANSITION_WRAPPER_META.generatedKey;
-/** Metadata key linking a generated transition wrapper to its source node. */
-const GENERATED_SOURCE_NODE_ID_KEY = LAYOUT_TRANSITION_WRAPPER_META.sourceNodeIdKey;
 
 /**
  * Return a new array of layer-like entries sorted by `paintOrder` ascending
@@ -246,64 +216,74 @@ function sanitizeLayerFileId(layerId: string): string {
   return sanitized.length > 0 ? sanitized : "layer";
 }
 
-/** Separate an IR into compositing-safe layers and emit each through the supplied SVG emitter. */
+/** Separate an IR into compositing-safe layers and emit each through the supplied SVG emitter.
+ * @throws {FatalError} VALIDATION for malformed source ownership or an invalid ancestor closure.
+ */
 export function renderLayeredSvg(input: RenderLayeredSvgInput): LayeredSvgResult {
   const { ir, sourceNodeMap, options, emitLayerSvg } = input;
-  const drawIndexMap = buildDrawIndexMap(ir.drawOrder);
-  const fragments = collectLayerFragments({
-    node: ir.root,
-    sourceNodeMap,
-    drawIndexMap,
-  });
-  const segments = mergeAdjacentFragments(fragments);
-
-  const metaByNodeId: Record<string, Record<string, string>> = {};
-  collectNodeMeta(ir.root, metaByNodeId);
-  const partIdsByNodeId: Record<string, CollectedPart[]> = {};
-  collectNodeParts(ir.root, partIdsByNodeId, createIdentityAffineMatrix());
-  const normalizedResourceIdPrefix =
+  const sourceIndex = buildIRSourceIndex(ir);
+  const partsBySource = new Map<number, CollectedPart[]>();
+  collectNodeParts(sourceIndex, partsBySource);
+  const fragments = collectLayerFragments(sourceIndex, sourceNodeMap);
+  const segments: LayerSegment[] = [];
+  for (const fragment of fragments) {
+    const previous = segments.at(-1);
+    if (!previous || previous.id !== fragment.id) {
+      segments.push(fragment);
+      continue;
+    }
+    previous.mode =
+      previous.mode === "atomic" || fragment.mode === "atomic" ? "atomic" : "independent";
+    for (const selected of fragment.selected) {
+      previous.selected.add(selected);
+    }
+    for (const collapsed of fragment.collapsedFromLayers) {
+      previous.collapsedFromLayers.add(collapsed);
+    }
+    previous.bbox = unionLayoutBBox(previous.bbox, fragment.bbox);
+    previous.paintOrder =
+      previous.paintOrder === undefined
+        ? fragment.paintOrder
+        : fragment.paintOrder === undefined
+          ? previous.paintOrder
+          : Math.min(previous.paintOrder, fragment.paintOrder);
+    previous.warnings = dedupeWarnings([...previous.warnings, ...fragment.warnings]);
+  }
+  const prefix =
     options?.resourceIdPrefix === undefined
       ? undefined
       : toCssSafeResourceId(options.resourceIdPrefix);
-
   const layers = segments.map((segment, layerIndex) => {
-    const manifestEntry = buildManifestEntry(segment, metaByNodeId, partIdsByNodeId);
-    // A non-empty document prefix gets a stable, delimiter-terminated numeric
-    // sub-prefix per layer. `layer-1-` is not a prefix of `layer-10-`, so the
-    // generated identifier sets remain disjoint across layered SVGs.
-    const layerResourceIdPrefix =
-      normalizedResourceIdPrefix !== undefined && normalizedResourceIdPrefix.length > 0
-        ? `${normalizedResourceIdPrefix}layer-${layerIndex}-`
-        : normalizedResourceIdPrefix;
-    const layerSvg = emitLayerSvg(
-      {
-        root: {
-          type: "group",
-          nodeId: ir.root.nodeId,
-          bbox: { ...ir.root.bbox },
-          children: segment.nodes.map(cloneIRForLayeredTransform),
-        },
-        drawOrder: ir.drawOrder,
-        width: ir.width,
-        height: ir.height,
-        warnings: ir.warnings,
-      },
-      {
-        debug: options?.debug ?? ir.debug,
-        resourceIdPrefix: layerResourceIdPrefix,
-        nodeIdMetadata: options?.nodeIdMetadata,
-        scale: options?.scale,
-        timeMs: options?.timeMs,
-        generator: options?.generator,
-      },
-    );
+    const { root, contributing, originalSourceByClone } = buildLayerTree(segment, sourceIndex);
+    const layerIr = { ...ir, root };
+    const layerIndexProjection = buildIRSourceIndex(layerIr);
+    const { sources, parts } = collectLayerSources(layerIndexProjection, sourceIndex, {
+      originalSourceByClone,
+      contributing,
+      partsBySource,
+    });
+    const svg = emitLayerSvg(layerIr, {
+      debug: options?.debug ?? ir.debug,
+      resourceIdPrefix: prefix ? `${prefix}layer-${layerIndex}-` : prefix,
+      nodeIdMetadata: options?.nodeIdMetadata,
+      scale: options?.scale,
+      timeMs: options?.timeMs,
+      generator: options?.generator,
+    });
     return {
-      ...manifestEntry,
-      svg: layerSvg,
+      id: segment.id,
+      bbox: segment.bbox,
+      sources,
+      ...(parts.length ? { parts } : {}),
+      mode: segment.mode,
+      paintOrder: segment.paintOrder ?? 0,
+      ...(segment.collapsedFromLayers.size
+        ? { collapsedFromLayers: [...segment.collapsedFromLayers].sort() }
+        : {}),
+      warnings: segment.warnings,
+      svg,
     };
   });
-
-  const animated = hasAnimatedNode(ir.root);
   return {
     width: ir.width,
     height: ir.height,
@@ -311,246 +291,238 @@ export function renderLayeredSvg(input: RenderLayeredSvgInput): LayeredSvgResult
     manifest: {
       width: ir.width,
       height: ir.height,
-      ...(animated ? { animated: true as const, timeMs: options?.timeMs ?? 0 } : {}),
+      ...(hasAnimatedNode(ir.root)
+        ? { animated: true as const, timeMs: options?.timeMs ?? 0 }
+        : {}),
       layers: layers.map(({ svg: _svg, ...entry }) => entry),
     },
   };
 }
 
-function buildDrawIndexMap(drawOrder: readonly string[]): ReadonlyMap<string, number> {
-  const drawIndexMap = new Map<string, number>();
-  for (const [index, nodeId] of drawOrder.entries()) {
-    drawIndexMap.set(nodeId, index);
-  }
-  return drawIndexMap;
-}
+function collectLayerFragments(
+  sourceIndex: IRSourceIndex,
+  sourceNodeMap: RenderLayeredSvgInput["sourceNodeMap"],
+): LayerSegment[] {
+  const fragments: LayerSegment[] = [];
+  const infoFor = (occurrence: IRNodeOccurrence): SourceNodeInfo =>
+    sourceNodeMap.get(occurrence.source.nodeId) ?? {
+      nodeId: occurrence.source.nodeId,
+      nodeType: "Box",
+      requestedLayerId: DEFAULT_LAYER_ID,
+    };
 
-type CollectLayerFragmentsOptions = {
-  node: IRNode;
-  sourceNodeMap: ReadonlyMap<string, SourceNodeInfo>;
-  drawIndexMap: ReadonlyMap<string, number>;
-  transformAncestors?: readonly TransformAncestor[];
-};
-
-function collectLayerFragments(options: CollectLayerFragmentsOptions): LayerFragment[] {
-  const { node, sourceNodeMap, drawIndexMap, transformAncestors = [] } = options;
-  const sourceNodeId = getSourceNodeId(node, sourceNodeMap);
-  const sourceNode = sourceNodeMap.get(sourceNodeId);
-  if (!sourceNode) {
-    return [];
-  }
-
-  if (isAtomicNode(node, sourceNode)) {
-    return [
-      createAtomicFragment({
-        node,
-        sourceNode,
-        sourceNodeMap,
-        drawIndexMap,
-        transformAncestors,
-      }),
-    ];
-  }
-
-  if (node.type === "group") {
-    const fragments: LayerFragment[] = [];
-    const nextTransformAncestors =
-      (node.transform && hasTransform(node.transform)) || node.animation
-        ? [
-            ...transformAncestors,
-            {
-              nodeId: node.nodeId,
-              bbox: { ...node.bbox },
-              ...(node.transform ? { transform: { ...node.transform } } : {}),
-              ...(node.animation ? { animation: node.animation } : {}),
-            },
-          ]
-        : transformAncestors;
-    for (const child of node.children ?? []) {
-      fragments.push(
-        ...collectLayerFragments({
-          node: child,
-          sourceNodeMap,
-          drawIndexMap,
-          transformAncestors: nextTransformAncestors,
-        }),
-      );
+  let skippedSubtreeEnd: number | null = null;
+  for (const occurrence of sourceIndex.nodes.values()) {
+    if (skippedSubtreeEnd !== null && occurrence.enterOrder < skippedSubtreeEnd) {
+      continue;
     }
-    return fragments;
+    const node = occurrence.node;
+    const sourceInfo = infoFor(occurrence);
+    const isAtomic = isAtomicLayerNode(node);
+    if (node.type === "group" && !isAtomic) {
+      continue;
+    }
+    skippedSubtreeEnd = occurrence.leaveOrder;
+    const { selected, collapsedFromLayers, warnings, paintOrder } = collectFragment(
+      occurrence,
+      sourceIndex,
+      infoFor,
+    );
+    fragments.push({
+      id: sourceInfo.requestedLayerId,
+      mode: isAtomic ? "atomic" : "independent",
+      selected,
+      bbox: toLayoutBBox(node.bbox),
+      paintOrder,
+      collapsedFromLayers,
+      warnings: dedupeWarnings(warnings),
+    });
   }
-
-  return [
-    createIndependentFragment({
-      node,
-      sourceNode,
-      drawIndexMap,
-      transformAncestors,
-    }),
-  ];
+  return fragments;
 }
 
-function isAtomicNode(node: IRNode, sourceNode: SourceNodeInfo): boolean {
-  if (
-    sourceNode.nodeType === "Svg" ||
-    sourceNode.nodeType === "Shape" ||
-    sourceNode.nodeType === "Symbol"
-  ) {
-    return true;
-  }
-
+function isAtomicLayerNode(node: IRNode): boolean {
   return (
-    node.type === "group" &&
-    (node.opacity != null || targetsOpacity(node) || node.clip != null || node.boxShadow != null)
+    node.type === "svg" ||
+    node.type === "shape" ||
+    (node.type === "group" &&
+      (node.opacity !== undefined ||
+        targetsOpacity(node) ||
+        node.clip !== undefined ||
+        node.boxShadow !== undefined))
   );
 }
+function appendIslandWarnings(node: IRNode, nodeId: string, warnings: LayerWarning[]): void {
+  if (node.type === "svg") {
+    warnings.push({ code: "SVG_SUBTREE_FORCED_ATOMIC", nodeId: nodeId });
+  }
+  if (node.type === "group" && node.clip) {
+    warnings.push({ code: "CLIP_FORCED_ATOMIC", nodeId: nodeId });
+  }
+  if (node.type === "group" && node.boxShadow) {
+    warnings.push({ code: "BOX_SHADOW_FORCED_ATOMIC", nodeId: nodeId });
+  }
+}
 
+function collectFragment(
+  occurrence: IRNodeOccurrence,
+  sourceIndex: IRSourceIndex,
+  sourceInfoFor: (occurrence: IRNodeOccurrence) => SourceNodeInfo,
+) {
+  const node = occurrence.node;
+  const islandInfo = sourceInfoFor(occurrence);
+  const isOpacityIsland =
+    node.type === "group" && (node.opacity !== undefined || targetsOpacity(node));
+  const selected = new Set<number>();
+  const collapsedFromLayers = new Set<string>();
+  const warnings: LayerWarning[] = [];
+  let paintOrder: number | undefined;
+  for (
+    let descendantIndex = occurrence.nodeIndex;
+    descendantIndex < sourceIndex.nodes.size;
+    descendantIndex++
+  ) {
+    const descendant = sourceIndex.nodes.get(descendantIndex);
+    if (!descendant || descendant.enterOrder > occurrence.leaveOrder) {
+      break;
+    }
+    selected.add(descendant.nodeIndex);
+    if (descendant.paintOrder !== null) {
+      paintOrder =
+        paintOrder === undefined
+          ? descendant.paintOrder
+          : Math.min(paintOrder, descendant.paintOrder);
+    }
+    const requested = sourceInfoFor(descendant);
+    if (requested.requestedLayerId !== islandInfo.requestedLayerId) {
+      collapsedFromLayers.add(requested.requestedLayerId);
+      warnings.push({
+        code: "CROSSES_COMPOSITING_ISLAND",
+        nodeId: descendant.source.nodeId,
+        islandRootNodeId: islandInfo.nodeId,
+      });
+      if (isOpacityIsland) {
+        warnings.push({
+          code: "PARENT_OPACITY_PREVENTED_SPLIT",
+          nodeId: descendant.source.nodeId,
+          parentNodeId: islandInfo.nodeId,
+        });
+      }
+    }
+  }
+  appendIslandWarnings(node, islandInfo.nodeId, warnings);
+  return { selected, collapsedFromLayers, warnings, paintOrder };
+}
+
+function appendLayerClone(
+  occurrence: IRNodeOccurrence,
+  clones: Map<number, IRNode>,
+  {
+    contributing,
+    originalSourceByClone,
+  }: { contributing: ReadonlySet<number>; originalSourceByClone: Map<IRNode, number> },
+): IRNode | null {
+  const node = occurrence.node;
+  const cloned = cloneIRForLayeredTransform(
+    node.type === "group" ? { ...node, children: [] } : node,
+  );
+  if (cloned.ownership.role === "source") {
+    originalSourceByClone.set(cloned, occurrence.nodeIndex);
+    if (!contributing.has(occurrence.nodeIndex)) {
+      cloned.ownership = { role: "source" };
+    }
+  }
+  clones.set(occurrence.nodeIndex, cloned);
+  if (occurrence.parentNodeIndex === null) {
+    return cloned;
+  } else {
+    const parent = clones.get(occurrence.parentNodeIndex);
+    if (parent?.type !== "group") {
+      throw new FatalError("VALIDATION", "Layer extraction lost a structural parent.", {
+        stage: "ir",
+      });
+    }
+    parent.children?.push(cloned);
+  }
+  return null;
+}
+function buildLayerTree(segment: LayerSegment, sourceIndex: IRSourceIndex) {
+  const contributing = new Set<number>();
+  for (const selected of segment.selected) {
+    const occurrence = sourceIndex.nodes.get(selected);
+    if (occurrence) {
+      contributing.add(occurrence.source.sourceIndex);
+    }
+  }
+  const clones = new Map<number, IRNode>();
+  const originalSourceByClone = new Map<IRNode, number>();
+  let root: IRNode | null = null;
+  for (const selected of segment.selected) {
+    const pending: IRNodeOccurrence[] = [];
+    let ancestor = sourceIndex.nodes.get(selected);
+    while (ancestor && !clones.has(ancestor.nodeIndex)) {
+      pending.push(ancestor);
+      ancestor =
+        ancestor.parentNodeIndex === null
+          ? undefined
+          : sourceIndex.nodes.get(ancestor.parentNodeIndex);
+    }
+    for (const occurrence of pending.reverse()) {
+      const rootClone = appendLayerClone(occurrence, clones, {
+        contributing,
+        originalSourceByClone,
+      });
+      if (rootClone) {
+        root = rootClone;
+      }
+    }
+  }
+  if (!root) {
+    throw new FatalError("VALIDATION", "Layer extraction requires the original root closure.", {
+      stage: "ir",
+    });
+  }
+  return { root, contributing, originalSourceByClone };
+}
+function collectLayerSources(
+  layerIndexProjection: IRSourceIndex,
+  sourceIndex: IRSourceIndex,
+  {
+    originalSourceByClone,
+    contributing,
+    partsBySource,
+  }: {
+    originalSourceByClone: ReadonlyMap<IRNode, number>;
+    contributing: ReadonlySet<number>;
+    partsBySource: ReadonlyMap<number, CollectedPart[]>;
+  },
+) {
+  const sources: LayerManifestEntry["sources"] = [];
+  const parts: LayerManifestPart[] = [];
+  for (const localSource of layerIndexProjection.sources.values()) {
+    const originalSourceIndex = originalSourceByClone.get(localSource.node);
+    if (originalSourceIndex === undefined || !contributing.has(originalSourceIndex)) {
+      continue;
+    }
+    const source = sourceIndex.sources.get(originalSourceIndex);
+    if (!source) {
+      throw new FatalError("VALIDATION", "Missing contributing layer source.", { stage: "ir" });
+    }
+    sources.push({
+      source: source.source,
+      layerSourceIndex: localSource.source.sourceIndex,
+      ...(source.node.ownership.role === "source" && source.node.ownership.meta
+        ? { meta: { ...source.node.ownership.meta } }
+        : {}),
+    });
+    for (const part of partsBySource.get(originalSourceIndex) ?? []) {
+      parts.push({ ...part, source: source.source });
+    }
+  }
+  return { sources, parts };
+}
 function targetsOpacity(node: IRGroupNode): boolean {
   return node.animation?.keyframes.some((keyframe) => keyframe.opacity !== undefined) ?? false;
-}
-
-function createAtomicFragment(options: {
-  node: IRNode;
-  sourceNode: SourceNodeInfo;
-  sourceNodeMap: ReadonlyMap<string, SourceNodeInfo>;
-  drawIndexMap: ReadonlyMap<string, number>;
-  transformAncestors: readonly TransformAncestor[];
-}): LayerFragment {
-  const { node, sourceNode, sourceNodeMap, drawIndexMap, transformAncestors } = options;
-  const sourceNodeIds = collectSourceNodeIds(node, sourceNodeMap);
-  const requestedLayerIds = new Set<string>();
-  for (const nodeId of sourceNodeIds) {
-    const requestedLayerId = sourceNodeMap.get(nodeId)?.requestedLayerId ?? DEFAULT_LAYER_ID;
-    requestedLayerIds.add(requestedLayerId);
-  }
-
-  const warnings: LayerWarning[] = [];
-  if (sourceNode.nodeType === "Svg") {
-    warnings.push({ code: "SVG_SUBTREE_FORCED_ATOMIC", nodeId: sourceNode.nodeId });
-  }
-  if (node.type === "group") {
-    if (node.clip != null) {
-      warnings.push({ code: "CLIP_FORCED_ATOMIC", nodeId: sourceNode.nodeId });
-    }
-    if (node.boxShadow != null) {
-      warnings.push({ code: "BOX_SHADOW_FORCED_ATOMIC", nodeId: sourceNode.nodeId });
-    }
-  }
-
-  for (const nodeId of sourceNodeIds) {
-    if (nodeId === sourceNode.nodeId) {
-      continue;
-    }
-    const requestedLayerId = sourceNodeMap.get(nodeId)?.requestedLayerId ?? DEFAULT_LAYER_ID;
-    if (requestedLayerId === sourceNode.requestedLayerId) {
-      continue;
-    }
-    warnings.push({
-      code: "CROSSES_COMPOSITING_ISLAND",
-      nodeId,
-      islandRootNodeId: sourceNode.nodeId,
-    });
-    if (node.type === "group" && (node.opacity != null || targetsOpacity(node))) {
-      warnings.push({
-        code: "PARENT_OPACITY_PREVENTED_SPLIT",
-        nodeId,
-        parentNodeId: sourceNode.nodeId,
-      });
-    }
-  }
-
-  const collapsedFromLayers = new Set(
-    [...requestedLayerIds].filter((layerId) => layerId !== sourceNode.requestedLayerId),
-  );
-
-  return {
-    id: sourceNode.requestedLayerId,
-    mode: "atomic",
-    node: wrapWithTransformAncestors(cloneIRForLayeredTransform(node), transformAncestors),
-    bbox: toLayoutBBox(node.bbox),
-    nodeIds: sourceNodeIds,
-    paintOrder: findPaintOrder(node, drawIndexMap),
-    collapsedFromLayers,
-    warnings: dedupeWarnings(warnings),
-  };
-}
-
-function createIndependentFragment(options: {
-  node: IRNode;
-  sourceNode: SourceNodeInfo;
-  drawIndexMap: ReadonlyMap<string, number>;
-  transformAncestors: readonly TransformAncestor[];
-}): LayerFragment {
-  const { node, sourceNode, drawIndexMap, transformAncestors } = options;
-  return {
-    id: sourceNode.requestedLayerId,
-    mode: "independent",
-    node: wrapWithTransformAncestors(cloneIRForLayeredTransform(node), transformAncestors),
-    bbox: toLayoutBBox(node.bbox),
-    nodeIds: new Set([sourceNode.nodeId]),
-    paintOrder: findPaintOrder(node, drawIndexMap),
-    collapsedFromLayers: new Set(),
-    warnings: [],
-  };
-}
-
-function collectSourceNodeIds(
-  node: IRNode,
-  sourceNodeMap: ReadonlyMap<string, SourceNodeInfo>,
-): Set<string> {
-  const sourceNodeIds = new Set<string>();
-  const visit = (currentNode: IRNode): void => {
-    sourceNodeIds.add(getSourceNodeId(currentNode, sourceNodeMap));
-    for (const child of currentNode.type === "group" ? (currentNode.children ?? []) : []) {
-      visit(child);
-    }
-  };
-  visit(node);
-  return sourceNodeIds;
-}
-
-function mergeAdjacentFragments(fragments: readonly LayerFragment[]): LayerSegment[] {
-  const segments: LayerSegment[] = [];
-
-  for (const fragment of fragments) {
-    const lastSegment = segments.at(-1);
-    if (!lastSegment || lastSegment.id !== fragment.id) {
-      segments.push({
-        id: fragment.id,
-        mode: fragment.mode,
-        nodes: [fragment.node],
-        bbox: fragment.bbox,
-        nodeIds: new Set(fragment.nodeIds),
-        paintOrder: fragment.paintOrder,
-        collapsedFromLayers: new Set(fragment.collapsedFromLayers),
-        warnings: [...fragment.warnings],
-      });
-      continue;
-    }
-
-    lastSegment.mode =
-      lastSegment.mode === "atomic" || fragment.mode === "atomic" ? "atomic" : "independent";
-    lastSegment.nodes.push(fragment.node);
-    lastSegment.bbox = unionLayoutBBox(lastSegment.bbox, fragment.bbox);
-    lastSegment.paintOrder = minPaintOrder(lastSegment.paintOrder, fragment.paintOrder);
-    for (const nodeId of fragment.nodeIds) {
-      lastSegment.nodeIds.add(nodeId);
-    }
-    for (const layerId of fragment.collapsedFromLayers) {
-      lastSegment.collapsedFromLayers.add(layerId);
-    }
-    lastSegment.warnings = dedupeWarnings([...lastSegment.warnings, ...fragment.warnings]);
-  }
-
-  return segments;
-}
-
-function collectNodeMeta(node: IRNode, accumulator: Record<string, Record<string, string>>): void {
-  if (node.type === "group" && node.meta) {
-    accumulator[node.nodeId] = node.meta;
-  }
-  for (const child of node.type === "group" ? (node.children ?? []) : []) {
-    collectNodeMeta(child, accumulator);
-  }
 }
 
 /** Quoted SVG part-ID attributes transcribed into layer manifests. */
@@ -583,50 +555,58 @@ function transformBBoxToAabb(matrix: AffineMatrix, bbox: BBox): BBox {
 // layer paints. Part bboxes are documented as canvas coordinates, so the
 // node's own transform and every ancestor transform must be applied.
 function collectNodeParts(
-  node: IRNode,
-  accumulator: Record<string, CollectedPart[]>,
-  ancestorMatrix: AffineMatrix,
+  sourceIndex: IRSourceIndex,
+  accumulator: Map<number, CollectedPart[]>,
 ): void {
-  const matrix = multiplyAffineMatrices(
-    ancestorMatrix,
-    createResolvedTransformMatrix(getIRNodeTransform(node), node.bbox),
-  );
-  if (node.type === "shape" && node.shapeParts) {
-    const collected: CollectedPart[] = [];
-    for (const part of node.shapeParts) {
-      if (part.partId === undefined) {
-        continue;
-      }
-      collected.push({
-        partId: part.partId,
-        ...(part.bounds
-          ? {
-              bbox: transformBBoxToAabb(matrix, {
-                x: node.bbox.x + part.bounds.x,
-                y: node.bbox.y + part.bounds.y,
-                width: part.bounds.width,
-                height: part.bounds.height,
-              }),
-            }
-          : {}),
-      });
-    }
+  const matrices = new Map<number, AffineMatrix>();
+  for (const occurrence of sourceIndex.nodes.values()) {
+    const node = occurrence.node;
+    const ancestorMatrix =
+      occurrence.parentNodeIndex === null
+        ? createIdentityAffineMatrix()
+        : (matrices.get(occurrence.parentNodeIndex) ?? createIdentityAffineMatrix());
+    const matrix = multiplyAffineMatrices(
+      ancestorMatrix,
+      createResolvedTransformMatrix(getIRNodeTransform(node), node.bbox),
+    );
+    matrices.set(occurrence.nodeIndex, matrix);
+    const collected = partsForNode(node, matrix);
     if (collected.length > 0) {
-      accumulator[node.nodeId] = collected;
+      const owner = occurrence.source.sourceIndex;
+      accumulator.set(owner, [...(accumulator.get(owner) ?? []), ...collected]);
     }
-  } else if (node.type === "svg" && node.svgContent) {
-    const collected = [...node.svgContent.matchAll(PART_ID_ATTR_PATTERN)].map((match) => ({
-      partId: unescapeXmlAttribute(match[1] ?? ""),
-    }));
-    if (collected.length > 0) {
-      accumulator[node.nodeId] = collected;
-    }
-  }
-  for (const child of node.type === "group" ? (node.children ?? []) : []) {
-    collectNodeParts(child, accumulator, matrix);
   }
 }
 
+function partsForNode(node: IRNode, matrix: AffineMatrix): CollectedPart[] {
+  if (node.type === "shape") {
+    return node.shapeParts.flatMap((part) =>
+      part.partId === undefined
+        ? []
+        : [
+            {
+              partId: part.partId,
+              ...(part.bounds
+                ? {
+                    bbox: transformBBoxToAabb(matrix, {
+                      x: node.bbox.x + part.bounds.x,
+                      y: node.bbox.y + part.bounds.y,
+                      width: part.bounds.width,
+                      height: part.bounds.height,
+                    }),
+                  }
+                : {}),
+            },
+          ],
+    );
+  }
+  if (node.type === "svg") {
+    return [...node.svgContent.matchAll(PART_ID_ATTR_PATTERN)].map((match) => ({
+      partId: unescapeXmlAttribute(match[1] ?? ""),
+    }));
+  }
+  return [];
+}
 function getIRNodeTransform(node: IRNode): IRGroupNode["transform"] {
   return node.type === "group" ? node.transform : undefined;
 }
@@ -639,120 +619,6 @@ function unescapeXmlAttribute(value: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
-}
-
-function buildManifestEntry(
-  segment: LayerSegment,
-  metaByNodeId: Record<string, Record<string, string>>,
-  partIdsByNodeId: Record<string, CollectedPart[]>,
-): LayerManifestEntry {
-  const collapsedFromLayers =
-    segment.collapsedFromLayers.size > 0
-      ? [...segment.collapsedFromLayers].sort((left, right) => left.localeCompare(right))
-      : undefined;
-
-  // Per-layer SVGs flatten ancestor groups away, so meta is transcribed from
-  // the source IR for every nodeId assigned to this layer.
-  const nodeMeta: Record<string, Record<string, string>> = {};
-  for (const nodeId of segment.nodeIds) {
-    const meta = metaByNodeId[nodeId];
-    if (meta) {
-      nodeMeta[nodeId] = meta;
-    }
-  }
-
-  const sortedNodeIds = [...segment.nodeIds].sort((left, right) => left.localeCompare(right));
-
-  // Deterministic order: by nodeId (matching nodeIds), then document order
-  // of the part paths within each node's svg content.
-  const parts: LayerManifestPart[] = [];
-  for (const nodeId of sortedNodeIds) {
-    for (const part of partIdsByNodeId[nodeId] ?? []) {
-      parts.push({ partId: part.partId, nodeId, ...(part.bbox ? { bbox: part.bbox } : {}) });
-    }
-  }
-
-  return {
-    id: segment.id,
-    bbox: segment.bbox,
-    nodeIds: sortedNodeIds,
-    ...(Object.keys(nodeMeta).length > 0 ? { nodeMeta } : {}),
-    ...(parts.length > 0 ? { parts } : {}),
-    mode: segment.mode,
-    paintOrder: segment.paintOrder ?? 0,
-    collapsedFromLayers,
-    warnings: dedupeWarnings(segment.warnings),
-  };
-}
-
-function findPaintOrder(
-  node: IRNode,
-  drawIndexMap: ReadonlyMap<string, number>,
-): number | undefined {
-  let paintOrder: number | undefined;
-
-  const visit = (currentNode: IRNode): void => {
-    const drawIndex = drawIndexMap.get(currentNode.nodeId);
-    if (drawIndex != null) {
-      paintOrder = paintOrder === undefined ? drawIndex : Math.min(paintOrder, drawIndex);
-    }
-    for (const child of currentNode.type === "group" ? (currentNode.children ?? []) : []) {
-      visit(child);
-    }
-  };
-
-  visit(node);
-  return paintOrder;
-}
-
-function minPaintOrder(left: number | undefined, right: number | undefined): number | undefined {
-  if (left === undefined) {
-    return right;
-  }
-  if (right === undefined) {
-    return left;
-  }
-  return Math.min(left, right);
-}
-
-function getSourceNodeId(node: IRNode, sourceNodeMap: ReadonlyMap<string, SourceNodeInfo>): string {
-  // Authored nodes always win by exact source-map membership. This keeps
-  // user-authored meta from impersonating generated provenance; only an IR
-  // node absent from the source layout may project through the marker below.
-  if (sourceNodeMap.has(node.nodeId)) {
-    return node.nodeId;
-  }
-  if (
-    node.type === "group" &&
-    node.meta?.[GENERATED_PROVENANCE_KEY] === GENERATED_LAYOUT_TRANSITION_PROVENANCE
-  ) {
-    const sourceNodeId = node.meta[GENERATED_SOURCE_NODE_ID_KEY];
-    if (sourceNodeId !== undefined && sourceNodeMap.has(sourceNodeId)) {
-      return sourceNodeId;
-    }
-  }
-  const nodeId = node.nodeId;
-  if (nodeId.endsWith(":content")) {
-    return nodeId.slice(0, -":content".length);
-  }
-  if (nodeId.endsWith(":outline")) {
-    return nodeId.slice(0, -":outline".length);
-  }
-  if (nodeId.endsWith(BG_NODE_SUFFIX)) {
-    return nodeId.slice(0, -BG_NODE_SUFFIX.length);
-  }
-  if (nodeId.endsWith(BORDER_NODE_SUFFIX)) {
-    return nodeId.slice(0, -BORDER_NODE_SUFFIX.length);
-  }
-  const inlineRectMatch = INLINE_RECT_FRAGMENT_PATTERN.exec(nodeId);
-  if (inlineRectMatch?.[1]) {
-    return inlineRectMatch[1];
-  }
-  const inlineDecorationMatch = INLINE_DECORATION_PATTERN.exec(nodeId);
-  if (inlineDecorationMatch?.[1]) {
-    return inlineDecorationMatch[1];
-  }
-  return nodeId;
 }
 
 function toLayoutBBox(bbox: IRNode["bbox"]): BBox {
@@ -791,28 +657,6 @@ function dedupeWarnings(warnings: readonly LayerWarning[]): LayerWarning[] {
   }
 
   return deduped;
-}
-
-function wrapWithTransformAncestors(
-  node: IRNode,
-  transformAncestors: readonly TransformAncestor[],
-): IRNode {
-  let wrappedNode = node;
-  for (let index = transformAncestors.length - 1; index >= 0; index -= 1) {
-    const ancestor = transformAncestors[index];
-    if (!ancestor) {
-      continue;
-    }
-    wrappedNode = {
-      type: "group",
-      nodeId: ancestor.nodeId,
-      bbox: { ...ancestor.bbox },
-      ...(ancestor.transform ? { transform: { ...ancestor.transform } } : {}),
-      ...(ancestor.animation ? { animation: cloneAnimationSpecForIR(ancestor.animation) } : {}),
-      children: [wrappedNode],
-    };
-  }
-  return wrappedNode;
 }
 
 /** Detect node or text-unit animation recursively when constructing layered output metadata. */

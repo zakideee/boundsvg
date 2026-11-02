@@ -50,9 +50,9 @@ describe("node metadata", () => {
     expect(svgA).toContain('data-boundsvg-meta-alpha="2" data-boundsvg-meta-zebra="1"');
   });
 
-  it("carries Canvas meta on the svg root element", () => {
+  it("carries Canvas meta on its source anchor inside the viewport", () => {
     const svg = engine.renderToSvg(canvasWith([]));
-    expect(svg).toMatch(/<svg [^>]*data-boundsvg-meta-scene="test"/);
+    expect(svg).toMatch(/<g [^>]*data-boundsvg-meta-scene="test"/);
   });
 
   it("escapes meta values", () => {
@@ -70,7 +70,7 @@ describe("node metadata", () => {
     expect(svg).toContain('data-boundsvg-meta-note="a&lt;b&amp;&quot;c"');
   });
 
-  it("appears in the layered manifest keyed by nodeId", () => {
+  it("appears in the layered manifest on its source reference", () => {
     const vnode = createElement(
       "Canvas",
       { width: 200, height: 100 },
@@ -85,9 +85,11 @@ describe("node metadata", () => {
     );
     const result = engine.renderToLayeredSvg(vnode);
     const layer = result.layers.find((entry) => entry.id === "content");
-    expect(layer?.nodeMeta?.["tag-target"]).toEqual({ role: "cta" });
-    // per-layer SVGs flatten ancestor groups, so the attribute lives on the
-    // combined output; the manifest is the per-layer contract for meta
+    expect(layer?.sources.find((entry) => entry.source.nodeId === "tag-target")?.meta).toEqual({
+      role: "cta",
+    });
+    // Source anchors retain metadata in the extracted tree as well as its manifest.
+    expect(layer?.svg).toContain('data-boundsvg-meta-role="cta"');
     const combined = engine.renderToSvg(vnode);
     expect(combined).toContain('data-boundsvg-meta-role="cta"');
   });

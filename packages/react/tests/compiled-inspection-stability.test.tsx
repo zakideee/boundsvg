@@ -31,8 +31,11 @@ function makeVNode(width = 100, text = "hello"): VNode {
   };
 }
 
+/** Shared scene reference for compiled-inspection lifetime assertions. */
 const STABLE_VNODE = makeVNode();
+/** Stable compilation settings used to isolate inspection-only rerenders. */
 const STABLE_COMPILE_OPTIONS: CompileOptions = { textPathMode: "merged" };
+/** Stable sampling settings used to isolate inspection-only rerenders. */
 const STABLE_RENDER_OPTIONS: RenderIrOptions = { textPathMode: "merged" };
 
 function vnodeWidth(vnode: VNode): number {
@@ -43,12 +46,13 @@ function makeStructuralIr(vnode: VNode): Omit<IR, "warnings"> {
   const width = vnodeWidth(vnode);
   return {
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "auto:0",
       bbox: { x: 0, y: 0, w: width, h: 80 },
       children: [],
     },
-    drawOrder: [],
+
     width,
     height: 80,
   };
@@ -108,12 +112,14 @@ function context(engine: Engine): BoundSvgContextValue {
   };
 }
 
-function mount(ui: React.ReactNode, engine: Engine) {
+function mount(element: React.ReactNode, engine: Engine) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => {
-    root.render(<BoundSvgContext.Provider value={context(engine)}>{ui}</BoundSvgContext.Provider>);
+    root.render(
+      <BoundSvgContext.Provider value={context(engine)}>{element}</BoundSvgContext.Provider>,
+    );
   });
   return {
     unmount() {

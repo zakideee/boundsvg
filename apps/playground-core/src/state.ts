@@ -5,6 +5,7 @@ import { DEFAULT_INSPECTION_FRAME_MODE } from "../../playground-shared/inspectio
 
 /** Current scene, output options, and inspection handle for the preset UI. */
 export const coreState = {
+  cachedIr: null as import("@boundsvg/core/scene").IR | null,
   currentPresetKey: "",
   currentCodeTab: "source" as "source" | "svg",
   bboxOverlayParts: [] as DebugOverlayPart[],

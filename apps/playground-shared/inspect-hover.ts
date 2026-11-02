@@ -10,7 +10,7 @@
  * a workspace package and cannot resolve those at build time).
  */
 
-import type { IR } from "@boundsvg/core/scene";
+import type { IR, IRSourceRef } from "@boundsvg/core/scene";
 import {
   buildNodeBBoxMap,
   EventEffectOverlay,
@@ -21,13 +21,13 @@ export type { EventEffectOverlayDisplayOptions } from "./event-effects.js";
 
 /**
  * A function that hit-tests the rendered SVG at the given client coordinates
- * and returns the nodeId of the element under the cursor, or `null`.
+ * and returns the source occurrence of the element under the cursor, or `null`.
  */
 export type InspectHitTestFn = (
   svgEl: SVGSVGElement,
   clientX: number,
   clientY: number,
-) => string | null;
+) => IRSourceRef | null;
 
 /**
  * Handle returned by `setupInspectHover`.
@@ -37,7 +37,7 @@ export type InspectHoverHandle = {
   /** Remove listeners and destroy the overlay. */
   cleanup: () => void;
   /** Programmatically highlight a node (or clear with `null`). */
-  highlight: (nodeId: string | null) => void;
+  highlight: (source: IRSourceRef | null) => void;
   /** Change display without replacing the SVG or resetting the selected node. */
   updateDisplay: (display?: EventEffectOverlayDisplayOptions) => void;
 };
@@ -47,15 +47,15 @@ export type InspectHoverHandle = {
  *
  * @param container - The DOM element containing the rendered `<svg>`.
  * @param ir - The IR tree returned by `engine.renderToSvgAndIR()`.
- * @param hitTest - Hit-test function that resolves a nodeId from client coords.
- * @param onHoverChange - Optional callback fired when the hovered nodeId changes.
- * @returns A handle with `cleanup()` and `highlight(nodeId)` methods.
+ * @param hitTest - Hit-test function that resolves a source from client coords.
+ * @param onHoverChange - Optional callback fired when the hovered source occurrence changes.
+ * @returns A handle with `cleanup()` and `highlight(source)` methods.
  */
 export function setupInspectHover(
   container: HTMLElement,
   ir: IR,
   hitTest: InspectHitTestFn,
-  onHoverChange?: (nodeId: string | null) => void,
+  onHoverChange?: (source: IRSourceRef | null) => void,
   display?: EventEffectOverlayDisplayOptions,
 ): InspectHoverHandle {
   const noop: InspectHoverHandle = {
@@ -78,15 +78,15 @@ export function setupInspectHover(
     display,
   });
 
-  let lastInspected: string | null = null;
+  let lastInspected: IRSourceRef | null = null;
 
   const onMouseMove = (e: MouseEvent): void => {
-    const nodeId = hitTest(svgEl, e.clientX, e.clientY);
+    const source = hitTest(svgEl, e.clientX, e.clientY);
 
-    if (nodeId !== lastInspected) {
-      lastInspected = nodeId;
-      overlay.setInspectHighlight(nodeId);
-      onHoverChange?.(nodeId);
+    if (source !== lastInspected) {
+      lastInspected = source;
+      overlay.setInspectHighlight(source);
+      onHoverChange?.(source);
     }
   };
 
@@ -108,10 +108,10 @@ export function setupInspectHover(
       svgEl.removeEventListener("mousemove", onMouseMove);
       svgEl.removeEventListener("mouseleave", onMouseLeave);
     },
-    highlight: (nodeId: string | null) => {
-      if (nodeId !== lastInspected) {
-        lastInspected = nodeId;
-        overlay.setInspectHighlight(nodeId);
+    highlight: (source: IRSourceRef | null) => {
+      if (source !== lastInspected) {
+        lastInspected = source;
+        overlay.setInspectHighlight(source);
       }
     },
   };

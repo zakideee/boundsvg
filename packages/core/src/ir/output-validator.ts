@@ -1,6 +1,7 @@
 import { RecoverableError } from "../errors.js";
 import type { StructuralIrValidationError } from "../generated/ir/structural-ir-validator.js";
 import { validateStructuralIr } from "../generated/ir/structural-ir-validator.js";
+import { buildIRSourceIndex } from "./source-index.js";
 import type { SerializedIR } from "./types.js";
 
 let structuralWarningsRejected = false;
@@ -62,7 +63,11 @@ export function validateStructuralIR(value: unknown): boolean {
     return false;
   }
   try {
-    return validateStructuralIr(value);
+    if (!validateStructuralIr(value)) {
+      return false;
+    }
+    buildIRSourceIndex(value);
+    return true;
   } catch {
     return false;
   }
@@ -88,7 +93,12 @@ export function validateSerializedIR(value: unknown): value is SerializedIR {
     return false;
   }
   try {
-    return validateStructuralIr(value);
+    const { warnings: _warnings, ...structural } = value;
+    if (!validateStructuralIr(structural)) {
+      return false;
+    }
+    buildIRSourceIndex(structural);
+    return true;
   } catch {
     return false;
   }

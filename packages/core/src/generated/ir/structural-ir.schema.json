@@ -7,12 +7,6 @@
     "root": {
       "$ref": "#/$defs/IrNode"
     },
-    "drawOrder": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
     "width": {
       "type": "number"
     },
@@ -25,7 +19,6 @@
   },
   "required": [
     "root",
-    "drawOrder",
     "width",
     "height"
   ],
@@ -39,11 +32,15 @@
         },
         "bbox": {
           "$ref": "#/$defs/BBox"
+        },
+        "ownership": {
+          "$ref": "#/$defs/IrNodeOwnership"
         }
       },
       "required": [
         "nodeId",
-        "bbox"
+        "bbox",
+        "ownership"
       ],
       "oneOf": [
         {
@@ -73,12 +70,6 @@
                 }
               ]
             },
-            "meta": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "string"
-              }
-            },
             "transform": {
               "anyOf": [
                 {
@@ -90,13 +81,6 @@
               "anyOf": [
                 {
                   "$ref": "#/$defs/AnimationSpec"
-                }
-              ]
-            },
-            "on": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/HandlersRef"
                 }
               ]
             },
@@ -344,13 +328,6 @@
                 "$ref": "#/$defs/TextDecorationFragment"
               }
             },
-            "on": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/HandlersRef"
-                }
-              ]
-            },
             "type": {
               "type": "string",
               "const": "text"
@@ -376,13 +353,6 @@
             },
             "preserveAspectRatio": {
               "type": "string"
-            },
-            "on": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/HandlersRef"
-                }
-              ]
             },
             "type": {
               "type": "string",
@@ -449,13 +419,6 @@
             "strokeMiterlimit": {
               "type": "number"
             },
-            "on": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/HandlersRef"
-                }
-              ]
-            },
             "type": {
               "type": "string",
               "const": "path"
@@ -479,13 +442,6 @@
             },
             "preserveAspectRatio": {
               "type": "string"
-            },
-            "on": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/HandlersRef"
-                }
-              ]
             },
             "type": {
               "type": "string",
@@ -544,13 +500,6 @@
             "strokeMiterlimit": {
               "type": "number"
             },
-            "on": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/HandlersRef"
-                }
-              ]
-            },
             "type": {
               "type": "string",
               "const": "shape"
@@ -561,7 +510,8 @@
             "shapeParts"
           ]
         }
-      ]
+      ],
+      "unevaluatedProperties": false
     },
     "BBox": {
       "description": "Axis-aligned bounding box.",
@@ -585,6 +535,181 @@
         "y",
         "w",
         "h"
+      ]
+    },
+    "IrNodeOwnership": {
+      "description": "Borrowed source ownership; semantic fields are emitted only once.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "on": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HandlersRef"
+                }
+              ]
+            },
+            "meta": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "maxProperties": 16,
+              "propertyNames": {
+                "pattern": "^[a-z][a-z0-9-]{0,31}$"
+              }
+            },
+            "role": {
+              "type": "string",
+              "const": "source"
+            }
+          },
+          "required": [
+            "role"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ownerNodeId": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string",
+              "const": "content"
+            }
+          },
+          "required": [
+            "role",
+            "ownerNodeId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ownerNodeId": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string",
+              "const": "decoration"
+            }
+          },
+          "required": [
+            "role",
+            "ownerNodeId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ownerNodeId": {
+              "type": "string"
+            },
+            "placement": {
+              "$ref": "#/$defs/WrapperPlacement"
+            },
+            "role": {
+              "type": "string",
+              "const": "wrapper"
+            }
+          },
+          "required": [
+            "role",
+            "ownerNodeId",
+            "placement"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "HandlersRef": {
+      "description": "Event handler references (string identifiers for hit testing).",
+      "type": "object",
+      "properties": {
+        "onClick": {
+          "type": "string"
+        },
+        "onDoubleClick": {
+          "type": "string"
+        },
+        "onContextMenu": {
+          "type": "string"
+        },
+        "onPointerDown": {
+          "type": "string"
+        },
+        "onPointerUp": {
+          "type": "string"
+        },
+        "onPointerCancel": {
+          "type": "string"
+        },
+        "onPointerMove": {
+          "type": "string"
+        },
+        "onPointerEnter": {
+          "type": "string"
+        },
+        "onPointerLeave": {
+          "type": "string"
+        },
+        "onPointerOver": {
+          "type": "string"
+        },
+        "onPointerOut": {
+          "type": "string"
+        },
+        "onMouseDown": {
+          "type": "string"
+        },
+        "onMouseUp": {
+          "type": "string"
+        },
+        "onMouseMove": {
+          "type": "string"
+        },
+        "onMouseEnter": {
+          "type": "string"
+        },
+        "onMouseLeave": {
+          "type": "string"
+        },
+        "onMouseOver": {
+          "type": "string"
+        },
+        "onMouseOut": {
+          "type": "string"
+        },
+        "onTouchStart": {
+          "type": "string"
+        },
+        "onTouchEnd": {
+          "type": "string"
+        },
+        "onTouchMove": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WrapperPlacement": {
+      "description": "Whether a wrapper belongs to a source ancestor or its one direct source child.",
+      "oneOf": [
+        {
+          "description": "The nearest source ancestor owns the wrapper.",
+          "type": "string",
+          "const": "inner"
+        },
+        {
+          "description": "The one direct source child owns the wrapper.",
+          "type": "string",
+          "const": "outer"
+        }
       ]
     },
     "BoxClip": {
@@ -912,75 +1037,6 @@
           ]
         }
       ]
-    },
-    "HandlersRef": {
-      "description": "Event handler references (string identifiers for hit testing).",
-      "type": "object",
-      "properties": {
-        "onClick": {
-          "type": "string"
-        },
-        "onDoubleClick": {
-          "type": "string"
-        },
-        "onContextMenu": {
-          "type": "string"
-        },
-        "onPointerDown": {
-          "type": "string"
-        },
-        "onPointerUp": {
-          "type": "string"
-        },
-        "onPointerCancel": {
-          "type": "string"
-        },
-        "onPointerMove": {
-          "type": "string"
-        },
-        "onPointerEnter": {
-          "type": "string"
-        },
-        "onPointerLeave": {
-          "type": "string"
-        },
-        "onPointerOver": {
-          "type": "string"
-        },
-        "onPointerOut": {
-          "type": "string"
-        },
-        "onMouseDown": {
-          "type": "string"
-        },
-        "onMouseUp": {
-          "type": "string"
-        },
-        "onMouseMove": {
-          "type": "string"
-        },
-        "onMouseEnter": {
-          "type": "string"
-        },
-        "onMouseLeave": {
-          "type": "string"
-        },
-        "onMouseOver": {
-          "type": "string"
-        },
-        "onMouseOut": {
-          "type": "string"
-        },
-        "onTouchStart": {
-          "type": "string"
-        },
-        "onTouchEnd": {
-          "type": "string"
-        },
-        "onTouchMove": {
-          "type": "string"
-        }
-      }
     },
     "Gradient": {
       "description": "Resolved gradient paint; geometry is the only drawing authority.",
@@ -2240,5 +2296,6 @@
       }
     }
   },
+  "additionalProperties": false,
   "$id": "https://github.com/zakideee/boundsvg/schemas/structural-ir-v1.json"
 }

@@ -78,7 +78,7 @@ function roundHitDecimal(scalar: number, precision: number): number {
 }
 
 /**
- * Require canonical schema-34 output, including null for empty geometry.
+ * Require canonical Path output, including null for empty geometry.
  * @throws {FatalError} VALIDATION when metadata is absent or malformed; layout
  * bounds cannot replace missing geometry from an older output schema.
  */
@@ -100,11 +100,10 @@ function assertPathGeometry(node: IRPathNode): void {
         bounds.minX > bounds.maxX ||
         bounds.minY > bounds.maxY))
   ) {
-    throw new FatalError(
-      "VALIDATION",
-      "Path hit testing requires canonical schema-34 pathGeometry",
-      { stage: "ir", nodeId: node.nodeId },
-    );
+    throw new FatalError("VALIDATION", "Path hit testing requires canonical pathGeometry", {
+      stage: "ir",
+      nodeId: node.nodeId,
+    });
   }
 }
 

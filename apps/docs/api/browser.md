@@ -120,6 +120,65 @@ rather than assuming immediate cancellation.
 | `@boundsvg/browser/assets` | Inspect PNG dimensions and trigger user-initiated download                               |
 | `@boundsvg/browser/events` | Translate DOM client coordinates to SVG user space and resolve path-geometry hit targets |
 
+## DOM hit testing and source ownership
+
+Use `@boundsvg/browser/events` with one prepared index for the SVG's exact IR
+snapshot. Render with `nodeIdMetadata: "include"`. The outer SVG viewport is
+an envelope; source anchors, physical endpoints and text-unit carriers have
+separate metadata. Node-ID labels can repeat and must not be used as DOM keys.
+
+```ts
+import { buildHitTestIndex } from "@boundsvg/core/scene";
+import {
+  bindIRToSvg,
+  nativePathCandidates,
+  resolveHitTarget,
+  translateSvgCoords,
+} from "@boundsvg/browser/events";
+
+const index = buildHitTestIndex(ir);
+const binding = bindIRToSvg(svgElement, index.sourceIndex);
+
+function pickSource(clientX: number, clientY: number) {
+  const point = translateSvgCoords(svgElement, clientX, clientY);
+  if (!point) {
+    return null;
+  }
+  const candidates = index.queryCandidates(point.x, point.y);
+  for (const native of nativePathCandidates(binding, index, {
+    clientX,
+    clientY,
+    x: point.x,
+    y: point.y,
+  })) {
+    if (!candidates.some((candidate) => candidate.source === native.source)) {
+      candidates.push(native);
+    }
+  }
+  candidates.sort((left, right) => right.order - left.order);
+  return resolveHitTarget(binding, candidates, clientX, clientY);
+}
+```
+
+The result is a snapshot-local `IRSourceRef`. Native Path candidates retain the
+same canvas, clip and tree-order gates, including canvas-scaled strokes outside
+the layout frame. `verifyPathGeometry(binding, geometryNodeIndex, clientX,
+clientY)` refines a physical Path endpoint; it no longer accepts a node-ID label.
+
+`binding.sourceForElement(element)` resolves semantic ownership.
+`occurrenceForElement(element)` resolves its physical endpoint or an associated
+ancestor. `elementForNode(nodeIndex)` returns the registered endpoint itself.
+For node-animation controls, require a source-role occurrence **and**
+`binding.elementForNode(occurrence.nodeIndex) === animationTarget`. A text-unit
+carrier can resolve to its source without being that source's animation target.
+Generated wrappers and unit carriers are not node-animation aliases.
+
+Rebuild the index and binding when the IR or SVG element changes, and clear old
+hover and selection references. Incomplete or mismatched documents have no
+registered endpoints. Embedded Svg markup remains opaque and another SVG
+scope's metadata is not registered. These markers describe rendering ownership;
+they are not authorization credentials.
+
 ## WASM shape capabilities
 
 `loadWasmModule()` validates the generated browser adapter before returning

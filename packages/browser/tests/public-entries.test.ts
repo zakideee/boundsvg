@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildHitTestIndex } from "@boundsvg/core/scene";
 import { describe, expect, it } from "vitest";
 
 type ConditionalExport = {
@@ -94,24 +95,29 @@ describe("public browser entries", () => {
       pngView.setUint32(20, 180, false);
       expect(assetsEntry.readPngDimensions(pngHeader)).toEqual({ width: 320, height: 180 });
 
-      const eventsEntry = require("@boundsvg/browser/events") as {
-        resolveHitTarget: (
-          container: Element,
-          candidates: ReadonlyArray<string>,
-          nodeTypes: ReadonlyMap<string, string>,
-          clientX: number,
-          clientY: number,
-        ) => string | null;
+      const eventsEntry = require("@boundsvg/browser/events") as typeof import("../src/events.js");
+      const index = buildHitTestIndex({
+        root: {
+          type: "rect",
+          ownership: { role: "source" },
+          nodeId: "representative-box",
+          bbox: { x: 0, y: 0, w: 100, h: 100 },
+        },
+        width: 100,
+        height: 100,
+        warnings: [],
+      });
+      const binding: import("../src/events.js").IRDomBinding = {
+        root: {} as unknown as SVGSVGElement,
+        sourceIndex: index.sourceIndex,
+        occurrenceForElement: () => null,
+        elementForNode: () => null,
+        sourceForElement: () => null,
       };
-      expect(
-        eventsEntry.resolveHitTarget(
-          {} as unknown as Element,
-          ["representative-box"],
-          new Map([["representative-box", "rect"]]),
-          10,
-          20,
-        ),
-      ).toBe("representative-box");
+      expect(eventsEntry.resolveHitTarget(binding, index.queryCandidates(10, 20), 10, 20)).toEqual({
+        sourceIndex: 0,
+        nodeId: "representative-box",
+      });
     },
   );
 

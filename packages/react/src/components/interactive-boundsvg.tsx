@@ -35,7 +35,7 @@ type InteractiveBoundSvgBaseProps = {
   /** Whether to show pointer cursor on interactive elements (default: true) */
   showPointerCursor?: boolean;
   /** Callback when hover state changes */
-  onHoverChange?: (nodeId: string | null) => void;
+  onHoverChange?: (source: import("@boundsvg/core/scene").IRSourceRef | null) => void;
   /** Callback when rendering completes, providing the IR for advanced consumers */
   onRender?: (ir: IR) => void;
   /**
@@ -127,7 +127,7 @@ export function InteractiveBoundSvg({
       return;
     }
     const menuInfo = textCopyRef.current.buildMenuInfo({
-      nodeId: hit.nodeId,
+      source: hit.source,
       svgX: hit.svgX,
       svgY: hit.svgY,
       clientX: hit.clientX,
@@ -156,7 +156,7 @@ export function InteractiveBoundSvg({
     [renderMode, renderOptions, showPointerCursor, enableTextCopy, handleTextContextMenu],
   );
 
-  const { svg, ir, textMap, error, isReady, hoverNodeId, containerRef } = useInteractiveSvg(
+  const { svg, ir, textMap, error, isReady, hoverSource, containerRef } = useInteractiveSvg(
     resolved.vnode,
     resolved.handlers,
     options,
@@ -165,7 +165,7 @@ export function InteractiveBoundSvg({
   // Hover and callback updates must not reinsert an unchanged SVG document.
   const svgMarkup = useMemo(() => ({ __html: svg ?? "" }), [svg]);
 
-  const textCopy = useTextCopy(ir, textMap);
+  const textCopy = useTextCopy(textMap);
   useLayoutEffect(() => {
     textCopyRef.current = textCopy;
   }, [textCopy]);
@@ -182,14 +182,14 @@ export function InteractiveBoundSvg({
   }, [ir]);
 
   // Fire onHoverChange callback when hover changes
-  const prevHoverRef = useRef<string | null>(null);
+  const prevHoverRef = useRef<import("@boundsvg/core/scene").IRSourceRef | null>(null);
   useEffect(() => {
-    if (!onHoverChange || hoverNodeId === prevHoverRef.current) {
+    if (!onHoverChange || hoverSource === prevHoverRef.current) {
       return;
     }
-    prevHoverRef.current = hoverNodeId;
-    onHoverChange(hoverNodeId);
-  }, [hoverNodeId, onHoverChange]);
+    prevHoverRef.current = hoverSource;
+    onHoverChange(hoverSource);
+  }, [hoverSource, onHoverChange]);
 
   // Error state
   if (resolved.error != null || error != null) {

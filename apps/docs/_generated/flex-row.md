@@ -23,17 +23,19 @@
 <summary>Generated SVG</summary>
 
 ```xml
-<svg xmlns="http://www.w3.org/2000/svg" data-boundsvg-node-id="auto:0" viewBox="0 0 400 120" width="400" height="120">
-  <rect x="0" y="0" width="400" height="120" fill="#0f172a"/>
-  <g data-boundsvg-node-id="auto:0.0">
-    <g data-boundsvg-node-id="auto:0.0.0">
-      <rect x="16" y="20" width="80" height="80" rx="8" ry="8" fill="#3b82f6"/>
-    </g>
-    <g data-boundsvg-node-id="auto:0.0.1">
-      <rect x="112" y="20" width="80" height="80" rx="8" ry="8" fill="#8b5cf6"/>
-    </g>
-    <g data-boundsvg-node-id="auto:0.0.2">
-      <rect x="208" y="20" width="80" height="80" rx="8" ry="8" fill="#ec4899"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" width="400" height="120">
+  <g data-boundsvg-role="source" data-boundsvg-node-index="0" data-boundsvg-source-index="0" data-boundsvg-node-id="auto:0">
+    <rect x="0" y="0" width="400" height="120" data-boundsvg-role="decoration" data-boundsvg-node-index="1" data-boundsvg-source-index="0" fill="#0f172a"/>
+    <g data-boundsvg-role="source" data-boundsvg-node-index="2" data-boundsvg-source-index="2" data-boundsvg-node-id="auto:0.0">
+      <g data-boundsvg-role="source" data-boundsvg-node-index="3" data-boundsvg-source-index="3" data-boundsvg-node-id="auto:0.0.0">
+        <rect x="16" y="20" width="80" height="80" data-boundsvg-role="decoration" data-boundsvg-node-index="4" data-boundsvg-source-index="3" rx="8" ry="8" fill="#3b82f6"/>
+      </g>
+      <g data-boundsvg-role="source" data-boundsvg-node-index="5" data-boundsvg-source-index="5" data-boundsvg-node-id="auto:0.0.1">
+        <rect x="112" y="20" width="80" height="80" data-boundsvg-role="decoration" data-boundsvg-node-index="6" data-boundsvg-source-index="5" rx="8" ry="8" fill="#8b5cf6"/>
+      </g>
+      <g data-boundsvg-role="source" data-boundsvg-node-index="7" data-boundsvg-source-index="7" data-boundsvg-node-id="auto:0.0.2">
+        <rect x="208" y="20" width="80" height="80" data-boundsvg-role="decoration" data-boundsvg-node-index="8" data-boundsvg-source-index="7" rx="8" ry="8" fill="#ec4899"/>
+      </g>
     </g>
   </g>
 </svg>

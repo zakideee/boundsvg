@@ -136,12 +136,13 @@ const SCENE: SceneNode = { type: "Canvas", width: 100, height: 100, children: []
 /** Matching valid Worker IR response used by transport integration fixtures. */
 const WORKER_IR: Omit<IR, "warnings"> = {
   root: {
+    ownership: { role: "source" },
     type: "group",
     nodeId: "root",
     bbox: { x: 0, y: 0, w: 100, h: 100 },
     children: [],
   },
-  drawOrder: ["root"],
+
   width: 100,
   height: 100,
 };
@@ -744,7 +745,7 @@ describe("WorkerEngine", () => {
                 {
                   id: "background",
                   bbox: { x: 0, y: 0, width: 100, height: 100 },
-                  nodeIds: ["bg"],
+                  sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
                   mode: "independent",
                   paintOrder: 0,
                   warnings: [],
@@ -753,7 +754,7 @@ describe("WorkerEngine", () => {
                 {
                   id: "text",
                   bbox: { x: 0, y: 0, width: 100, height: 100 },
-                  nodeIds: ["title"],
+                  sources: [{ source: { sourceIndex: 1, nodeId: "title" }, layerSourceIndex: 1 }],
                   mode: "independent",
                   paintOrder: 1,
                   warnings: [],
@@ -767,7 +768,7 @@ describe("WorkerEngine", () => {
                   {
                     id: "background",
                     bbox: { x: 0, y: 0, width: 100, height: 100 },
-                    nodeIds: ["bg"],
+                    sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
                     mode: "independent",
                     paintOrder: 0,
                     warnings: [],
@@ -775,7 +776,7 @@ describe("WorkerEngine", () => {
                   {
                     id: "text",
                     bbox: { x: 0, y: 0, width: 100, height: 100 },
-                    nodeIds: ["title"],
+                    sources: [{ source: { sourceIndex: 1, nodeId: "title" }, layerSourceIndex: 1 }],
                     mode: "independent",
                     paintOrder: 1,
                     warnings: [],
@@ -830,7 +831,7 @@ describe("WorkerEngine", () => {
                 {
                   id: "background",
                   bbox: null,
-                  nodeIds: ["bg"],
+                  sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
                   mode: "independent",
                   paintOrder: 0,
                   warnings: [],
@@ -846,7 +847,7 @@ describe("WorkerEngine", () => {
                   {
                     id: "background",
                     bbox: null,
-                    nodeIds: ["bg"],
+                    sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
                     mode: "independent",
                     paintOrder: 0,
                     warnings: [],

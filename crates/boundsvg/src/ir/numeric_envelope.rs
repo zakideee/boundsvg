@@ -1123,10 +1123,10 @@ mod tests {
     use serde_json::json;
 
     fn scene(transform: &serde_json::Value) -> Ir {
-        Ir { root: IrNode::from(serde_json::from_value::<IrNodeInput>(json!({
+        Ir { root: IrNode::from(serde_json::from_value::<IrNodeInput>(json!({ "ownership": { "role": "source" },
             "type":"group", "nodeId":"owner", "bbox":{"x":0,"y":0,"w":100,"h":100},
-            "transform":transform, "children":[{"type":"rect","nodeId":"paint","bbox":{"x":0,"y":0,"w":100,"h":100},"fill":"red"}]
-        })).expect("fixture")), width:100.0,height:100.0,draw_order:vec!["paint".into()],warnings:vec![],debug:None }
+            "transform":transform, "children":[{ "ownership": { "role": "source" },"type":"rect","nodeId":"paint","bbox":{"x":0,"y":0,"w":100,"h":100},"fill":"red"}]
+        })).expect("fixture")), width:100.0,height:100.0,warnings:vec![],debug:None }
     }
 
     #[test]
@@ -1172,6 +1172,10 @@ mod tests {
         let mut ir = scene(&json!({"skewXDeg":12}));
         for index in 0..48 {
             ir.root = IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: format!("rotation-{index}"),
                 bbox: ir.root.bbox,
                 kind: IrNodeKind::Group {
@@ -1183,9 +1187,7 @@ mod tests {
                     clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     animation: None,
-                    on: None,
                 },
             };
         }
@@ -1193,6 +1195,10 @@ mod tests {
         let mut ir = scene(&json!({"skewXDeg":12,"skewYDeg":12}));
         for index in 0..3 {
             ir.root = IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: format!("shear-{index}"),
                 bbox: ir.root.bbox,
                 kind: IrNodeKind::Group {
@@ -1205,9 +1211,7 @@ mod tests {
                     clip: None,
                     opacity: None,
                     box_shadow: None,
-                    meta: None,
                     animation: None,
-                    on: None,
                 },
             };
         }

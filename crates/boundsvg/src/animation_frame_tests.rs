@@ -65,7 +65,7 @@ fn fixture(
     format: AnimatedRasterFormat,
 ) -> Result<(BoundSvgEngine, BoundSvgRasterScene, AnimatedRasterSession), String> {
     let engine = BoundSvgEngine::create();
-    let ir = crate::parse_emit_ir(r##"{"width":8,"height":4,"root":{"type":"rect","nodeId":"allocation-probe-root","bbox":{"x":0,"y":0,"w":8,"h":4},"fill":"#e32"}}"##).map_err(|_| "Invalid owned rectangle fixture".to_string())?;
+    let ir = crate::parse_emit_ir(r##"{"width":8,"height":4,"root":{"type":"rect","nodeId":"allocation-probe-root","bbox":{"x":0,"y":0,"w":8,"h":4},"fill":"#e32","ownership":{"role":"source"}}}"##).map_err(|_| "Invalid owned rectangle fixture".to_string())?;
     let scene = BoundSvgRasterScene {
         ir,
         options: RenderSvgOptions::default(),

@@ -1,3 +1,4 @@
+import { buildIRSourceIndex } from "../src/ir/source-index.js";
 /**
  * Render-pipeline contract tests for the WASM-backed engine.
  *
@@ -28,6 +29,7 @@ import {
 } from "./conformance/conformance-engine.js";
 import { CONFORMANCE_SCENES } from "./conformance/scenes/index.js";
 
+/** Shape geometry spanning the part and layer export contract fixtures. */
 const COVERAGE_GEOMETRY = {
   viewBox: { width: 10, height: 10 },
   root: { kind: "path" as const, nodeId: "solo", d: "M0 0 H10 V10 H0 Z" },
@@ -362,12 +364,13 @@ describe("engine render contract", () => {
         JSON.stringify({
           ir: {
             root: {
+              ownership: { role: "source" },
               type: "group",
               nodeId: "root",
               bbox: { x: 0, y: 0, w: 100, h: 50 },
               children: [],
             },
-            drawOrder: ["root"],
+
             width: 100,
             height: 50,
           },
@@ -640,12 +643,14 @@ describe("wasm IR consumption by the TS IR contract", () => {
     }
 
     // Hit-test: every sampled hit must resolve to a node the IR knows.
-    const knownNodeIds = new Set(ir.drawOrder);
+    const knownNodeIds = new Set(
+      [...buildIRSourceIndex(ir).sources.values()].map((entry) => entry.source.nodeId),
+    );
     let hitCount = 0;
     const step = Math.max(4, Math.floor(Math.min(ir.width, ir.height) / 12));
     for (let sampleY = 0; sampleY < ir.height; sampleY += step) {
       for (let sampleX = 0; sampleX < ir.width; sampleX += step) {
-        const hit = hitTest(ir, sampleX + 0.5, sampleY + 0.5);
+        const hit = hitTest(ir, sampleX + 0.5, sampleY + 0.5)?.nodeId ?? null;
         if (hit !== null) {
           hitCount += 1;
           expect(knownNodeIds.has(hit), `hit ${hit} is a drawn node`).toBe(true);

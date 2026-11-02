@@ -109,7 +109,7 @@ const result = engine.renderToLayeredSvg(vnode, {
 | ----------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `width`                 | `number`                                                              | Canvas width in px                                                          |
 | `height`                | `number`                                                              | Canvas height in px                                                         |
-| `layers`                | `LayerEntry[]`                                                        | One `{ id, svg, bbox, nodeIds, mode, paintOrder, warnings, ... }` per layer |
+| `layers`                | `LayerEntry[]`                                                        | One `{ id, svg, bbox, sources, mode, paintOrder, warnings, ... }` per layer |
 | `compositionValidation` | `LayeredCompositionValidationResult?`                                 | Present only when `validateComposition.enabled === true`                    |
 | `manifest`              | `{ width, height, animated?, timeMs?, layers: LayerManifestEntry[] }` | Same layer metadata without the `svg` payload                               |
 
@@ -124,18 +124,17 @@ SVG-only `resourceIdPrefix` and `nodeIdMetadata`.
 
 ### `LayerEntry` fields
 
-| Field                 | Type                                      | Description                                                                                                                    |
-| --------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `id`                  | `string`                                  | Resolved layer id (never empty; `"default"` when unspecified)                                                                  |
-| `svg`                 | `string`                                  | Full SVG document for this layer                                                                                               |
-| `bbox`                | `{ x, y, width, height }`                 | Union bbox of the nodes painted into this layer (px, scene-space)                                                              |
-| `nodeIds`             | `string[]`                                | Source `NodeId`s assigned to the layer (sorted)                                                                                |
-| `nodeMeta`            | `Record<string, Record<string, string>>?` | Per-node `meta` for the nodes in this layer                                                                                    |
-| `parts`               | `LayerManifestPart[]?`                    | Addressable shape parts, when `emitPartIds` is on                                                                              |
-| `mode`                | `"independent" \| "atomic"`               | `atomic` when any [Compositing islands](#compositing-islands) trigger applies to this layer's content; `independent` otherwise |
-| `paintOrder`          | `number`                                  | Lowest `ir.drawOrder` index inside the layer, or `0` if it draws nothing. Ascending = back-to-front                            |
-| `collapsedFromLayers` | `string[]?`                               | Other logical layer ids that were absorbed when `mode === "atomic"`                                                            |
-| `warnings`            | `LayerWarning[]`                          | Resolver diagnostics (see below)                                                                                               |
+| Field                 | Type                                                                                 | Description                                                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                  | `string`                                                                             | Resolved layer id (never empty; `"default"` when unspecified)                                                                  |
+| `svg`                 | `string`                                                                             | Full SVG document for this layer                                                                                               |
+| `bbox`                | `{ x, y, width, height }`                                                            | Union of pre-transform layout boxes painted into this layer (px)                                                               |
+| `sources`             | `{ source: IRSourceRef; layerSourceIndex: number; meta?: Record<string, string> }[]` | Original source occurrence, its source index in this layer, and source metadata                                                |
+| `parts`               | `LayerManifestPart[]?`                                                               | Addressable shape parts, when `emitPartIds` is on                                                                              |
+| `mode`                | `"independent" \| "atomic"`                                                          | `atomic` when any [Compositing islands](#compositing-islands) trigger applies to this layer's content; `independent` otherwise |
+| `paintOrder`          | `number`                                                                             | Lowest primitive ordinal from the original IR tree; ascending is back-to-front                                                 |
+| `collapsedFromLayers` | `string[]?`                                                                          | Other logical layer ids that were absorbed when `mode === "atomic"`                                                            |
+| `warnings`            | `LayerWarning[]`                                                                     | Resolver diagnostics (see below)                                                                                               |
 
 ## `renderToLayeredPng`
 
@@ -274,15 +273,9 @@ out/card.layers/
 
 File names follow `NNN-<sanitized-id>.<ext>`, where `NNN` is the layer's
 zero-padded position in the back-to-front `layers` array: its index, not its
-`paintOrder` value. `paintOrder` is the layer's lowest index into `ir.drawOrder`,
-which is a sequence of _draw operations_, not of layers: one node can emit several
-(a `Box` with a background and a border), and some entries belong to no layer at
-all (a split container that carries event handlers). So the index and `paintOrder`
-can diverge; do not derive one from the other; join on each layer's `fileName`. The id is reduced to `[A-Za-z0-9_-]` with `-` replacing anything else and runs of `-` collapsed to one;
-case is preserved, as `001-textBox.svg` above shows. An id with no allowed
-characters becomes `-`, not empty (`日本語` → `001--.svg`); the `layer` fallback in
-`formatLayerFileName` is unreachable from a rendered result, because a resolved
-layer id is never empty.
+`paintOrder` value. `paintOrder` is the lowest primitive ordinal in the original
+IR tree. A source may own several paints, so layer positions and paint ordinals
+can differ. Join exported files through their manifest entries.
 
 `manifest.json` carries each layer's in-memory metadata plus a `fileName`: join
 on that rather than rebuilding the name. Its top level is `width` / `height` /
@@ -303,3 +296,11 @@ shared export flags.
 - [`@boundsvg/browser`](/api/browser) — `layeredPngToDataUrls`,
   `layeredPngToBlobs`, `layeredSvgToDataUrls`, `composeLayeredSvgInline`
 - [CLI](/api/cli) — `--format layered-svg`, `--format layered-png`
+
+Layer trees retain the selected paint or compositing island and the union of
+its original ancestors, in original tree order. Owner sources and outer
+wrappers remain structurally valid. Contributing sources retain handlers and
+metadata; sources retained only as context do not copy those semantic fields.
+Each `sources` entry maps an original SourceRef to `layerSourceIndex` in the
+extracted tree. Rebuild an index for a layer before querying its SVG. Part
+manifest entries also carry `source`, replacing a label-only `nodeId` join.

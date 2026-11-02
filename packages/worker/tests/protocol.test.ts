@@ -670,11 +670,13 @@ describe("isWorkerResponse", () => {
       svg: "<svg></svg>",
       ir: {
         root: {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "root",
           bbox: { x: 0, y: 0, w: 100, h: 100 },
           children: [
             {
+              ownership: { role: "source" },
               type: "rect",
               nodeId: "child",
               bbox: { x: 4, y: 4, w: 20, h: 10 },
@@ -682,7 +684,7 @@ describe("isWorkerResponse", () => {
             },
           ],
         },
-        drawOrder: ["child", "root"],
+
         width: 100,
         height: 100,
       },
@@ -821,7 +823,7 @@ describe("isWorkerResponse", () => {
           {
             id: "background",
             bbox: { x: 0, y: 0, width: 100, height: 100 },
-            nodeIds: ["bg"],
+            sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
             mode: "independent",
             paintOrder: 0,
             warnings: [],
@@ -835,7 +837,7 @@ describe("isWorkerResponse", () => {
             {
               id: "background",
               bbox: { x: 0, y: 0, width: 100, height: 100 },
-              nodeIds: ["bg"],
+              sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
               mode: "independent",
               paintOrder: 0,
               warnings: [],
@@ -860,7 +862,7 @@ describe("isWorkerResponse", () => {
             {
               id: "background",
               bbox: { x: 0, y: 0, width: 100, height: 100 },
-              nodeIds: ["bg"],
+              sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
               mode: "independent",
               paintOrder: 0,
               warnings: [],
@@ -891,7 +893,7 @@ describe("isWorkerResponse", () => {
           {
             id: "background",
             bbox: { x: 0, y: 0, width: 100, height: 100 },
-            nodeIds: ["bg"],
+            sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
             mode: "independent",
             paintOrder: 0,
             warnings: [],
@@ -907,7 +909,7 @@ describe("isWorkerResponse", () => {
             {
               id: "background",
               bbox: { x: 0, y: 0, width: 100, height: 100 },
-              nodeIds: ["bg"],
+              sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
               mode: "independent",
               paintOrder: 0,
               warnings: [],
@@ -1691,7 +1693,7 @@ describe("collectResponseTransferables", () => {
           {
             id: "background",
             bbox: null,
-            nodeIds: ["bg"],
+            sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
             mode: "independent",
             paintOrder: 0,
             warnings: [],
@@ -1700,7 +1702,7 @@ describe("collectResponseTransferables", () => {
           {
             id: "text",
             bbox: null,
-            nodeIds: ["title"],
+            sources: [{ source: { sourceIndex: 1, nodeId: "title" }, layerSourceIndex: 1 }],
             mode: "independent",
             paintOrder: 1,
             warnings: [],
@@ -1716,7 +1718,7 @@ describe("collectResponseTransferables", () => {
             {
               id: "background",
               bbox: null,
-              nodeIds: ["bg"],
+              sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
               mode: "independent",
               paintOrder: 0,
               warnings: [],
@@ -1724,7 +1726,7 @@ describe("collectResponseTransferables", () => {
             {
               id: "text",
               bbox: null,
-              nodeIds: ["title"],
+              sources: [{ source: { sourceIndex: 1, nodeId: "title" }, layerSourceIndex: 1 }],
               mode: "independent",
               paintOrder: 1,
               warnings: [],
@@ -1765,7 +1767,7 @@ describe("collectResponseTransferables", () => {
           {
             id: "background",
             bbox: { x: 0, y: 0, width: 100, height: 100 },
-            nodeIds: ["bg"],
+            sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
             mode: "independent",
             paintOrder: 0,
             warnings: [],
@@ -1779,7 +1781,7 @@ describe("collectResponseTransferables", () => {
             {
               id: "background",
               bbox: { x: 0, y: 0, width: 100, height: 100 },
-              nodeIds: ["bg"],
+              sources: [{ source: { sourceIndex: 1, nodeId: "bg" }, layerSourceIndex: 1 }],
               mode: "independent",
               paintOrder: 0,
               warnings: [],

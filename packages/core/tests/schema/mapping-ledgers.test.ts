@@ -228,7 +228,7 @@ describe("semantic mapping ledgers", () => {
         (fieldCount, nodeLedger) => fieldCount + Object.keys(nodeLedger).length,
         0,
       ),
-    ).toBe(108);
+    ).toBe(107);
     expect(RUST_IR_TO_PUBLIC_IR_MAPPING.path.pathGeometry).toBe("derived-output");
   });
 

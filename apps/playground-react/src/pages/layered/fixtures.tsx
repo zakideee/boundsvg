@@ -7,6 +7,7 @@ type LayeredFixtureDefinition = {
   vnode: VNode;
 };
 
+/** Embedded raster fixture used by deterministic layered-export examples. */
 const TEST_IMAGE_DATA_URL = `data:image/svg+xml;utf8,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
     <rect width="96" height="96" fill="#f3f4f6"/>
@@ -32,7 +33,7 @@ export function buildLayeredFixtures(): LayeredFixtureDefinition[] {
       id: "shape-parts",
       label: "Shape parts in manifest",
       description:
-        "A Shape rendered with emitPartIds + meta: the Manifest JSON tab lists the layer's parts (partId per addressable part) and nodeMeta alongside nodeIds.",
+        "A Shape rendered with emitPartIds + meta: the Manifest JSON tab lists the layer's parts (partId per addressable part) and source metadata alongside original and layer-local occurrence references.",
       vnode: toVNode(
         <Canvas width={320} height={180}>
           <Box

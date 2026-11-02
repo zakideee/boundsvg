@@ -1,14 +1,7 @@
-import { resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
+import { bindIRToSvg, resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
 import { createPngObjectUrl } from "@boundsvg/browser/png";
 import type { Engine } from "@boundsvg/core";
-import {
-  buildHandlerMap,
-  buildHitTestIndex,
-  buildInspectHitTestIndex,
-  buildNodeTypeMap,
-  type IR,
-  inspectHitTestCandidates,
-} from "@boundsvg/core/scene";
+import { buildHitTestIndex, buildInspectHitTestIndex, type IR } from "@boundsvg/core/scene";
 import { getElement } from "../../playground-shared/dom.js";
 import { escapeHtml } from "../../playground-shared/html-utils.js";
 import {
@@ -30,14 +23,17 @@ function resolveOverlayDisplay(): EventEffectOverlayDisplayOptions {
 
 function createHitTester(ir: IR): InspectHitTestFn {
   const index = buildInspectHitTestIndex(ir);
-  const nodeTypeMap = buildNodeTypeMap(ir);
+  let binding: ReturnType<typeof bindIRToSvg> | null = null;
   return (svgEl, clientX, clientY) => {
     const coords = translateSvgCoords(svgEl, clientX, clientY);
     if (!coords) {
       return null;
     }
-    const candidates = inspectHitTestCandidates(index, coords.x, coords.y);
-    return resolveHitTarget(svgEl, candidates, nodeTypeMap, clientX, clientY);
+    const candidates = index.queryCandidates(coords.x, coords.y);
+    if (binding?.root !== svgEl) {
+      binding = bindIRToSvg(svgEl, index.sourceIndex);
+    }
+    return resolveHitTarget(binding, candidates, clientX, clientY);
   };
 }
 
@@ -115,19 +111,18 @@ export function renderPreset(engine: Engine, key: string): void {
           ...(preset.animatedSvgOptions ?? { playback: { mode: "independent" } }),
         });
   coreState.cachedSvgString = svg;
+  coreState.cachedIr = ir;
   svgOutput.innerHTML = svg;
 
   if (key === "mouse") {
     // Build spatial index and handler map
     const index = buildHitTestIndex(ir);
-    const handlerMap = buildHandlerMap(ir);
 
     // Setup event listeners (includes its own overlay + hover glow)
     const mouseHandle = setupMouseEvents(
       svgOutput,
       ir,
       index,
-      handlerMap,
       resolveOverlayDisplay(),
       highlightSvgSourceLine,
     );
@@ -209,6 +204,7 @@ function renderLayeredPreset(engine: Engine, preset: Preset): void {
   const layeredSvg = engine.renderToLayeredSvg(vnode, options);
   const layeredPng = engine.renderToLayeredPng(vnode, pngOpts);
   coreState.cachedSvgString = singleSvg;
+  coreState.cachedIr = singleIr;
 
   const sortedSvgLayers = [...layeredSvg.layers].sort((a, b) => a.paintOrder - b.paintOrder);
   const sortedPngLayers = [...layeredPng.layers].sort((a, b) => a.paintOrder - b.paintOrder);

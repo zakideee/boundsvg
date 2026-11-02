@@ -11,7 +11,7 @@ import {
   type InspectionRect,
   type InspectionTransformBox,
 } from "@boundsvg/core/inspect";
-import type { IR, IRGroupNode, IRNode } from "@boundsvg/core/scene";
+import { buildIRSourceIndex, type IR, type IRSourceRef } from "@boundsvg/core/scene";
 
 import { DEFAULT_INSPECTION_FRAME_MODE } from "./inspection-frame.js";
 
@@ -105,8 +105,8 @@ export type NodeBBox = {
 export type NodeSemantics = {
   /** Human element kind derived from the IR children: Text / Shape / Image / ... */
   kind: string;
-  /** Author-assigned id (absent for auto-generated node ids). */
-  explicitId?: string;
+  /** Semantic source label, including generated authoring IDs. */
+  nodeId: string;
   /** Text excerpt for text nodes. */
   text?: string;
   /** Addressable shape part ids (emitPartIds / partPaint). */
@@ -189,136 +189,67 @@ function isTransformBoxEqualToLayout(
   );
 }
 
+function buildNodeSemantics(
+  source: import("@boundsvg/core/scene").IRSourceInfo,
+  primary: import("@boundsvg/core/scene").IRNode | undefined,
+): NodeSemantics {
+  const semantics: NodeSemantics = {
+    kind: primary ? primary.type[0]?.toUpperCase() + primary.type.slice(1) : "Box",
+    nodeId: source.source.nodeId,
+  };
+  if (primary?.type === "text") {
+    semantics.text = primary.displayText ?? primary.lines.map((line) => line.text).join(" ");
+  }
+  if (primary?.type === "shape") {
+    semantics.partIds = primary.shapeParts.flatMap((part) =>
+      part.partId === undefined ? [] : [part.partId],
+    );
+  }
+  if (source.node.ownership.role === "source" && source.node.ownership.meta) {
+    semantics.meta = Object.entries(source.node.ownership.meta);
+  }
+  return semantics;
+}
+
 /**
- * Build a flat map of nodeId → bounding box from the IR tree.
+ * Build a map of source occurrence ordinals to prepared inspection geometry from the IR tree.
  * Uses resolved inspection geometry and adds corner radii and tooltip semantics
  * without recomputing transforms.
  */
-export function buildNodeBBoxMap(ir: IR): Map<string, NodeBBox> {
-  const inspectionBBoxes = collectInspectionBBoxes(ir);
-  const borderRadiusMap = collectBorderRadiusMap(ir.root);
-  const semanticsMap = collectNodeSemantics(ir.root);
-  const map = new Map<string, NodeBBox>();
-  for (const bbox of inspectionBBoxes) {
-    const nextBBox: NodeBBox = {
-      semantics: semanticsMap.get(bbox.nodeId),
-      x: bbox.x,
-      y: bbox.y,
-      w: bbox.w,
-      h: bbox.h,
-      rx: borderRadiusMap.get(bbox.nodeId),
-      layoutBBox: { ...bbox.layoutBBox },
-      transformBox: {
-        points: bbox.transformBox.points.map((point) => ({
-          ...point,
-        })) as InspectionTransformBox["points"],
-      },
-      visualBBox: { ...bbox.visualBBox },
-      origin: bbox.origin ? { ...bbox.origin } : null,
-      hasOwnTransform: bbox.hasOwnTransform,
-    };
-    const existingBBox = map.get(bbox.nodeId);
-    map.set(
-      bbox.nodeId,
-      existingBBox === undefined ? nextBBox : mergeNodeBBox(existingBBox, nextBBox),
-    );
+export function buildNodeBBoxMap(ir: IR): Map<number, NodeBBox> {
+  const sourceIndex = buildIRSourceIndex(ir);
+  const geometry = new Map(
+    collectInspectionBBoxes(ir, sourceIndex).map((entry) => [entry.nodeIndex, entry]),
+  );
+  const map = new Map<number, NodeBBox>();
+  for (const source of sourceIndex.sources.values()) {
+    const bbox = geometry.get(source.primaryNodeIndex ?? source.source.sourceIndex);
+    const sourceBBox = geometry.get(source.source.sourceIndex);
+    if (!bbox) {
+      continue;
+    }
+    const primary =
+      source.primaryNodeIndex === null
+        ? undefined
+        : sourceIndex.nodes.get(source.primaryNodeIndex)?.node;
+    const semantics = buildNodeSemantics(source, primary);
+    const radius = primary?.type === "rect" ? primary.borderRadius : undefined;
+    map.set(source.source.sourceIndex, {
+      semantics,
+      ...bbox.layoutBBox,
+      rx:
+        typeof radius === "number"
+          ? radius
+          : radius
+            ? Math.max(radius.tl, radius.tr, radius.br, radius.bl)
+            : undefined,
+      layoutBBox: bbox.layoutBBox,
+      transformBox: bbox.transformBox,
+      visualBBox: bbox.visualBBox,
+      origin: sourceBBox?.origin ?? bbox.origin,
+      hasOwnTransform: sourceBBox?.hasOwnTransform ?? bbox.hasOwnTransform,
+    });
   }
-  return map;
-}
-
-function mergeNodeBBox(existingBBox: NodeBBox, nextBBox: NodeBBox): NodeBBox {
-  return existingBBox.hasOwnTransform && !nextBBox.hasOwnTransform ? existingBBox : nextBBox;
-}
-
-function collectBorderRadiusMap(node: IRNode): Map<string, number> {
-  const map = new Map<string, number>();
-
-  const walk = (currentNode: IRNode): void => {
-    if (currentNode.type === "rect" && currentNode.borderRadius != null) {
-      if (typeof currentNode.borderRadius === "number") {
-        map.set(currentNode.nodeId, currentNode.borderRadius);
-      } else {
-        const { tl, tr, br, bl } = currentNode.borderRadius;
-        map.set(currentNode.nodeId, Math.max(tl, tr, br, bl));
-      }
-    }
-
-    for (const child of currentNode.type === "group" ? (currentNode.children ?? []) : []) {
-      walk(child);
-    }
-  };
-
-  walk(node);
-  return map;
-}
-
-/**
- * Derive DevTools-style semantics per source node: the element kind (from the
- * node's leaf children), a text excerpt, addressable shape part ids, and the
- * author metadata bag - so hover labels read like an element inspector
- * instead of raw auto:* node ids.
- */
-function collectNodeSemantics(root: IRNode): Map<string, NodeSemantics> {
-  const map = new Map<string, NodeSemantics>();
-
-  const kindOfChildren = (node: IRGroupNode): string => {
-    const children = node.children ?? [];
-    const childTypes = new Set(children.map((child) => child.type));
-    if (childTypes.has("text")) {
-      return "Text";
-    }
-    if (childTypes.has("shape")) {
-      return "Shape";
-    }
-    if (childTypes.has("svg")) {
-      return "Svg";
-    }
-    if (childTypes.has("image")) {
-      return "Image";
-    }
-    if (childTypes.has("path")) {
-      return "Path";
-    }
-    if (children.some((child) => child.type === "group")) {
-      return "Box";
-    }
-    return node.type === "group" ? "Box" : node.type;
-  };
-
-  const semanticsForGroup = (node: IRGroupNode): NodeSemantics => {
-    const semantics: NodeSemantics = { kind: kindOfChildren(node) };
-    if (!node.nodeId.startsWith("auto:")) {
-      semantics.explicitId = node.nodeId;
-    }
-    for (const child of node.children ?? []) {
-      if (child.type === "text") {
-        semantics.text = child.lines.map((line) => line.text).join(" ");
-      }
-      if (child.type === "shape") {
-        const partIds = child.shapeParts.flatMap((part) =>
-          part.partId === undefined ? [] : [part.partId],
-        );
-        if (partIds.length > 0) {
-          semantics.partIds = partIds;
-        }
-      }
-    }
-    if (node.meta) {
-      semantics.meta = Object.entries(node.meta);
-    }
-    return semantics;
-  };
-
-  const walk = (node: IRNode): void => {
-    if (node.type === "group") {
-      map.set(node.nodeId, semanticsForGroup(node));
-    }
-    for (const child of node.type === "group" ? (node.children ?? []) : []) {
-      walk(child);
-    }
-  };
-
-  walk(root);
   return map;
 }
 
@@ -338,7 +269,7 @@ export type EventEffectOverlayOptions = {
   /** Canvas height in SVG user units (from IR.height) */
   height: number;
   /** Map of nodeId → bbox, built from IR */
-  bboxMap: Map<string, NodeBBox>;
+  bboxMap: Map<number, NodeBBox>;
   display?: EventEffectOverlayDisplayOptions;
 };
 
@@ -354,12 +285,10 @@ export class EventEffectOverlay {
   private readonly resizeObserver: ResizeObserver | null;
   /** True when this instance created the wrapper `<div>` around the SVG. */
   private readonly createdWrapper: boolean;
-  private bboxMap: Map<string, NodeBBox>;
+  private bboxMap: Map<number, NodeBBox>;
   private hoverRect: SVGElement | null = null;
-  private hoverNodeId: string | null = null;
-  private hoverColor = "#4ade80";
   private inspectRect: SVGElement | null = null;
-  private inspectNodeId: string | null = null;
+  private inspectSource: IRSourceRef | null = null;
   private tooltipHideTimeout: number | null = null;
   private pendingTimeouts: number[] = [];
   private originLayer: SVGElement | null = null;
@@ -455,8 +384,8 @@ export class EventEffectOverlay {
    * Flash effect: brief colored rect that fades out over `durationMs`.
    * Used for discrete events (click, press, etc.).
    */
-  flashNode(nodeId: string, color: string, durationMs = 500): void {
-    const bbox = this.resolveBBox(nodeId);
+  flashNode(source: IRSourceRef, color: string, durationMs = 500): void {
+    const bbox = this.resolveBBox(source);
     if (!bbox) {
       return;
     }
@@ -492,20 +421,18 @@ export class EventEffectOverlay {
    * Hover glow: persistent pulsing outline while a node is hovered.
    * Pass `null` to clear the glow.
    */
-  setHoverGlow(nodeId: string | null, color = "#4ade80"): void {
+  setHoverGlow(source: IRSourceRef | null, color = "#4ade80"): void {
     // Remove existing glow
     if (this.hoverRect) {
       this.hoverRect.remove();
       this.hoverRect = null;
     }
-    this.hoverNodeId = nodeId;
-    this.hoverColor = color;
 
-    if (!nodeId) {
+    if (!source) {
       return;
     }
 
-    const bbox = this.resolveBBox(nodeId);
+    const bbox = this.resolveBBox(source);
     if (!bbox) {
       return;
     }
@@ -531,14 +458,14 @@ export class EventEffectOverlay {
    * Highlight the selected inspection geometry without animation.
    * Pass `null` to clear.
    */
-  setInspectHighlight(nodeId: string | null): void {
+  setInspectHighlight(source: IRSourceRef | null): void {
     if (this.inspectRect) {
       this.inspectRect.remove();
       this.inspectRect = null;
     }
-    this.inspectNodeId = nodeId;
+    this.inspectSource = source;
 
-    if (!nodeId) {
+    if (!source) {
       this.hideTooltip();
       return;
     }
@@ -548,7 +475,7 @@ export class EventEffectOverlay {
       return;
     }
 
-    const bbox = this.resolveBBox(nodeId);
+    const bbox = this.resolveBBox(source);
     if (!bbox) {
       this.hideTooltip();
       return;
@@ -565,19 +492,20 @@ export class EventEffectOverlay {
     this.overlayMode = display?.mode ?? DEFAULT_INSPECTION_FRAME_MODE;
     this.showOrigin = display?.showOrigin ?? false;
     this.renderPersistentOrigins();
-    this.setInspectHighlight(this.inspectNodeId);
+    this.setInspectHighlight(this.inspectSource);
   }
 
-  /** Update the bbox map (e.g. after IR re-render). Preserves active effects. */
-  updateBBoxMap(bboxMap: Map<string, NodeBBox>): void {
+  /** Replace snapshot geometry and clear effects whose references belong to the previous IR. */
+  updateBBoxMap(bboxMap: Map<number, NodeBBox>): void {
+    this.setHoverGlow(null);
+    this.setInspectHighlight(null);
+    for (const timeout of this.pendingTimeouts) {
+      clearTimeout(timeout);
+    }
+    this.pendingTimeouts.length = 0;
+    this.overlaySvg.replaceChildren();
     this.bboxMap = bboxMap;
     this.renderPersistentOrigins();
-    if (this.hoverNodeId) {
-      this.setHoverGlow(this.hoverNodeId, this.hoverColor);
-    }
-    if (this.inspectNodeId) {
-      this.setInspectHighlight(this.inspectNodeId);
-    }
   }
 
   /** Remove the overlay SVG, unwrap the main SVG if we wrapped it, and clean up timers. */
@@ -592,9 +520,8 @@ export class EventEffectOverlay {
       this.tooltipHideTimeout = null;
     }
     this.hoverRect = null;
-    this.hoverNodeId = null;
     this.inspectRect = null;
-    this.inspectNodeId = null;
+    this.inspectSource = null;
     if (this.overlaySvg.parentNode) {
       this.overlaySvg.remove();
     }
@@ -620,12 +547,10 @@ export class EventEffectOverlay {
   // -------------------------------------------------------------------------
 
   /**
-   * Resolve the bbox for a nodeId.
-   * If the nodeId itself isn't found, falls back to the `:bg` suffixed node
-   * (background rect created by the IR builder for Box/Flex containers).
+   * Resolve the prepared geometry for one source occurrence.
    */
-  private resolveBBox(nodeId: string): NodeBBox | null {
-    return this.bboxMap.get(nodeId) ?? this.bboxMap.get(`${nodeId}:bg`) ?? null;
+  private resolveBBox(source: IRSourceRef): NodeBBox | null {
+    return this.bboxMap.get(source.sourceIndex) ?? null;
   }
 
   private createModeRect(
@@ -728,10 +653,8 @@ export class EventEffectOverlay {
     const titleParts = [
       `<span style="color:${kindColor};font-weight:700">${escapeTooltipText(kind)}</span>`,
     ];
-    if (semantics?.explicitId) {
-      titleParts.push(
-        `<span style="color:#7dd3fc">#${escapeTooltipText(semantics.explicitId)}</span>`,
-      );
+    if (semantics?.nodeId) {
+      titleParts.push(`<span style="color:#7dd3fc">#${escapeTooltipText(semantics.nodeId)}</span>`);
     }
     if (semantics?.text) {
       const excerpt =

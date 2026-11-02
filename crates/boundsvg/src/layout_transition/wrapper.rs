@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use crate::ir::ownership::{IrNodeOwnership, WrapperPlacement};
 use crate::ir::types::{AnimationSpec, BBox, IrNode, IrNodeKind};
 
 use super::affine::{AxisAlignedAffine, bbox_world_delta};
@@ -10,14 +11,8 @@ use super::plan::LayoutTransitionPlanInput;
 use super::signature::{signature_has_non_identity_transform, signature_has_painted_canvas_stroke};
 use super::{CompatibilityCategory, CompatibilityMismatch};
 
-/// Reserved namespace for generated layout-transition wrapper identifiers.
+/// Stable generated label prefix; ownership, not this spelling, identifies a wrapper.
 pub(super) const GENERATED_WRAPPER_ID_PREFIX: &str = "__boundsvg:layout-transition-wrapper:";
-/// Metadata key marking an engine-generated transition wrapper.
-pub(super) const GENERATED_PROVENANCE_KEY: &str = "boundsvg.generated";
-/// Metadata value distinguishing transition wrappers from authored nodes.
-pub(super) const GENERATED_PROVENANCE_VALUE: &str = "layout-transition-wrapper";
-/// Metadata key linking a generated wrapper to its semantic source node.
-pub(super) const GENERATED_SOURCE_NODE_ID_KEY: &str = "boundsvg.sourceNodeId";
 
 #[derive(Debug)]
 /// Wrapper identity, source owner, reference box, and generated animation for one semantic node.
@@ -185,32 +180,6 @@ fn validate_generated_scale_contract(
     Ok(())
 }
 
-/// Reject pre-existing nodes that claim the generated transition wrapper namespace.
-///
-/// # Errors
-///
-/// Returns an ID compatibility mismatch at the first conflicting node.
-pub(super) fn validate_reserved_wrapper_namespace(
-    root: &IrNode,
-) -> Result<(), CompatibilityMismatch> {
-    if root.node_id.starts_with(GENERATED_WRAPPER_ID_PREFIX) {
-        return Err(CompatibilityMismatch {
-            category: CompatibilityCategory::Id,
-            node_id: root.node_id.clone(),
-            expected:
-                "authored and internal IR IDs outside the reserved transition wrapper namespace"
-                    .to_string(),
-            observed: format!("ID uses reserved prefix {GENERATED_WRAPPER_ID_PREFIX:?}"),
-        });
-    }
-    if let IrNodeKind::Group { children, .. } = &root.kind {
-        for child in children {
-            validate_reserved_wrapper_namespace(child)?;
-        }
-    }
-    Ok(())
-}
-
 /// Consume matching wrapper specs at semantic groups and return the wrapped tree.
 pub(super) fn inject_generated_wrappers(
     mut node: IrNode,
@@ -220,11 +189,12 @@ pub(super) fn inject_generated_wrappers(
     // production IR may contain a same-ID paint leaf inside that Group. Claim
     // the spec before descending so the leaf cannot consume its owner's
     // wrapper and leave clips, transforms, or sibling paint behind.
-    let wrapper_spec = if matches!(&node.kind, IrNodeKind::Group { .. }) {
-        wrapper_specs.remove(&node.node_id)
-    } else {
-        None
-    };
+    let wrapper_spec =
+        if node.ownership.is_source() && matches!(&node.kind, IrNodeKind::Group { .. }) {
+            wrapper_specs.remove(&node.node_id)
+        } else {
+            None
+        };
     if let IrNodeKind::Group { children, .. } = &mut node.kind {
         let original_children = std::mem::take(children);
         *children = original_children
@@ -236,27 +206,20 @@ pub(super) fn inject_generated_wrappers(
     let Some(spec) = wrapper_spec else {
         return node;
     };
-    let mut meta = BTreeMap::new();
-    meta.insert(
-        GENERATED_PROVENANCE_KEY.to_string(),
-        GENERATED_PROVENANCE_VALUE.to_string(),
-    );
-    meta.insert(
-        GENERATED_SOURCE_NODE_ID_KEY.to_string(),
-        spec.source_node_id,
-    );
     IrNode {
         node_id: spec.wrapper_id,
+        ownership: IrNodeOwnership::Wrapper {
+            owner_node_id: spec.source_node_id,
+            placement: WrapperPlacement::Outer,
+        },
         bbox: spec.bbox,
         kind: IrNodeKind::Group {
             children: vec![node],
             clip: None,
             opacity: None,
             box_shadow: None,
-            meta: Some(meta),
             transform: None,
             animation: Some(spec.animation),
-            on: None,
         },
     }
 }

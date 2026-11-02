@@ -14,7 +14,7 @@ import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 
 /**
  * Literal-byte oracle seeded from REFERENCE_COMMIT and updated for the
- * resolved paint and box-surface contract. Normal runs compare complete SVG,
+ * structural source-ownership and occurrence-resource contract. Normal runs compare complete SVG,
  * IR, raster, diagnostic, and export bytes.
  *
  * After reviewing an intentional output-contract change:
@@ -23,9 +23,9 @@ import { collectAnimatedRaster } from "../helpers/animation-collector.js";
  */
 const REFERENCE_COMMIT = "d2245a816d1b372c8b2ca374db182bc06f39d8d2";
 /** Version of the preserved literal-byte parity fixture manifest. */
-const REFERENCE_FORMAT_VERSION = 2;
+const REFERENCE_FORMAT_VERSION = 3;
 /** Output contract applied to the original reference corpus. */
-const REFERENCE_CONTRACT = "resolved-paint-box-surfaces";
+const REFERENCE_CONTRACT = "structural-source-ownership";
 /** Root of preserved byte fixtures used to compare output behavior. */
 const referenceRoot = path.resolve(__dirname, "fixtures/refactor-output-parity-base");
 /** Manifest that identifies the preserved output fixtures. */

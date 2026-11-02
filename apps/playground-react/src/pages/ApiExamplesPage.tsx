@@ -1,3 +1,4 @@
+import type { IRSourceRef } from "@boundsvg/core/scene";
 import {
   Canvas,
   type CompileOptions,
@@ -55,6 +56,7 @@ function isRendererMode(view: ApiView): view is RendererMode {
 // Code snippets
 // ---------------------------------------------------------------------------
 
+/** Copyable examples for the API tabs shown on this page. */
 const API_CODE_SNIPPETS: Record<ApiView, string> = {
   boundsvg: `import { BoundSvg } from "@boundsvg/react";
 
@@ -80,7 +82,7 @@ const handlers = new Map<string, EventCallback>([
   ["handleHover", (info) => console.log("hover", info.nodeId)],
 ]);
 
-const { svg, hoverNodeId, containerRef, isReady } = useInteractiveSvg(
+const { svg, hoverSource, containerRef, isReady } = useInteractiveSvg(
   vnode,
   handlers,
   { showPointerCursor: true },
@@ -97,7 +99,7 @@ import { InteractiveBoundSvg } from "@boundsvg/react/interactive";
   height={320}
   background="#252526"
   renderOptions={{ debug: false }}
-  onHoverChange={(nodeId) => console.log("hover", nodeId)}
+  onHoverChange={(source) => console.log("hover", source)}
 >
   <Flex direction="column" padding={32} gap={14}>
     <Text id="title" font="NotoSansJP-woff2" fontSizePx={44} color="#f9fafb"
@@ -118,7 +120,7 @@ const {
   copyNodeText,   // Copy text of a single node
   copyAllText,    // Copy all text in the canvas
   copyStatus,     // "idle" | "copied" | "failed"
-} = useTextCopy(ir, textMap);
+} = useTextCopy(textMap);
 
 // Right-click on text → custom context menu
 function handleMenu(hit) {
@@ -316,7 +318,7 @@ function InteractiveHookSurface({
   handlers: Map<string, EventCallback>;
   renderOptions?: SharedRenderOptions;
 }) {
-  const { svg, hoverNodeId, containerRef, error, isReady } = useInteractiveSvg(vnode, handlers, {
+  const { svg, hoverSource, containerRef, error, isReady } = useInteractiveSvg(vnode, handlers, {
     renderOptions,
     showPointerCursor: true,
   });
@@ -342,9 +344,9 @@ function InteractiveHookSurface({
         className="rendered-content"
         dangerouslySetInnerHTML={{ __html: svg }}
       />
-      {hoverNodeId && (
+      {hoverSource && (
         <p className="api-status-label">
-          hoverNodeId: <code>{hoverNodeId}</code>
+          hoverSource: <code>{hoverSource.nodeId}</code>
         </p>
       )}
     </div>
@@ -356,7 +358,7 @@ function InteractiveHookSurface({
 // ---------------------------------------------------------------------------
 
 function InteractiveComponentSurface({ renderOptions }: { renderOptions?: SharedRenderOptions }) {
-  const [hovered, setHovered] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<import("@boundsvg/core/scene").IRSourceRef | null>(null);
 
   return (
     <div className="preview-stage">
@@ -408,7 +410,7 @@ function InteractiveComponentSurface({ renderOptions }: { renderOptions?: Shared
       </InteractiveBoundSvg>
       {hovered && (
         <p className="api-status-label">
-          hoverNodeId: <code>{hovered}</code>
+          hoverSource: <code>{hovered.nodeId}</code>
         </p>
       )}
     </div>
@@ -428,19 +430,23 @@ function TextCopySurface({
   handlers: Map<string, EventCallback>;
   renderOptions?: SharedRenderOptions;
 }) {
-  const [copiedText, setCopiedText] = useState<string | null>(null);
+  const [copyTarget, setCopyTarget] = useState<IRSourceRef | null>(null);
 
-  const onTextContextMenu = useCallback((hit: { nodeId: string }) => {
-    setCopiedText(hit.nodeId);
+  const onTextContextMenu = useCallback((hit: { source: IRSourceRef }) => {
+    setCopyTarget(hit.source);
   }, []);
 
-  const { svg, ir, textMap, containerRef, error, isReady } = useInteractiveSvg(vnode, handlers, {
+  const { svg, textMap, containerRef, error, isReady } = useInteractiveSvg(vnode, handlers, {
     renderOptions,
     enableTextCopy: true,
     onTextContextMenu,
   });
 
-  const { copyNodeText, copyAllText, copyStatus } = useTextCopy(ir, textMap);
+  const { copyNodeText, copyAllText, copyStatus } = useTextCopy(textMap);
+  const copiedText =
+    copyTarget && textMap?.nodes.get(copyTarget.sourceIndex)?.source === copyTarget
+      ? copyTarget
+      : null;
 
   const handleCopyAll = useCallback(() => {
     copyAllText();
@@ -479,7 +485,7 @@ function TextCopySurface({
         </button>
         {copiedText && (
           <button type="button" className="api-copy-button" onClick={handleCopyNode}>
-            Copy "{copiedText}"
+            Copy "{copiedText.nodeId}"
           </button>
         )}
         <span className="api-copy-status">
@@ -487,7 +493,7 @@ function TextCopySurface({
         </span>
         {copiedText && (
           <span className="api-status-label">
-            Right-clicked: <code>{copiedText}</code>
+            Right-clicked: <code>{copiedText.nodeId}</code>
           </span>
         )}
       </div>
@@ -502,6 +508,7 @@ function TextCopySurface({
 type ApiViewTab = "preview" | "svg" | "jsx" | "api-usage";
 type CodeLayout = "tab" | "panel";
 
+/** Human-readable names for the API result views. */
 const API_VIEW_TAB_LABELS: Record<ApiViewTab, string> = {
   preview: "Preview",
   svg: "Rendered SVG",
@@ -594,6 +601,7 @@ function ApiPreviewSurface({
   );
 }
 
+/** Present runnable API examples with export and source-inspection results. */
 export function ApiExamplesPage() {
   const { engine, status } = useBoundSvg();
   const [apiView, setApiView] = useState<ApiView>("boundsvg");

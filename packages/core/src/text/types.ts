@@ -114,6 +114,7 @@ export type TextUnitMap = {
 /** Whether path text is emitted as merged outlines or individual positioned glyphs. */
 export type TextPathMode = "merged" | "glyphs";
 
+/** Text-decoration lines supported by the resolved paint pipeline. */
 export type TextDecorationLine = "underline" | "overline" | "line-through";
 
 /** Declarative text decoration. `none` stops inherited decoration. */
@@ -220,6 +221,12 @@ export type TextGradient = NonNullable<import("../ir/types.js").IRTextNode["grad
 
 /** Physical glyph paths and shared paints for a parent Text block. */
 export type TextOutlineNode = {
+  /** Physical Text occurrence in the resolved IR snapshot. */
+  nodeIndex: number;
+  /** Semantic owner of this physical Text. */
+  source: import("../ir/source-index.js").IRSourceRef;
+  /** Role of the physical Text; outline views also retain non-primary paint. */
+  ownership: import("../ir/types.js").IRNodeOwnership;
   nodeId: string;
   text: string;
   bbox: BBox;

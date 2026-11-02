@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createEngineAsync, type Engine } from "@boundsvg/core";
 import { initNodeWasm } from "@boundsvg/core/node";
+import { buildIRSourceIndex } from "@boundsvg/core/scene";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   CJK_VARFONT_ALIAS,
@@ -112,7 +113,9 @@ describe("playground-core public preset smoke", () => {
 
       expect(svg).toContain("<svg");
       expect(png.byteLength).toBeGreaterThan(100);
-      expect(ir.drawOrder.length).toBeGreaterThan(0);
+      expect(
+        [...buildIRSourceIndex(ir).nodes.values()].some((entry) => entry.paintOrder !== null),
+      ).toBe(true);
     });
   }
 

@@ -25,8 +25,9 @@ use crate::ir::types::{
 };
 use crate::scene::{
     AnimationPlaybackStyle, ClipPathDef, DebugLineItem, DebugRectItem, DebugRectKind, FilterDef,
-    GradientDef, GroupOpenItem, ImageItem, NestedSvgItem, PaintItem, PaintScene, PathItem,
-    RectItem, ReducedMotionMode, ShapePartItem, SharedShapePathDef, TextGlyphItem, TextItem,
+    GradientDef, GroupOpenItem, ImageItem, NestedSvgItem, NodeAssociation, PaintItem, PaintScene,
+    PathItem, RectItem, ReducedMotionMode, ShapePartItem, SharedShapePathDef, TextGlyphItem,
+    TextItem,
 };
 use crate::svg_emit::identifier_namespace::{SvgIdentifierNamespace, SvgIdentifierRole};
 use crate::svg_emit::num_format::{format_js_number, format_number};
@@ -97,7 +98,7 @@ pub fn emit_svg_scene(scene: &PaintScene, options: SvgEmitOptions) -> Result<Str
 
     // Build <svg> opening tag. Always emit width/height so browser layout
     // does not resolve to 0x0 when only viewBox is present.
-    let mut svg_attrs: Vec<String> = vec![
+    let svg_attrs: Vec<String> = vec![
         "xmlns=\"http://www.w3.org/2000/svg\"".to_string(),
         format!(
             "viewBox=\"0 0 {} {}\"",
@@ -107,21 +108,6 @@ pub fn emit_svg_scene(scene: &PaintScene, options: SvgEmitOptions) -> Result<Str
         format!("width=\"{}\"", fmt2(scene.width * scene.scale)?),
         format!("height=\"{}\"", fmt2(scene.height * scene.scale)?),
     ];
-    if options.includes_node_ids() {
-        svg_attrs.insert(
-            1,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&scene.root_node_id)),
-        );
-    }
-    // The root group wrapper is skipped, so Canvas meta rides on the <svg>.
-    if let Some(meta) = &scene.root_meta {
-        for (key, value) in meta {
-            svg_attrs.push(format!(
-                "data-boundsvg-meta-{key}=\"{}\"",
-                escape_xml(value)
-            ));
-        }
-    }
     parts.push(format!("<svg {}>", svg_attrs.join(" ")));
 
     if let Some(generator) = &scene.generator {
@@ -220,28 +206,44 @@ fn emit_items(
 // Groups
 // ---------------------------------------------------------------------------
 
-fn emit_group_open(
-    open: &GroupOpenItem,
-    depth: usize,
-    options: SvgEmitOptions,
-) -> Result<String, EngineError> {
-    let mut attrs: Vec<String> = Vec::new();
-    if options.includes_node_ids()
-        && let Some(node_id) = &open.node_id
-        && !is_generated_box_id(node_id)
-    {
-        attrs.push(format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(node_id)));
+fn association_attrs(association: &NodeAssociation, options: SvgEmitOptions) -> Vec<String> {
+    let mut attrs = Vec::new();
+    if options.includes_node_ids() {
+        attrs.push(format!("data-boundsvg-role=\"{}\"", association.role));
+        attrs.push(format!(
+            "data-boundsvg-node-index=\"{}\"",
+            association.node_index
+        ));
+        attrs.push(format!(
+            "data-boundsvg-source-index=\"{}\"",
+            association.source_index
+        ));
+        if let Some(node_id) = &association.source_node_id {
+            attrs.push(format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(node_id)));
+        }
     }
-    if let Some(animation_class) = &open.animation_class {
-        attrs.push(format!("class=\"{}\"", escape_xml(animation_class)));
-    }
-    if let Some(meta) = &open.meta {
+    if let Some(meta) = &association.meta {
         for (key, value) in meta {
             attrs.push(format!(
                 "data-boundsvg-meta-{key}=\"{}\"",
                 escape_xml(value)
             ));
         }
+    }
+    attrs
+}
+
+fn emit_group_open(
+    open: &GroupOpenItem,
+    depth: usize,
+    options: SvgEmitOptions,
+) -> Result<String, EngineError> {
+    let mut attrs: Vec<String> = Vec::new();
+    if let Some(association) = &open.association {
+        attrs.extend(association_attrs(association, options));
+    }
+    if let Some(animation_class) = &open.animation_class {
+        attrs.push(format!("class=\"{}\"", escape_xml(animation_class)));
     }
     if let Some(transform) = &open.transform {
         attrs.push(format!("transform=\"{}\"", escape_xml(transform)));
@@ -771,11 +773,11 @@ pub(crate) fn timeline_plan_css_byte_count(
     for track in &plan.tracks {
         let class_name = identifier_namespace.identifier(
             SvgIdentifierRole::AnimationClass,
-            &track.animation_name_owner,
+            &track.animation_resource_key,
         );
         let keyframes_name = identifier_namespace.identifier(
             SvgIdentifierRole::AnimationKeyframes,
-            &track.animation_name_owner,
+            &track.animation_resource_key,
         );
         write_timeline_animation_rule_parts(
             &mut counter,
@@ -798,7 +800,7 @@ pub(crate) fn timeline_plan_css_byte_count(
             plan.tracks.iter().map(|track| {
                 identifier_namespace.identifier(
                     SvgIdentifierRole::AnimationClass,
-                    &track.animation_name_owner,
+                    &track.animation_resource_key,
                 )
             }),
         )?;
@@ -978,9 +980,7 @@ fn emit_rect(rect: &RectItem, options: SvgEmitOptions) -> Result<String, EngineE
         format!("width=\"{}\"", fmt2(rect.bbox.w)?),
         format!("height=\"{}\"", fmt2(rect.bbox.h)?),
     ];
-    if options.includes_node_ids() && rect.emit_node_id_attr {
-        attrs.push(format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&rect.node_id)));
-    }
+    attrs.extend(association_attrs(&rect.association, options));
     if let Some(class_name) = &rect.canvas_stroke_class {
         attrs.push(format!("class=\"{}\"", escape_xml(class_name)));
     }
@@ -1003,9 +1003,7 @@ fn emit_rounded_rect_path(
         "d=\"{}\"",
         rounded_rect_path_data(rect.bbox, radii)?
     )];
-    if options.includes_node_ids() && rect.emit_node_id_attr {
-        attrs.push(format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&rect.node_id)));
-    }
+    attrs.extend(association_attrs(&rect.association, options));
     if let Some(class_name) = &rect.canvas_stroke_class {
         attrs.push(format!("class=\"{}\"", escape_xml(class_name)));
     }
@@ -1083,12 +1081,7 @@ fn text_group_attrs(text: &TextItem, options: SvgEmitOptions) -> Vec<String> {
         "data-boundsvg-text=\"{}\"",
         escape_xml(&text.label)
     )];
-    if options.includes_node_ids() {
-        attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&text.node_id)),
-        );
-    }
+    attrs.extend(association_attrs(&text.association, options));
     if !text.label.is_empty() {
         attrs.push(format!("aria-label=\"{}\"", escape_xml(&text.label)));
     }
@@ -1100,6 +1093,7 @@ fn emit_text_fill_glyph(
     path_d: &str,
     text: &TextItem,
     indent: &str,
+    options: SvgEmitOptions,
 ) -> Result<String, EngineError> {
     let path = if glyph.missing {
         let stroke_width = fmt2(text.font_size_px * MISSING_GLYPH_STROKE_RATIO)?;
@@ -1115,13 +1109,15 @@ fn emit_text_fill_glyph(
             escape_xml(&glyph.fill)
         )
     };
-    emit_text_unit_path(glyph, &path, indent)
+    emit_text_unit_path(glyph, &path, indent, text, options)
 }
 
 fn emit_text_unit_path(
     glyph: &TextGlyphItem,
     path: &str,
     indent: &str,
+    text: &TextItem,
+    options: SvgEmitOptions,
 ) -> Result<String, EngineError> {
     let Some(unit_paint) = &glyph.unit_paint else {
         return Ok(format!("{indent}{path}"));
@@ -1138,6 +1134,12 @@ fn emit_text_unit_path(
     }
     if attrs.is_empty() {
         return Ok(format!("{indent}{path}"));
+    }
+    if options.includes_node_ids() {
+        attrs.push(format!(
+            "data-boundsvg-unit-source-index=\"{}\"",
+            text.association.source_index
+        ));
     }
     Ok(format!(
         "{indent}<g {}>\n{indent}  {path}\n{indent}</g>",
@@ -1177,7 +1179,13 @@ fn emit_text(
     append_text_decorations(&mut lines, text, false, &glyph_indent)?;
     for glyph in &text.glyphs {
         let path_d = compact_text_path(&glyph.d);
-        lines.push(emit_text_fill_glyph(glyph, &path_d, text, &glyph_indent)?);
+        lines.push(emit_text_fill_glyph(
+            glyph,
+            &path_d,
+            text,
+            &glyph_indent,
+            options,
+        )?);
     }
     append_text_decorations(&mut lines, text, true, &glyph_indent)?;
     lines.push(format!("{indent}</g>"));
@@ -1224,6 +1232,8 @@ fn emit_text_effect_layers(
                     glyph,
                     &format!("<path d=\"{}\"/>", escape_xml(&path_data[*glyph_index])),
                     &copy_indent,
+                    text,
+                    options,
                 )?);
             }
             lines.push(format!("{inner}</g>"));
@@ -1265,6 +1275,8 @@ fn emit_text_effect_layers(
                     glyph,
                     &format!("<path d=\"{}\"/>", escape_xml(&path_data[*glyph_index])),
                     &copy_indent,
+                    text,
+                    options,
                 )?);
             }
             lines.push(format!("{inner}</g>"));
@@ -1273,7 +1285,7 @@ fn emit_text_effect_layers(
 
     // Fill glyphs on top.
     for (glyph, path_d) in text.glyphs.iter().zip(&path_data) {
-        lines.push(emit_text_fill_glyph(glyph, path_d, text, &inner)?);
+        lines.push(emit_text_fill_glyph(glyph, path_d, text, &inner, options)?);
     }
     append_text_decorations(&mut lines, text, true, &inner)?;
     lines.push(format!("{indent}</g>"));
@@ -1315,12 +1327,7 @@ fn emit_image(image: &ImageItem, options: SvgEmitOptions) -> Result<String, Engi
         format!("width=\"{}\"", fmt2(image.bbox.w)?),
         format!("height=\"{}\"", fmt2(image.bbox.h)?),
     ];
-    if options.includes_node_ids() {
-        attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&image.node_id)),
-        );
-    }
+    attrs.extend(association_attrs(&image.association, options));
     if !image.preserve_aspect_ratio.is_empty() {
         attrs.push(format!(
             "preserveAspectRatio=\"{}\"",
@@ -1333,12 +1340,6 @@ fn emit_image(image: &ImageItem, options: SvgEmitOptions) -> Result<String, Engi
 // ---------------------------------------------------------------------------
 // Path (wrapped in a nested <svg> for positioning with visible overflow)
 // ---------------------------------------------------------------------------
-
-fn is_generated_box_id(node_id: &str) -> bool {
-    [":bg", ":border", ":outline", ":content"]
-        .iter()
-        .any(|suffix| node_id.ends_with(suffix))
-}
 
 fn emit_path(path: &PathItem, options: SvgEmitOptions) -> Result<String, EngineError> {
     let mut path_attrs: Vec<String> = vec![format!("d=\"{}\"", escape_xml(&path.d))];
@@ -1401,12 +1402,7 @@ fn emit_path(path: &PathItem, options: SvgEmitOptions) -> Result<String, EngineE
         format!("height=\"{}\"", fmt2(h)?),
         "overflow=\"visible\"".to_string(),
     ];
-    if options.includes_node_ids() && !is_generated_box_id(&path.node_id) {
-        svg_attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&path.node_id)),
-        );
-    }
+    svg_attrs.extend(association_attrs(&path.association, options));
     Ok([
         format!("<svg {}>", svg_attrs.join(" ")),
         format!("  <path {}/>", path_attrs.join(" ")),
@@ -1430,12 +1426,7 @@ fn emit_nested_svg(
         format!("width=\"{}\"", fmt2(nested.bbox.w)?),
         format!("height=\"{}\"", fmt2(nested.bbox.h)?),
     ];
-    if options.includes_node_ids() {
-        attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&nested.node_id)),
-        );
-    }
+    attrs.extend(association_attrs(&nested.association, options));
     if let Some(view_box) = &nested.view_box
         && !view_box.is_empty()
     {
@@ -1480,12 +1471,7 @@ fn emit_shape(
         format!("height=\"{}\"", fmt2(shape.bbox.h)?),
         "overflow=\"hidden\"".to_string(),
     ];
-    if options.includes_node_ids() {
-        svg_attrs.insert(
-            0,
-            format!("{NODE_ID_ATTR}=\"{}\"", escape_xml(&shape.node_id)),
-        );
-    }
+    svg_attrs.extend(association_attrs(&shape.association, options));
 
     let mut lines: Vec<String> = vec![format!("{indent}<svg {}>", svg_attrs.join(" "))];
     for part in &shape.parts {
@@ -1772,7 +1758,13 @@ mod tests {
     #[test]
     fn positions_path_wrapper_without_clipping_its_paint() {
         let path = PathItem {
-            node_id: "arrow".to_string(),
+            association: NodeAssociation {
+                node_index: 0,
+                source_index: 0,
+                role: "source",
+                source_node_id: Some("arrow".to_string()),
+                meta: None,
+            },
             bbox: BBox {
                 x: 100.0,
                 y: 20.0,
@@ -1792,7 +1784,7 @@ mod tests {
         };
         let svg = emit_path(&path, SvgEmitOptions::default()).expect("Path emits");
         assert!(svg.starts_with(
-            "<svg data-boundsvg-node-id=\"arrow\" x=\"100\" y=\"20\" width=\"40\" height=\"40\" overflow=\"visible\">"
+            "<svg x=\"100\" y=\"20\" width=\"40\" height=\"40\" overflow=\"visible\" data-boundsvg-role=\"source\" data-boundsvg-node-index=\"0\" data-boundsvg-source-index=\"0\" data-boundsvg-node-id=\"arrow\">"
         ));
         assert!(svg.contains(
             "d=\"M-100 0L120 0L120 40Z\" fill=\"red\" stroke=\"black\" stroke-width=\"2\""

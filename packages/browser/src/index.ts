@@ -22,6 +22,8 @@ export type {
 export { clearFontCache, createFontLoader, preloadFonts } from "./fonts.js";
 export type { ImageLoaderOptions } from "./images.js";
 export { createBrowserImageLoader } from "./images.js";
+export type { IRDomBinding } from "./ir-dom-binding.js";
+export { bindIRToSvg, nativePathCandidates } from "./ir-dom-binding.js";
 export type { ComposeLayeredSvgInlineOptions } from "./layered.js";
 export {
   composeLayeredSvgInline,

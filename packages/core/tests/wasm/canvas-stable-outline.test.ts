@@ -241,9 +241,9 @@ describe("canvas-stable outlines and Path strokes through the real WASM pipeline
       png: sha256(engine.renderToPng(scene)),
     }).toMatchInlineSnapshot(`
       {
-        "ir": "c16dce89bfb77307f8444b8c1f9628dceec2a17f647578e2980968460ca61b5f",
+        "ir": "b3100ae1547908417a5c5ede2e05ff35cb7eec6125a305ce905043abb78ba76e",
         "png": "0b273664c740ebda319299728ece0823f70b3d44c777d729420138f301ddb691",
-        "svg": "5d7c2afb3f4a0d60baff7eed74a45e8a7860841e364e45c104a0a49abb235d87",
+        "svg": "1d72586d232a26fe6d7714740c3b32065c10c509d6911e5466b9f6e3703480ed",
       }
     `);
   });
@@ -251,17 +251,17 @@ describe("canvas-stable outlines and Path strokes through the real WASM pipeline
   it("pins the default (transform-scaled) Path IR, SVG, and raster bytes", () => {
     const scene = defaultPathStrokeScene();
     const ir = engine.renderToIR(scene);
-    // The added derived metadata is the only IR change; paint hashes stay pinned.
+    // Ownership changes IR and SVG bytes; the raster oracle remains pinned.
     expect(
       sha256(
         JSON.stringify(ir, (key, value: unknown) => (key === "pathGeometry" ? undefined : value)),
       ),
-    ).toBe("499348200d6ee4766536226a8faf4912ad481f92d0863674321230802e08763e");
+    ).toBe("a78cc52c75d834eccbef3b04fd34d8f2da15f31dc8983a7cc11fa75a32eea861");
     expect(sha256(JSON.stringify(ir))).toBe(
-      "50995ab151d263abdd51cd62008c360a8e68a3cc4f5c68c859e9e07154456f23",
+      "16109be532f86335e4f6cb6ca01bd90544ca39e8c990f1c67542c033080b9cdb",
     );
     expect(sha256(engine.renderToSvg(scene))).toBe(
-      "3be4eef508dd1084fe577be3fdd9aa5b24c30771ce8ae98eff04dbc702c42a75",
+      "2112cad6273d68a6b8afad59895563f48a7bd475206c6dfc40b8a44c5c9436ec",
     );
     expect(sha256(engine.renderToPng(scene))).toBe(
       "e47f5e4a952eec010cb456817db464a81beca8f7c8b566776d03da6b765883fe",
@@ -274,7 +274,7 @@ describe("canvas-stable outlines and Path strokes through the real WASM pipeline
       { scale: 2 },
     );
     expect(svg).toContain('width="128" height="128"');
-    expect(svg).toContain('class="bsvg-vstroke-hairline"');
+    expect(svg).toContain('class="bsvg-vstroke-n3"');
     expect(svg).toContain('stroke-width="0.625"');
     expect(svg).toContain("stroke-width: 2;");
     expect(svg).toContain("vector-effect: non-scaling-stroke;");
@@ -532,7 +532,7 @@ describe("canvas-stable outlines and Path strokes through the real WASM pipeline
     );
     const svg = engine.renderToSvg(scene, { scale: 2 });
     expect(svg).toContain('width="192" height="128"');
-    expect(svg).toContain('class="bsvg-vstroke-rotated-path"');
+    expect(svg).toContain('class="bsvg-vstroke-n3"');
     expect(svg).toContain('stroke-width="0.333333"');
     expect(svg).toContain("stroke-width: 2;");
 

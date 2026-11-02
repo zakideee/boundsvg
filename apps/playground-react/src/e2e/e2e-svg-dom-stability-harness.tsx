@@ -1,4 +1,5 @@
 import type { IR, VNode } from "@boundsvg/core";
+import { buildIRSourceIndex } from "@boundsvg/core/scene";
 import { AnimatedBoundSvg, BoundSvg } from "@boundsvg/react";
 import { type EventCallback, InteractiveBoundSvg } from "@boundsvg/react/interactive";
 import { BoundSvgProvider } from "@boundsvg/react/provider";
@@ -152,7 +153,9 @@ function readSnapshot(): DisplaySnapshot {
     })),
     touchAction: (svg as SVGSVGElement | null)?.style.touchAction ?? null,
     callbacks: [...deliveries],
-    irNodeIds: committedIr?.drawOrder ?? [],
+    irNodeIds: committedIr
+      ? [...buildIRSourceIndex(committedIr).sources.values()].map((info) => info.source.nodeId)
+      : [],
     error: document.querySelector('[data-testid="error"]')?.textContent ?? null,
   };
 }

@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use serde_json::{Map, Value, json};
 
 use crate::ir::types::{IrNode, IrNodeKind};
@@ -164,24 +162,16 @@ pub(super) fn signature_has_painted_canvas_stroke(signature: &Value) -> bool {
         })
 }
 
-pub(super) fn text_flow_signature(
-    root: &IrNode,
-    owner_id: &str,
-    semantic_ids: &BTreeSet<String>,
-) -> Value {
-    fn collect(
-        node: &IrNode,
-        owner_id: &str,
-        semantic_ids: &BTreeSet<String>,
-        signatures: &mut Vec<Value>,
-    ) {
+/// Describe primary text flow inside this source scope, excluding decorative and nested-source text.
+pub(super) fn text_flow_signature(root: &IrNode) -> Value {
+    fn collect(node: &IrNode, is_root: bool, signatures: &mut Vec<Value>) {
+        if !is_root && node.ownership.is_source() {
+            return;
+        }
         match &node.kind {
             IrNodeKind::Group { children, .. } => {
-                if node.node_id != owner_id && semantic_ids.contains(&node.node_id) {
-                    return;
-                }
                 for child in children {
-                    collect(child, owner_id, semantic_ids, signatures);
+                    collect(child, false, signatures);
                 }
             }
             IrNodeKind::Text {
@@ -190,6 +180,12 @@ pub(super) fn text_flow_signature(
                 display_text,
                 ..
             } => {
+                if matches!(
+                    &node.ownership,
+                    crate::ir::ownership::IrNodeOwnership::Decoration { .. }
+                ) {
+                    return;
+                }
                 let line_signatures = lines
                     .iter()
                     .map(|line| {
@@ -229,6 +225,6 @@ pub(super) fn text_flow_signature(
     }
 
     let mut signatures = Vec::new();
-    collect(root, owner_id, semantic_ids, &mut signatures);
+    collect(root, true, &mut signatures);
     Value::Array(signatures)
 }

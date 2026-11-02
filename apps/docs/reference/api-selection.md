@@ -40,9 +40,8 @@ the four transformed corners matter.
 Path hit-test candidates use Rust-derived conservative geometry/stroke bounds
 separate from the layout box. Explicit rectangular and rounded clips are tested
 in their original coordinates for their owner and descendants, including nested
-and transformed clips. `hitTest`, `hitTestWithIndex`, and candidate enumeration
-use the same rules. Generic spatial indexes and inspection selection retain
-their placement-box semantics.
+and transformed clips. `hitTest`, prepared `queryTopmost`, and candidate enumeration
+use the same rules. Generic spatial indexes and inspection selection use source primary geometry, or the source frame when no primary exists. Generic spatial indexes retain their caller-inserted box semantics.
 
 Core returns candidates rather than exact painted ink: a curved Path's bounds
 can contain empty space, and text/shadows are not pixel-accurate. Browser event

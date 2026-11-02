@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine } from "../../src/engine.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import type { IRNode, IRTextNode } from "../../src/ir/types.js";
 import { fromSceneDocument, toSceneDocument } from "../../src/scene/from-vnode.js";
 import { createElement } from "../../src/vnode/create-element.js";
@@ -113,8 +114,16 @@ describe("InlineRect real WASM rendering", () => {
       "typing:inline-rect:1",
       "typing:inline-rect:2",
     ]);
-    expect(ir.drawOrder).toContain("typing");
-    expect(ir.drawOrder).toEqual([
+    expect(
+      [...buildIRSourceIndex(ir).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId),
+    ).toContain("typing");
+    expect(
+      [...buildIRSourceIndex(ir).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId),
+    ).toEqual([
       "auto:0:bg",
       "typing:inline-rect:0:rect",
       "typing",

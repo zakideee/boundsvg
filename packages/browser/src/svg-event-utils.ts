@@ -1,4 +1,5 @@
-import type { IRNodeType } from "@boundsvg/core/scene";
+import type { IRHitCandidate, IRSourceRef } from "@boundsvg/core/scene";
+import type { IRDomBinding } from "./ir-dom-binding.js";
 
 /**
  * Translate DOM client coordinates to SVG user-space coordinates.
@@ -24,26 +25,25 @@ export function translateSvgCoords(
  * Verify that a point hits a path's actual geometry (not just its bounding box)
  * using the browser's `isPointInFill()` / `isPointInStroke()` SVG DOM APIs.
  *
- * Finds the `<path>` element inside an `<svg data-boundsvg-node-id="...">` wrapper
- * within the given container. Returns true (bbox fallback) when the element
+ * Finds the direct `<path>` paint of the bound physical IR endpoint. Returns true (bbox fallback) when the element
  * or geometry API is unavailable. Fill and stroke must actually be painted.
  * Mounted zero-sized viewports also require a native hit at the current point,
  * preserving browsers' differing treatment of visible overflow there.
  */
 export function verifyPathGeometry(
-  container: Element,
-  nodeId: string,
+  binding: IRDomBinding,
+  geometryNodeIndex: number,
   clientX: number,
   clientY: number,
 ): boolean {
-  const wrapper = container.querySelector(
-    `svg[data-boundsvg-node-id="${CSS.escape(nodeId)}"]`,
-  ) as SVGSVGElement | null;
+  const endpoint = binding.elementForNode(geometryNodeIndex);
+  const wrapper = endpoint?.localName === "svg" ? (endpoint as SVGSVGElement) : null;
+  const container = binding.root;
   if (!wrapper) {
     return true;
   }
 
-  const pathEl = wrapper.querySelector("path") as SVGPathElement | null;
+  const pathEl = wrapper.querySelector(":scope > path") as SVGPathElement | null;
   if (!pathEl) {
     return true;
   }
@@ -102,18 +102,21 @@ export function verifyPathGeometry(
  * Falls through to the next candidate if path geometry misses.
  */
 export function resolveHitTarget(
-  container: Element,
-  candidates: ReadonlyArray<string>,
-  nodeTypeMap: ReadonlyMap<string, IRNodeType>,
+  binding: IRDomBinding,
+  candidates: readonly IRHitCandidate[],
   clientX: number,
   clientY: number,
-): string | null {
-  for (const nodeId of candidates) {
-    if (nodeTypeMap.get(nodeId) !== "path") {
-      return nodeId;
+): IRSourceRef | null {
+  for (const candidate of candidates) {
+    const occurrence = binding.sourceIndex.nodes.get(candidate.geometryNodeIndex);
+    if (!occurrence || occurrence.source !== candidate.source) {
+      continue;
     }
-    if (verifyPathGeometry(container, nodeId, clientX, clientY)) {
-      return nodeId;
+    if (
+      occurrence.node.type !== "path" ||
+      verifyPathGeometry(binding, candidate.geometryNodeIndex, clientX, clientY)
+    ) {
+      return candidate.source;
     }
   }
   return null;

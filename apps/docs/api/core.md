@@ -538,7 +538,7 @@ interface Engine {
   registerSymbol(id: string, def: SymbolDefinition): void;
   unregisterGeometry(id: string): void;
   unregisterSymbol(id: string): void;
-  hitTest(ir: IR, x: number, y: number): string | null;
+  hitTest(ir: IR, x: number, y: number): IRSourceRef | null;
   dispose(): void;
 }
 ```
@@ -845,6 +845,59 @@ For animated scenes it always samples opacity and transform at `timeMs` while
 retaining the semantic animation track. The `animation` output mode does not
 select a different IR representation.
 
+Every IR node requires structural `ownership`:
+
+```ts
+type IRNodeOwnership =
+  | { role: "source"; on?: HandlersRef; meta?: Record<string, string> }
+  | { role: "content"; ownerNodeId: string }
+  | { role: "decoration"; ownerNodeId: string }
+  | { role: "wrapper"; ownerNodeId: string; placement: "inner" | "outer" };
+```
+
+A source is a semantic entity. Its `on` and `meta` exist only inside source
+ownership. A source group owns at most one primary `content` primitive;
+`decoration` paints without becoming a separate selectable entity. InlineRect
+and inline box paint are decoration. A source primitive is its own primary.
+Groups can be sources or wrappers; primitives can be sources, content or
+decoration. An inner wrapper belongs to the nearest source ancestor. An outer
+wrapper has exactly one direct source child and belongs to that child.
+`ownerNodeId` must match this structurally resolved source's label; it is not
+an ID lookup. The root must be a source or an outer wrapper.
+
+Use `buildIRSourceIndex(ir)` from `@boundsvg/core/scene` to obtain occurrence
+and source facts. `nodeIndex` counts every physical node in preorder, including
+wrappers. `sourceIndex` is the owning source's `nodeIndex`. Raw IR may repeat
+`nodeId` labels, including labels shared by a source and paint. VNode/Scene
+source IDs still must be unique, but generated paint labels do not reserve
+user IDs. A SourceRef `{ sourceIndex, nodeId }` belongs to one IR snapshot;
+rebuild indices and clear selection/DOM bindings when replacing that snapshot.
+It is not a persistent document identifier.
+
+Tree order determines painting; there is no serialized `drawOrder`. Source
+facts expose `primaryNodeIndex` and `parentSourceIndex`, replacing separate
+handler/type maps. `buildTextMap(ir)` and `buildTextSelectionMap(ir)` key entries
+by source occurrence. Their queries take `sourceIndex`; `getAllText(textMap)`
+uses primary text paint order without a second order list.
+
+`source.meta` uses the authoring rules at every input boundary: at most 16
+keys matching `^[a-z][a-z0-9-]{0,31}$`, with values at most 256 UTF-16 code units.
+Event references use the declared handler keys and non-null strings. Unknown
+ownership fields, null variants, dangling owners and multiple primary paints
+are rejected. IR schema 37 requires migration or regeneration of older IR;
+node-level `on`/`meta`, serialized order and transition provenance metadata
+are not accepted as alternate ownership paths.
+
+SVG emission adds an ordinary IR root element inside the viewport `<svg>`.
+Root transforms, clip, opacity and animation therefore apply normally. The
+viewport itself carries no source identity. Only source anchors carry
+`data-boundsvg-node-id` and business metadata. Physical endpoints carry role,
+node-index and source-index attributes; empty paints retain an empty endpoint.
+Generated resource IDs use physical occurrences, so SVG bytes and generated
+identifiers change even when normal Canvas pixels are unchanged. Treat these
+attributes as correspondence metadata, not authorization. Browser bindings
+scope endpoints to the matching IR and keep embedded Svg markup opaque.
+
 In text IR, `IRTextNode.lines[].fragments[].style` is optional. It is present
 only for a fragment with an explicit color-bearing style override; a fragment
 without that override does not carry a concrete `TextRunStyle`. The effective
@@ -883,7 +936,10 @@ not exposed as the public output type.
 
 ### `engine.renderToTextOutlines(input, options?)`
 
-Returns an array of `TextOutlineNode` objects containing SVG paths for each Text.
+Returns one `TextOutlineNode` for every physical Text occurrence, including decorative
+text. Each entry includes `nodeIndex`, `source` and `ownership`; repeated `nodeId`
+labels do not identify a unique paint. Empty Text occurrences retain an empty paths
+array. Text-copy queries use primary source text instead of this physical paint list.
 A path's `fill` is a solid-color string or `{ gradientIndex: number }`, referencing
 its parent node's optional `gradients` table. Each resource stores the original
 color expression, resolved linear endpoints or radial center/radii and stops, and shared Text `bbox` in the paths' local
@@ -892,7 +948,7 @@ together. Do not treat a gradient reference as a color string or recompute its
 frame from an individual glyph. SVG and layered SVG exports resolve these
 resources automatically.
 
-IR schema 36 replaces group `clipPath` and `clipBorderRadius` with a single
+The structured clip contract replaces group `clipPath` and `clipBorderRadius` with a single
 `clip`: `{ kind: "empty" }` or `{ kind: "boxContour", bbox, corners }`, where
 `corners` holds top-left, top-right, bottom-right, and bottom-left `{ rx, ry }`.
 These resolved axes must be finite and nonnegative, with `rx <= bbox.w / 2`
@@ -912,15 +968,22 @@ using CSS gradient strings in scene authoring; the engine resolves them once.
 
 ### `engine.hitTest(ir, x, y)`
 
-Returns the `NodeId` of the topmost conservative candidate at canvas point
+Returns an `IRSourceRef` for the topmost conservative source candidate at canvas point
 `(x, y)`, or `null`. Path geometry/stroke bounds can extend beyond its layout
 `bbox`. Explicit rectangular and rounded clips exclude invisible portions of
 their owner and descendants in the clip's original coordinates. Candidate
 bounds still contain Path holes or curve whitespace; Browser/React interaction
 checks actual Path fill/stroke for the final target. Supply IR from the matching
-engine version: missing schema-34 `pathGeometry` raises `FatalError` with code
+engine version: missing canonical `pathGeometry` raises `FatalError` with code
 `VALIDATION`. Regenerate older IR from the scene rather than substituting layout
-bounds. See [Choosing an API](/reference/api-selection) for precision and sampling.
+bounds. Prepare repeated queries with `buildHitTestIndex(ir)` or
+`buildInspectHitTestIndex(ir)` from `@boundsvg/core/scene`. Their
+`queryCandidates(x, y)` returns `{ source, geometryNodeIndex, order }[]`.
+Interaction uses primary paint position, or a handler-only source frame after
+its children. Inspection uses primary geometry, or the source frame before
+its children. Decoration and wrappers are not independent selections. A source
+with primary paint never falls back to its frame when that paint misses.
+See [Choosing an API](/reference/api-selection) for precision and sampling.
 
 ### `engine.compile(input, options?)`
 
@@ -1351,18 +1414,17 @@ type LayeredPngResult = {
 
 ### `LayerEntry` / `LayerPngEntry`
 
-| Field                 | Type                                      | Description                                                                                                                                         |
-| --------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                  | `string`                                  | Resolved layer id (`"default"` when unspecified)                                                                                                    |
-| `svg` or `png`        | `string` / `Uint8Array`                   | Layer payload                                                                                                                                       |
-| `bbox`                | `{ x, y, width, height }`                 | Union bbox of source nodes assigned to this layer                                                                                                   |
-| `nodeIds`             | `string[]`                                | Source `NodeId`s painted into this layer (sorted)                                                                                                   |
-| `nodeMeta`            | `Record<string, Record<string, string>>?` | Per-node `meta` for the nodes in this layer                                                                                                         |
-| `parts`               | `LayerManifestPart[]?`                    | Addressable shape parts, when `emitPartIds` is on                                                                                                   |
-| `mode`                | `"independent" \| "atomic"`               | `atomic` when any [compositing-island trigger](/guides/layered-export#compositing-islands) applies to this layer's content; `independent` otherwise |
-| `paintOrder`          | `number`                                  | Lowest `ir.drawOrder` index inside the layer, or `0` if it draws nothing. Ascending = back-to-front                                                 |
-| `collapsedFromLayers` | `string[]?`                               | Other layer ids absorbed into this atomic layer                                                                                                     |
-| `warnings`            | `LayerWarning[]`                          | Resolver warnings (see below)                                                                                                                       |
+| Field                 | Type                                                                                 | Description                                                                                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                  | `string`                                                                             | Resolved layer id (`"default"` when unspecified)                                                                                                    |
+| `svg` or `png`        | `string` / `Uint8Array`                                                              | Layer payload                                                                                                                                       |
+| `bbox`                | `{ x, y, width, height }`                                                            | Union of pre-transform layout boxes assigned to this layer                                                                                          |
+| `sources`             | `{ source: IRSourceRef; layerSourceIndex: number; meta?: Record<string, string> }[]` | Original source occurrences contributing to the layer, their layer-local ordinals and application metadata.                                         |
+| `parts`               | `LayerManifestPart[]?`                                                               | Addressable shape parts, when `emitPartIds` is on                                                                                                   |
+| `mode`                | `"independent" \| "atomic"`                                                          | `atomic` when any [compositing-island trigger](/guides/layered-export#compositing-islands) applies to this layer's content; `independent` otherwise |
+| `paintOrder`          | `number`                                                                             | Lowest tree-derived physical paint ordinal inside the layer, or `0` if it draws nothing. Ascending = back-to-front                                  |
+| `collapsedFromLayers` | `string[]?`                                                                          | Other layer ids absorbed into this atomic layer                                                                                                     |
+| `warnings`            | `LayerWarning[]`                                                                     | Resolver warnings (see below)                                                                                                                       |
 
 ### `LayerWarning`
 
@@ -1532,7 +1594,7 @@ const inspection = inspectScene(engine, vnode);
 const bboxes = collectInspectionBBoxes(inspection.ir);
 ```
 
-`inspectScene(engine, input, options?)` returns the layout tree, sampled IR, text map, handler map, node type map, bbox list, recoverable warnings, node ID validation result, and summary stats. Each bbox includes pre-transform `layoutBBox`, transformed corner points in `transformBox`, and their world-space axis-aligned `visualBBox`. Use it for CI checks, internal asset validation tools, or editor panels that need positioned geometry rather than rendered bytes.
+`inspectScene(engine, input, options?)` returns the layout tree, sampled IR, primary text map, source index, occurrence bbox list, recoverable warnings, node ID validation result, and summary stats. Each bbox includes pre-transform `layoutBBox`, transformed corner points in `transformBox`, and their world-space axis-aligned `visualBBox`. Use it for CI checks, internal asset validation tools, or editor panels that need positioned geometry rather than rendered bytes.
 
 See [Choosing an API](/reference/api-selection) for bbox semantics, animation sampling, and cost.
 
@@ -1631,3 +1693,7 @@ Import this low-level adapter helper from `@boundsvg/core/wasm`. Its signature i
 `decodeAnimatedRasterFatal(value: unknown): FatalError | undefined`. It validates
 a local or serialized animated raster diagnostic and returns a `FatalError`, or
 `undefined` when the diagnostic envelope or closed context is invalid.
+
+Animation-state samples include `nodeIndex` and `source` from the sampled IR snapshot.
+Use these references to distinguish source, wrapper and text-unit targets; do not
+join sampled tracks to sources by a node-ID suffix.

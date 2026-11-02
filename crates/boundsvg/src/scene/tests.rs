@@ -12,6 +12,10 @@ fn bbox(x: f64, y: f64, w: f64, h: f64) -> BBox {
 
 fn group_node(node_id: &str, children: Vec<IrNode>) -> IrNode {
     IrNode {
+        ownership: crate::ir::ownership::IrNodeOwnership::Source {
+            on: None,
+            meta: None,
+        },
         node_id: node_id.to_string(),
         bbox: bbox(0.0, 0.0, 100.0, 100.0),
         kind: IrNodeKind::Group {
@@ -19,16 +23,18 @@ fn group_node(node_id: &str, children: Vec<IrNode>) -> IrNode {
             clip: None,
             opacity: None,
             box_shadow: None,
-            meta: None,
             transform: None,
             animation: None,
-            on: None,
         },
     }
 }
 
 fn rect_node(node_id: &str, fill: &str) -> IrNode {
     IrNode {
+        ownership: crate::ir::ownership::IrNodeOwnership::Source {
+            on: None,
+            meta: None,
+        },
         node_id: node_id.to_string(),
         bbox: bbox(1.0, 2.0, 30.0, 40.0),
         kind: IrNodeKind::Rect {
@@ -59,6 +65,10 @@ fn set_group_transform(node: &mut IrNode, scale_x: f64, scale_y: f64) {
 /// Build a Path scene fixture with canonical output geometry independent of its layout box.
 fn path_node(node_id: &str) -> IrNode {
     IrNode {
+        ownership: crate::ir::ownership::IrNodeOwnership::Source {
+            on: None,
+            meta: None,
+        },
         node_id: node_id.to_string(),
         bbox: bbox(0.0, 0.0, 10.0, 10.0),
         kind: IrNodeKind::Path {
@@ -81,7 +91,6 @@ fn path_node(node_id: &str) -> IrNode {
             stroke_linejoin: None,
             stroke_dasharray: None,
             stroke_miterlimit: None,
-            on: None,
         },
     }
 }
@@ -89,6 +98,10 @@ fn path_node(node_id: &str) -> IrNode {
 /// Build the canvas-stable stroke variant with the same canonical Path metadata contract.
 fn canvas_path_node(node_id: &str, dasharray: Option<&str>) -> IrNode {
     IrNode {
+        ownership: crate::ir::ownership::IrNodeOwnership::Source {
+            on: None,
+            meta: None,
+        },
         node_id: node_id.to_string(),
         bbox: bbox(0.0, 0.0, 10.0, 10.0),
         kind: IrNodeKind::Path {
@@ -111,13 +124,16 @@ fn canvas_path_node(node_id: &str, dasharray: Option<&str>) -> IrNode {
             stroke_linejoin: None,
             stroke_dasharray: dasharray.map(str::to_string),
             stroke_miterlimit: None,
-            on: None,
         },
     }
 }
 
 fn shape_node(node_id: &str, part_ds: &[&str]) -> IrNode {
     IrNode {
+        ownership: crate::ir::ownership::IrNodeOwnership::Source {
+            on: None,
+            meta: None,
+        },
         node_id: node_id.to_string(),
         bbox: bbox(0.0, 0.0, 20.0, 20.0),
         kind: IrNodeKind::Shape {
@@ -139,15 +155,13 @@ fn shape_node(node_id: &str, part_ds: &[&str]) -> IrNode {
             stroke_linejoin: None,
             stroke_dasharray: None,
             stroke_miterlimit: None,
-            on: None,
         },
     }
 }
 
-fn ir_with_root(root: IrNode, draw_order: Vec<String>) -> Ir {
+fn ir_with_root(root: IrNode) -> Ir {
     Ir {
         root,
-        draw_order,
         width: 100.0,
         height: 100.0,
         debug: None,
@@ -172,28 +186,19 @@ fn sample_ir() -> Ir {
             group_node("empty-group", Vec::new()),
         ],
     );
-    ir_with_root(
-        root,
-        vec![
-            "canvas:bg".to_string(),
-            "inner:bg".to_string(),
-            "p1".to_string(),
-            "s1".to_string(),
-            "s2".to_string(),
-        ],
-    )
+    ir_with_root(root)
 }
 
 fn leaf_node_ids(items: &[PaintItem]) -> Vec<String> {
     items
         .iter()
         .filter_map(|item| match item {
-            PaintItem::Rect(rect) => Some(rect.node_id.clone()),
-            PaintItem::Text(text) => Some(text.node_id.clone()),
-            PaintItem::Image(image) => Some(image.node_id.clone()),
-            PaintItem::Path(path) => Some(path.node_id.clone()),
-            PaintItem::NestedSvg(nested) => Some(nested.node_id.clone()),
-            PaintItem::Shape(shape) => Some(shape.node_id.clone()),
+            PaintItem::Rect(rect) => rect.association.source_node_id.clone(),
+            PaintItem::Text(text) => text.association.source_node_id.clone(),
+            PaintItem::Image(image) => image.association.source_node_id.clone(),
+            PaintItem::Path(path) => path.association.source_node_id.clone(),
+            PaintItem::NestedSvg(nested) => nested.association.source_node_id.clone(),
+            PaintItem::Shape(shape) => shape.association.source_node_id.clone(),
             _ => None,
         })
         .collect()
@@ -240,7 +245,7 @@ fn rect_and_path_strokes_share_scaling_errors_and_class_allocation() {
         ] {
             let mut owner = group_node("owner", vec![primitive.clone()]);
             set_group_transform(&mut owner, scale_x, scale_y);
-            let ir = ir_with_root(group_node("canvas", vec![owner]), vec!["primitive".into()]);
+            let ir = ir_with_root(group_node("canvas", vec![owner]));
             let result = resolve_paint_scene(&ir, &PaintSceneOptions::default());
             if is_supported {
                 let scene = result.expect("uniform scale");
@@ -270,26 +275,20 @@ fn rect_and_path_strokes_share_scaling_errors_and_class_allocation() {
         canvas_rect_node("primitive", Some("4,2")),
         canvas_path_node("primitive", Some("4,2")),
     ] {
-        let ir = ir_with_root(
-            group_node("owner", vec![primitive]),
-            vec!["primitive".into()],
-        );
+        let ir = ir_with_root(group_node("owner", vec![primitive]));
         assert!(
             matches!(resolve_paint_scene(&ir, &PaintSceneOptions::default()),
             Err(EngineError::Structured { code, node_id, .. }) if code == "CANVAS_STROKE_DASH_UNSUPPORTED" && node_id.as_deref() == Some("primitive"))
         );
     }
-    let mixed = ir_with_root(
-        group_node(
-            "owner",
-            vec![
-                canvas_rect_node("primitive", None),
-                canvas_path_node("primitive", None),
-                canvas_rect_node("primitive-2", None),
-            ],
-        ),
-        vec![],
-    );
+    let mixed = ir_with_root(group_node(
+        "owner",
+        vec![
+            canvas_rect_node("primitive", None),
+            canvas_path_node("primitive", None),
+            canvas_rect_node("primitive-2", None),
+        ],
+    ));
     let scene =
         resolve_paint_scene(&mixed, &PaintSceneOptions::default()).expect("mixed primitives");
     let classes: std::collections::HashSet<_> = scene
@@ -304,10 +303,7 @@ fn rect_and_path_strokes_share_scaling_errors_and_class_allocation() {
 fn canvas_path_rejects_unsupported_transform_and_dash_with_path_owner_id() {
     let mut scaled_path = group_node("path-wrapper", vec![canvas_path_node("path", None)]);
     set_group_transform(&mut scaled_path, 2.0, 1.0);
-    let transform_ir = ir_with_root(
-        group_node("canvas", vec![scaled_path]),
-        vec!["path".to_string()],
-    );
+    let transform_ir = ir_with_root(group_node("canvas", vec![scaled_path]));
     let transform_error = resolve_paint_scene(&transform_ir, &PaintSceneOptions::default())
         .expect_err("non-uniform Path transform must fail");
     assert!(matches!(
@@ -320,10 +316,10 @@ fn canvas_path_rejects_unsupported_transform_and_dash_with_path_owner_id() {
             && node_id.as_deref() == Some("path")
     ));
 
-    let dash_ir = ir_with_root(
-        group_node("canvas", vec![canvas_path_node("path", Some("4,2"))]),
-        vec!["path".to_string()],
-    );
+    let dash_ir = ir_with_root(group_node(
+        "canvas",
+        vec![canvas_path_node("path", Some("4,2"))],
+    ));
     let dash_error = resolve_paint_scene(&dash_ir, &PaintSceneOptions::default())
         .expect_err("dashed Path stroke must fail");
     assert!(matches!(
@@ -357,7 +353,7 @@ fn canvas_stroke_ignores_unpainted_raw_ir_paths() {
         }
         let mut owner = group_node("path-wrapper", vec![path]);
         set_group_transform(&mut owner, 2.0, 1.0);
-        let ir = ir_with_root(group_node("canvas", vec![owner]), vec!["path".to_string()]);
+        let ir = ir_with_root(group_node("canvas", vec![owner]));
 
         let paint_scene = resolve_paint_scene(&ir, &PaintSceneOptions::default())
             .expect("an unpainted Path does not impose canvas-stroke constraints");
@@ -370,14 +366,16 @@ fn canvas_stroke_ignores_unpainted_raw_ir_paths() {
 }
 
 #[test]
-fn leaf_order_projects_the_ir_draw_order() {
-    // The sample IR has no container handlers and no empty leaves, so the
-    // scene's leaf sequence must equal drawOrder exactly (bg/border rects
-    // included — they are IR nodes of their own).
+fn leaf_order_follows_the_ir_tree() {
+    // Every primitive in this fixture paints once in tree order.
     let ir = sample_ir();
     let paint_scene =
         resolve_paint_scene(&ir, &PaintSceneOptions::default()).expect("scene resolves");
-    assert_eq!(leaf_node_ids(&paint_scene.items), ir.draw_order);
+
+    assert_eq!(
+        leaf_node_ids(&paint_scene.items),
+        ["canvas:bg", "inner:bg", "p1", "s1", "s2"]
+    );
 }
 
 #[test]
@@ -408,7 +406,7 @@ fn every_ir_group_gets_a_group_item_and_opacity_one_gets_no_attr() {
         *opacity = Some(1.0);
     }
     let root = group_node("canvas", vec![group]);
-    let ir = ir_with_root(root, vec!["r1".to_string()]);
+    let ir = ir_with_root(root);
 
     let paint_scene =
         resolve_paint_scene(&ir, &PaintSceneOptions::default()).expect("scene resolves");
@@ -420,8 +418,14 @@ fn every_ir_group_gets_a_group_item_and_opacity_one_gets_no_attr() {
             _ => None,
         })
         .collect();
-    assert_eq!(group_opens.len(), 1);
-    assert_eq!(group_opens[0].node_id.as_deref(), Some("g1"));
+    assert_eq!(group_opens.len(), 2);
+    assert_eq!(
+        group_opens[1]
+            .association
+            .as_ref()
+            .and_then(|association| association.source_node_id.as_deref()),
+        Some("g1")
+    );
     assert_eq!(group_opens[0].opacity, None);
 
     // A non-1 opacity keeps the attribute.
@@ -429,17 +433,22 @@ fn every_ir_group_gets_a_group_item_and_opacity_one_gets_no_attr() {
     if let IrNodeKind::Group { opacity, .. } = &mut translucent.kind {
         *opacity = Some(0.5);
     }
-    let ir = ir_with_root(
-        group_node("canvas", vec![translucent]),
-        vec!["r2".to_string()],
-    );
+    let ir = ir_with_root(group_node("canvas", vec![translucent]));
     let paint_scene =
         resolve_paint_scene(&ir, &PaintSceneOptions::default()).expect("scene resolves");
     let open = paint_scene
         .items
         .iter()
         .find_map(|item| match item {
-            PaintItem::GroupOpen(open) => Some(open),
+            PaintItem::GroupOpen(open)
+                if open
+                    .association
+                    .as_ref()
+                    .and_then(|association| association.source_node_id.as_deref())
+                    == Some("g2") =>
+            {
+                Some(open)
+            }
             _ => None,
         })
         .expect("group item");
@@ -544,18 +553,25 @@ fn debug_overlay_resolves_only_when_requested() {
 #[test]
 fn root_meta_rides_on_the_scene() {
     let mut root = group_node("canvas", vec![rect_node("r1", "#abc")]);
-    if let IrNodeKind::Group { meta, .. } = &mut root.kind {
+    if let crate::ir::ownership::IrNodeOwnership::Source { meta, .. } = &mut root.ownership {
         let mut entries = BTreeMap::new();
         entries.insert("scene".to_string(), "metadata".to_string());
         *meta = Some(entries);
     }
-    let ir = ir_with_root(root, vec!["r1".to_string()]);
+    let ir = ir_with_root(root);
     let paint_scene =
         resolve_paint_scene(&ir, &PaintSceneOptions::default()).expect("scene resolves");
     assert_eq!(
         paint_scene
-            .root_meta
-            .as_ref()
+            .items
+            .iter()
+            .find_map(|item| match item {
+                PaintItem::GroupOpen(open) => open
+                    .association
+                    .as_ref()
+                    .and_then(|association| association.meta.as_ref()),
+                _ => None,
+            })
             .and_then(|meta| meta.get("scene"))
             .map(String::as_str),
         Some("metadata")

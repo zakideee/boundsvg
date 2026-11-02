@@ -28,8 +28,14 @@ function harness() {
   const ir = {
     width: 8,
     height: 4,
-    drawOrder: [],
-    root: { type: "group", nodeId: "canvas", bbox: { x: 0, y: 0, w: 8, h: 4 }, children: [] },
+
+    root: {
+      ownership: { role: "source" },
+      type: "group",
+      nodeId: "canvas",
+      bbox: { x: 0, y: 0, w: 8, h: 4 },
+      children: [],
+    },
   };
   let sampledTimes: number[] = [];
   let lastOpen: AnimationSessionOpenInput | undefined;

@@ -155,6 +155,6 @@ describe("SVG emission — per-corner borderRadius", () => {
     expect(svg).toContain("<path ");
     expect(svg).toContain('fill="#000000"');
     expect(svg).toContain('fill-rule="evenodd"');
-    expect(svg).toContain('clip-path="url(#clip-border-path:border)"');
+    expect(svg).toMatch(/clip-path="url\(#clip-n\d+\)"/);
   });
 });

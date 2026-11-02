@@ -6,6 +6,7 @@ import type { AnimationSpec } from "../../src/vnode/types.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
 
+/** Delayed fade used to distinguish decoration sampling from primary text paint. */
 const FADE: AnimationSpec = {
   keyframes: [
     { at: 0, opacity: 0 },
@@ -31,7 +32,7 @@ function decoratedScene() {
 
 /** Opacity attributes of the groups wrapping animated `:ibox` decoration rects. */
 function iboxGroupOpacities(svg: string): string[] {
-  return [...svg.matchAll(/<g[^>]*:ibox\d+"[^>]*>/g)].map(
+  return [...svg.matchAll(/<g[^>]*data-boundsvg-role="wrapper"[^>]*>/g)].map(
     (match) => /opacity="([^"]*)"/.exec(match[0])?.[1] ?? "1",
   );
 }

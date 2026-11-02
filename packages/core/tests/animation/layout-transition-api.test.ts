@@ -148,11 +148,12 @@ describe("layout transition public API", () => {
         return JSON.stringify({
           ir: {
             root: {
+              ownership: { role: "source" },
               nodeId: "scene",
               bbox: { x: 0, y: 0, w: 100, h: 100 },
               type: "group",
             },
-            drawOrder: [],
+
             width: 100,
             height: 100,
           },
@@ -183,11 +184,12 @@ describe("layout transition public API", () => {
         JSON.stringify({
           ir: {
             root: {
+              ownership: { role: "source" },
               nodeId: "scene",
               bbox: { x: 0, y: 0, w: 100, h: 100 },
               type: "group",
             },
-            drawOrder: [],
+
             width: 100,
             height: 100,
           },

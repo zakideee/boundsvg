@@ -1,17 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine } from "../../src/engine.js";
+import { serializeIrForWasm } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
 import { hitTest } from "../../src/ir/hit-test.js";
-import {
-  buildInspectHitTestIndex,
-  inspectHitTestCandidates,
-} from "../../src/ir/inspect-hit-test.js";
+import { buildInspectHitTestIndex } from "../../src/ir/inspect-hit-test.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import type { IR, IRNode } from "../../src/ir/types.js";
 import { snapshotLayerSourceMetadata } from "../../src/layer-source-metadata.js";
 import { renderLayeredSvg } from "../../src/layered-svg.js";
 import type { LayoutNode } from "../../src/layout/types.js";
 import type { LayoutTransitionInput } from "../../src/layout-transition.js";
-import { LAYOUT_TRANSITION_WRAPPER_META } from "../../src/layout-transition.js";
 import { resolveSceneOrVNodeInput } from "../../src/scene/from-vnode.js";
 import type { SceneNode } from "../../src/scene/types.js";
 import {
@@ -82,6 +80,8 @@ function findIrNode(root: IRNode, nodeId: string): IRNode {
 }
 
 type RawAnimationStateSample = {
+  nodeIndex: number;
+  source: { sourceIndex: number; nodeId: string };
   nodeId: string;
   transform?: AffineMatrix;
 };
@@ -92,17 +92,26 @@ function sampleGeneratedBBoxes(
   timeMs: number,
 ): Map<string, { x: number; y: number; width: number; height: number }> {
   const samples = JSON.parse(
-    handle.sampleAnimationState(JSON.stringify(ir), timeMs),
+    handle.sampleAnimationState(serializeIrForWasm(ir), timeMs),
   ) as RawAnimationStateSample[];
-  const generatedTransforms = new Map(
-    samples
-      .filter((sample) => sample.nodeId.startsWith("__boundsvg:layout-transition-wrapper:"))
-      .map((sample) => [sample.nodeId, sample.transform ?? createIdentityAffineMatrix()]),
-  );
+  const index = buildIRSourceIndex(ir);
+  const generatedTransforms = new Map<IRNode, AffineMatrix>();
+  for (const sample of samples) {
+    const occurrence = index.nodes.get(sample.nodeIndex);
+    if (!occurrence || occurrence.source.sourceIndex !== sample.source.sourceIndex) {
+      throw new TypeError("Sample association must match the snapshot");
+    }
+    if (
+      occurrence.node.ownership.role === "wrapper" &&
+      occurrence.node.ownership.placement === "outer"
+    ) {
+      generatedTransforms.set(occurrence.node, sample.transform ?? createIdentityAffineMatrix());
+    }
+  }
   const sampledBBoxes = new Map<string, { x: number; y: number; width: number; height: number }>();
 
   function walk(node: IRNode, ancestorMatrix: AffineMatrix): void {
-    const ownMatrix = generatedTransforms.get(node.nodeId) ?? createIdentityAffineMatrix();
+    const ownMatrix = generatedTransforms.get(node) ?? createIdentityAffineMatrix();
     const worldMatrix = multiplyAffineMatrices(ancestorMatrix, ownMatrix);
     const corners = [
       { x: node.bbox.x, y: node.bbox.y },
@@ -542,10 +551,10 @@ describe("portable layout transition fixture", () => {
       if (wrapper.type !== "group") {
         throw new TypeError("Generated layout-transition wrapper must be a Group");
       }
-      expect(wrapper.meta).toEqual({
-        [LAYOUT_TRANSITION_WRAPPER_META.generatedKey]:
-          LAYOUT_TRANSITION_WRAPPER_META.generatedValue,
-        [LAYOUT_TRANSITION_WRAPPER_META.sourceNodeIdKey]: sourceNodeId,
+      expect(wrapper.ownership).toEqual({
+        role: "wrapper",
+        placement: "outer",
+        ownerNodeId: sourceNodeId,
       });
       expect(wrapper.animation?.durationMs).toBe(1000);
       expect(wrapper.animation?.keyframes.map((keyframe) => keyframe.at)).toEqual([0, 0.3, 0.7, 1]);
@@ -574,7 +583,15 @@ describe("portable layout transition fixture", () => {
     expect(() =>
       findIrNode(compiledIr.root, "__boundsvg:layout-transition-wrapper:8:message-1"),
     ).toThrow(RangeError);
-    expect(compiledIr.drawOrder).toEqual(referenceIr.drawOrder);
+    expect(
+      [...buildIRSourceIndex(compiledIr).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId),
+    ).toEqual(
+      [...buildIRSourceIndex(referenceIr).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId),
+    );
   });
 
   it("emits generated outer and authored inner animations in declarative SVG", () => {
@@ -583,9 +600,7 @@ describe("portable layout transition fixture", () => {
       playback: { mode: "independent" },
     });
 
-    expect(declarativeSvg).toContain(
-      'data-boundsvg-node-id="__boundsvg:layout-transition-wrapper:7:tail"',
-    );
+    expect(declarativeSvg).toContain('data-boundsvg-role="wrapper"');
     expect(declarativeSvg).toContain('data-boundsvg-node-id="tail"');
     expect(declarativeSvg).toContain("animation-duration: 1000ms");
     expect(declarativeSvg).toContain("animation-duration: 180ms");
@@ -601,8 +616,8 @@ describe("portable layout transition fixture", () => {
       }
       tail.layer = "tail-layer";
       tail.meta = {
-        "boundsvg.generated": "layout-transition-wrapper",
-        "boundsvg.sourceNodeId": "message-1",
+        generated: "layout-transition-wrapper",
+        "source-node-id": "message-1",
       };
       message.layer = "message-layer";
     }
@@ -619,16 +634,12 @@ describe("portable layout transition fixture", () => {
     expect(layered.manifest.animated).toBe(true);
     expect(
       layered.layers
-        .flatMap((layer) => layer.nodeIds)
+        .flatMap((layer) => layer.sources.map((entry) => entry.source.nodeId))
         .some((nodeId) => nodeId.startsWith("__boundsvg:layout-transition-wrapper:")),
     ).toBe(false);
-    expect(
-      layered.layers.some((layer) =>
-        layer.svg.includes("__boundsvg:layout-transition-wrapper:7:tail"),
-      ),
-    ).toBe(true);
+    expect(layered.layers.some((layer) => layer.id === "tail-layer")).toBe(true);
     const tailLayer = layered.layers.find((layer) => layer.id === "tail-layer");
-    expect(tailLayer?.nodeIds).toContain("tail");
+    expect(tailLayer?.sources.map((entry) => entry.source.nodeId)).toContain("tail");
     expect(tailLayer?.mode).toBe("atomic");
     expect(tailLayer?.collapsedFromLayers).toContain("message-layer");
     expect(tailLayer?.warnings).toContainEqual({
@@ -636,9 +647,9 @@ describe("portable layout transition fixture", () => {
       nodeId: "message-1",
       parentNodeId: "tail",
     });
-    expect(tailLayer?.nodeMeta?.tail).toEqual({
-      "boundsvg.generated": "layout-transition-wrapper",
-      "boundsvg.sourceNodeId": "message-1",
+    expect(tailLayer?.sources.find((entry) => entry.source.nodeId === "tail")?.meta).toEqual({
+      generated: "layout-transition-wrapper",
+      "source-node-id": "message-1",
     });
   });
 
@@ -662,14 +673,18 @@ describe("portable layout transition fixture", () => {
     });
 
     const emptyIdLayer = layered.layers.find((layer) => layer.id === "empty-id-layer");
-    expect(emptyIdLayer?.nodeIds).toContain("");
+    expect(emptyIdLayer?.sources.map((entry) => entry.source.nodeId)).toContain("");
     expect(
       layered.layers
-        .flatMap((layer) => layer.nodeIds)
+        .flatMap((layer) => layer.sources.map((entry) => entry.source.nodeId))
         .some((nodeId) => nodeId.startsWith("__boundsvg:layout-transition-wrapper:")),
     ).toBe(false);
     expect(
-      layered.layers.some((layer) => layer.svg.includes("__boundsvg:layout-transition-wrapper:")),
+      layered.layers.some((layer) =>
+        [...buildIRSourceIndex(JSON.parse(layer.svg)).nodes.values()].some(
+          (entry) => entry.node.ownership.role === "wrapper",
+        ),
+      ),
     ).toBe(true);
   });
 
@@ -686,30 +701,31 @@ describe("portable layout transition fixture", () => {
     const compiledIr = engine.snapshotCompiledIR(compiled);
     const wrapper = findIrNode(compiledIr.root, "__boundsvg:layout-transition-wrapper:7:tail");
     const authoredTail = findIrNode(compiledIr.root, "tail");
-    expect(wrapper.type === "group" ? wrapper.meta : undefined).toMatchObject({
-      "boundsvg.generated": "layout-transition-wrapper",
-      "boundsvg.sourceNodeId": "tail",
-    });
-    expect(wrapper.type === "group" ? wrapper.on : undefined).toBeUndefined();
-    expect(authoredTail.type === "group" ? authoredTail.on : undefined).toEqual({
-      onClick: "select-tail",
-    });
-    expect(hitTest(compiledIr, 40, 158)).toBe("tail");
-    expect(compiledIr.drawOrder.some((nodeId) => nodeId.startsWith("__boundsvg:"))).toBe(false);
-    const inspectCandidates = inspectHitTestCandidates(
-      buildInspectHitTestIndex(compiledIr),
-      40,
-      158,
-    );
+    expect(wrapper.ownership).toEqual({ role: "wrapper", placement: "outer", ownerNodeId: "tail" });
+    expect(
+      authoredTail.ownership.role === "source" ? authoredTail.ownership.on : undefined,
+    ).toEqual({ onClick: "select-tail" });
+    expect(hitTest(compiledIr, 40, 158)?.nodeId ?? null).toBe("tail");
+    expect(
+      [...buildIRSourceIndex(compiledIr).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId)
+        .some((nodeId) => nodeId.startsWith("__boundsvg:")),
+    ).toBe(false);
+    const inspectCandidates = buildInspectHitTestIndex(compiledIr)
+      .queryCandidates(40, 158)
+      .map((candidate) => candidate.source.nodeId);
     expect(inspectCandidates).toContain("tail");
-    expect(inspectCandidates).toContain("__boundsvg:layout-transition-wrapper:7:tail");
+    expect(inspectCandidates).not.toContain("__boundsvg:layout-transition-wrapper:7:tail");
 
     const internalSamples = JSON.parse(
-      handle.sampleAnimationState(JSON.stringify(compiledIr), 150),
+      handle.sampleAnimationState(serializeIrForWasm(compiledIr), 150),
     ) as RawAnimationStateSample[];
     expect(
-      internalSamples.some((sample) =>
-        sample.nodeId.startsWith("__boundsvg:layout-transition-wrapper:"),
+      internalSamples.some(
+        (sample) =>
+          buildIRSourceIndex(compiledIr).nodes.get(sample.nodeIndex)?.node.ownership.role ===
+          "wrapper",
       ),
     ).toBe(true);
   });

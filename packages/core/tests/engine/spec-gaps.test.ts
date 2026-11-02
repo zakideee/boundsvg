@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createEngine, type Engine } from "../../src/engine.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
 import { createEngineFromHandle, createFontedWasmHandle } from "../helpers/wasm-render-engine.js";
@@ -36,8 +37,8 @@ function mockComputeLayoutFn(inputJson: string): string {
       const fontSize = node.text.fontSizePx;
       const content = node.text.content;
       const advance = fontSize * 0.6;
-      const tw = Math.min(content.length * advance, w);
-      const ch = fontSize * 1.2;
+      const textWidth = Math.min(content.length * advance, w);
+      const lineHeight = fontSize * 1.2;
       const glyphs = [...content].map((_, i) => ({
         glyphId: i + 1,
         xAdvance: advance,
@@ -50,14 +51,14 @@ function mockComputeLayoutFn(inputJson: string): string {
         nodeId: node.nodeId,
         x: 0,
         y: 0,
-        width: tw,
-        height: ch,
+        width: textWidth,
+        height: lineHeight,
         textLayout: {
           glyphs: [],
-          measuredWidth: tw,
-          measuredHeight: ch,
-          lines: [{ text: content, glyphs, width: tw, baselineY: fontSize * 0.8 }],
-          bbox: { x: 0, y: 0, w: tw, h: ch },
+          measuredWidth: textWidth,
+          measuredHeight: lineHeight,
+          lines: [{ text: content, glyphs, width: textWidth, baselineY: fontSize * 0.8 }],
+          bbox: { x: 0, y: 0, w: textWidth, h: lineHeight },
           chosenFontSizePx: fontSize,
           overflow: { type: "none" },
         },
@@ -67,13 +68,13 @@ function mockComputeLayoutFn(inputJson: string): string {
     }
 
     if (node.children) {
-      for (const c of node.children as Array<{
+      for (const child of node.children as Array<{
         nodeId: string;
         style: Record<string, unknown>;
         children?: unknown[];
         text?: { content: string; fontSizePx: number };
       }>) {
-        collect(c);
+        collect(child);
       }
     }
   }
@@ -131,12 +132,22 @@ describe("HandlersRef on leaf nodes", () => {
 
     const ir = renderEngine.renderToIR(vnode, { skipValidation: true });
     // Find the text IRNode
-    const textNode = findNode(ir.root, "text");
+    const textNode = [...buildIRSourceIndex(ir).sources.values()].find(
+      (entry) => entry.source.nodeId === "t1",
+    )?.node;
     expect(textNode).toBeDefined();
-    expect(textNode!.on).toBeDefined();
-    expect(textNode!.on!.onClick).toBe("handleClick");
-    expect(textNode!.on!.onPointerEnter).toBe("handleEnter");
-    expect(textNode!.on!.onPointerCancel).toBe("handleCancel");
+    expect(
+      textNode!.ownership.role === "source" ? textNode!.ownership.on : undefined,
+    ).toBeDefined();
+    expect(
+      (textNode!.ownership.role === "source" ? textNode!.ownership.on : undefined)!.onClick,
+    ).toBe("handleClick");
+    expect(
+      (textNode!.ownership.role === "source" ? textNode!.ownership.on : undefined)!.onPointerEnter,
+    ).toBe("handleEnter");
+    expect(
+      (textNode!.ownership.role === "source" ? textNode!.ownership.on : undefined)!.onPointerCancel,
+    ).toBe("handleCancel");
   });
 
   it("image node carries on field", () => {
@@ -153,10 +164,14 @@ describe("HandlersRef on leaf nodes", () => {
     );
 
     const ir = renderEngine.renderToIR(vnode, { skipValidation: true });
-    const imgNode = findNode(ir.root, "image");
+    const imgNode = [...buildIRSourceIndex(ir).sources.values()].find(
+      (entry) => entry.source.nodeId === "img1",
+    )?.node;
     expect(imgNode).toBeDefined();
-    expect(imgNode!.on).toBeDefined();
-    expect(imgNode!.on!.onClick).toBe("imgClick");
+    expect(imgNode!.ownership.role === "source" ? imgNode!.ownership.on : undefined).toBeDefined();
+    expect(
+      (imgNode!.ownership.role === "source" ? imgNode!.ownership.on : undefined)!.onClick,
+    ).toBe("imgClick");
   });
 
   it("path node carries on field", () => {
@@ -173,10 +188,16 @@ describe("HandlersRef on leaf nodes", () => {
     );
 
     const ir = renderEngine.renderToIR(vnode, { skipValidation: true });
-    const pathNode = findNode(ir.root, "path");
+    const pathNode = [...buildIRSourceIndex(ir).sources.values()].find(
+      (entry) => entry.source.nodeId === "p1",
+    )?.node;
     expect(pathNode).toBeDefined();
-    expect(pathNode!.on).toBeDefined();
-    expect(pathNode!.on!.onClick).toBe("pathClick");
+    expect(
+      pathNode!.ownership.role === "source" ? pathNode!.ownership.on : undefined,
+    ).toBeDefined();
+    expect(
+      (pathNode!.ownership.role === "source" ? pathNode!.ownership.on : undefined)!.onClick,
+    ).toBe("pathClick");
   });
 
   it("container group nodes carry on field when handlers are set", () => {
@@ -194,8 +215,10 @@ describe("HandlersRef on leaf nodes", () => {
     const ir = renderEngine.renderToIR(vnode, { skipValidation: true });
     const boxGroup = ir.root.children![0]!;
     expect(boxGroup.type).toBe("group");
-    expect(boxGroup.on).toBeDefined();
-    expect(boxGroup.on!.onClick).toBe("boxClick");
+    expect(boxGroup.ownership.role === "source" ? boxGroup.ownership.on : undefined).toBeDefined();
+    expect(
+      (boxGroup.ownership.role === "source" ? boxGroup.ownership.on : undefined)!.onClick,
+    ).toBe("boxClick");
   });
 
   it("container group nodes without handlers have no on field", () => {
@@ -212,51 +235,8 @@ describe("HandlersRef on leaf nodes", () => {
     const ir = renderEngine.renderToIR(vnode, { skipValidation: true });
     const boxGroup = ir.root.children![0]!;
     expect(boxGroup.type).toBe("group");
-    expect(boxGroup.on).toBeUndefined();
+    expect(
+      boxGroup.ownership.role === "source" ? boxGroup.ownership.on : undefined,
+    ).toBeUndefined();
   });
 });
-
-/** Helper: recursively find first IRNode of a given type */
-function findNode(
-  node: { type: string; children?: Array<{ type: string; children?: unknown[]; on?: unknown }> },
-  type: string,
-):
-  | {
-      type: string;
-      on?: {
-        onClick?: string;
-        onPointerMove?: string;
-        onPointerEnter?: string;
-        onPointerLeave?: string;
-        onPointerCancel?: string;
-      };
-    }
-  | undefined {
-  if (node.type === type) {
-    return node as {
-      type: string;
-      on?: {
-        onClick?: string;
-        onPointerMove?: string;
-        onPointerEnter?: string;
-        onPointerLeave?: string;
-        onPointerCancel?: string;
-      };
-    };
-  }
-  if (node.children) {
-    for (const c of node.children) {
-      const found = findNode(
-        c as {
-          type: string;
-          children?: Array<{ type: string; children?: unknown[]; on?: unknown }>;
-        },
-        type,
-      );
-      if (found) {
-        return found;
-      }
-    }
-  }
-  return undefined;
-}

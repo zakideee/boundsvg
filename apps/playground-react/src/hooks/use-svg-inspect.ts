@@ -9,16 +9,16 @@
  * - `useSvgInspectFromData` — for Worker pages (accepts pre-computed SVG + IR)
  */
 
-import { resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
+import { bindIRToSvg, resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
 import {
   buildInspectHitTestIndex,
-  buildNodeTypeMap,
+  buildIRSourceIndex,
   type IR,
-  inspectHitTestCandidates,
+  type IRSourceRef,
 } from "@boundsvg/core/scene";
 import type { Engine, RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/react";
 import Prism from "prismjs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   highlightCodeLines,
   wrapInLineElements,
@@ -39,23 +39,26 @@ import { buildNodeLineMap, type NodeLineRange } from "../../../playground-shared
 
 function createHitTester(ir: IR): InspectHitTestFn {
   const index = buildInspectHitTestIndex(ir);
-  const nodeTypeMap = buildNodeTypeMap(ir);
+  let binding: ReturnType<typeof bindIRToSvg> | null = null;
   return (svgEl, clientX, clientY) => {
     const coords = translateSvgCoords(svgEl, clientX, clientY);
     if (!coords) {
       return null;
     }
-    const candidates = inspectHitTestCandidates(index, coords.x, coords.y);
-    return resolveHitTarget(svgEl, candidates, nodeTypeMap, clientX, clientY);
+    const candidates = index.queryCandidates(coords.x, coords.y);
+    if (binding?.root !== svgEl) {
+      binding = bindIRToSvg(svgEl, index.sourceIndex);
+    }
+    return resolveHitTarget(binding, candidates, clientX, clientY);
   };
 }
 
-function buildLineToNodeMap(lineMap: Map<string, NodeLineRange>): Map<number, string> {
-  const result = new Map<number, string>();
-  for (const [nodeId, range] of lineMap) {
+function buildLineToSourceMap(lineMap: Map<number, NodeLineRange>): Map<number, number> {
+  const result = new Map<number, number>();
+  for (const [sourceOrdinal, range] of lineMap) {
     for (let line = range.start; line <= range.end; line++) {
       if (!result.has(line)) {
-        result.set(line, nodeId);
+        result.set(line, sourceOrdinal);
       }
     }
   }
@@ -69,8 +72,9 @@ function buildLineToNodeMap(lineMap: Map<string, NodeLineRange>): Map<number, st
 type SvgRenderData = {
   highlightedSvg: string;
   ir: IR | null;
-  nodeLineMap: Map<string, NodeLineRange> | null;
-  lineToNodeMap: Map<number, string> | null;
+  nodeLineMap: Map<number, NodeLineRange> | null;
+  lineToSourceMap: Map<number, number> | null;
+  sources: ReturnType<typeof buildIRSourceIndex>["sources"] | null;
 };
 
 /** Empty inspection state while render artifacts are unavailable. */
@@ -78,17 +82,19 @@ const EMPTY_DATA: SvgRenderData = {
   highlightedSvg: "",
   ir: null,
   nodeLineMap: null,
-  lineToNodeMap: null,
+  lineToSourceMap: null,
+  sources: null,
 };
 
 /** Format raw SVG string into highlighted, line-wrapped HTML for code display. */
 function computeSvgRenderData(svgString: string, ir: IR): SvgRenderData {
   const formatted = formatSvgCode(svgString);
-  const nodeLineMap = buildNodeLineMap(formatted);
-  const lineToNodeMap = buildLineToNodeMap(nodeLineMap);
+  const sourceIndex = buildIRSourceIndex(ir);
+  const nodeLineMap = buildNodeLineMap(formatted, sourceIndex);
+  const lineToSourceMap = buildLineToSourceMap(nodeLineMap);
   const highlighted = Prism.highlight(formatted, getPrismGrammar("markup"), "markup");
   const highlightedSvg = wrapInLineElements(highlighted);
-  return { highlightedSvg, ir, nodeLineMap, lineToNodeMap };
+  return { highlightedSvg, ir, nodeLineMap, lineToSourceMap, sources: sourceIndex.sources };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,7 +125,9 @@ function useInspectHover(
 
   // Track the current IR so the MutationObserver can detect stale closures.
   const currentIrRef = useRef<IR | null>(null);
-  currentIrRef.current = data.ir;
+  useLayoutEffect(() => {
+    currentIrRef.current = data.ir;
+  }, [data.ir]);
 
   // ---- Inspect hover on preview container (SVG → code direction) ----
   useEffect(() => {
@@ -132,11 +140,11 @@ function useInspectHover(
     const nodeLineMap = data.nodeLineMap;
     const hitTester = createHitTester(ir);
 
-    const onHover = (nodeId: string | null): void => {
+    const onHover = (source: IRSourceRef | null): void => {
       if (!codeEl || !nodeLineMap) {
         return;
       }
-      const range = nodeId ? (nodeLineMap.get(nodeId) ?? null) : null;
+      const range = source ? (nodeLineMap.get(source.sourceIndex) ?? null) : null;
       highlightCodeLines(codeEl, range);
     };
 
@@ -195,11 +203,11 @@ function useInspectHover(
 
   // ---- Code-line hover on code block (code → SVG direction) ----
   useEffect(() => {
-    if (!codeEl || !data.nodeLineMap || !data.lineToNodeMap) {
+    if (!codeEl || !data.nodeLineMap || !data.lineToSourceMap) {
       return;
     }
 
-    const { nodeLineMap, lineToNodeMap } = data;
+    const { nodeLineMap, lineToSourceMap } = data;
 
     const onMouseOver = (e: MouseEvent): void => {
       const target = (e.target as HTMLElement).closest?.(".code-line") as HTMLElement | null;
@@ -207,11 +215,11 @@ function useInspectHover(
         return;
       }
       const lineNum = Number(target.dataset.line);
-      const nodeId = lineToNodeMap.get(lineNum) ?? null;
-      if (nodeId) {
-        const range = nodeLineMap.get(nodeId) ?? null;
+      const sourceOrdinal = lineToSourceMap.get(lineNum) ?? null;
+      if (sourceOrdinal !== null) {
+        const range = nodeLineMap.get(sourceOrdinal) ?? null;
         highlightCodeLines(codeEl, range);
-        inspectHandleRef.current?.highlight(nodeId);
+        inspectHandleRef.current?.highlight(data.sources?.get(sourceOrdinal)?.source ?? null);
       } else {
         highlightCodeLines(codeEl, null);
         inspectHandleRef.current?.highlight(null);

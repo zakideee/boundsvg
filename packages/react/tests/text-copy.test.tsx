@@ -35,7 +35,7 @@ async function mountTextCopy(): Promise<{
   const root = createRoot(container);
 
   function Probe() {
-    textCopyResult = useTextCopy(null, null);
+    textCopyResult = useTextCopy(null);
     return null;
   }
 

@@ -111,6 +111,11 @@ fn layout_output_checks_f32_geometry_before_json_conversion() {
 fn animation_output_rejects_optional_opacity_and_every_affine_channel() {
     for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let sample = AnimationStateSample {
+            node_index: 0,
+            source: crate::ir::ownership::IrSourceRef {
+                source_index: 0,
+                node_id: "node".into(),
+            },
             node_id: "node".to_string(),
             opacity: Some(invalid),
             transform: None,
@@ -137,6 +142,11 @@ fn animation_output_rejects_optional_opacity_and_every_affine_channel() {
                 _ => matrix.f = invalid,
             }
             let sample = AnimationStateSample {
+                node_index: 0,
+                source: crate::ir::ownership::IrSourceRef {
+                    source_index: 0,
+                    node_id: "node".into(),
+                },
                 node_id: "node".to_string(),
                 opacity: None,
                 transform: Some(matrix),
@@ -149,6 +159,11 @@ fn animation_output_rejects_optional_opacity_and_every_affine_channel() {
     }
     for opacity in [-f64::MAX, -0.0, 0.0, f64::MAX] {
         let sample = AnimationStateSample {
+            node_index: 0,
+            source: crate::ir::ownership::IrSourceRef {
+                source_index: 0,
+                node_id: "node".into(),
+            },
             node_id: "node".to_string(),
             opacity: Some(opacity),
             transform: None,
@@ -158,6 +173,11 @@ fn animation_output_rejects_optional_opacity_and_every_affine_channel() {
         assert_eq!(encoded["opacity"], json!(opacity));
     }
     let sample = AnimationStateSample {
+        node_index: 0,
+        source: crate::ir::ownership::IrSourceRef {
+            source_index: 0,
+            node_id: "node".into(),
+        },
         node_id: "node".to_string(),
         opacity: None,
         transform: None,
@@ -165,13 +185,13 @@ fn animation_output_rejects_optional_opacity_and_every_affine_channel() {
     assert_eq!(
         serde_json::to_value(FiniteOutput::try_new(vec![sample]).expect("absent pose"))
             .expect("JSON"),
-        json!([{"nodeId": "node"}])
+        json!([{"nodeIndex":0,"source":{"sourceIndex":0,"nodeId":"node"},"nodeId": "node"}])
     );
 }
 
 #[test]
 fn finite_animation_inputs_can_report_a_typed_output_overflow() {
-    let root = serde_json::from_value::<IrNodeInput>(json!({
+    let root = serde_json::from_value::<IrNodeInput>(json!({ "ownership": { "role": "source" },
         "nodeId": "node", "type": "group", "bbox": {"x":0,"y":0,"w":10,"h":10},
         "animation": {
             "durationMs": 100, "easing": "linear", "fill": "both",
@@ -184,7 +204,7 @@ fn finite_animation_inputs_can_report_a_typed_output_overflow() {
     .expect("finite input DTO");
     let source = Ir {
         root: IrNode::from(root),
-        draw_order: vec!["node".to_string()],
+
         width: 10.0,
         height: 10.0,
         debug: None,

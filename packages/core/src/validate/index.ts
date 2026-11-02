@@ -290,10 +290,13 @@ const Z_INDEX_SUPPORTED_TYPES = new Set<VNodeType>([
   "Symbol",
 ]);
 
+/** Allowed authoring metadata keys, also used by the raw IR source contract. */
 const META_KEY_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
+/** Maximum metadata entries on one authored source. */
 const META_MAX_KEYS = 16;
 
+/** Maximum UTF-16 code units in one authored metadata value. */
 const META_MAX_VALUE_LENGTH = 256;
 
 function validateMetaProp(node: VNode, nid: string): void {

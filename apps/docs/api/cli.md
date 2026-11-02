@@ -37,7 +37,7 @@ boundsvg inspect \
   --output-format json
 ```
 
-`inspect` builds the same VNode input as `export`, then reports canvas size, node counts, draw order, node ID validation, warnings, missing glyph counts, overflow text node counts, and bboxes.
+`inspect` builds the same VNode input as `export`, then reports canvas size, node counts, physical paint order, source occurrences, node ID validation, warnings, missing glyph counts, overflow text node counts, and bboxes.
 
 ## `boundsvg doctor`
 
@@ -211,7 +211,7 @@ out/card.layers/
 └── 002-text.svg
 ```
 
-Each layer file name is `NNN-<sanitized-id>.<ext>`, where `NNN` is the layer's zero-padded position in the back-to-front `layers` array — its index, not its `paintOrder` value (the layer's lowest index into `ir.drawOrder`; that sequence counts draw operations rather than layers — one node can emit several, and some entries belong to no layer at all, so the index and `paintOrder` can diverge) — and the id is reduced to `[A-Za-z0-9_-]` with `-` replacing anything else and runs of `-` collapsed to one; case is preserved. An id with no allowed characters becomes `-` (`日本語` → `001--.svg`), never empty. Join on each layer's `fileName` in `manifest.json` rather than rebuilding the name. stdout is not supported for layered formats.
+Each layer file name is `NNN-<sanitized-id>.<ext>`, where `NNN` is the layer's zero-padded position in the back-to-front `layers` array — its index, not its `paintOrder` value (the lowest primitive ordinal from the original IR tree; a source can own several paints, so layer indices and paint ordinals can differ) — and the id is reduced to `[A-Za-z0-9_-]` with `-` replacing anything else and runs of `-` collapsed to one; case is preserved. An id with no allowed characters becomes `-` (`日本語` → `001--.svg`), never empty. Join on each layer's `fileName` in `manifest.json` rather than rebuilding the name. stdout is not supported for layered formats.
 
 `manifest.json` for `layered-svg`:
 
@@ -225,7 +225,12 @@ Each layer file name is `NNN-<sanitized-id>.<ext>`, where `NNN` is the layer's z
       "fileName": "000-background.svg",
       "mode": "independent",
       "paintOrder": 0,
-      "nodeIds": ["bg"],
+      "sources": [
+        {
+          "source": { "sourceIndex": 1, "nodeId": "bg" },
+          "layerSourceIndex": 1
+        }
+      ],
       "bbox": { "x": 0, "y": 0, "width": 320, "height": 180 },
       "warnings": []
     }

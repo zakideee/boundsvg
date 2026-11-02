@@ -24,6 +24,9 @@ export type HandlersRef = GeneratedHandlersRef;
 /** Intermediate Representation node, discriminated by `type`. */
 export type IRNode = GeneratedIrNode;
 
+/** Explicit structural role and source-owned event/application metadata. */
+export type IRNodeOwnership = IRNode["ownership"];
+
 /** Public IR node discriminants. */
 export type IRNodeType = IRNode["type"];
 

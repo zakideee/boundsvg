@@ -30,6 +30,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::error::EngineError;
 use crate::ir::animation_timeline::{CssIterationCount, DocumentAnimationPlan, DocumentKeyframe};
+use crate::ir::ownership::{IrSourceIndex, build_source_index};
 use crate::ir::types::{
     AnimationSpec, BBox, BorderRadius, BoxShadow, Gradient, Ir, IrNode, IrNodeKind, IrTextAlign,
     ShapePathPart, StrokeLinecap, StrokeLinejoin, StrokeScaling, TextOutlinePath, TextPaint,
@@ -173,8 +174,6 @@ pub struct PaintScene {
     pub width: f64,
     pub height: f64,
     pub scale: f64,
-    pub root_node_id: String,
-    pub root_meta: Option<BTreeMap<String, String>>,
     pub generator: Option<crate::output_generator::OutputGenerator>,
     pub defs: SceneDefs,
     pub animations: Vec<AnimationStyle>,
@@ -294,12 +293,38 @@ pub enum PaintItem {
     DebugLine(DebugLineItem),
 }
 
+/// IR occurrence associated with a generated SVG endpoint in one render scope.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeAssociation {
+    /// Physical preorder ordinal in the original IR.
+    pub node_index: usize,
+    /// Preorder ordinal of the owning source occurrence.
+    pub source_index: usize,
+    /// Explicit source, content, decoration or wrapper role.
+    pub role: &'static str,
+    /// Semantic node label, present only for source anchors.
+    pub source_node_id: Option<String>,
+    /// Business metadata, present only on source anchors.
+    pub meta: Option<BTreeMap<String, String>>,
+}
+
+fn node_association(node: &IrNode, index: &IrSourceIndex) -> NodeAssociation {
+    let occurrence = index.occurrence(node);
+    NodeAssociation {
+        node_index: occurrence.node_index,
+        source_index: occurrence.source_index,
+        role: node.ownership.role(),
+        source_node_id: node.ownership.is_source().then(|| node.node_id.clone()),
+        meta: node.ownership.metadata().cloned(),
+    }
+}
+
 /// Resolved attributes of a `<g>` opening tag, in emission order.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GroupOpenItem {
-    /// `None` for anonymous wrappers (debug overlay transform/clip groups).
-    pub node_id: Option<String>,
-    pub meta: Option<BTreeMap<String, String>>,
+    /// Absent on anonymous debug carrier groups.
+    /// Physical endpoint association, absent for anonymous debug groups.
+    pub association: Option<NodeAssociation>,
     pub transform: Option<String>,
     pub clip_ref: Option<String>,
     pub filter_ref: Option<String>,
@@ -313,9 +338,8 @@ pub struct GroupOpenItem {
 #[derive(Debug, Clone, PartialEq)]
 /// A rectangle paint primitive with resolved fill and stroke geometry.
 pub struct RectItem {
-    pub node_id: String,
-    /// Internal `:bg` / `:border` rects omit the node-id attribute.
-    pub emit_node_id_attr: bool,
+    /// Physical endpoint and semantic source in this render snapshot.
+    pub association: NodeAssociation,
     pub bbox: BBox,
     pub border_radius: Option<BorderRadius>,
     /// Gradient fill resource id (wins over `fill`).
@@ -407,7 +431,8 @@ pub struct TextDecorationItem {
 #[derive(Debug, Clone, PartialEq)]
 /// Resolved text paint: glyph fills, effect layers, and independent text decorations.
 pub struct TextItem {
-    pub node_id: String,
+    /// Physical endpoint and semantic source in this render snapshot.
+    pub association: NodeAssociation,
     /// Line texts joined with `\n` (drives `data-boundsvg-text`/`aria-label`).
     pub label: String,
     pub font_size_px: f64,
@@ -418,8 +443,10 @@ pub struct TextItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Positioned raster image paint associated with one physical IR occurrence.
 pub struct ImageItem {
-    pub node_id: String,
+    /// Physical endpoint and semantic source in this render snapshot.
+    pub association: NodeAssociation,
     pub bbox: BBox,
     pub src: String,
     pub preserve_aspect_ratio: String,
@@ -428,7 +455,8 @@ pub struct ImageItem {
 #[derive(Debug, Clone, PartialEq)]
 /// Resolved path paint used by Path primitives and owner-generated box outlines.
 pub struct PathItem {
-    pub node_id: String,
+    /// Physical endpoint and semantic source in this render snapshot.
+    pub association: NodeAssociation,
     pub bbox: BBox,
     pub d: String,
     pub fill: Option<String>,
@@ -443,8 +471,10 @@ pub struct PathItem {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Opaque embedded SVG paint and its physical endpoint association.
 pub struct NestedSvgItem {
-    pub node_id: String,
+    /// Physical endpoint and semantic source in this render snapshot.
+    pub association: NodeAssociation,
     pub bbox: BBox,
     pub content: String,
     pub view_box: Option<String>,
@@ -478,8 +508,10 @@ pub struct SplitShapePath {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Resolved structural shape parts and their shared physical endpoint association.
 pub struct ShapeItem {
-    pub node_id: String,
+    /// Physical endpoint and semantic source in this render snapshot.
+    pub association: NodeAssociation,
     pub bbox: BBox,
     pub parts: Vec<ShapePartItem>,
 }
@@ -527,10 +559,11 @@ pub fn resolve_paint_scene(
     options: &PaintSceneOptions,
 ) -> Result<PaintScene, EngineError> {
     crate::ir::numeric_envelope::validate(ir)?;
+    let source_index = build_source_index(&ir.root)?;
     let identifier_namespace = SvgIdentifierNamespace::new(&options.resource_id_prefix);
 
     let mut defs = SceneDefs::default();
-    collect_defs(&ir.root, &mut defs, &identifier_namespace);
+    collect_defs(&ir.root, &mut defs, &identifier_namespace, &source_index);
     let shared_shape_paths =
         collect_shared_shape_paths(&ir.root, &identifier_namespace, &mut defs)?;
     let declarative_animation = options.animation_mode == AnimationMode::Declarative;
@@ -539,7 +572,12 @@ pub fn resolve_paint_scene(
         if let Some(timeline_plan) = &options.timeline_plan {
             collect_timeline_animations(timeline_plan, &identifier_namespace, &mut animations)?;
         } else {
-            collect_animations(&ir.root, &identifier_namespace, &mut animations)?;
+            collect_animations(
+                &ir.root,
+                &identifier_namespace,
+                &mut animations,
+                &source_index,
+            )?;
         }
     }
 
@@ -550,41 +588,37 @@ pub fn resolve_paint_scene(
         shared: &shared_shape_paths,
         declarative_animation,
         output_scale: options.scale,
+        source_index: &source_index,
     };
-    if let IrNodeKind::Group { children, .. } = &ir.root.kind {
-        for child in children {
-            resolve_node(
-                child,
-                &resolve_options,
-                AffineMatrix::identity(),
-                false,
-                &mut items,
-                &mut canvas_stroke_state,
-            )?;
-        }
-    }
+    resolve_node(
+        &ir.root,
+        &resolve_options,
+        AffineMatrix::identity(),
+        false,
+        &mut items,
+        &mut canvas_stroke_state,
+    )?;
 
     let debug_parts = resolve_debug_overlay_parts(&options.debug, ir.debug);
     let debug_items = match debug_parts {
         Some(parts) => {
             let mut overlay: Vec<PaintItem> = Vec::new();
-            resolve_debug_overlays(&ir.root, &identifier_namespace, parts, &mut overlay);
+            resolve_debug_overlays(
+                &ir.root,
+                &identifier_namespace,
+                &source_index,
+                parts,
+                &mut overlay,
+            );
             Some(overlay)
         }
         None => None,
-    };
-
-    let root_meta = match &ir.root.kind {
-        IrNodeKind::Group { meta, .. } => meta.clone(),
-        _ => None,
     };
 
     Ok(PaintScene {
         width: ir.width,
         height: ir.height,
         scale: options.scale,
-        root_node_id: ir.root.node_id.clone(),
-        root_meta,
         generator: options.generator.clone(),
         defs,
         animations,
@@ -616,7 +650,9 @@ fn collect_animations(
     node: &IrNode,
     identifier_namespace: &SvgIdentifierNamespace,
     animations: &mut Vec<AnimationStyle>,
+    source_index: &IrSourceIndex,
 ) -> Result<(), EngineError> {
+    let resource_key = source_index.resource_key(node);
     match &node.kind {
         IrNodeKind::Group {
             children,
@@ -626,7 +662,7 @@ fn collect_animations(
             if let Some(spec) = animation {
                 crate::ir::numeric_envelope::validate_independent_css_skew(spec, &node.node_id)?;
                 let (class_name, keyframes_name) =
-                    animation_names(&node.node_id, identifier_namespace);
+                    animation_names(&resource_key, identifier_namespace);
                 animations.push(AnimationStyle {
                     class_name,
                     keyframes_name,
@@ -635,7 +671,7 @@ fn collect_animations(
                 });
             }
             for child in children {
-                collect_animations(child, identifier_namespace, animations)?;
+                collect_animations(child, identifier_namespace, animations, source_index)?;
             }
         }
         IrNodeKind::Text {
@@ -682,7 +718,7 @@ fn collect_animations(
                         + f64::from(order_index) * unit_animation.delay_step_ms.unwrap_or(0.0),
                 );
                 let (class_name, keyframes_name) =
-                    unit_animation_names(&node.node_id, unit_index, identifier_namespace);
+                    unit_animation_names(&resource_key, unit_index, identifier_namespace);
                 animations.push(AnimationStyle {
                     class_name,
                     keyframes_name,
@@ -704,7 +740,7 @@ fn collect_timeline_animations(
     for track in &plan.tracks {
         crate::ir::numeric_envelope::validate_timeline_css_skew(&track.keyframes, &track.owner_id)?;
         let (class_name, keyframes_name) =
-            animation_names(&track.animation_name_owner, identifier_namespace);
+            animation_names(&track.animation_resource_key, identifier_namespace);
         animations.push(AnimationStyle {
             class_name,
             keyframes_name,
@@ -793,7 +829,9 @@ fn collect_defs(
     node: &IrNode,
     defs: &mut SceneDefs,
     identifier_namespace: &SvgIdentifierNamespace,
+    source_index: &IrSourceIndex,
 ) {
+    let resource_key = source_index.resource_key(node);
     match &node.kind {
         IrNodeKind::Group {
             children,
@@ -804,15 +842,15 @@ fn collect_defs(
             if let Some(clip) = clip {
                 defs.clip_paths.push(ClipPathDef {
                     id: identifier_namespace
-                        .identifier(SvgIdentifierRole::ClipPathId, &node.node_id),
+                        .identifier(SvgIdentifierRole::ClipPathId, &resource_key),
                     clip: clip.clone(),
                 });
             }
             if let Some(shadow) = box_shadow {
-                push_box_shadow_filter(defs, shadow, &node.node_id, identifier_namespace);
+                push_box_shadow_filter(defs, shadow, &resource_key, identifier_namespace);
             }
             for child in children {
-                collect_defs(child, defs, identifier_namespace);
+                collect_defs(child, defs, identifier_namespace, source_index);
             }
         }
         IrNodeKind::Rect {
@@ -820,7 +858,7 @@ fn collect_defs(
             ..
         } => {
             defs.gradients.push(GradientDef {
-                id: identifier_namespace.identifier(SvgIdentifierRole::GradientId, &node.node_id),
+                id: identifier_namespace.identifier(SvgIdentifierRole::GradientId, &resource_key),
                 bbox: node.bbox,
                 gradient: gradient.clone(),
             });
@@ -833,7 +871,7 @@ fn collect_defs(
         } => {
             for (index, resource) in gradients.iter().flatten().enumerate() {
                 defs.gradients.push(GradientDef {
-                    id: text_gradient_id(&node.node_id, index, identifier_namespace),
+                    id: text_gradient_id(&resource_key, index, identifier_namespace),
                     bbox: resource.bbox,
                     gradient: resource.gradient.clone(),
                 });
@@ -847,7 +885,7 @@ fn collect_defs(
                     defs.filters.push(FilterDef {
                         id: identifier_namespace.identifier(
                             SvgIdentifierRole::FilterId,
-                            &format!("{}:ts{layer_index}", node.node_id),
+                            &format!("{resource_key}:ts{layer_index}"),
                         ),
                         dx: shadow.dx,
                         dy: shadow.dy,
@@ -863,7 +901,7 @@ fn collect_defs(
                     defs.filters.push(FilterDef {
                         id: identifier_namespace.identifier(
                             SvgIdentifierRole::FilterId,
-                            &format!("{}:ts{layer_index}", node.node_id),
+                            &format!("{resource_key}:ts{layer_index}"),
                         ),
                         dx: shadow.dx,
                         dy: shadow.dy,
@@ -878,7 +916,7 @@ fn collect_defs(
                         defs.filters.push(FilterDef {
                             id: identifier_namespace.identifier(
                                 SvgIdentifierRole::FilterId,
-                                &format!("{}:pr{range_index}:ts{layer_index}", node.node_id),
+                                &format!("{resource_key}:pr{range_index}:ts{layer_index}"),
                             ),
                             dx: shadow.dx,
                             dy: shadow.dy,
@@ -1026,6 +1064,7 @@ fn collect_shape_part_occurrences(
 // ---------------------------------------------------------------------------
 
 struct ResolveNodeOptions<'a> {
+    source_index: &'a IrSourceIndex<'a>,
     identifier_namespace: &'a SvgIdentifierNamespace,
     shared: &'a SharedShapePathIndex,
     declarative_animation: bool,
@@ -1120,6 +1159,7 @@ struct CanvasStrokeRequest<'a> {
     stroke_width: Option<f64>,
     stroke_dasharray: Option<&'a str>,
     owner_node_id: &'a str,
+    resource_key: &'a str,
     ancestor_matrix: AffineMatrix,
     ancestor_has_unsupported_transform: bool,
 }
@@ -1168,7 +1208,7 @@ fn resolve_canvas_stroke(
         });
     }
     let class_name = canvas_stroke_class_name(
-        request.owner_node_id,
+        request.resource_key,
         options.identifier_namespace,
         &mut canvas_stroke_state.class_counts,
         &mut canvas_stroke_state.used_class_names,
@@ -1191,33 +1231,36 @@ fn resolve_node(
     items: &mut Vec<PaintItem>,
     canvas_stroke_state: &mut CanvasStrokeState,
 ) -> Result<(), EngineError> {
+    let association = node_association(node, options.source_index);
+    let resource_key = options.source_index.resource_key(node);
+    let owner_node_id = &options.source_index.nodes[association.source_index]
+        .node
+        .node_id;
     match &node.kind {
         IrNodeKind::Group {
             children,
             clip,
             opacity,
             box_shadow,
-            meta,
             transform,
             animation,
             ..
         } => {
             let animation_identifiers = (options.declarative_animation && animation.is_some())
-                .then(|| animation_names(&node.node_id, options.identifier_namespace));
+                .then(|| animation_names(&resource_key, options.identifier_namespace));
             let has_body = !children.is_empty();
             let open = GroupOpenItem {
-                node_id: Some(node.node_id.clone()),
-                meta: meta.clone(),
+                association: Some(association.clone()),
                 transform: node_transform_attr(transform.as_ref(), node.bbox),
                 clip_ref: clip.is_some().then(|| {
                     options
                         .identifier_namespace
-                        .identifier(SvgIdentifierRole::ClipPathId, &node.node_id)
+                        .identifier(SvgIdentifierRole::ClipPathId, &resource_key)
                 }),
                 filter_ref: box_shadow.is_some().then(|| {
                     options
                         .identifier_namespace
-                        .identifier(SvgIdentifierRole::FilterId, &node.node_id)
+                        .identifier(SvgIdentifierRole::FilterId, &resource_key)
                 }),
                 opacity: (*opacity).filter(|value| *value != 1.0),
                 animation_class: animation_identifiers
@@ -1247,14 +1290,17 @@ fn resolve_node(
             Ok(())
         }
         IrNodeKind::Rect { stroke_scaling, .. } => {
-            if let Some(mut rect_item) = resolve_rect_item(node, options.identifier_namespace) {
+            if let Some(mut rect_item) =
+                resolve_rect_item(node, options.identifier_namespace, options.source_index)
+            {
                 if let Some(resolved_stroke) = resolve_canvas_stroke(
                     &CanvasStrokeRequest {
                         stroke_scaling: *stroke_scaling,
                         stroke: rect_item.stroke.as_deref(),
                         stroke_width: rect_item.stroke_width,
                         stroke_dasharray: rect_item.stroke_dasharray.as_deref(),
-                        owner_node_id: &node.node_id,
+                        owner_node_id,
+                        resource_key: &resource_key,
                         ancestor_matrix,
                         ancestor_has_unsupported_transform,
                     },
@@ -1273,8 +1319,11 @@ fn resolve_node(
                 node,
                 options.identifier_namespace,
                 options.declarative_animation,
+                options.source_index,
             ) {
                 items.push(PaintItem::Text(text_item));
+            } else {
+                push_empty_endpoint(association, items);
             }
             Ok(())
         }
@@ -1283,9 +1332,11 @@ fn resolve_node(
             preserve_aspect_ratio,
             ..
         } => {
-            if !src.is_empty() {
+            if src.is_empty() {
+                push_empty_endpoint(association, items);
+            } else {
                 items.push(PaintItem::Image(ImageItem {
-                    node_id: node.node_id.clone(),
+                    association: association.clone(),
                     bbox: node.bbox,
                     src: src.clone(),
                     preserve_aspect_ratio: preserve_aspect_ratio.clone(),
@@ -1306,9 +1357,11 @@ fn resolve_node(
             stroke_miterlimit,
             ..
         } => {
-            if !path_data.is_empty() {
+            if path_data.is_empty() {
+                push_empty_endpoint(association, items);
+            } else {
                 let mut path_item = PathItem {
-                    node_id: node.node_id.clone(),
+                    association: association.clone(),
                     bbox: node.bbox,
                     d: path_data.clone(),
                     fill: fill.clone(),
@@ -1330,10 +1383,8 @@ fn resolve_node(
                         stroke: path_item.stroke.as_deref(),
                         stroke_width: path_item.stroke_width,
                         stroke_dasharray: stroke_dasharray.as_deref(),
-                        owner_node_id: node
-                            .node_id
-                            .strip_suffix(":outline")
-                            .unwrap_or(&node.node_id),
+                        owner_node_id,
+                        resource_key: &resource_key,
                         ancestor_matrix,
                         ancestor_has_unsupported_transform,
                     },
@@ -1353,9 +1404,11 @@ fn resolve_node(
             preserve_aspect_ratio,
             ..
         } => {
-            if !content.is_empty() {
+            if content.is_empty() {
+                push_empty_endpoint(association, items);
+            } else {
                 items.push(PaintItem::NestedSvg(NestedSvgItem {
-                    node_id: node.node_id.clone(),
+                    association: association.clone(),
                     bbox: node.bbox,
                     content: content.clone(),
                     view_box: view_box.clone(),
@@ -1365,25 +1418,34 @@ fn resolve_node(
             Ok(())
         }
         IrNodeKind::Shape { shape_parts, .. } => {
-            if !shape_parts.is_empty() {
-                items.push(PaintItem::Shape(resolve_shape_item(node, options.shared)?));
+            if shape_parts.is_empty() {
+                push_empty_endpoint(association, items);
+            } else {
+                items.push(PaintItem::Shape(resolve_shape_item(
+                    node,
+                    options.shared,
+                    options.source_index,
+                )?));
             }
             Ok(())
         }
     }
 }
 
-fn is_internal_render_node_id(node_id: &str) -> bool {
-    node_id.ends_with(":bg")
-        || node_id.ends_with(":border")
-        || node_id.ends_with(":outline")
-        || node_id.ends_with(":content")
+fn push_empty_endpoint(association: NodeAssociation, items: &mut Vec<PaintItem>) {
+    items.push(PaintItem::GroupOpen(GroupOpenItem {
+        association: Some(association),
+        self_close: true,
+        ..GroupOpenItem::default()
+    }));
 }
 
 fn resolve_rect_item(
     node: &IrNode,
     identifier_namespace: &SvgIdentifierNamespace,
+    source_index: &IrSourceIndex,
 ) -> Option<RectItem> {
+    let resource_key = source_index.resource_key(node);
     let IrNodeKind::Rect {
         fill,
         gradient,
@@ -1400,13 +1462,12 @@ fn resolve_rect_item(
         return None;
     };
     Some(RectItem {
-        emit_node_id_attr: !is_internal_render_node_id(&node.node_id),
-        node_id: node.node_id.clone(),
+        association: node_association(node, source_index),
         bbox: node.bbox,
         border_radius: *border_radius,
         gradient_ref: gradient
             .is_some()
-            .then(|| identifier_namespace.identifier(SvgIdentifierRole::GradientId, &node.node_id)),
+            .then(|| identifier_namespace.identifier(SvgIdentifierRole::GradientId, &resource_key)),
         fill: fill.clone(),
         stroke: stroke.clone(),
         stroke_width: *stroke_width,
@@ -1523,7 +1584,9 @@ fn resolve_text_item(
     node: &IrNode,
     identifier_namespace: &SvgIdentifierNamespace,
     declarative_animation: bool,
+    source_index: &IrSourceIndex,
 ) -> Option<TextItem> {
+    let resource_key = source_index.resource_key(node);
     let IrNodeKind::Text {
         lines,
         font_size_px,
@@ -1556,7 +1619,7 @@ fn resolve_text_item(
                 resource.color.as_str(),
                 format!(
                     "url(#{})",
-                    text_gradient_id(&node.node_id, index, identifier_namespace)
+                    text_gradient_id(&resource_key, index, identifier_namespace)
                 ),
             )
         })
@@ -1594,7 +1657,7 @@ fn resolve_text_item(
                     .map(|(layer_index, shadow)| TextShadowLayerItem {
                         filter_ref: identifier_namespace.identifier(
                             SvgIdentifierRole::FilterId,
-                            &format!("{}:ts{layer_index}", node.node_id),
+                            &format!("{resource_key}:ts{layer_index}"),
                         ),
                         color: shadow.color.clone(),
                     })
@@ -1628,7 +1691,7 @@ fn resolve_text_item(
                         .map(|(layer_index, shadow)| TextShadowLayerItem {
                             filter_ref: identifier_namespace.identifier(
                                 SvgIdentifierRole::FilterId,
-                                &format!("{}:pr{range_index}:ts{layer_index}", node.node_id),
+                                &format!("{resource_key}:pr{range_index}:ts{layer_index}"),
                             ),
                             color: shadow.color.clone(),
                         })
@@ -1651,7 +1714,7 @@ fn resolve_text_item(
                     .map(|(layer_index, shadow)| TextShadowLayerItem {
                         filter_ref: identifier_namespace.identifier(
                             SvgIdentifierRole::FilterId,
-                            &format!("{}:ts{layer_index}", node.node_id),
+                            &format!("{resource_key}:ts{layer_index}"),
                         ),
                         color: shadow.color.clone(),
                     })
@@ -1677,11 +1740,11 @@ fn resolve_text_item(
     };
 
     Some(TextItem {
-        node_id: node.node_id.clone(),
+        association: node_association(node, source_index),
         label,
         font_size_px: *font_size_px,
         glyphs: text_glyph_items(
-            &node.node_id,
+            &resource_key,
             glyph_paths,
             unit_animation_samples.as_deref(),
             identifier_namespace,
@@ -1743,10 +1806,11 @@ fn resolve_text_item(
 fn resolve_shape_item(
     node: &IrNode,
     shared: &SharedShapePathIndex,
+    source_index: &IrSourceIndex,
 ) -> Result<ShapeItem, EngineError> {
     let IrNodeKind::Shape { shape_parts, .. } = &node.kind else {
         return Ok(ShapeItem {
-            node_id: node.node_id.clone(),
+            association: node_association(node, source_index),
             bbox: node.bbox,
             parts: Vec::new(),
         });
@@ -1784,7 +1848,7 @@ fn resolve_shape_item(
     }
 
     Ok(ShapeItem {
-        node_id: node.node_id.clone(),
+        association: node_association(node, source_index),
         bbox: node.bbox,
         parts,
     })
@@ -1863,6 +1927,7 @@ fn node_layout_box(node: &IrNode) -> BBox {
 fn resolve_debug_overlays(
     node: &IrNode,
     identifier_namespace: &SvgIdentifierNamespace,
+    source_index: &IrSourceIndex,
     parts: DebugParts,
     items: &mut Vec<PaintItem>,
 ) {
@@ -1874,9 +1939,12 @@ fn resolve_debug_overlays(
     };
 
     let transform_attr = node_transform_attr(transform, node.bbox);
-    let clip_ref = clip
-        .is_some()
-        .then(|| identifier_namespace.identifier(SvgIdentifierRole::ClipPathId, &node.node_id));
+    let clip_ref = clip.is_some().then(|| {
+        identifier_namespace.identifier(
+            SvgIdentifierRole::ClipPathId,
+            &source_index.resource_key(node),
+        )
+    });
 
     if transform_attr.is_some() || clip_ref.is_some() {
         items.push(PaintItem::GroupOpen(GroupOpenItem {
@@ -1884,17 +1952,18 @@ fn resolve_debug_overlays(
             clip_ref,
             ..GroupOpenItem::default()
         }));
-        resolve_debug_overlay_node(node, identifier_namespace, parts, items);
+        resolve_debug_overlay_node(node, identifier_namespace, source_index, parts, items);
         items.push(PaintItem::GroupClose);
         return;
     }
 
-    resolve_debug_overlay_node(node, identifier_namespace, parts, items);
+    resolve_debug_overlay_node(node, identifier_namespace, source_index, parts, items);
 }
 
 fn resolve_debug_overlay_node(
     node: &IrNode,
     identifier_namespace: &SvgIdentifierNamespace,
+    source_index: &IrSourceIndex,
     parts: DebugParts,
     items: &mut Vec<PaintItem>,
 ) {
@@ -1928,7 +1997,7 @@ fn resolve_debug_overlay_node(
     }
     if let IrNodeKind::Group { children, .. } = &node.kind {
         for child in children {
-            resolve_debug_overlays(child, identifier_namespace, parts, items);
+            resolve_debug_overlays(child, identifier_namespace, source_index, parts, items);
         }
     }
 }

@@ -741,12 +741,11 @@ fn collect_text_node_ids<'a>(node: &'a ir::types::IrNode, target: &mut Vec<&'a s
 
 /// Subset of the public TS `IR` shape consumed by SVG emission.
 ///
-/// `drawOrder` and `warnings` are intentionally omitted: neither affects the
-/// paint scene. Keeping this wire type shared prevents the one-shot and
-/// prepared emit paths from drifting.
+/// Tree order determines painting. Warnings are returned separately from this
+/// rendering input; one-shot and prepared emit share the same wire contract.
 #[cfg_attr(feature = "ir-schema", derive(schemars::JsonSchema))]
 #[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EmitIrInput {
     root: ir::wire_input::IrNodeInput,
     width: f64,
@@ -1297,16 +1296,23 @@ fn parse_emit_ir(ir_json: &str) -> Result<ir::types::Ir, JsValue> {
     if let Some(root) = raw_input.get("root") {
         validate_ir_box_wire(root).map_err(|error| engine_error_to_render_envelope(&error))?;
     }
-    let input: EmitIrInput = serde_json::from_value(raw_input)
-        .map_err(|error| JsValue::from_str(&format!("Invalid IR JSON: {error}")))?;
+    let input: EmitIrInput = serde_json::from_value(raw_input).map_err(|error| {
+        render_error_envelope(
+            "VALIDATION",
+            &format!("Invalid IR JSON: {error}"),
+            Some(diagnostics::PipelineStage::Ir),
+            None,
+        )
+    })?;
     let parsed_ir = ir::types::Ir {
         root: input.root.into(),
-        draw_order: Vec::new(),
         width: input.width,
         height: input.height,
         debug: input.debug,
         warnings: Vec::new(),
     };
+    ir::ownership::build_source_index(&parsed_ir.root)
+        .map_err(|error| engine_error_to_render_envelope(&error))?;
     // Hand-authored IRs bypass the VNode build path that vets nested SVG
     // content. Both one-shot and prepared entry points are trust boundaries.
     assert_ir_svg_content_safe(&parsed_ir.root)?;
@@ -2150,7 +2156,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 36;
+pub const WASM_SCHEMA_VERSION: u32 = 37;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]
@@ -4262,11 +4268,11 @@ mod tests {
 
     fn timeline_ir_json() -> String {
         serde_json::json!({
-            "root": {
+            "root": { "ownership": { "role": "source" },
                 "nodeId": "root",
                 "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0 },
                 "type": "group",
-                "children": [{
+                "children": [{ "ownership": { "role": "source" },
                     "nodeId": "card",
                     "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0 },
                     "type": "group",

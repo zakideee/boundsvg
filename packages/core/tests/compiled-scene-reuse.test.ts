@@ -124,7 +124,9 @@ describe("CompiledScene reuse", () => {
 
     firstSnapshot.width = 1;
     firstSnapshot.root.bbox.w = 1;
-    firstSnapshot.drawOrder.push("snapshot-only");
+    if (firstSnapshot.root.ownership.role === "source") {
+      firstSnapshot.root.ownership.meta = { isolated: "snapshot-only" };
+    }
     firstSnapshot.warnings.length = 0;
 
     const svgBefore = engine.renderCompiledToSvg(compiled);

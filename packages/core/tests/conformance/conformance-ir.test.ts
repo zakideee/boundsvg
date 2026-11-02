@@ -1,3 +1,4 @@
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 /**
  * Conformance IR structure assertions rendered through the real WASM engine.
  * Prerequisite: `pnpm build:wasm`.
@@ -8,12 +9,13 @@ import type { Engine } from "../../src/engine.js";
 import type { IR, IRNode } from "../../src/ir/types.js";
 import { validateNodeIds } from "../../src/node-ids.js";
 import { parsePathBBox } from "../../src/path/utils.js";
-import { buildHitTestIndex, hitTestWithIndex } from "../../src/scene.js";
+import { buildHitTestIndex } from "../../src/scene.js";
 import type { VNode } from "../../src/vnode/types.js";
 import { createConformanceEngine } from "./conformance-engine.js";
 import { FONT_LATIN } from "./scenes/assets.js";
 import { CONFORMANCE_SCENES, type ConformanceScene } from "./scenes/index.js";
 
+/** Minimum authored source IDs expected in each conformance scene. */
 const EXPLICIT_IDS_MIN = 5;
 /** Sub-pixel slack for measured text blocks against the canvas edge. */
 const BBOX_EPSILON_PX = 1;
@@ -48,7 +50,7 @@ function collectIRNodes(ir: IR): IRNode[] {
       continue;
     }
     nodes.push(node);
-    for (const child of node.children ?? []) {
+    for (const child of node.type === "group" ? (node.children ?? []) : []) {
       stack.push(child);
     }
   }
@@ -107,19 +109,20 @@ describe("conformance IR structure", () => {
     }
   });
 
-  it.each(cases)("%s has a duplicate-free drawOrder that covers all paint nodes", (_id, scene) => {
+  it.each(
+    cases,
+  )("%s gives every paint occurrence one unique ordinal and a valid source", (_id, scene) => {
     const ir = irFor(scene);
-    expect(new Set(ir.drawOrder).size).toBe(ir.drawOrder.length);
-
-    const nodeIds = new Set(collectIRNodes(ir).map((node) => node.nodeId));
-    for (const drawId of ir.drawOrder) {
-      expect(nodeIds.has(drawId), `drawOrder entry "${drawId}" not in IR tree`).toBe(true);
-    }
-
-    const drawSet = new Set(ir.drawOrder);
-    for (const node of collectIRNodes(ir)) {
-      if (node.type !== "group") {
-        expect(drawSet.has(node.nodeId), `paint node "${node.nodeId}" missing`).toBe(true);
+    const index = buildIRSourceIndex(ir);
+    const paints = [...index.nodes.values()].filter((entry) => entry.paintOrder !== null);
+    expect(paints.map((entry) => entry.paintOrder)).toEqual(paints.map((_, ordinal) => ordinal));
+    expect(index.nodes.size).toBe(collectIRNodes(ir).length);
+    for (const occurrence of index.nodes.values()) {
+      expect(index.sources.get(occurrence.source.sourceIndex)?.source).toEqual(occurrence.source);
+      if (occurrence.node.ownership.role === "content") {
+        expect(index.sources.get(occurrence.source.sourceIndex)?.primaryNodeIndex).toBe(
+          occurrence.nodeIndex,
+        );
       }
     }
   });
@@ -213,8 +216,16 @@ describe("conformance scene-specific contracts", () => {
 
     expect(fragments).toHaveLength(6);
     for (const fragment of fragments) {
-      expect(ir.drawOrder).not.toContain(fragment.nodeId);
-      expect(ir.drawOrder).toContain(`${fragment.nodeId}:rect`);
+      expect(
+        [...buildIRSourceIndex(ir).nodes.values()]
+          .filter((entry) => entry.paintOrder !== null)
+          .map((entry) => entry.node.nodeId),
+      ).not.toContain(fragment.nodeId);
+      expect(
+        [...buildIRSourceIndex(ir).nodes.values()]
+          .filter((entry) => entry.paintOrder !== null)
+          .map((entry) => entry.node.nodeId),
+      ).toContain(`${fragment.nodeId}:rect`);
     }
     expect(horizontalText?.lines?.map((line) => line.text).join("")).toBe("typed block underline");
     expect(verticalRect?.bbox).toMatchObject({ w: 4, h: 18 });
@@ -332,7 +343,9 @@ describe("conformance scene-specific contracts", () => {
     const ir = engine.renderToIR(scene.build());
     const nodes = collectIRNodes(ir);
 
-    const interactiveNodes = nodes.filter((node) => node.on);
+    const interactiveNodes = nodes.filter(
+      (node) => node.ownership.role === "source" && node.ownership.on,
+    );
     expect(interactiveNodes.map((node) => node.nodeId).sort()).toEqual([
       "nlp-arrow",
       "nlp-cta-button",
@@ -342,7 +355,12 @@ describe("conformance scene-specific contracts", () => {
       "nlp-z-middle",
     ]);
     expect(
-      Object.fromEntries(interactiveNodes.map((node) => [node.nodeId, node.on])),
+      Object.fromEntries(
+        interactiveNodes.map((node) => [
+          node.nodeId,
+          node.ownership.role === "source" ? node.ownership.on : undefined,
+        ]),
+      ),
     ).toMatchObject({
       "nlp-arrow": {
         onClick: "handleArrowClick",
@@ -394,8 +412,10 @@ describe("conformance scene-specific contracts", () => {
 
     const hitTestIndex = buildHitTestIndex(ir);
     for (const { nodeId, x, y } of hitCases) {
-      expect(engine.hitTest(ir, x, y), `direct hit for "${nodeId}"`).toBe(nodeId);
-      expect(hitTestWithIndex(hitTestIndex, x, y), `indexed hit for "${nodeId}"`).toBe(nodeId);
+      expect(engine.hitTest(ir, x, y)?.nodeId ?? null, `direct hit for "${nodeId}"`).toBe(nodeId);
+      expect(hitTestIndex.queryTopmost(x, y)?.nodeId ?? null, `indexed hit for "${nodeId}"`).toBe(
+        nodeId,
+      );
     }
   });
 

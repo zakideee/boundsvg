@@ -161,7 +161,7 @@ fn validate_layered_svg_composition_input_preserves_optional_presence() {
 #[test]
 fn emit_ir_debug_preserves_presence() {
     let fixture = json!({
-        "root": {
+        "root": { "ownership": { "role": "source" },
             "nodeId": "root", "type": "group",
             "bbox": {"x": 0, "y": 0, "w": 100, "h": 80}, "children": []
         },
@@ -170,5 +170,5 @@ fn emit_ir_debug_preserves_presence() {
     assert_optional_field::<super::EmitIrInput>(&fixture, "debug", |input| input.debug.is_none());
     let mut unknown = fixture;
     unknown["unknownOption"] = json!(true);
-    assert!(serde_json::from_value::<super::EmitIrInput>(unknown).is_ok());
+    assert!(serde_json::from_value::<super::EmitIrInput>(unknown).is_err());
 }

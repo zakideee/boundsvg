@@ -12,20 +12,23 @@ describe("buildNodeBBoxMap", () => {
     const ir: IR = {
       width: 100,
       height: 80,
-      drawOrder: ["transformed"],
+
       warnings: [],
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "auto:0",
         bbox: { x: 0, y: 0, w: 100, h: 80 },
         children: [
           {
+            ownership: { role: "source" },
             type: "group",
             nodeId: "transformed",
             bbox: { x: 10, y: 20, w: 40, h: 24 },
             transform: { translateX: 5, translateY: 7, originX: 20, originY: 12 },
             children: [
               {
+                ownership: { role: "content", ownerNodeId: "transformed" },
                 type: "rect",
                 nodeId: "transformed",
                 bbox: { x: 10, y: 20, w: 40, h: 24 },
@@ -45,13 +48,13 @@ describe("buildNodeBBoxMap", () => {
     expect(matchingEntries[0]?.hasOwnTransform).toBe(true);
     expect(matchingEntries[1]?.hasOwnTransform).toBe(false);
 
-    const merged = buildNodeBBoxMap(ir).get("transformed");
+    const merged = buildNodeBBoxMap(ir).get(1);
     expect(merged?.hasOwnTransform).toBe(true);
     expect(merged?.origin).toEqual(matchingEntries[0]?.origin);
     expect(merged?.transformBox).toEqual(matchingEntries[0]?.transformBox);
     expect(merged?.visualBBox).toEqual(matchingEntries[0]?.visualBBox);
     expect(merged?.rx).toBe(6);
-    expect(merged?.semantics?.kind).toBe("Box");
+    expect(merged?.semantics?.kind).toBe("Rect");
   });
 });
 
@@ -62,17 +65,26 @@ describe("resolveInspectOverlayParts", () => {
     const ir: IR = {
       width: 100,
       height: 80,
-      drawOrder: ["child"],
+
       warnings: [],
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "parent",
         bbox: { x: 0, y: 0, w: 100, h: 80 },
         transform,
-        children: [{ type: "rect", nodeId: "child", bbox: layoutBBox, fill: "red" }],
+        children: [
+          {
+            ownership: { role: "source" },
+            type: "rect",
+            nodeId: "child",
+            bbox: layoutBBox,
+            fill: "red",
+          },
+        ],
       },
     };
-    const geometry = buildNodeBBoxMap(ir).get("child");
+    const geometry = buildNodeBBoxMap(ir).get(1);
     expect(geometry).toBeDefined();
     return geometry!;
   }

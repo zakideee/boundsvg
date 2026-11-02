@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Engine } from "../../src/engine.js";
 import { inspectScene } from "../../src/inspect.js";
-import { buildHitTestIndex, hitTest, hitTestWithIndex } from "../../src/ir/hit-test.js";
+import { buildHitTestIndex, hitTest } from "../../src/ir/hit-test.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import type { IRNode } from "../../src/ir/types.js";
 import { collectNodeIds } from "../../src/node-ids.js";
 import { fromSceneDocument, toSceneDocument } from "../../src/scene/from-vnode.js";
@@ -91,8 +92,8 @@ describe("text paint, skew, and independent box surfaces", () => {
         [40, 40, "target"],
         [79, 0, hasRoundedCorners ? null : "target"],
       ] as const) {
-        expect(hitTest(ir, x, y)).toBe(expected);
-        expect(hitTestWithIndex(index, x, y)).toBe(expected);
+        expect(hitTest(ir, x, y)?.nodeId ?? null).toBe(expected);
+        expect(index.queryTopmost(x, y)?.nodeId ?? null).toBe(expected);
       }
     });
   }
@@ -171,7 +172,12 @@ describe("text paint, skew, and independent box surfaces", () => {
     expect(outline?.type).toBe("path");
     expect(outline?.bbox).toEqual({ x: 0, y: 0, w: 100, h: 80 });
     expect(outline?.type === "path" ? outline.strokeWidth : undefined).toBe(2);
-    expect(ir.drawOrder.at(-1)).toBe("card:outline");
+    expect(
+      [...buildIRSourceIndex(ir).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId)
+        .at(-1),
+    ).toBe("card:outline");
   });
 
   it("does not paint the inset candidate outside a circular outer contour", () => {
@@ -224,13 +230,16 @@ describe("text paint, skew, and independent box surfaces", () => {
       [40, 50, null],
       [90, 50, "content"],
     ] as const) {
-      expect(hitTest(ir, x, y)).toBe(expected);
-      expect(hitTestWithIndex(index, x, y)).toBe(expected);
+      expect(hitTest(ir, x, y)?.nodeId ?? null).toBe(expected);
+      expect(index.queryTopmost(x, y)?.nodeId ?? null).toBe(expected);
     }
     const inspection = inspectScene(engine, scene);
     expect(inspection.bboxes.some((entry) => entry.nodeId.endsWith(":content"))).toBe(false);
-    expect(inspection.nodeTypeMap.has("circle:content")).toBe(false);
-    expect(inspection.handlerMap.has("circle:content")).toBe(false);
+    expect(
+      [...inspection.sourceIndex.sources.values()].some(
+        (entry) => entry.source.nodeId === "circle:content",
+      ),
+    ).toBe(false);
     expect(engine.renderToSvg(scene)).not.toMatch(
       /data-boundsvg-node-id="circle:(?:border|content|outline)"/,
     );
@@ -313,8 +322,8 @@ describe("text paint, skew, and independent box surfaces", () => {
     expect(content?.type === "group" ? content.clip : undefined).toEqual({
       kind: "empty",
     });
-    expect(hitTest(ir, 50, 50)).toBeNull();
-    expect(hitTestWithIndex(buildHitTestIndex(ir), 50, 50)).toBeNull();
+    expect(hitTest(ir, 50, 50)?.nodeId ?? null).toBeNull();
+    expect(buildHitTestIndex(ir).queryTopmost(50, 50)?.nodeId ?? null).toBeNull();
     expect(colorAt(engine.renderToPng(scene), 50, 50)).toEqual([0, 0, 255, 255]);
   });
 
@@ -330,7 +339,11 @@ describe("text paint, skew, and independent box surfaces", () => {
       }),
     );
     expect(collectNodeIds(scene).map((entry) => entry.id)).not.toContain("zero:border");
-    expect(engine.renderToIR(scene).drawOrder).not.toContain("zero:border");
+    expect(
+      [...buildIRSourceIndex(engine.renderToIR(scene)).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId),
+    ).not.toContain("zero:border");
   });
 
   it("shares one physical Text paint frame across wrapped Inline fragments and exported paths", () => {

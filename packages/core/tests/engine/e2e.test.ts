@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PngResolutionAdjustedWarning } from "../../src/engine.js";
 import { FatalError } from "../../src/errors.js";
+import { buildIRSourceIndex } from "../../src/ir/source-index.js";
 import type { IRNode, IRTextNode } from "../../src/ir/types.js";
 import { createElement } from "../../src/vnode/create-element.js";
 import type { WasmEngineHandle } from "../../src/wasm/index.js";
@@ -130,9 +131,9 @@ describe("E2E integration", () => {
 
     const svg = engine.renderToSvg(vnode);
     expect(svg).toContain(
-      '<g data-boundsvg-node-id="panel" transform="translate(12 0) rotate(15 40 20) translate(40 20) scale(1.5 1) translate(-40 -20)">',
+      'data-boundsvg-node-id="panel" transform="translate(12 0) rotate(15 40 20) translate(40 20) scale(1.5 1) translate(-40 -20)">',
     );
-    expect(svg).toContain('<rect x="0" y="0" width="80" height="40" fill="#ff0000"/>');
+    expect(svg).toMatch(/<rect x="0" y="0" width="80" height="40"[^>]*fill="#ff0000"\/>/);
   });
 
   it("full pipeline: VNode → IR → hitTest", () => {
@@ -157,12 +158,16 @@ describe("E2E integration", () => {
 
     // IR should have structure
     expect(ir.root).toBeDefined();
-    expect(ir.drawOrder.length).toBeGreaterThan(0);
+    expect(
+      [...buildIRSourceIndex(ir).nodes.values()]
+        .filter((entry) => entry.paintOrder !== null)
+        .map((entry) => entry.node.nodeId).length,
+    ).toBeGreaterThan(0);
     expect(ir.width).toBe(400);
     expect(ir.height).toBe(300);
 
     // Hit test on the text node
-    const hit = engine.hitTest(ir, 10, 10);
+    const hit = engine.hitTest(ir, 10, 10)?.nodeId ?? null;
     expect(hit).toBe("target-text");
   });
 

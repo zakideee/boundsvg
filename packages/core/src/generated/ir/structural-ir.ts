@@ -8,19 +8,44 @@
 export type IrNode = {
   nodeId: string;
   bbox: BBox;
+  ownership: IrNodeOwnership;
 } & IrNode1;
+/**
+ * Borrowed source ownership; semantic fields are emitted only once.
+ */
+export type IrNodeOwnership =
+  | {
+      on?: HandlersRef;
+      meta?: {
+        [k: string]: string;
+      };
+      role: "source";
+    }
+  | {
+      ownerNodeId: string;
+      role: "content";
+    }
+  | {
+      ownerNodeId: string;
+      role: "decoration";
+    }
+  | {
+      ownerNodeId: string;
+      placement: WrapperPlacement;
+      role: "wrapper";
+    };
+/**
+ * Whether a wrapper belongs to a source ancestor or its one direct source child.
+ */
+export type WrapperPlacement = "inner" | "outer";
 export type IrNode1 =
   | {
       children?: IrNode[];
       clip?: BoxClip;
       opacity?: number;
       boxShadow?: BoxShadow;
-      meta?: {
-        [k: string]: string;
-      };
       transform?: Transform2D;
       animation?: AnimationSpec;
-      on?: HandlersRef;
       type: "group";
     }
   | {
@@ -88,13 +113,11 @@ export type IrNode1 =
       strokes?: TextStrokeLayer[];
       shadows?: TextShadowLayer[];
       textDecorations?: TextDecorationFragment[];
-      on?: HandlersRef;
       type: "text";
     }
   | {
       src: string;
       preserveAspectRatio: string;
-      on?: HandlersRef;
       type: "image";
     }
   | {
@@ -109,14 +132,12 @@ export type IrNode1 =
       strokeLinejoin?: StrokeLinejoin;
       strokeDasharray?: string;
       strokeMiterlimit?: number;
-      on?: HandlersRef;
       type: "path";
     }
   | {
       svgContent: string;
       svgViewBox?: string;
       preserveAspectRatio: string;
-      on?: HandlersRef;
       type: "svg";
     }
   | {
@@ -129,7 +150,6 @@ export type IrNode1 =
       strokeLinejoin?: StrokeLinejoin;
       strokeDasharray?: string;
       strokeMiterlimit?: number;
-      on?: HandlersRef;
       type: "shape";
     };
 /**
@@ -239,7 +259,6 @@ export type IrFillRule = "nonzero" | "evenodd";
  */
 export interface GeneratedStructuralIr {
   root: IrNode;
-  drawOrder: string[];
   width: number;
   height: number;
   debug?: boolean;
@@ -252,6 +271,32 @@ export interface BBox {
   y: number;
   w: number;
   h: number;
+}
+/**
+ * Event handler references (string identifiers for hit testing).
+ */
+export interface HandlersRef {
+  onClick?: string;
+  onDoubleClick?: string;
+  onContextMenu?: string;
+  onPointerDown?: string;
+  onPointerUp?: string;
+  onPointerCancel?: string;
+  onPointerMove?: string;
+  onPointerEnter?: string;
+  onPointerLeave?: string;
+  onPointerOver?: string;
+  onPointerOut?: string;
+  onMouseDown?: string;
+  onMouseUp?: string;
+  onMouseMove?: string;
+  onMouseEnter?: string;
+  onMouseLeave?: string;
+  onMouseOver?: string;
+  onMouseOut?: string;
+  onTouchStart?: string;
+  onTouchEnd?: string;
+  onTouchMove?: string;
 }
 /**
  * Axis-aligned bounding box.
@@ -359,32 +404,6 @@ export interface AnimationSteps {
   type: "steps";
   count: number;
   position?: "jump-start" | "jump-end" | "jump-none" | "jump-both";
-}
-/**
- * Event handler references (string identifiers for hit testing).
- */
-export interface HandlersRef {
-  onClick?: string;
-  onDoubleClick?: string;
-  onContextMenu?: string;
-  onPointerDown?: string;
-  onPointerUp?: string;
-  onPointerCancel?: string;
-  onPointerMove?: string;
-  onPointerEnter?: string;
-  onPointerLeave?: string;
-  onPointerOver?: string;
-  onPointerOut?: string;
-  onMouseDown?: string;
-  onMouseUp?: string;
-  onMouseMove?: string;
-  onMouseEnter?: string;
-  onMouseLeave?: string;
-  onMouseOver?: string;
-  onMouseOut?: string;
-  onTouchStart?: string;
-  onTouchEnd?: string;
-  onTouchMove?: string;
 }
 /**
  * Resolved linear-gradient endpoints in local gradient-box coordinates.

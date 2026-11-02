@@ -1119,6 +1119,11 @@ pub(crate) fn validate_text_animation_budgets(root: &IrNode) -> Result<(), Engin
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnimationStateSample {
+    /// Physical preorder occurrence of this animated group.
+    pub node_index: usize,
+    /// Structurally resolved source in the sampled snapshot.
+    pub source: super::ownership::IrSourceRef,
+    /// Physical node label, which may repeat.
     pub node_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
@@ -1159,6 +1164,7 @@ fn transform_to_affine(transform: &Transform2D) -> Result<AffineMatrixDto, Engin
 
 fn collect_animation_state(
     node: &IrNode,
+    index: &super::ownership::IrSourceIndex,
     samples: &mut Vec<AnimationStateSample>,
 ) -> Result<(), EngineError> {
     if let IrNodeKind::Group {
@@ -1170,7 +1176,13 @@ fn collect_animation_state(
     } = &node.kind
     {
         if animation.is_some() {
+            let occurrence = index.occurrence(node);
             samples.push(AnimationStateSample {
+                node_index: occurrence.node_index,
+                source: super::ownership::IrSourceRef {
+                    source_index: occurrence.source_index,
+                    node_id: index.nodes[occurrence.source_index].node.node_id.clone(),
+                },
                 node_id: node.node_id.clone(),
                 opacity: *opacity,
                 transform: transform
@@ -1187,7 +1199,7 @@ fn collect_animation_state(
             });
         }
         for child in children {
-            collect_animation_state(child, samples)?;
+            collect_animation_state(child, index, samples)?;
         }
     }
     Ok(())
@@ -1195,6 +1207,7 @@ fn collect_animation_state(
 
 /// Sample every animated node's resolved opacity and transform at `time_ms`.
 ///
+/// Samples are in physical preorder and carry occurrence/source references.
 /// Only nodes carrying a node-level `animation` track appear. Text unit tracks
 /// resolve per paint unit rather than per node, so they have no single
 /// opacity/transform to report and are deliberately absent.
@@ -1209,7 +1222,8 @@ pub fn sample_animation_state(
 ) -> Result<Vec<AnimationStateSample>, EngineError> {
     let sampled = sample_animation(ir, time_ms)?;
     let mut samples = Vec::new();
-    collect_animation_state(&sampled.root, &mut samples)?;
+    let index = super::ownership::build_source_index(&sampled.root)?;
+    collect_animation_state(&sampled.root, &index, &mut samples)?;
     crate::wire::finite::FiniteOutput::try_new(&samples)
         .map_err(|error| error.into_engine_error("sample_animation_state"))?;
     Ok(samples)
@@ -1273,6 +1287,10 @@ mod tests {
     fn ir(fill: &str, iterations: f64) -> Ir {
         Ir {
             root: IrNode {
+                ownership: crate::ir::ownership::IrNodeOwnership::Source {
+                    on: None,
+                    meta: None,
+                },
                 node_id: "root".to_string(),
                 bbox: BBox::new(10.0, 20.0, 80.0, 40.0),
                 kind: IrNodeKind::Group {
@@ -1280,13 +1298,11 @@ mod tests {
                     clip: None,
                     opacity: Some(0.75),
                     box_shadow: None,
-                    meta: None,
                     transform: None,
                     animation: Some(spec(fill, iterations)),
-                    on: None,
                 },
             },
-            draw_order: Vec::new(),
+
             width: 100.0,
             height: 100.0,
             debug: None,
@@ -1335,8 +1351,8 @@ mod tests {
     }
 
     fn text_unit_ir(order: &str) -> Ir {
-        let root =
-            serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(serde_json::json!({
+        let root = serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(
+            serde_json::json!({ "ownership": { "role": "source" },
                 "nodeId": "text",
                     "bbox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
                     "type": "text",
@@ -1398,12 +1414,13 @@ mod tests {
                             "bbox": { "x": 10.0, "y": 0.0, "w": 10.0, "h": 10.0 }
                         }
                     ]
-            }))
-            .map(IrNode::from)
-            .expect("text unit node fixture deserializes");
+            }),
+        )
+        .map(IrNode::from)
+        .expect("text unit node fixture deserializes");
         Ir {
             root,
-            draw_order: vec!["text".to_string()],
+
             width: 20.0,
             height: 10.0,
             debug: None,
@@ -1881,7 +1898,6 @@ mod tests {
         assert_eq!(unit_opacity(&logical, "second"), Some(0.0));
         assert_eq!(unit_opacity(&visual, "first"), Some(0.0));
         assert!(unit_opacity(&visual, "second").is_some_and(|value| (value - 0.25).abs() < 1.0e-6));
-        assert_eq!(logical.draw_order, visual.draw_order);
     }
     #[test]
     fn animation_state_reports_only_animated_nodes() {

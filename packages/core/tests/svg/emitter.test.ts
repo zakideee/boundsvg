@@ -1,4 +1,5 @@
 import { circularClip } from "../helpers/box-clip.js";
+import { decodeRgbaPng } from "../helpers/rgba-png.js";
 /**
  * WASM emitter contract: hand-built IRs driven through the `emit_svg_from_ir`
  * export must produce the pinned SVG markup (attributes, escaping, debug
@@ -29,15 +30,16 @@ afterAll(() => {
   handle.dispose();
 });
 
-function makeIR(children: IRNode[], drawOrder: string[], width = 800, height = 600): IR {
+function makeIR(children: IRNode[], width = 800, height = 600): IR {
   return {
     root: {
+      ownership: { role: "source" },
       type: "group",
       nodeId: "root",
       bbox: { x: 0, y: 0, w: width, h: height },
       children,
     },
-    drawOrder,
+
     width,
     height,
     warnings: [],
@@ -58,14 +60,16 @@ function makeIdentifierNamespaceIR(): IR {
   return makeIR(
     [
       {
+        ownership: { role: "source", meta: { scope: "raw-resourceIdPrefix-doc-clip-" } },
         type: "group",
         nodeId: "panel",
         bbox: { x: 10, y: 10, w: 120, h: 80 },
         boxShadow: { dx: 1, dy: 2, blur: 4, spread: 0, color: "#0008" },
-        meta: { scope: "raw-resourceIdPrefix-doc-clip-" },
+
         animation,
         children: [
           {
+            ownership: { role: "decoration", ownerNodeId: "panel" },
             type: "rect",
             nodeId: "panel:bg",
             bbox: { x: 10, y: 10, w: 120, h: 80 },
@@ -79,6 +83,7 @@ function makeIdentifierNamespaceIR(): IR {
             },
           },
           {
+            ownership: { role: "source" },
             type: "path",
             nodeId: "panel:outline",
             bbox: { x: 10, y: 10, w: 120, h: 80 },
@@ -89,6 +94,7 @@ function makeIdentifierNamespaceIR(): IR {
             strokeWidth: 1,
           },
           {
+            ownership: { role: "source" },
             type: "path",
             nodeId: "hairline-path",
             bbox: { x: 20, y: 20, w: 80, h: 30 },
@@ -102,6 +108,7 @@ function makeIdentifierNamespaceIR(): IR {
         clip: circularClip({ x: 10, y: 10, w: 120, h: 80 }, 0),
       },
       {
+        ownership: { role: "source" },
         type: "text",
         nodeId: "unit-text",
         bbox: { x: 20, y: 100, w: 20, h: 20 },
@@ -153,6 +160,7 @@ function makeIdentifierNamespaceIR(): IR {
         ],
       },
       {
+        ownership: { role: "source" },
         type: "shape",
         nodeId: "shape-left",
         bbox: { x: 150, y: 20, w: 20, h: 20 },
@@ -160,6 +168,7 @@ function makeIdentifierNamespaceIR(): IR {
         fill: "#2563eb",
       },
       {
+        ownership: { role: "source" },
         type: "shape",
         nodeId: "shape-right",
         bbox: { x: 180, y: 20, w: 20, h: 20 },
@@ -167,6 +176,7 @@ function makeIdentifierNamespaceIR(): IR {
         fill: "#2563eb",
       },
       {
+        ownership: { role: "source" },
         type: "svg",
         nodeId: "raw-svg",
         bbox: { x: 150, y: 80, w: 40, h: 40 },
@@ -174,15 +184,6 @@ function makeIdentifierNamespaceIR(): IR {
         svgViewBox: "0 0 1 1",
         preserveAspectRatio: "xMidYMid meet",
       },
-    ],
-    [
-      "panel:bg",
-      "panel:outline",
-      "hairline-path",
-      "unit-text",
-      "shape-left",
-      "shape-right",
-      "raw-svg",
     ],
     240,
     160,
@@ -193,18 +194,21 @@ function makeNodeMetadataIR(): IR {
   return makeIR(
     [
       {
+        ownership: { role: "source", meta: { scope: "kept-meta" } },
         type: "group",
         nodeId: "group-node",
         bbox: { x: 0, y: 0, w: 40, h: 40 },
-        meta: { scope: "kept-meta" },
+
         children: [
           {
+            ownership: { role: "source" },
             type: "rect",
             nodeId: "rect-node",
             bbox: { x: 1, y: 1, w: 10, h: 8 },
             fill: "#ef4444",
           },
           {
+            ownership: { role: "source" },
             type: "rect",
             nodeId: "rounded-rect-node",
             bbox: { x: 14, y: 1, w: 10, h: 8 },
@@ -214,6 +218,7 @@ function makeNodeMetadataIR(): IR {
         ],
       },
       {
+        ownership: { role: "source" },
         type: "text",
         nodeId: "text-node",
         bbox: { x: 0, y: 44, w: 20, h: 12 },
@@ -236,6 +241,7 @@ function makeNodeMetadataIR(): IR {
         ],
       },
       {
+        ownership: { role: "source" },
         type: "image",
         nodeId: "image-node",
         bbox: { x: 24, y: 44, w: 8, h: 8 },
@@ -243,6 +249,7 @@ function makeNodeMetadataIR(): IR {
         preserveAspectRatio: "xMidYMid meet",
       },
       {
+        ownership: { role: "source" },
         type: "path",
         nodeId: "path-node",
         bbox: { x: 36, y: 44, w: 8, h: 8 },
@@ -250,6 +257,7 @@ function makeNodeMetadataIR(): IR {
         fill: "#22c55e",
       },
       {
+        ownership: { role: "source" },
         type: "svg",
         nodeId: "svg-node",
         bbox: { x: 48, y: 44, w: 8, h: 8 },
@@ -259,21 +267,13 @@ function makeNodeMetadataIR(): IR {
         preserveAspectRatio: "xMidYMid meet",
       },
       {
+        ownership: { role: "source" },
         type: "shape",
         nodeId: "shape-node",
         bbox: { x: 60, y: 44, w: 8, h: 8 },
         shapeParts: [{ partId: "shape-part", d: "M60 44H68V52Z" }],
         fill: "#3b82f6",
       },
-    ],
-    [
-      "rect-node",
-      "rounded-rect-node",
-      "text-node",
-      "image-node",
-      "path-node",
-      "svg-node",
-      "shape-node",
     ],
     80,
     64,
@@ -324,7 +324,7 @@ function sortedIntersection(left: Set<string>, right: Set<string>): string[] {
 
 describe("emit_svg_from_ir", () => {
   it("generates valid SVG with viewBox", () => {
-    const ir = makeIR([], []);
+    const ir = makeIR([]);
     const svg = emitSvgFromIrViaHandle(handle, ir);
 
     expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"');
@@ -378,6 +378,7 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIR(
       [
         {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "clipped",
           bbox: { x: 0, y: 0, w: 100, h: 100 },
@@ -392,11 +393,16 @@ describe("emit_svg_from_ir", () => {
             ],
           },
           children: [
-            { type: "rect", nodeId: "paint", bbox: { x: 0, y: 0, w: 100, h: 100 }, fill: "red" },
+            {
+              ownership: { role: "source" },
+              type: "rect",
+              nodeId: "paint",
+              bbox: { x: 0, y: 0, w: 100, h: 100 },
+              fill: "red",
+            },
           ],
         },
       ],
-      ["paint"],
       100,
       100,
     );
@@ -404,17 +410,15 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("emits rect with fill", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "rect",
-          nodeId: "bg",
-          bbox: { x: 10, y: 20, w: 200, h: 100 },
-          fill: "#ff0000",
-        },
-      ],
-      ["bg"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "rect",
+        nodeId: "bg",
+        bbox: { x: 10, y: 20, w: 200, h: 100 },
+        fill: "#ff0000",
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('data-boundsvg-node-id="bg"');
@@ -423,19 +427,17 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("emits rect with stroke and borderRadius", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "rect",
-          nodeId: "border",
-          bbox: { x: 0, y: 0, w: 100, h: 50 },
-          stroke: "#000000",
-          strokeWidth: 2,
-          borderRadius: 8,
-        },
-      ],
-      ["border"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "rect",
+        nodeId: "border",
+        bbox: { x: 0, y: 0, w: 100, h: 50 },
+        stroke: "#000000",
+        strokeWidth: 2,
+        borderRadius: 8,
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('rx="8"');
@@ -449,12 +451,14 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIR(
       [
         {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "camera",
           bbox: { x: 0, y: 0, w: 96, h: 64 },
           transform: { scaleX: 1.6, scaleY: 1.6, originX: 0, originY: 0 },
           children: [
             {
+              ownership: { role: "source" },
               type: "path",
               nodeId: "camera:outline",
               bbox: { x: 8, y: 8, w: 40, h: 20 },
@@ -466,13 +470,12 @@ describe("emit_svg_from_ir", () => {
           ],
         },
       ],
-      ["camera:outline"],
       96,
       64,
     );
 
     const svg = emitSvgFromIrViaHandle(handle, ir, { scale: 2 });
-    expect(svg).toContain('class="bsvg-vstroke-camera"');
+    expect(svg).toContain('class="bsvg-vstroke-n2"');
     expect(svg).toContain('stroke-width="0.625"');
     expect(svg).toContain("@supports (vector-effect: non-scaling-stroke)");
     expect(svg).toContain("stroke-width: 2;");
@@ -482,6 +485,7 @@ describe("emit_svg_from_ir", () => {
   it("resolves mixed raw Rect and Path strokes with collision-free namespaced rules", () => {
     const paints: IRNode[] = [
       {
+        ownership: { role: "source" },
         type: "rect",
         nodeId: "line",
         bbox: { x: 5, y: 5, w: 30, h: 20 },
@@ -491,6 +495,7 @@ describe("emit_svg_from_ir", () => {
         borderRadius: { tl: 4, tr: 0, br: 2, bl: 0 },
       },
       {
+        ownership: { role: "source" },
         type: "path",
         nodeId: "line",
         bbox: { x: 5, y: 30, w: 30, h: 20 },
@@ -500,6 +505,7 @@ describe("emit_svg_from_ir", () => {
         strokeScaling: "canvas",
       },
       {
+        ownership: { role: "source" },
         type: "rect",
         nodeId: "line-2",
         bbox: { x: 40, y: 5, w: 20, h: 20 },
@@ -510,6 +516,7 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIR(
       [
         {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "camera",
           bbox: { x: 0, y: 0, w: 100, h: 100 },
@@ -517,7 +524,6 @@ describe("emit_svg_from_ir", () => {
           children: paints,
         },
       ],
-      [],
       100,
       100,
     );
@@ -536,12 +542,14 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIR(
       [
         {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "camera",
           bbox: { x: 0, y: 0, w: 96, h: 64 },
           transform: { scaleX: 1.6, scaleY: 1.6, originX: 0, originY: 0 },
           children: [
             {
+              ownership: { role: "source" },
               type: "path",
               nodeId: "hairline-path",
               bbox: { x: 8, y: 8, w: 40, h: 20 },
@@ -554,13 +562,12 @@ describe("emit_svg_from_ir", () => {
           ],
         },
       ],
-      ["hairline-path"],
       96,
       64,
     );
 
     const svg = emitSvgFromIrViaHandle(handle, ir, { scale: 2 });
-    expect(svg).toContain('<path d="M0 0H40V20H0Z" class="bsvg-vstroke-hairline-path"');
+    expect(svg).toContain('<path d="M0 0H40V20H0Z" class="bsvg-vstroke-n2"');
     expect(svg).toContain('stroke-width="0.625"');
     expect(svg).toContain("@supports (vector-effect: non-scaling-stroke)");
     expect(svg).toContain("stroke-width: 2;");
@@ -569,16 +576,17 @@ describe("emit_svg_from_ir", () => {
 
   it("keeps omitted and explicit Rect transform stroke scaling byte-identical", () => {
     const path: IRNode = {
+      ownership: { role: "source" },
       type: "rect",
       nodeId: "outline",
       bbox: { x: 0, y: 0, w: 10, h: 10 },
       stroke: "#fff",
       strokeWidth: 1,
     };
-    const omitted = emitSvgFromIrViaHandle(handle, makeIR([path], ["outline"], 10, 10));
+    const omitted = emitSvgFromIrViaHandle(handle, makeIR([path], 10, 10));
     const explicit = emitSvgFromIrViaHandle(
       handle,
-      makeIR([{ ...path, strokeScaling: "transform" }], ["outline"], 10, 10),
+      makeIR([{ ...path, strokeScaling: "transform" }], 10, 10),
     );
     expect(explicit).toBe(omitted);
   });
@@ -587,6 +595,7 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIR(
       [
         {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "camera",
           bbox: { x: 0, y: 0, w: 20, h: 20 },
@@ -600,6 +609,7 @@ describe("emit_svg_from_ir", () => {
           },
           children: [
             {
+              ownership: { role: "source" },
               type: "path",
               nodeId: "camera:outline",
               bbox: { x: 2, y: 2, w: 10, h: 10 },
@@ -611,7 +621,6 @@ describe("emit_svg_from_ir", () => {
           ],
         },
       ],
-      ["camera:outline"],
       20,
       20,
     );
@@ -631,11 +640,13 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIR(
       [
         {
+          ownership: { role: "source" },
           type: "group",
           nodeId: "card one",
           bbox: { x: 0, y: 0, w: 10, h: 10 },
           children: [
             {
+              ownership: { role: "source" },
               type: "path",
               nodeId: "card one:outline",
               bbox: { x: 0, y: 0, w: 10, h: 10 },
@@ -647,7 +658,6 @@ describe("emit_svg_from_ir", () => {
           ],
         },
       ],
-      ["card one:outline"],
       10,
       10,
     );
@@ -663,6 +673,7 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIR(
       [
         {
+          ownership: { role: "source" },
           type: "rect",
           nodeId: "border",
           bbox: { x: 0, y: 0, w: 10, h: 10 },
@@ -670,7 +681,6 @@ describe("emit_svg_from_ir", () => {
           strokeWidth: 1,
         },
       ],
-      ["border"],
       10,
       10,
     );
@@ -682,6 +692,7 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIR(
       [
         {
+          ownership: { role: "source" },
           type: "path",
           nodeId: "path",
           bbox: { x: 0, y: 0, w: 10, h: 10 },
@@ -691,7 +702,6 @@ describe("emit_svg_from_ir", () => {
           strokeScaling: "canvas",
         },
       ],
-      ["path"],
       10,
       10,
     );
@@ -700,36 +710,34 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("emits text as glyph path wrapper with metadata", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "txt1",
-          bbox: { x: 10, y: 10, w: 200, h: 40 },
-          font: "NotoSansJP",
-          fontSizePx: 16,
-          color: "#333333",
-          textAlign: "start",
-          layoutBox: { x: 10, y: 10, w: 200, h: 40 },
-          lineHeightPx: 19.2,
-          lines: [
-            { text: "Hello", glyphs: [], width: 48, baselineY: 15.36 },
-            { text: "World", glyphs: [], width: 48, baselineY: 34.56 },
-          ],
-          glyphPaths: [
-            {
-              nodeId: "txt1",
-              d: "M0 0H10",
-              fill: "#333333",
-              glyphIds: [1, 2],
-              text: "Hello\nWorld",
-              bbox: { x: 0, y: 0, w: 10, h: 10 },
-            },
-          ],
-        },
-      ],
-      ["txt1"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "txt1",
+        bbox: { x: 10, y: 10, w: 200, h: 40 },
+        font: "NotoSansJP",
+        fontSizePx: 16,
+        color: "#333333",
+        textAlign: "start",
+        layoutBox: { x: 10, y: 10, w: 200, h: 40 },
+        lineHeightPx: 19.2,
+        lines: [
+          { text: "Hello", glyphs: [], width: 48, baselineY: 15.36 },
+          { text: "World", glyphs: [], width: 48, baselineY: 34.56 },
+        ],
+        glyphPaths: [
+          {
+            nodeId: "txt1",
+            d: "M0 0H10",
+            fill: "#333333",
+            glyphIds: [1, 2],
+            text: "Hello\nWorld",
+            bbox: { x: 0, y: 0, w: 10, h: 10 },
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('data-boundsvg-node-id="txt1"');
@@ -741,76 +749,74 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("emits multiple path runs when glyph fills differ", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "txt-frag",
-          bbox: { x: 10, y: 10, w: 200, h: 20 },
-          font: "BaseFont",
-          fontSizePx: 16,
-          color: "#000000",
-          textAlign: "start",
-          layoutBox: { x: 10, y: 10, w: 200, h: 20 },
-          lineHeightPx: 19.2,
-          lines: [
-            {
-              text: "ABC",
-              glyphs: [],
-              width: 30,
-              baselineY: 14,
-              fragments: [
-                {
-                  text: "A",
-                  glyphs: [],
-                  width: 10,
-                  style: {
-                    font: "BaseFont",
-                    fontWeight: 400,
-                    fontStyle: "normal",
-                    color: "#ff0000",
-                    fontSizePx: 16,
-                    letterSpacingPx: 0,
-                  },
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "txt-frag",
+        bbox: { x: 10, y: 10, w: 200, h: 20 },
+        font: "BaseFont",
+        fontSizePx: 16,
+        color: "#000000",
+        textAlign: "start",
+        layoutBox: { x: 10, y: 10, w: 200, h: 20 },
+        lineHeightPx: 19.2,
+        lines: [
+          {
+            text: "ABC",
+            glyphs: [],
+            width: 30,
+            baselineY: 14,
+            fragments: [
+              {
+                text: "A",
+                glyphs: [],
+                width: 10,
+                style: {
+                  font: "BaseFont",
+                  fontWeight: 400,
+                  fontStyle: "normal",
+                  color: "#ff0000",
+                  fontSizePx: 16,
+                  letterSpacingPx: 0,
                 },
-                {
-                  text: "BC",
-                  glyphs: [],
-                  width: 20,
-                  style: {
-                    font: "BaseFont",
-                    fontWeight: 400,
-                    fontStyle: "normal",
-                    color: "#0000ff",
-                    fontSizePx: 16,
-                    letterSpacingPx: 0,
-                  },
+              },
+              {
+                text: "BC",
+                glyphs: [],
+                width: 20,
+                style: {
+                  font: "BaseFont",
+                  fontWeight: 400,
+                  fontStyle: "normal",
+                  color: "#0000ff",
+                  fontSizePx: 16,
+                  letterSpacingPx: 0,
                 },
-              ],
-            },
-          ],
-          glyphPaths: [
-            {
-              nodeId: "txt-frag",
-              d: "M0 0H10",
-              fill: "#ff0000",
-              glyphIds: [1],
-              text: "A",
-              bbox: { x: 0, y: 0, w: 10, h: 10 },
-            },
-            {
-              nodeId: "txt-frag",
-              d: "M10 0L30 0",
-              fill: "#0000ff",
-              glyphIds: [2, 3],
-              text: "BC",
-              bbox: { x: 10, y: 0, w: 20, h: 10 },
-            },
-          ],
-        },
-      ],
-      ["txt-frag"],
-    );
+              },
+            ],
+          },
+        ],
+        glyphPaths: [
+          {
+            nodeId: "txt-frag",
+            d: "M0 0H10",
+            fill: "#ff0000",
+            glyphIds: [1],
+            text: "A",
+            bbox: { x: 0, y: 0, w: 10, h: 10 },
+          },
+          {
+            nodeId: "txt-frag",
+            d: "M10 0L30 0",
+            fill: "#0000ff",
+            glyphIds: [2, 3],
+            text: "BC",
+            bbox: { x: 10, y: 0, w: 20, h: 10 },
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('fill="#ff0000"');
@@ -819,59 +825,55 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("emits fill per glyph path when provided", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "txt-path",
-          bbox: { x: 0, y: 0, w: 100, h: 20 },
-          font: "F",
-          fontSizePx: 16,
-          color: "#111111",
-          textAlign: "start",
-          layoutBox: { x: 0, y: 0, w: 100, h: 20 },
-          lineHeightPx: 19.2,
-          lines: [{ text: "A", glyphs: [], width: 10, baselineY: 14 }],
-          glyphPaths: [
-            {
-              nodeId: "txt-path",
-              d: "M0 0H10",
-              fill: "#ff0000",
-              glyphIds: [1],
-              text: "A",
-              bbox: { x: 0, y: 0, w: 10, h: 1 },
-            },
-            {
-              nodeId: "txt-path",
-              d: "M0 1H10",
-              fill: "#0000ff",
-              glyphIds: [2],
-              text: "A",
-              bbox: { x: 0, y: 1, w: 10, h: 1 },
-            },
-          ],
-        },
-      ],
-      ["txt-path"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "txt-path",
+        bbox: { x: 0, y: 0, w: 100, h: 20 },
+        font: "F",
+        fontSizePx: 16,
+        color: "#111111",
+        textAlign: "start",
+        layoutBox: { x: 0, y: 0, w: 100, h: 20 },
+        lineHeightPx: 19.2,
+        lines: [{ text: "A", glyphs: [], width: 10, baselineY: 14 }],
+        glyphPaths: [
+          {
+            nodeId: "txt-path",
+            d: "M0 0H10",
+            fill: "#ff0000",
+            glyphIds: [1],
+            text: "A",
+            bbox: { x: 0, y: 0, w: 10, h: 1 },
+          },
+          {
+            nodeId: "txt-path",
+            d: "M0 1H10",
+            fill: "#0000ff",
+            glyphIds: [2],
+            text: "A",
+            bbox: { x: 0, y: 1, w: 10, h: 1 },
+          },
+        ],
+      },
+    ]);
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('<path d="M0 0H10" fill="#ff0000"/>');
     expect(svg).toContain('<path d="M0 1H10" fill="#0000ff"/>');
   });
 
   it("emits image with data URI", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "image",
-          nodeId: "img1",
-          bbox: { x: 50, y: 50, w: 200, h: 150 },
-          src: "data:image/png;base64,AAAA",
-          preserveAspectRatio: "xMidYMid meet",
-        },
-      ],
-      ["img1"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "image",
+        nodeId: "img1",
+        bbox: { x: 50, y: 50, w: 200, h: 150 },
+        src: "data:image/png;base64,AAAA",
+        preserveAspectRatio: "xMidYMid meet",
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain("<image");
@@ -883,16 +885,19 @@ describe("emit_svg_from_ir", () => {
   it("emits group wrappers with data-boundsvg-node-id attribute", () => {
     const ir: IR = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 300, h: 200 },
         children: [
           {
+            ownership: { role: "source" },
             type: "group",
             nodeId: "panel",
             bbox: { x: 10, y: 10, w: 120, h: 80 },
             children: [
               {
+                ownership: { role: "source" },
                 type: "text",
                 nodeId: "label",
                 bbox: { x: 20, y: 20, w: 40, h: 20 },
@@ -918,62 +923,62 @@ describe("emit_svg_from_ir", () => {
           },
         ],
       },
-      drawOrder: ["label"],
+
       width: 300,
       height: 200,
       warnings: [],
     };
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
-    expect(svg).toContain('<g data-boundsvg-node-id="panel">');
+    expect(svg).toContain(
+      '<g data-boundsvg-role="source" data-boundsvg-node-index="1" data-boundsvg-source-index="1" data-boundsvg-node-id="panel">',
+    );
   });
 
   it("emits nested svg wrappers with data-boundsvg-node-id attribute", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "svg",
-          nodeId: "badge",
-          bbox: { x: 16, y: 24, w: 48, h: 48 },
-          svgContent: '<circle cx="24" cy="24" r="20"/>',
-          svgViewBox: "0 0 48 48",
-          preserveAspectRatio: "xMidYMid meet",
-        },
-      ],
-      ["badge"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "svg",
+        nodeId: "badge",
+        bbox: { x: 16, y: 24, w: 48, h: 48 },
+        svgContent: '<circle cx="24" cy="24" r="20"/>',
+        svgViewBox: "0 0 48 48",
+        preserveAspectRatio: "xMidYMid meet",
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain(
-      '<svg data-boundsvg-node-id="badge" x="16" y="24" width="48" height="48"',
+      '<svg x="16" y="24" width="48" height="48" data-boundsvg-role="source" data-boundsvg-node-index="1" data-boundsvg-source-index="1" data-boundsvg-node-id="badge"',
     );
   });
 
   it("does not emit data-boundsvg-node-id for internal background and border rects", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "group",
-          nodeId: "panel",
-          bbox: { x: 0, y: 0, w: 120, h: 80 },
-          children: [
-            {
-              type: "rect",
-              nodeId: "panel:bg",
-              bbox: { x: 0, y: 0, w: 120, h: 80 },
-              fill: "#ffffff",
-            },
-            {
-              type: "rect",
-              nodeId: "panel:border",
-              bbox: { x: 0, y: 0, w: 120, h: 80 },
-              stroke: "#000000",
-            },
-          ],
-        },
-      ],
-      ["panel:bg", "panel:border"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "group",
+        nodeId: "panel",
+        bbox: { x: 0, y: 0, w: 120, h: 80 },
+        children: [
+          {
+            ownership: { role: "decoration", ownerNodeId: "panel" },
+            type: "rect",
+            nodeId: "panel:bg",
+            bbox: { x: 0, y: 0, w: 120, h: 80 },
+            fill: "#ffffff",
+          },
+          {
+            ownership: { role: "decoration", ownerNodeId: "panel" },
+            type: "rect",
+            nodeId: "panel:border",
+            bbox: { x: 0, y: 0, w: 120, h: 80 },
+            stroke: "#000000",
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).not.toContain('data-boundsvg-node-id="panel:bg"');
@@ -984,11 +989,13 @@ describe("emit_svg_from_ir", () => {
   it("emits clipPath definitions", () => {
     const ir: IR = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 800, h: 600 },
         children: [
           {
+            ownership: { role: "source" },
             type: "rect",
             nodeId: "bg",
             bbox: { x: 0, y: 0, w: 200, h: 100 },
@@ -997,7 +1004,7 @@ describe("emit_svg_from_ir", () => {
         ],
         clip: circularClip({ x: 0, y: 0, w: 800, h: 600 }, 0),
       },
-      drawOrder: ["bg"],
+
       width: 800,
       height: 600,
       warnings: [],
@@ -1006,7 +1013,7 @@ describe("emit_svg_from_ir", () => {
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain("<defs>");
     expect(svg).toContain("<clipPath");
-    expect(svg).toContain("clip-root");
+    expect(svg).toContain("clip-n0");
     expect(svg).toContain("</clipPath>");
     expect(svg).toContain("</defs>");
   });
@@ -1014,17 +1021,20 @@ describe("emit_svg_from_ir", () => {
   it("applies resourceIdPrefix to generated defs and references", () => {
     const ir: IR = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 300, h: 200 },
         children: [
           {
+            ownership: { role: "source" },
             type: "group",
             nodeId: "panel",
             bbox: { x: 10, y: 10, w: 120, h: 80 },
             boxShadow: { dx: 1, dy: 2, blur: 4, spread: 0, color: "rgba(0,0,0,0.3)" },
             children: [
               {
+                ownership: { role: "source" },
                 type: "rect",
                 nodeId: "bg",
                 bbox: { x: 10, y: 10, w: 120, h: 80 },
@@ -1042,7 +1052,7 @@ describe("emit_svg_from_ir", () => {
           },
         ],
       },
-      drawOrder: ["bg"],
+
       width: 300,
       height: 200,
       warnings: [],
@@ -1050,12 +1060,12 @@ describe("emit_svg_from_ir", () => {
 
     const svg = emitSvgFromIrViaHandle(handle, ir, { resourceIdPrefix: "doc-a-" });
 
-    expect(svg).toContain('id="doc-a-clip-panel"');
-    expect(svg).toContain('clip-path="url(#doc-a-clip-panel)"');
-    expect(svg).toContain('id="doc-a-grad-bg"');
-    expect(svg).toContain('fill="url(#doc-a-grad-bg)"');
-    expect(svg).toContain('id="doc-a-filter-panel"');
-    expect(svg).toContain('filter="url(#doc-a-filter-panel)"');
+    expect(svg).toContain('id="doc-a-clip-n1"');
+    expect(svg).toContain('clip-path="url(#doc-a-clip-n1)"');
+    expect(svg).toContain('id="doc-a-grad-n2"');
+    expect(svg).toContain('fill="url(#doc-a-grad-n2)"');
+    expect(svg).toContain('id="doc-a-filter-n1"');
+    expect(svg).toContain('filter="url(#doc-a-filter-n1)"');
     expect(svg).not.toContain('id="clip-panel"');
     expect(svg).not.toContain("url(#clip-panel)");
   });
@@ -1107,17 +1117,14 @@ describe("emit_svg_from_ir", () => {
       }
     }
 
-    expect(inventoryA.classes).toContain(`bsvg-${prefixA}vstroke-panel`);
-    expect(inventoryA.classes).toContain(`bsvg-${prefixA}vstroke-hairline-path`);
+    expect(inventoryA.classes).toContain(`bsvg-${prefixA}vstroke-n3`);
+    expect(inventoryA.classes).toContain(`bsvg-${prefixA}vstroke-n4`);
     expect(inventoryA.classes).toContain(`bsvg-${prefixA}debug-overlay`);
     expect([...inventoryA.ids]).toEqual(
       expect.arrayContaining([expect.stringMatching(/^scope-a-000-sp-/u)]),
     );
     expect([...inventoryA.keyframes]).toEqual(
-      expect.arrayContaining([
-        `${prefixA}anim-panel-keyframes`,
-        `${prefixA}anim-unit-text:unit:0-keyframes`,
-      ]),
+      expect.arrayContaining([`${prefixA}anim-n1-keyframes`, `${prefixA}anim-n5:unit:0-keyframes`]),
     );
     for (const svg of [svgA, svgB]) {
       expect(svg).toContain('data-boundsvg-meta-scope="raw-resourceIdPrefix-doc-clip-"');
@@ -1139,8 +1146,8 @@ describe("emit_svg_from_ir", () => {
 
     expect(explicitEmpty).toBe(omitted);
     expect(omitted).toContain('<g class="debug-overlay" opacity="0.4">');
-    expect(omitted).toContain('class="bsvg-vstroke-panel"');
-    expect(omitted).toContain("@keyframes anim-panel-keyframes");
+    expect(omitted).toContain('class="bsvg-vstroke-n3"');
+    expect(omitted).toContain("@keyframes anim-n1-keyframes");
   });
 
   it("creates deterministic resource ID prefixes", () => {
@@ -1152,16 +1159,19 @@ describe("emit_svg_from_ir", () => {
   it("clips debug overlays by ancestor clip paths", () => {
     const ir: IR = {
       root: {
+        ownership: { role: "source" },
         type: "group",
         nodeId: "root",
         bbox: { x: 0, y: 0, w: 160, h: 160 },
         children: [
           {
+            ownership: { role: "source" },
             type: "group",
             nodeId: "clipper",
             bbox: { x: 20, y: 20, w: 80, h: 80 },
             children: [
               {
+                ownership: { role: "source" },
                 type: "text",
                 nodeId: "txt-clipped",
                 bbox: { x: 24, y: 24, w: 48, h: 120 },
@@ -1188,7 +1198,7 @@ describe("emit_svg_from_ir", () => {
           },
         ],
       },
-      drawOrder: ["txt-clipped"],
+
       width: 160,
       height: 160,
       warnings: [],
@@ -1198,49 +1208,47 @@ describe("emit_svg_from_ir", () => {
 
     expect(svg).toContain('<g class="debug-overlay" opacity="0.4">');
     expect(svg).toMatch(
-      /<g class="debug-overlay" opacity="0\.4">[\s\S]*<g clip-path="url\(#clip-clipper\)">[\s\S]*<rect x="50" y="30" width="60" height="100" fill="none" stroke="#ff0000" stroke-width="1"\/>[\s\S]*<\/g>/,
+      /<g class="debug-overlay" opacity="0\.4">[\s\S]*<g clip-path="url\(#clip-n1\)">[\s\S]*<rect x="50" y="30" width="60" height="100" fill="none" stroke="#ff0000" stroke-width="1"\/>[\s\S]*<\/g>/,
     );
   });
 
   it("draws computed line layout boxes in debug overlays", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "txt-lines",
-          bbox: { x: 20, y: 10, w: 100, h: 40 },
-          font: "F",
-          fontSizePx: 16,
-          color: "#000000",
-          textAlign: "center",
-          layoutBox: { x: 20, y: 10, w: 100, h: 40 },
-          lineHeightPx: 20,
-          lines: [
-            { text: "First", glyphs: [], width: 60, baselineY: 14 },
-            { text: "Second", glyphs: [], width: 30, baselineY: 34 },
-          ],
-          glyphPaths: [
-            {
-              nodeId: "txt-lines",
-              d: "M40 12L100 12L100 28L40 28Z",
-              fill: "#000000",
-              glyphIds: [1],
-              text: "First",
-              bbox: { x: 40, y: 12, w: 60, h: 16 },
-            },
-            {
-              nodeId: "txt-lines",
-              d: "M55 32L85 32L85 44L55 44Z",
-              fill: "#000000",
-              glyphIds: [2],
-              text: "Second",
-              bbox: { x: 55, y: 32, w: 30, h: 12 },
-            },
-          ],
-        },
-      ],
-      ["txt-lines"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "txt-lines",
+        bbox: { x: 20, y: 10, w: 100, h: 40 },
+        font: "F",
+        fontSizePx: 16,
+        color: "#000000",
+        textAlign: "center",
+        layoutBox: { x: 20, y: 10, w: 100, h: 40 },
+        lineHeightPx: 20,
+        lines: [
+          { text: "First", glyphs: [], width: 60, baselineY: 14 },
+          { text: "Second", glyphs: [], width: 30, baselineY: 34 },
+        ],
+        glyphPaths: [
+          {
+            nodeId: "txt-lines",
+            d: "M40 12L100 12L100 28L40 28Z",
+            fill: "#000000",
+            glyphIds: [1],
+            text: "First",
+            bbox: { x: 40, y: 12, w: 60, h: 16 },
+          },
+          {
+            nodeId: "txt-lines",
+            d: "M55 32L85 32L85 44L55 44Z",
+            fill: "#000000",
+            glyphIds: [2],
+            text: "Second",
+            bbox: { x: 55, y: 32, w: 30, h: 12 },
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir, { debug: true });
 
@@ -1253,35 +1261,33 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("expands debug measured glyph bounds by text stroke width", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "txt-stroke-debug",
-          bbox: { x: 0, y: 0, w: 80, h: 30 },
-          font: "F",
-          fontSizePx: 16,
-          color: "#000000",
-          textAlign: "start",
-          layoutBox: { x: 0, y: 0, w: 80, h: 30 },
-          lineHeightPx: 19.2,
-          stroke: "#f59e0b",
-          strokeWidth: 4,
-          lines: [{ text: "A", glyphs: [], width: 30, baselineY: 20 }],
-          glyphPaths: [
-            {
-              nodeId: "txt-stroke-debug",
-              d: "M10 12L40 12L40 24L10 24Z",
-              fill: "#000000",
-              glyphIds: [1],
-              text: "A",
-              bbox: { x: 10, y: 12, w: 30, h: 12 },
-            },
-          ],
-        },
-      ],
-      ["txt-stroke-debug"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "txt-stroke-debug",
+        bbox: { x: 0, y: 0, w: 80, h: 30 },
+        font: "F",
+        fontSizePx: 16,
+        color: "#000000",
+        textAlign: "start",
+        layoutBox: { x: 0, y: 0, w: 80, h: 30 },
+        lineHeightPx: 19.2,
+        stroke: "#f59e0b",
+        strokeWidth: 4,
+        lines: [{ text: "A", glyphs: [], width: 30, baselineY: 20 }],
+        glyphPaths: [
+          {
+            nodeId: "txt-stroke-debug",
+            d: "M10 12L40 12L40 24L10 24Z",
+            fill: "#000000",
+            glyphIds: [1],
+            text: "A",
+            bbox: { x: 10, y: 12, w: 30, h: 12 },
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir, { debug: true });
 
@@ -1291,33 +1297,31 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("can emit only selected debug overlay parts", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "txt-selected-debug",
-          bbox: { x: 10, y: 20, w: 80, h: 30 },
-          font: "F",
-          fontSizePx: 16,
-          color: "#000000",
-          textAlign: "start",
-          layoutBox: { x: 10, y: 20, w: 80, h: 30 },
-          lineHeightPx: 19.2,
-          lines: [{ text: "A", glyphs: [], width: 30, baselineY: 18 }],
-          glyphPaths: [
-            {
-              nodeId: "txt-selected-debug",
-              d: "M12 24L38 24L38 36L12 36Z",
-              fill: "#000000",
-              glyphIds: [1],
-              text: "A",
-              bbox: { x: 12, y: 24, w: 26, h: 12 },
-            },
-          ],
-        },
-      ],
-      ["txt-selected-debug"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "txt-selected-debug",
+        bbox: { x: 10, y: 20, w: 80, h: 30 },
+        font: "F",
+        fontSizePx: 16,
+        color: "#000000",
+        textAlign: "start",
+        layoutBox: { x: 10, y: 20, w: 80, h: 30 },
+        lineHeightPx: 19.2,
+        lines: [{ text: "A", glyphs: [], width: 30, baselineY: 18 }],
+        glyphPaths: [
+          {
+            nodeId: "txt-selected-debug",
+            d: "M12 24L38 24L38 36L12 36Z",
+            fill: "#000000",
+            glyphIds: [1],
+            text: "A",
+            bbox: { x: 12, y: 24, w: 26, h: 12 },
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir, { debug: { parts: ["baseline"] } });
 
@@ -1331,27 +1335,25 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("emits vertical baselines for vertical-rl text", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "txt-vertical-baseline",
-          bbox: { x: 10, y: 20, w: 60, h: 120 },
-          font: "F",
-          fontSizePx: 16,
-          color: "#000000",
-          textAlign: "start",
-          layoutBox: { x: 8, y: 16, w: 72, h: 140 },
-          writingMode: "vertical-rl",
-          lineHeightPx: 24,
-          lines: [
-            { text: "一", glyphs: [], width: 80, baselineY: 14 },
-            { text: "二", glyphs: [], width: 80, baselineY: 38 },
-          ],
-        },
-      ],
-      ["txt-vertical-baseline"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "txt-vertical-baseline",
+        bbox: { x: 10, y: 20, w: 60, h: 120 },
+        font: "F",
+        fontSizePx: 16,
+        color: "#000000",
+        textAlign: "start",
+        layoutBox: { x: 8, y: 16, w: 72, h: 140 },
+        writingMode: "vertical-rl",
+        lineHeightPx: 24,
+        lines: [
+          { text: "一", glyphs: [], width: 80, baselineY: 14 },
+          { text: "二", glyphs: [], width: 80, baselineY: 38 },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir, { debug: { parts: ["baseline"] } });
 
@@ -1364,69 +1366,67 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("uses positioned base glyphs for rich vertical baselines", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "txt-positioned-vertical-baseline",
-          bbox: { x: 40, y: 20, w: 40, h: 120 },
-          font: "NotoSansJP",
-          color: "#000000",
-          textAlign: "start",
-          layoutBox: { x: 100, y: 16, w: 100, h: 140 },
-          writingMode: "vertical-rl",
-          fontSizePx: 28,
-          lineHeightPx: 33.6,
-          lines: [
-            {
-              text: "古こと",
-              glyphs: [],
-              width: 80,
-              baselineY: 14,
-              positionedGlyphs: [
-                {
-                  glyphId: 1,
-                  text: "古",
-                  clusterStart: 0,
-                  clusterEnd: 3,
-                  fontAlias: "NotoSansJP",
-                  fontWeight: 400,
-                  fontStyle: "normal",
-                  fontSizePx: 28,
-                  originX: 24,
-                  originY: 20,
-                  xOffset: 2,
-                  yOffset: 0,
-                  xAdvance: 0,
-                  yAdvance: 28,
-                  rotationDeg: 0,
-                  absolutePosition: true,
-                },
-                {
-                  glyphId: 2,
-                  text: "こ",
-                  clusterStart: 3,
-                  clusterEnd: 6,
-                  fontAlias: "NotoSansJP",
-                  fontWeight: 400,
-                  fontStyle: "normal",
-                  fontSizePx: 11,
-                  originX: 38,
-                  originY: 20,
-                  xOffset: 0,
-                  yOffset: 0,
-                  xAdvance: 0,
-                  yAdvance: 11,
-                  rotationDeg: 0,
-                  absolutePosition: true,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      ["txt-positioned-vertical-baseline"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "txt-positioned-vertical-baseline",
+        bbox: { x: 40, y: 20, w: 40, h: 120 },
+        font: "NotoSansJP",
+        color: "#000000",
+        textAlign: "start",
+        layoutBox: { x: 100, y: 16, w: 100, h: 140 },
+        writingMode: "vertical-rl",
+        fontSizePx: 28,
+        lineHeightPx: 33.6,
+        lines: [
+          {
+            text: "古こと",
+            glyphs: [],
+            width: 80,
+            baselineY: 14,
+            positionedGlyphs: [
+              {
+                glyphId: 1,
+                text: "古",
+                clusterStart: 0,
+                clusterEnd: 3,
+                fontAlias: "NotoSansJP",
+                fontWeight: 400,
+                fontStyle: "normal",
+                fontSizePx: 28,
+                originX: 24,
+                originY: 20,
+                xOffset: 2,
+                yOffset: 0,
+                xAdvance: 0,
+                yAdvance: 28,
+                rotationDeg: 0,
+                absolutePosition: true,
+              },
+              {
+                glyphId: 2,
+                text: "こ",
+                clusterStart: 3,
+                clusterEnd: 6,
+                fontAlias: "NotoSansJP",
+                fontWeight: 400,
+                fontStyle: "normal",
+                fontSizePx: 11,
+                originX: 38,
+                originY: 20,
+                xOffset: 0,
+                yOffset: 0,
+                xAdvance: 0,
+                yAdvance: 11,
+                rotationDeg: 0,
+                absolutePosition: true,
+              },
+            ],
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir, { debug: { parts: ["baseline"] } });
 
@@ -1436,17 +1436,15 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("omits debug overlays when selected debug parts are empty", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "rect",
-          nodeId: "rect-empty-debug",
-          bbox: { x: 0, y: 0, w: 20, h: 20 },
-          fill: "#ffffff",
-        },
-      ],
-      ["rect-empty-debug"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "rect",
+        nodeId: "rect-empty-debug",
+        bbox: { x: 0, y: 0, w: 20, h: 20 },
+        fill: "#ffffff",
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir, { debug: { parts: [] } });
 
@@ -1454,50 +1452,46 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("escapes XML characters in text metadata", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "txt1",
-          bbox: { x: 0, y: 0, w: 200, h: 20 },
-          font: "Arial",
-          fontSizePx: 16,
-          color: "#000",
-          textAlign: "start",
-          layoutBox: { x: 0, y: 0, w: 200, h: 20 },
-          lineHeightPx: 19.2,
-          lines: [{ text: "A < B & C > D", glyphs: [], width: 100, baselineY: 14 }],
-          glyphPaths: [
-            {
-              nodeId: "txt1",
-              d: "M0 0H10",
-              fill: "#000",
-              glyphIds: [1],
-              text: "A < B & C > D",
-              bbox: { x: 0, y: 0, w: 10, h: 10 },
-            },
-          ],
-        },
-      ],
-      ["txt1"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "txt1",
+        bbox: { x: 0, y: 0, w: 200, h: 20 },
+        font: "Arial",
+        fontSizePx: 16,
+        color: "#000",
+        textAlign: "start",
+        layoutBox: { x: 0, y: 0, w: 200, h: 20 },
+        lineHeightPx: 19.2,
+        lines: [{ text: "A < B & C > D", glyphs: [], width: 100, baselineY: 14 }],
+        glyphPaths: [
+          {
+            nodeId: "txt1",
+            d: "M0 0H10",
+            fill: "#000",
+            glyphIds: [1],
+            text: "A < B & C > D",
+            bbox: { x: 0, y: 0, w: 10, h: 10 },
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('data-boundsvg-text="A &lt; B &amp; C &gt; D"');
   });
 
   it("rounds decimal values to 2 places", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "rect",
-          nodeId: "r1",
-          bbox: { x: 10.123456, y: 20.987654, w: 100.555, h: 50.001 },
-          fill: "#000",
-        },
-      ],
-      ["r1"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "rect",
+        nodeId: "r1",
+        bbox: { x: 10.123456, y: 20.987654, w: 100.555, h: 50.001 },
+        fill: "#000",
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('x="10.12"');
@@ -1507,18 +1501,16 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("emits path wrapper with data-boundsvg-node-id attribute", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "path",
-          nodeId: "star1",
-          bbox: { x: 100, y: 200, w: 120, h: 115 },
-          pathData: "M60 10 L73 45 L110 45 L80 68 L90 105 L60 82 L30 105 L40 68 L10 45 L47 45 Z",
-          fill: "#fbbf24",
-        },
-      ],
-      ["star1"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "path",
+        nodeId: "star1",
+        bbox: { x: 100, y: 200, w: 120, h: 115 },
+        pathData: "M60 10 L73 45 L110 45 L80 68 L90 105 L60 82 L30 105 L40 68 L10 45 L47 45 Z",
+        fill: "#fbbf24",
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('data-boundsvg-node-id="star1"');
@@ -1529,54 +1521,50 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("escapes special characters in data-boundsvg-node-id", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "path",
-          nodeId: 'path<>&"test',
-          bbox: { x: 0, y: 0, w: 50, h: 50 },
-          pathData: "M0 0 L50 50",
-          fill: "#000",
-        },
-      ],
-      ['path<>&"test'],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "path",
+        nodeId: 'path<>&"test',
+        bbox: { x: 0, y: 0, w: 50, h: 50 },
+        pathData: "M0 0 L50 50",
+        fill: "#000",
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('data-boundsvg-node-id="path&lt;&gt;&amp;&quot;test"');
   });
 
   it("emits text stroke with round linejoin", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "stroked",
-          bbox: { x: 0, y: 0, w: 200, h: 30 },
-          font: "Arial",
-          fontSizePx: 24,
-          color: "#000",
-          textAlign: "start",
-          layoutBox: { x: 0, y: 0, w: 200, h: 30 },
-          lineHeightPx: 28.8,
-          stroke: "#ff0000",
-          strokeWidth: 3,
-          strokeLinejoin: "round",
-          lines: [{ text: "Wv", glyphs: [], width: 40, baselineY: 20 }],
-          glyphPaths: [
-            {
-              nodeId: "stroked",
-              d: "M0 0L10 10",
-              fill: "#000",
-              glyphIds: [1],
-              text: "Wv",
-              bbox: { x: 0, y: 0, w: 10, h: 10 },
-            },
-          ],
-        },
-      ],
-      ["stroked"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "stroked",
+        bbox: { x: 0, y: 0, w: 200, h: 30 },
+        font: "Arial",
+        fontSizePx: 24,
+        color: "#000",
+        textAlign: "start",
+        layoutBox: { x: 0, y: 0, w: 200, h: 30 },
+        lineHeightPx: 28.8,
+        stroke: "#ff0000",
+        strokeWidth: 3,
+        strokeLinejoin: "round",
+        lines: [{ text: "Wv", glyphs: [], width: 40, baselineY: 20 }],
+        glyphPaths: [
+          {
+            nodeId: "stroked",
+            d: "M0 0L10 10",
+            fill: "#000",
+            glyphIds: [1],
+            text: "Wv",
+            bbox: { x: 0, y: 0, w: 10, h: 10 },
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('stroke="#ff0000"');
@@ -1586,39 +1574,37 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("emits all text stroke style attrs", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "styled-stroke",
-          bbox: { x: 0, y: 0, w: 200, h: 30 },
-          font: "Arial",
-          fontSizePx: 24,
-          color: "#000",
-          textAlign: "start",
-          layoutBox: { x: 0, y: 0, w: 200, h: 30 },
-          lineHeightPx: 28.8,
-          stroke: "#0000ff",
-          strokeWidth: 2,
-          strokeLinecap: "round",
-          strokeLinejoin: "bevel",
-          strokeDasharray: "5,3",
-          strokeMiterlimit: 8,
-          lines: [{ text: "Test", glyphs: [], width: 60, baselineY: 20 }],
-          glyphPaths: [
-            {
-              nodeId: "styled-stroke",
-              d: "M0 0L10 10",
-              fill: "#000",
-              glyphIds: [1],
-              text: "Test",
-              bbox: { x: 0, y: 0, w: 10, h: 10 },
-            },
-          ],
-        },
-      ],
-      ["styled-stroke"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "styled-stroke",
+        bbox: { x: 0, y: 0, w: 200, h: 30 },
+        font: "Arial",
+        fontSizePx: 24,
+        color: "#000",
+        textAlign: "start",
+        layoutBox: { x: 0, y: 0, w: 200, h: 30 },
+        lineHeightPx: 28.8,
+        stroke: "#0000ff",
+        strokeWidth: 2,
+        strokeLinecap: "round",
+        strokeLinejoin: "bevel",
+        strokeDasharray: "5,3",
+        strokeMiterlimit: 8,
+        lines: [{ text: "Test", glyphs: [], width: 60, baselineY: 20 }],
+        glyphPaths: [
+          {
+            nodeId: "styled-stroke",
+            d: "M0 0L10 10",
+            fill: "#000",
+            glyphIds: [1],
+            text: "Test",
+            bbox: { x: 0, y: 0, w: 10, h: 10 },
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('stroke-linecap="round"');
@@ -1628,36 +1614,34 @@ describe("emit_svg_from_ir", () => {
   });
 
   it("emits stroke style attrs on glyph paths", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "text",
-          nodeId: "glyph-stroked",
-          bbox: { x: 0, y: 0, w: 100, h: 20 },
-          font: "F",
-          fontSizePx: 16,
-          color: "#000",
-          textAlign: "start",
-          layoutBox: { x: 0, y: 0, w: 100, h: 20 },
-          lineHeightPx: 19.2,
-          stroke: "#f00",
-          strokeWidth: 2,
-          strokeLinejoin: "round",
-          lines: [{ text: "A", glyphs: [], width: 10, baselineY: 14 }],
-          glyphPaths: [
-            {
-              nodeId: "glyph-stroked",
-              d: "M0 0L10 10",
-              fill: "#000",
-              glyphIds: [1],
-              text: "A",
-              bbox: { x: 0, y: 0, w: 10, h: 10 },
-            },
-          ],
-        },
-      ],
-      ["glyph-stroked"],
-    );
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "text",
+        nodeId: "glyph-stroked",
+        bbox: { x: 0, y: 0, w: 100, h: 20 },
+        font: "F",
+        fontSizePx: 16,
+        color: "#000",
+        textAlign: "start",
+        layoutBox: { x: 0, y: 0, w: 100, h: 20 },
+        lineHeightPx: 19.2,
+        stroke: "#f00",
+        strokeWidth: 2,
+        strokeLinejoin: "round",
+        lines: [{ text: "A", glyphs: [], width: 10, baselineY: 14 }],
+        glyphPaths: [
+          {
+            nodeId: "glyph-stroked",
+            d: "M0 0L10 10",
+            fill: "#000",
+            glyphIds: [1],
+            text: "A",
+            bbox: { x: 0, y: 0, w: 10, h: 10 },
+          },
+        ],
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     expect(svg).toContain('stroke="#f00"');
@@ -1666,29 +1650,28 @@ describe("emit_svg_from_ir", () => {
     expect(svg).toContain("<path");
   });
 
-  it("emits nodes in drawOrder sequence", () => {
-    const ir = makeIR(
-      [
-        {
-          type: "rect",
-          nodeId: "first",
-          bbox: { x: 0, y: 0, w: 100, h: 100 },
-          fill: "#ff0000",
-        },
-        {
-          type: "rect",
-          nodeId: "second",
-          bbox: { x: 50, y: 50, w: 100, h: 100 },
-          fill: "#00ff00",
-        },
-      ],
-      ["first", "second"],
-    );
+  it("emits nodes in tree paint sequence", () => {
+    const ir = makeIR([
+      {
+        ownership: { role: "source" },
+        type: "rect",
+        nodeId: "first",
+        bbox: { x: 0, y: 0, w: 100, h: 100 },
+        fill: "#ff0000",
+      },
+      {
+        ownership: { role: "source" },
+        type: "rect",
+        nodeId: "second",
+        bbox: { x: 50, y: 50, w: 100, h: 100 },
+        fill: "#00ff00",
+      },
+    ]);
 
     const svg = emitSvgFromIrViaHandle(handle, ir);
     const firstIdx = svg.indexOf("#ff0000");
     const secondIdx = svg.indexOf("#00ff00");
-    // drawOrder should be preserved (first before second)
+    // Tree order should be preserved (first before second)
     expect(firstIdx).toBeGreaterThan(-1);
     expect(secondIdx).toBeGreaterThan(-1);
     expect(firstIdx).toBeLessThan(secondIdx);
@@ -1698,6 +1681,7 @@ describe("emit_svg_from_ir", () => {
     const ir = makeIR(
       [
         {
+          ownership: { role: "source" },
           type: "shape",
           nodeId: "bowtie",
           bbox: { x: 0, y: 0, w: 100, h: 100 },
@@ -1709,7 +1693,6 @@ describe("emit_svg_from_ir", () => {
           ],
         },
       ],
-      ["bowtie"],
       100,
       100,
     );
@@ -1721,6 +1704,7 @@ describe("emit_svg_from_ir", () => {
 
   it("does not create dead shared defs for split stroke geometry", () => {
     const splitShape = (nodeId: string): IRNode => ({
+      ownership: { role: "source" },
       type: "shape",
       nodeId,
       bbox: { x: 0, y: 0, w: 100, h: 100 },
@@ -1730,11 +1714,46 @@ describe("emit_svg_from_ir", () => {
     });
     const svg = emitSvgFromIrViaHandle(
       handle,
-      makeIR([splitShape("a"), splitShape("b")], ["a", "b"], 100, 100),
+      makeIR([splitShape("a"), splitShape("b")], 100, 100),
     );
 
     expect(svg).not.toMatch(/<path id="[^"]*sp-/);
     expect(svg).not.toContain("<use ");
     expect((svg.match(/d="M0,50L100,50"/g) ?? []).length).toBe(2);
   });
+});
+
+it("paints a primitive root and applies root-group transform, clip and opacity to raster output", () => {
+  const bbox = { x: 0, y: 0, w: 8, h: 8 };
+  const primitive: IRNode = {
+    type: "rect",
+    nodeId: "root",
+    bbox,
+    ownership: { role: "source" },
+    fill: "red",
+  };
+  const make = (root: IRNode): IR => ({ root, width: 8, height: 8, warnings: [] });
+  const rasterize = handle.createSvgToPngFn();
+  const pixel = (svg: string, x: number, y: number) => {
+    const png = decodeRgbaPng(rasterize(svg));
+    const offset = (y * png.width + x) * 4;
+    return [...png.rgba.slice(offset, offset + 4)];
+  };
+  const sourceSvg = emitSvgFromIrViaHandle(handle, make(primitive));
+  expect(sourceSvg).toContain('data-boundsvg-node-index="0"');
+  expect(pixel(sourceSvg, 0, 0)).toEqual([255, 0, 0, 255]);
+  const root: IRNode = {
+    type: "group",
+    nodeId: "root",
+    bbox,
+    ownership: { role: "source" },
+    opacity: 0.5,
+    transform: { translateX: 2 },
+    clip: circularClip({ x: 0, y: 0, w: 4, h: 4 }, 0),
+    children: [{ ...primitive, ownership: { role: "content", ownerNodeId: "root" } }],
+  };
+  const svg = emitSvgFromIrViaHandle(handle, make(root));
+  expect(pixel(svg, 1, 1)).toEqual([0, 0, 0, 0]);
+  expect(pixel(svg, 3, 1)).toEqual([255, 0, 0, 128]);
+  expect(pixel(svg, 7, 1)).toEqual([0, 0, 0, 0]);
 });

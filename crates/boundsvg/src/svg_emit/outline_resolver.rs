@@ -1233,8 +1233,8 @@ mod tests {
 
     #[test]
     fn rejects_legacy_glyph_indices_when_unit_membership_is_active() {
-        let node: IrNode =
-            serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(serde_json::json!({
+        let node: IrNode = serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(
+            serde_json::json!({ "ownership": { "role": "source" },
                 "nodeId": "text",
                 "bbox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
                 "type": "text",
@@ -1278,9 +1278,10 @@ mod tests {
                         "durationMs": 100.0
                     }
                 }
-            }))
-            .map(IrNode::from)
-            .expect("text unit node fixture deserializes");
+            }),
+        )
+        .map(IrNode::from)
+        .expect("text unit node fixture deserializes");
 
         let error = build_node_outline_requests(&node.kind, node.bbox, &node.node_id, None)
             .expect_err("legacy glyph indices must not be used for unit membership");
@@ -1292,41 +1293,43 @@ mod tests {
     }
 
     fn positioned_text_node() -> IrNode {
-        serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(serde_json::json!({
-            "nodeId": "text",
-            "bbox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
-            "type": "text",
-            "lines": [{
-                "text": "A",
-                "glyphs": [],
-                "width": 10.0,
-                "baselineY": 8.0,
-                "positionedGlyphs": [{
-                    "glyphId": 1,
+        serde_json::from_value::<crate::ir::wire_input::IrNodeInput>(
+            serde_json::json!({ "ownership": { "role": "source" },
+                "nodeId": "text",
+                "bbox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
+                "type": "text",
+                "lines": [{
                     "text": "A",
-                    "clusterStart": 0,
-                    "clusterEnd": 1,
-                    "fontAlias": "Test",
-                    "fontWeight": 400,
-                    "fontStyle": "normal",
-                    "originX": 0.0,
-                    "originY": 8.0,
-                    "xOffset": 0.0,
-                    "yOffset": 0.0,
-                    "xAdvance": 10.0,
-                    "yAdvance": 0.0,
-                    "rotationDeg": 0,
-                    "baselineRotationDeg": 45.0,
-                    "inlineScale": 2.0
-                }]
-            }],
-            "font": "Test",
-            "fontSizePx": 10.0,
-            "color": "#000000",
-            "textAlign": "start",
-            "layoutBox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
-            "lineHeightPx": 10.0
-        }))
+                    "glyphs": [],
+                    "width": 10.0,
+                    "baselineY": 8.0,
+                    "positionedGlyphs": [{
+                        "glyphId": 1,
+                        "text": "A",
+                        "clusterStart": 0,
+                        "clusterEnd": 1,
+                        "fontAlias": "Test",
+                        "fontWeight": 400,
+                        "fontStyle": "normal",
+                        "originX": 0.0,
+                        "originY": 8.0,
+                        "xOffset": 0.0,
+                        "yOffset": 0.0,
+                        "xAdvance": 10.0,
+                        "yAdvance": 0.0,
+                        "rotationDeg": 0,
+                        "baselineRotationDeg": 45.0,
+                        "inlineScale": 2.0
+                    }]
+                }],
+                "font": "Test",
+                "fontSizePx": 10.0,
+                "color": "#000000",
+                "textAlign": "start",
+                "layoutBox": { "x": 0.0, "y": 0.0, "w": 20.0, "h": 10.0 },
+                "lineHeightPx": 10.0
+            }),
+        )
         .map(IrNode::from)
         .expect("positioned text node fixture deserializes")
     }

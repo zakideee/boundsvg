@@ -96,14 +96,10 @@ boundsvg	crates/boundsvg/src/ir/wire_output.rs	HandlersRefOutput	on_touch_start	
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	animation	animation	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	box_shadow	boxShadow	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	clip	clip	omit-none
-boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	meta	meta	omit-none
-boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	on	on	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	opacity	opacity	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Group	transform	transform	omit-none
-boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Image	on	on	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Path	fill	fill	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Path	fill_rule	fillRule	omit-none
-boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Path	on	on	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Path	stroke	stroke	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Path	stroke_dasharray	strokeDasharray	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Path	stroke_linecap	strokeLinecap	omit-none
@@ -123,14 +119,12 @@ boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Rect	stroke_sca
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Rect	stroke_width	strokeWidth	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Shape	fill	fill	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Shape	fill_rule	fillRule	omit-none
-boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Shape	on	on	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Shape	stroke	stroke	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Shape	stroke_dasharray	strokeDasharray	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Shape	stroke_linecap	strokeLinecap	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Shape	stroke_linejoin	strokeLinejoin	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Shape	stroke_miterlimit	strokeMiterlimit	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Shape	stroke_width	strokeWidth	omit-none
-boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Svg	on	on	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Svg	view_box	svgViewBox	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	display_text	displayText	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	font_fallback	fontFallback	omit-none
@@ -142,7 +136,6 @@ boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	glyph_path
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	gradients	gradients	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	language	language	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	letter_spacing_px	letterSpacingPx	omit-none
-boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	on	on	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	shadows	shadows	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	source_text	sourceText	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	stroke	stroke	omit-none
@@ -159,6 +152,8 @@ boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	unit_anima
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	unit_animation_samples	unitAnimationSamples	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	unit_map	unitMap	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeKindOutput::Text	writing_mode	writingMode	omit-none
+boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeOwnershipOutput::Source	meta	meta	omit-none
+boundsvg	crates/boundsvg/src/ir/wire_output.rs	IrNodeOwnershipOutput::Source	on	on	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	LineProjection	fragments	fragments	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	LineProjection	positioned_glyphs	positionedGlyphs	omit-none
 boundsvg	crates/boundsvg/src/ir/wire_output.rs	ShapePartPaintOutput	fill	fill	omit-none

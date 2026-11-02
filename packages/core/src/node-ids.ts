@@ -1,18 +1,11 @@
 import { FatalError } from "./errors.js";
 import { generateNodeId } from "./ir/node-id.js";
-import { resolveBorderWidths } from "./layout/box-style.js";
 import { resolveSceneOrVNodeInput } from "./scene/from-vnode.js";
 import type { SceneNode } from "./scene/types.js";
 import type { VNode, VNodeType } from "./vnode/types.js";
 
 /** Source of an explicit, automatic, or owner-generated identifier. */
-export type CollectedNodeIdSource =
-  | "explicit"
-  | "auto"
-  | "background"
-  | "border"
-  | "outline"
-  | "content";
+export type CollectedNodeIdSource = "explicit" | "auto";
 
 /** One authored, automatic, or generated ID with its source-tree position and optional owner. */
 export type CollectedNodeId = {
@@ -20,7 +13,6 @@ export type CollectedNodeId = {
   source: CollectedNodeIdSource;
   nodeType: VNodeType;
   path: readonly number[];
-  baseNodeId?: string;
 };
 
 /** All source entries that claim the same render identifier. */
@@ -36,12 +28,11 @@ export type NodeIdValidationResult = {
   duplicates: NodeIdDuplicate[];
   explicitIds: string[];
   autoIds: string[];
-  generatedIds: string[];
 };
 
 type NodeIdInput = VNode | SceneNode;
 
-/** Collect source IDs and reserved box-paint/clip IDs without rendering the input. */
+/** Collect source IDs and source IDs without rendering the input. */
 export function collectNodeIds(input: NodeIdInput): CollectedNodeId[] {
   const vnode = resolveSceneOrVNodeInput(input);
   const ids: CollectedNodeId[] = [];
@@ -54,13 +45,12 @@ export function collectNodeIds(input: NodeIdInput): CollectedNodeId[] {
   return ids;
 }
 
-/** Find collisions across authored nodes and their reserved generated identifiers. */
+/** Find collisions across authored and automatic source identifiers. */
 export function validateNodeIds(input: NodeIdInput): NodeIdValidationResult {
   const ids = collectNodeIds(input);
   const byId = new Map<string, CollectedNodeId[]>();
   const explicitIds: string[] = [];
   const autoIds: string[] = [];
-  const generatedIds: string[] = [];
 
   for (const entry of ids) {
     const entries = byId.get(entry.id);
@@ -76,12 +66,6 @@ export function validateNodeIds(input: NodeIdInput): NodeIdValidationResult {
         break;
       case "auto":
         autoIds.push(entry.id);
-        break;
-      case "background":
-      case "border":
-      case "outline":
-      case "content":
-        generatedIds.push(entry.id);
         break;
     }
   }
@@ -99,11 +83,10 @@ export function validateNodeIds(input: NodeIdInput): NodeIdValidationResult {
     duplicates,
     explicitIds,
     autoIds,
-    generatedIds,
   };
 }
 
-/** Throw NODE_ID_COLLISION when source and reserved generated IDs overlap. */
+/** Throw NODE_ID_COLLISION when source IDs overlap. */
 export function assertUniqueNodeIds(input: NodeIdInput): void {
   const result = validateNodeIds(input);
   if (result.valid) {
@@ -117,7 +100,7 @@ export function assertUniqueNodeIds(input: NodeIdInput): void {
   const sources = duplicate.entries.map((entry) => entry.source).join(", ");
   throw new FatalError(
     "NODE_ID_COLLISION",
-    `Validation error: node id "${duplicate.id}" collides across generated render IDs (${sources})`,
+    `Validation error: node id "${duplicate.id}" duplicates a source ID (${sources})`,
     {
       stage: "validate",
       nodeId: duplicate.id,
@@ -144,48 +127,6 @@ function collectVNodeNodeIds(
     path: position.path,
   });
 
-  if (hasBackgroundRenderNode(vnode)) {
-    ids.push({
-      id: `${nodeId}:bg`,
-      source: "background",
-      nodeType: vnode.type,
-      path: position.path,
-      baseNodeId: nodeId,
-    });
-  }
-
-  if (hasBorderRenderNode(vnode)) {
-    ids.push({
-      id: `${nodeId}:border`,
-      source: "border",
-      nodeType: vnode.type,
-      path: position.path,
-      baseNodeId: nodeId,
-    });
-  }
-
-  if (vnode.type === "Box" || vnode.type === "Flex" || vnode.type === "Grid") {
-    const hasWidth = resolveBorderWidths(vnode.props.borderWidth).some((width) => width > 0);
-    if (hasWidth && vnode.props.overflow === "clip" && vnode.children.length > 0) {
-      ids.push({
-        id: `${nodeId}:content`,
-        source: "content",
-        nodeType: vnode.type,
-        path: position.path,
-        baseNodeId: nodeId,
-      });
-    }
-    const outline = vnode.props.outline;
-    if (outline && outline.stroke.length > 0 && (outline.strokeWidth ?? 1) > 0) {
-      ids.push({
-        id: `${nodeId}:outline`,
-        source: "outline",
-        nodeType: vnode.type,
-        path: position.path,
-        baseNodeId: nodeId,
-      });
-    }
-  }
   for (const [index, child] of vnode.children.entries()) {
     if (typeof child === "string") {
       continue;
@@ -196,31 +137,5 @@ function collectVNodeNodeIds(
       parentNodeId: nodeId,
       path: [...position.path, index],
     });
-  }
-}
-
-function hasBackgroundRenderNode(vnode: VNode): boolean {
-  switch (vnode.type) {
-    case "Canvas":
-    case "Flex":
-    case "Grid":
-    case "Box":
-      return typeof vnode.props.background === "string" && vnode.props.background.length > 0;
-    default:
-      return false;
-  }
-}
-
-function hasBorderRenderNode(vnode: VNode): boolean {
-  switch (vnode.type) {
-    case "Flex":
-    case "Grid":
-    case "Box":
-      return (
-        Boolean(vnode.props.borderColor) &&
-        resolveBorderWidths(vnode.props.borderWidth).some((width) => width > 0)
-      );
-    default:
-      return false;
   }
 }

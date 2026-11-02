@@ -12,6 +12,7 @@ import { createElement } from "../../src/vnode/create-element.js";
 import type { VNode } from "../../src/vnode/types.js";
 import { assertWasmPkgAvailable, loadSubsetFont } from "./test-prerequisites.js";
 
+/** Injected fixture-font alias shared by TextOnPath render assertions. */
 const FONT = "NotoSansJP";
 let engine: Engine;
 
@@ -302,7 +303,7 @@ describe("TextOnPath real WASM pipeline", () => {
           ir,
           resolvedPathTextNode.bbox.x + resolvedPathTextNode.bbox.w / 2,
           resolvedPathTextNode.bbox.y + resolvedPathTextNode.bbox.h / 2,
-        ),
+        )?.nodeId ?? null,
       ).toBe("paint-ranges");
     }
     expect(svg).toContain('data-boundsvg-text="ABCD"');
@@ -897,7 +898,7 @@ describe("TextOnPath real WASM pipeline", () => {
           ir,
           textNode.bbox.x + textNode.bbox.w / 2,
           textNode.bbox.y + textNode.bbox.h / 2,
-        ),
+        )?.nodeId ?? null,
       ).toBe("path-text");
     }
     const positionedGlyphs = textNode?.lines[0]?.positionedGlyphs ?? [];
@@ -916,8 +917,19 @@ describe("TextOnPath real WASM pipeline", () => {
       expect(svg).toContain('stroke="#ffffff" stroke-width="3"');
     }
     const glyphIr = engine.renderToSvgAndIR(vnode, { textPathMode: "glyphs" }).ir;
-    expect(getNodeText(buildTextMap(glyphIr), "path-text")).toBe("曲線 Path");
-    expect(buildTextSelectionMap(glyphIr).nodes.get("path-text")?.glyphs.length).toBeGreaterThan(0);
+    expect(
+      getNodeText(
+        buildTextMap(glyphIr),
+        [...buildTextMap(glyphIr).nodes.values()].find(
+          (entry) => entry.source.nodeId === "path-text",
+        )!.source.sourceIndex,
+      ),
+    ).toBe("曲線 Path");
+    expect(
+      [...buildTextSelectionMap(glyphIr).nodes.values()].find(
+        (entry) => entry.source.nodeId === "path-text",
+      )?.glyphs.length,
+    ).toBeGreaterThan(0);
     expect(engine.renderToSvg(vnode, { debug: true })).toContain("debug-overlay");
     const layered = engine.renderToLayeredSvg(withPathProps({ layer: "curve" }));
     expect(layered.layers.some((layer) => layer.id === "curve")).toBe(true);
@@ -1058,7 +1070,7 @@ describe("TextOnPath real WASM pipeline", () => {
     const textNode = findTextNode(ir.root);
     expect(textNode?.bbox).toEqual({ x: 0, y: 0, w: 0, h: 0 });
     expect(textNode?.lines[0]?.positionedGlyphs).toEqual([]);
-    expect(engine.hitTest(ir, 100, 80)).toBeNull();
+    expect(engine.hitTest(ir, 100, 80)?.nodeId ?? null).toBeNull();
 
     const svg = engine.renderToSvg(vnode);
     expect(svg).toContain('data-boundsvg-text="hidden original"');

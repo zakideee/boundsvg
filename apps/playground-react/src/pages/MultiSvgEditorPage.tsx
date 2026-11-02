@@ -131,6 +131,7 @@ function selectionStyle(node: IRNode | null, width: number, height: number): CSS
   };
 }
 
+/** Edit multiple scenes while inspecting each rendered snapshot independently. */
 export function MultiSvgEditorPage() {
   return (
     <JotaiProvider>
@@ -711,7 +712,7 @@ function CompositionPanelInner() {
     [handlerIds, placements, renderCache, selectedAssetId],
   );
 
-  const { svg, ir, error, hoverNodeId, isReady, containerRef } = useInteractiveSvg(vnode, handlers);
+  const { svg, ir, error, hoverSource, isReady, containerRef } = useInteractiveSvg(vnode, handlers);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -975,7 +976,7 @@ function CompositionPanelInner() {
         codeLayout={codeLayout}
         highlightedRenderedSvg={highlightedRenderedSvg}
         selectedAssetId={selectedAssetId}
-        hoverNodeId={hoverNodeId}
+        hoverNodeId={hoverSource?.nodeId ?? null}
         isDragging={isDragging}
         error={error}
         isReady={isReady}

@@ -1,3 +1,4 @@
+import { inspectScene } from "@boundsvg/core/inspect";
 // ---------------------------------------------------------------------------
 // export subcommand handler
 // ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ import { deriveExportExtension, parseExportArgs } from "./cli-export.js";
 import { reportDryRun, reportDryRunBinary, reportDryRunDirectory } from "./dry-run.js";
 import { ffmpegNotFoundMessage, probeFfmpeg, resolveFfmpegCommand } from "./ffmpeg-locator.js";
 import { CLI_FRAME_RATE_HELP, type CliFrameRate, parseCliFrameRate } from "./frame-rate.js";
-import { formatInspectionJson, inspectCliScene } from "./inspection-report.js";
+import { formatInspectionJson } from "./inspection-report.js";
 import {
   buildFfmpegArgs,
   buildMp4Schedule,
@@ -389,7 +390,7 @@ function writeInspectionReport(
 
   let report: string;
   try {
-    const inspection = inspectCliScene(engine, input, {
+    const inspection = inspectScene(engine, input, {
       textPathMode: options.textPathMode,
     });
     report = formatInspectionJson(inspection);

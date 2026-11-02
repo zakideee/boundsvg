@@ -4,6 +4,7 @@ pub(crate) mod box_geometry;
 pub mod builder;
 pub mod gradient;
 pub(crate) mod numeric_envelope;
+pub mod ownership;
 pub(crate) mod path_geometry;
 mod svg_id_rewrite;
 pub mod svg_security;

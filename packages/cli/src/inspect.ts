@@ -1,11 +1,8 @@
 import { resolve } from "node:path";
+import { inspectScene, type SceneInspection } from "@boundsvg/core/inspect";
 import { parseExportArgs } from "./cli-export.js";
 import { buildExportVNode, formatError, initEngine, readExportInput } from "./export.js";
-import {
-  type CliSceneInspection,
-  formatInspectionJson,
-  inspectCliScene,
-} from "./inspection-report.js";
+import { formatInspectionJson } from "./inspection-report.js";
 import type { CliIo } from "./types.js";
 
 type InspectOutputFormat = "json" | "table";
@@ -36,11 +33,11 @@ function stripInspectFlags(args: string[]): {
   return { args: nextArgs, outputFormat, hasOutput };
 }
 
-function toTableReport(inspection: CliSceneInspection): string {
+function toTableReport(inspection: SceneInspection): string {
   const lines = [
     `canvas: ${inspection.stats.width}x${inspection.stats.height}`,
     `nodes: ${inspection.stats.nodeCount} (${inspection.stats.textNodeCount} text, ${inspection.stats.handlerNodeCount} handlers)`,
-    `drawOrder: ${inspection.stats.drawNodeCount}`,
+    `paintNodes: ${inspection.stats.drawNodeCount}`,
     `measureCalls: ${inspection.stats.measureCallCount}`,
     `warnings: ${inspection.stats.warningCount}`,
     `nodeIds: ${inspection.nodeIds.valid ? "valid" : "duplicates found"}`,
@@ -79,6 +76,7 @@ Options:
 `);
 }
 
+/** Inspect one input scene and write the selected JSON or text report. */
 export async function runInspect(io: CliIo, args: string[]): Promise<number> {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     printInspectUsage(io);
@@ -110,7 +108,7 @@ export async function runInspect(io: CliIo, args: string[]): Promise<number> {
       return vnodeResult.exitCode;
     }
 
-    const inspection = inspectCliScene(engine, vnodeResult.vnode, {
+    const inspection = inspectScene(engine, vnodeResult.vnode, {
       textPathMode: parsed.options.textPathMode,
     });
     const report =

@@ -122,12 +122,11 @@ fn serializes_flat_nodes_with_type_tag_and_omits_unset_fields() {
     assert_eq!(
         ir,
         json!({
-            "root": {
+            "root": { "ownership": { "role": "source" },
                 "type": "group",
                 "nodeId": "root",
                 "bbox": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0 },
             },
-            "drawOrder": [],
             "width": 100.0,
             "height": 50.0,
             "warnings": [],
@@ -160,11 +159,11 @@ fn builds_background_then_intrinsically_clipped_border_surface() {
         ],
     );
 
-    assert_eq!(ir["drawOrder"], json!(["box:bg", "box:border"]));
+    assert!(ir.get("drawOrder").is_none());
     let box_children = &ir["root"]["children"][0]["children"];
     assert_eq!(
         box_children[0],
-        json!({
+        json!({ "ownership": { "role": "decoration", "ownerNodeId": "box" },
             "type": "rect",
             "nodeId": "box:bg",
             "bbox": { "x": 10.0, "y": 10.0, "w": 50.0, "h": 40.0 },
@@ -440,14 +439,13 @@ fn attaches_meta_transform_opacity_and_interactive_handlers_to_groups() {
 
     let card = &ir["root"]["children"][0];
     assert_eq!(card["opacity"], json!(0.5));
-    assert_eq!(card["meta"], json!({ "role": "card" }));
+    assert_eq!(card["ownership"]["meta"], json!({ "role": "card" }));
     assert_eq!(
         card["transform"],
         json!({ "rotateDeg": 45.0, "originX": 10.0, "originY": 10.0 })
     );
-    assert_eq!(card["on"], json!({ "onClick": "select" }));
-    // Interactive containers join drawOrder after their children
-    assert_eq!(ir["drawOrder"], json!(["card"]));
+    assert_eq!(card["ownership"]["on"], json!({ "onClick": "select" }));
+    assert!(ir.get("drawOrder").is_none());
 }
 
 #[test]
@@ -793,7 +791,7 @@ fn builds_text_node_with_aligned_bbox_and_layout_box() {
     );
     // lineHeightPx fallback: measured h / line count = 18 / 1
     assert_eq!(text["lineHeightPx"], json!(18.0));
-    assert_eq!(ir["drawOrder"], json!(["txt"]));
+    assert!(ir.get("drawOrder").is_none());
 }
 
 #[test]
@@ -1093,7 +1091,7 @@ fn emits_inline_box_decorations_before_text() {
     );
 
     // Invisible decoration (no background, no border color) is skipped
-    assert_eq!(ir["drawOrder"], json!(["txt:ibox0", "txt"]));
+    assert!(ir.get("drawOrder").is_none());
     let decoration = &ir["root"]["children"][0]["children"][0];
     assert_eq!(decoration["nodeId"], json!("txt:ibox0"));
     assert_eq!(
@@ -1450,8 +1448,12 @@ fn emits_inline_rects_in_fixed_paint_order_with_fragment_animation() {
         json!({ "type": "steps", "count": 1.0, "position": "jump-end" })
     );
     assert_eq!(
-        ir["drawOrder"],
-        json!(["txt:inline-rect:0:rect", "txt", "txt:inline-rect:1:rect"])
+        [
+            children[0]["ownership"]["role"].as_str(),
+            children[1]["ownership"]["role"].as_str(),
+            children[2]["ownership"]["role"].as_str()
+        ],
+        [Some("wrapper"), Some("content"), Some("wrapper")]
     );
 }
 
@@ -1915,7 +1917,7 @@ fn compiles_shape_parts_baked_to_the_node_box() {
     assert_eq!(parts.len(), 1);
     assert!(parts[0].get("partId").is_none());
     assert!(parts[0]["d"].as_str().is_some_and(|d| !d.is_empty()));
-    assert_eq!(ir["drawOrder"], json!(["shp"]));
+    assert!(ir.get("drawOrder").is_none());
 }
 
 #[test]

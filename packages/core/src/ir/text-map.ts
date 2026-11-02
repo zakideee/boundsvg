@@ -1,5 +1,6 @@
 import type { BBox } from "../text/types.js";
-import type { IR, IRNode } from "./types.js";
+import { buildIRSourceIndex, type IRSourceRef } from "./source-index.js";
+import type { IR } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -16,7 +17,7 @@ export type LineEntry = {
 
 /** Text node entry in a TextMap */
 export type TextNodeEntry = {
-  nodeId: string;
+  source: IRSourceRef;
   /** Full text (lines joined by "\n") */
   text: string;
   bbox: BBox;
@@ -26,77 +27,57 @@ export type TextNodeEntry = {
   lineHeightPx?: number;
 };
 
-/** Flat text structure extracted from an IR tree */
+/** Text entries and ancestor relations keyed by snapshot-local source occurrence. */
 export type TextMap = {
-  /** All text nodes indexed by nodeId */
-  nodes: ReadonlyMap<string, TextNodeEntry>;
-  /** groupNodeId → descendant text nodeIds (in tree walk order) */
-  childTextMap: ReadonlyMap<string, readonly string[]>;
-  /** nodeId → parent nodeId (for ancestor lookups) */
-  parentMap: ReadonlyMap<string, string>;
+  nodes: ReadonlyMap<number, TextNodeEntry>;
+  childTextMap: ReadonlyMap<number, readonly number[]>;
+  parentMap: ReadonlyMap<number, number>;
 };
 
-// ---------------------------------------------------------------------------
-// Build
-// ---------------------------------------------------------------------------
-
-/**
- * Build a TextMap by walking the IR tree once.
- * Collects all text nodes and builds group-to-descendants + parent mappings.
+/** Extract primary text paints in tree paint order and their semantic ancestors.
+ * @throws {FatalError} VALIDATION for malformed source ownership.
  */
-export function buildTextMap(ir: IR): TextMap {
-  const nodes = new Map<string, TextNodeEntry>();
-  const childTextMap = new Map<string, string[]>();
-  const parentMap = new Map<string, string>();
-
-  function walk(node: IRNode, parentNodeId: string | null): string[] {
-    if (parentNodeId !== null) {
-      parentMap.set(node.nodeId, parentNodeId);
+export function buildTextMap(ir: IR, sourceIndex = buildIRSourceIndex(ir)): TextMap {
+  const nodes = new Map<number, TextNodeEntry>();
+  const childTextMap = new Map<number, number[]>();
+  const parentMap = new Map<number, number>();
+  for (const source of sourceIndex.sources.values()) {
+    if (source.parentSourceIndex !== null) {
+      parentMap.set(source.source.sourceIndex, source.parentSourceIndex);
     }
-
-    if (node.type === "text") {
-      const lineEntries: LineEntry[] = node.lines.map((line, i) => ({
-        text: line.text,
-        lineIndex: i,
-        baselineY: line.baselineY,
-        width: line.width,
-      }));
-      const text = lineEntries.map((line) => line.text).join("\n");
-
-      nodes.set(node.nodeId, {
-        nodeId: node.nodeId,
-        text,
-        bbox: node.bbox,
-        lines: lineEntries,
-        writingMode: node.writingMode,
-        fontSizePx: node.fontSizePx,
-        lineHeightPx: node.lineHeightPx,
-      });
-
-      return [node.nodeId];
-    }
-
-    if (node.type === "group" && node.children) {
-      const descendantTextIds: string[] = [];
-      for (const child of node.children) {
-        // IR wrappers may reuse the same nodeId as their single child (for
-        // example a text group wrapper plus the text node itself). In that case
-        // the logical parent for ancestor traversal is the nearest ancestor with
-        // a different nodeId, not the immediate wrapper with the same nodeId.
-        const childParentNodeId = child.nodeId === node.nodeId ? parentNodeId : node.nodeId;
-        descendantTextIds.push(...walk(child, childParentNodeId));
-      }
-      if (descendantTextIds.length > 0) {
-        childTextMap.set(node.nodeId, descendantTextIds);
-      }
-      return descendantTextIds;
-    }
-
-    return [];
   }
-
-  walk(ir.root, null);
-
+  for (const occurrence of sourceIndex.nodes.values()) {
+    const node = occurrence.node;
+    if (
+      node.type !== "text" ||
+      sourceIndex.sources.get(occurrence.source.sourceIndex)?.primaryNodeIndex !==
+        occurrence.nodeIndex
+    ) {
+      continue;
+    }
+    const lines = node.lines.map((line, lineIndex) => ({
+      text: line.text,
+      lineIndex,
+      baselineY: line.baselineY,
+      width: line.width,
+    }));
+    nodes.set(occurrence.source.sourceIndex, {
+      source: occurrence.source,
+      text: node.displayText ?? lines.map((line) => line.text).join("\n"),
+      bbox: node.bbox,
+      lines,
+      writingMode: node.writingMode,
+      fontSizePx: node.fontSizePx,
+      lineHeightPx: node.lineHeightPx,
+    });
+    let parent = parentMap.get(occurrence.source.sourceIndex);
+    while (parent !== undefined) {
+      const descendants = childTextMap.get(parent) ?? [];
+      descendants.push(occurrence.source.sourceIndex);
+      childTextMap.set(parent, descendants);
+      parent = parentMap.get(parent);
+    }
+  }
   return { nodes, childTextMap, parentMap };
 }
 
@@ -105,8 +86,8 @@ export function buildTextMap(ir: IR): TextMap {
 // ---------------------------------------------------------------------------
 
 /** Get the full text of a single text node. */
-export function getNodeText(textMap: TextMap, nodeId: string): string | null {
-  return textMap.nodes.get(nodeId)?.text ?? null;
+export function getNodeText(textMap: TextMap, sourceIndex: number): string | null {
+  return textMap.nodes.get(sourceIndex)?.text ?? null;
 }
 
 /**
@@ -114,9 +95,9 @@ export function getNodeText(textMap: TextMap, nodeId: string): string | null {
  * multiple text descendants. Falls back to the direct parent group
  * if all ancestors contain only one text node.
  */
-export function getAncestorText(textMap: TextMap, nodeId: string): string | null {
-  let current = nodeId;
-  const visited = new Set<string>();
+export function getAncestorText(textMap: TextMap, sourceIndex: number): string | null {
+  let current = sourceIndex;
+  const visited = new Set<number>();
 
   while (true) {
     if (visited.has(current)) {
@@ -142,17 +123,8 @@ export function getAncestorText(textMap: TextMap, nodeId: string): string | null
 }
 
 /** Get all text in the IR, ordered by draw order. */
-export function getAllText(textMap: TextMap, drawOrder: readonly string[]): string {
-  const texts: string[] = [];
-
-  for (const nodeId of drawOrder) {
-    const entry = textMap.nodes.get(nodeId);
-    if (entry) {
-      texts.push(entry.text);
-    }
-  }
-
-  return texts.join("\n\n");
+export function getAllText(textMap: TextMap): string {
+  return [...textMap.nodes.values()].map((entry) => entry.text).join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -208,10 +180,10 @@ function scanLineByMidpoint(options: {
  */
 export function findLineAtPoint(
   textMap: TextMap,
-  nodeId: string,
+  sourceIndex: number,
   point: { svgX: number; svgY: number },
 ): LineEntry | null {
-  const entry = textMap.nodes.get(nodeId);
+  const entry = textMap.nodes.get(sourceIndex);
   if (!entry || entry.lines.length === 0) {
     return null;
   }

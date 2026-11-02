@@ -2,14 +2,6 @@ import { FatalError } from "../errors.js";
 import type { VNode } from "../vnode/types.js";
 import type { NodePosition } from "./internal.js";
 
-/** Generated box paint and clip identifiers share one reserved suffix policy. */
-const GENERATED_BOX_SUFFIXES = [":bg", ":border", ":outline", ":content"] as const;
-
-/** Identify owner-generated paints and box clip wrappers when selecting semantic nodes. */
-export function isGeneratedBoxNodeId(nodeId: string): boolean {
-  return GENERATED_BOX_SUFFIXES.some((suffix) => nodeId.endsWith(suffix));
-}
-
 /** Resolved identifier and whether it was supplied explicitly by the author. */
 type GeneratedNodeId = {
   id: string;
