@@ -876,9 +876,11 @@ It is not a persistent document identifier.
 
 Tree order determines painting; there is no serialized `drawOrder`. Source
 facts expose `primaryNodeIndex` and `parentSourceIndex`, replacing separate
-handler/type maps. `buildTextMap(sourceIndex)` and `buildTextSelectionMap(sourceIndex)` key entries
-by source occurrence. Their queries take `sourceIndex`; `getAllText(textMap)`
-uses primary text paint order without a second order list.
+handler/type maps. `buildTextMap(index)` and `buildTextSelectionMap(index)` take
+a prepared `IRSourceIndex` and key entries by source ordinal. Text queries
+(`getNodeText`, `findLineAtPoint`, `getAncestorText`) take a canonical
+`IRSourceRef` from that same index. `getAllText(textMap)` uses primary text
+paint order without a second order list.
 
 `source.meta` uses the authoring rules at every input boundary: at most 16
 keys matching `^[a-z][a-z0-9-]{0,31}$`, with values at most 256 UTF-16 code units.
