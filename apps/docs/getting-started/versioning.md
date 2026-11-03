@@ -69,10 +69,25 @@ key. Decode external values with `decodeSceneDocument()` when a detached
 APIs validate the complete recursive structure, and `fromSceneDocument()`
 decodes exactly once.
 
-The current WASM schema is version 35. That internal bridge number is not
+The current WASM schema is version 37. That internal bridge number is not
 a Scene document field and must not be added to `.scene.json` files. Any future
 incompatible Scene format would require a separately documented migration;
 there is no runtime version-dispatch mode today.
+
+### 0.10.0 and WASM schema 37 migration
+
+Upgrade all `@boundsvg/*` packages and the node and web WASM artifacts together.
+The independent MP4 schema remains version 1.
+
+Regenerate saved or hand-built IR with the matching engine's `renderToIR(scene)`.
+Schema 37 requires explicit source ownership. Build a prepared source index with
+`buildIRSourceIndex(ir)` from `@boundsvg/core/scene` before source and text queries;
+rebuild that index and clear bindings when replacing its IR snapshot. See the
+[Core API](/api/core) for the ownership and query contracts.
+
+For decorative container frames, migrate the removed border decoration props to
+`outline`. Keep `borderWidth` and `borderColor` for borders that reserve layout
+space. See [border surfaces and outlines](/components/box#border-surfaces-and-outlines).
 
 ### 0.9.0 and WASM schema 35 migration
 
