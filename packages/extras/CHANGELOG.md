@@ -1,5 +1,12 @@
 # @boundsvg/extras
 
+## 0.10.0
+
+### Patch Changes
+
+- Updated dependencies [[`cf30f4b`](https://github.com/zakideee/boundsvg/commit/cf30f4becbd59ce7253c4270ddec540a3506a987)]:
+  - @boundsvg/core@0.10.0
+
 ## 0.9.0
 
 ### Patch Changes
