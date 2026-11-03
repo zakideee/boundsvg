@@ -55,3 +55,8 @@ syn = { version = "2", features = ["full", "visit"] }
 [features]
 ir-schema = ["dep:schemars", "boundshape/schema", "boundtext/schema"]
 unicode-full = ["boundtext/unicode-full"]
+
+[package.metadata.boundsvg-release]
+pending-version = "0.10.0"
+change-kind = "breaking-rendering-api"
+obligation-id = "design-expressions"
