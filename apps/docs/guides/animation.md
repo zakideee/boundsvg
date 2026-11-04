@@ -21,6 +21,8 @@ each time, as described below.
 - `transform.scaleX`
 - `transform.scaleY`
 - `transform.rotateDeg`
+- `transform.skewXDeg`
+- `transform.skewYDeg`
 
 Width, height, position, font size, colors, and every other layout or paint
 property are not `animate`/`animateUnits` track targets. Materialize changing
@@ -87,7 +89,9 @@ Every keyframe has a normalized `at` value in `0..1`. Values must be strictly
 increasing, and an animation needs at least two keyframes. If any keyframe uses
 `opacity`, every keyframe must define `opacity`; the same rule applies to
 `transform`. Omitted transform channels use their identity values (`0` for
-translation and rotation, `1` for scale).
+translation, rotation, and skew, `1` for scale). Skew uses the angle and
+finite-composition limits described in the [Core API](/api/core#skew-transforms),
+including validation of values reached by overshooting easing curves.
 
 | `AnimationSpec` field | Type                           | Default  | Meaning                                                               |
 | --------------------- | ------------------------------ | -------- | --------------------------------------------------------------------- |
@@ -515,7 +519,7 @@ function playbackLabel(playback: AnimatedSvgPlayback): string {
 
 ### Canvas-stable strokes
 
-A solid `Flex`, `Grid`, or `Box` border, or a solid `Path` stroke, can opt out
+A solid `Flex`, `Grid`, or `Box` outline, or a solid `Path` stroke, can opt out
 of a camera's post-layout scale while retaining normal layout and geometry:
 
 ```tsx
@@ -559,7 +563,7 @@ canvas-stroke restoration CSS width; it leaves `viewBox`, child geometry, and
 ordinary non-canvas-stroke attributes unchanged.
 
 Only similarity transforms are accepted for an ancestor of a canvas-stable
-stroke. Non-uniform scale, axis reflection, and dashed strokes fail explicitly
+stroke. Non-uniform scale, skew, axis reflection, and dashed strokes fail explicitly
 instead of being approximated. Translation can still move coverage between
 adjacent pixels; this option reduces scale-driven width pulsing, not all
 subpixel antialiasing changes.
