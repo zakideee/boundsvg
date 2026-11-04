@@ -86,7 +86,8 @@ structured failure codes, and output differences across versions.
   shadows, no `px` suffixes.
 - Border widths accept a number or four edges; line decoration uses `outline`.
 - Canvas-stable stroke scaling is limited to solid `Flex`, `Grid`, and `Box`
-  borders and solid `Path` strokes. It does not apply to `Shape`, `Symbol`, text
+  outlines and solid `Path` strokes. It does not apply to layout-reserving borders,
+  `Shape`, `Symbol`, text
   outlines, `Inline`, `InlineBox`, embedded SVG, or arbitrary SVG attributes.
 - A `strokeScaling: "canvas"` stroke supports ancestor translation, rotation,
   and uniform scale only. A non-uniform scale, skew, or axis reflection fails with
@@ -136,8 +137,8 @@ structured failure codes, and output differences across versions.
 - Core has no IME event, selection, candidate, or composition-state API.
   Applications own those states and materialize `Text`, decorated `Inline`,
   `InlineRect`, and candidate UI for each frame.
-- Animation targets only `opacity` and center-pivot translate, rotate, and
-  scale. `Text.animateUnits` and `TextOnPath.animateUnits` can apply those
+- Animation targets only `opacity` and center-pivot translate, rotate, scale,
+  and skew. `Text.animateUnits` and `TextOnPath.animateUnits` can apply those
   channels per shaping cluster or resolved line, but do not provide arbitrary
   grapheme, word, fragment, reveal, stroke-dash, rich-text span, or shape-part
   tracks.
