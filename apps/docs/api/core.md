@@ -101,7 +101,7 @@ Omitting `transformOrigin` preserves the existing pixel `originX`/`originY`
 behavior, with each missing pixel axis defaulting to zero. Combining the two
 origin forms is rejected even when a pixel origin is zero. An origin without
 a static transform adds no paint transform and does not change animation's
-pivot. Canvas and inline nodes do not accept this prop.
+pivot. `Canvas`, `TextOnPath`, and inline nodes do not accept this prop.
 
 ### Skew transforms
 
@@ -636,7 +636,7 @@ import {
 } from "@boundsvg/core/wasm";
 ```
 
-All nine functions require a matching schema-35 WASM module. A custom module
+All nine functions require a WASM module matching the installed Core package. A custom module
 must provide the complete capability set; `isShapeWasmAvailable()` is `true`
 only when all nine exports are functions. Each call also checks its own
 capability and throws `SHAPE_WASM_CAPABILITY_MISSING` when it is absent.

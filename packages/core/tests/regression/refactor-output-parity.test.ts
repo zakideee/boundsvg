@@ -13,7 +13,7 @@ import { CONFORMANCE_SCENES } from "../conformance/scenes/index.js";
 import { collectAnimatedRaster } from "../helpers/animation-collector.js";
 
 /**
- * Literal-byte oracle seeded from REFERENCE_COMMIT and updated for the
+ * Literal-byte oracle captured from REFERENCE_COMMIT for the
  * structural source-ownership and occurrence-resource contract. Normal runs compare complete SVG,
  * IR, raster, diagnostic, and export bytes.
  *
@@ -21,7 +21,7 @@ import { collectAnimatedRaster } from "../helpers/animation-collector.js";
  *   REFACTOR_PARITY_UPDATE=1 pnpm --filter @boundsvg/core exec vitest run \
  *     tests/regression/refactor-output-parity.test.ts
  */
-const REFERENCE_COMMIT = "d2245a816d1b372c8b2ca374db182bc06f39d8d2";
+const REFERENCE_COMMIT = "4b3067f7e3255e56a24dac7f9859f126787bb47e";
 /** Version of the preserved literal-byte parity fixture manifest. */
 const REFERENCE_FORMAT_VERSION = 3;
 /** Output contract applied to the original reference corpus. */
@@ -320,12 +320,6 @@ describe("refactor output parity", () => {
         throw new TypeError(`Missing captured parity artifact: ${artifactName}`);
       }
       const expectedBytes = new Uint8Array(readFileSync(safeArtifactPath(artifactName)));
-      if (artifactName === "contracts/wasm-schema-version.txt") {
-        // Relative origin input bumps the schema; retain the historical rendering oracle.
-        expect(expectedBytes).toEqual(utf8("37"));
-        expect(actualBytes).toEqual(utf8("38"));
-        continue;
-      }
       expect(actualBytes.byteLength, `${artifactName}: byte length`).toBe(expectedBytes.byteLength);
       expect(actualBytes, `${artifactName}: complete byte content`).toEqual(expectedBytes);
     }
