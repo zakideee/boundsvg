@@ -34,6 +34,13 @@ stroke width and shadow offset/blur expansion do not enlarge it.
 
 ## The `animate` prop
 
+A node's static [`transformOrigin`](/api/core#static-transform-origins) uses
+its completed outer layout box. An opacity-only track keeps that static
+transform. When a transform track contributes, it replaces the entire static
+transform and uses the node center; outside its fill interval, the static
+pose returns. `transformOrigin` is not a keyframe field and does not change
+the ink-centered pivots of `animateUnits`.
+
 `Flex`, `Grid`, `Box`, `Text`, `TextOnPath`, `Image`, `Path`, `Svg`, `Shape`,
 and `Symbol` accept `animate?: AnimationSpec`. `InlineRect` accepts the same
 track inside rich text. Give animated logical nodes an explicit `id` so their

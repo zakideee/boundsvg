@@ -4,6 +4,10 @@ title: Flex
 
 # Flex
 
+| Prop              | Type          | Description                                                                                         |
+| ----------------- | ------------- | --------------------------------------------------------------------------------------------------- |
+| `transformOrigin` | `BoxPosition` | Origin in the outer layout box; see [static transform origins](/api/core#static-transform-origins). |
+
 Flexbox layout container.
 
 ## Props

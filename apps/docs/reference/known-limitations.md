@@ -4,6 +4,10 @@ title: Known Limitations
 
 # Known Limitations
 
+Static `transformOrigin` uses the outer layout box, including padding and border;
+it does not select glyph ink or child-paint bounds. Node animation retains a
+fixed layout-center pivot and text-unit animation retains its ink-center pivot.
+
 Documented gaps and sharp edges, so you can evaluate boundsvg honestly.
 Items here are known and triaged — please do not file bugs for them; see the
 [feature matrix](/reference/feature-matrix) for the full support table.

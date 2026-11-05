@@ -3,6 +3,7 @@ import type { TextDecoration, TextShadowLayer, TextStrokeLayer } from "../text/t
 import type {
   AnimationSpec,
   BoxOutlineStyle,
+  BoxPosition,
   PartPaintOverride,
   StrokeScaling,
   TextFlowExclusion,
@@ -106,8 +107,10 @@ type LayerProps = {
   layer?: string;
 };
 
+/** Static post-layout transform and optional origin within the outer layout box. */
 type TransformProps = {
   transform?: Transform2D;
+  transformOrigin?: BoxPosition;
 };
 
 type AnimationProps = {

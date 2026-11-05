@@ -27,6 +27,22 @@ export type VNodeType =
 /** Padding / margin shorthand: uniform number or [top, right, bottom, left] */
 export type Spacing = number | [number, number, number, number];
 
+/** Position within a box, using dimensionless ratios: zero or a normal number through one. */
+export type RelativePosition = { x: number; y: number };
+
+/** One of nine box alignments, or an explicit position on both axes. */
+export type BoxPosition =
+  | "top left"
+  | "top"
+  | "top right"
+  | "left"
+  | "center"
+  | "right"
+  | "bottom left"
+  | "bottom"
+  | "bottom right"
+  | RelativePosition;
+
 /** Post-layout transform channels supported by declarative animation. */
 export type AnimationTransform2D = Omit<Transform2D, "originX" | "originY">;
 
@@ -252,6 +268,8 @@ export type FlexProps = {
   zIndex?: number;
   /** Static post-layout paint transform */
   transform?: Transform2D;
+  /** Static transform origin in the outer layout box; cannot be combined with pixel origins. */
+  transformOrigin?: BoxPosition;
   /** Declarative post-layout opacity/transform animation. */
   animate?: AnimationSpec;
   /** Logical layer assignment hint for layered SVG export */
@@ -338,6 +356,8 @@ export type GridProps = {
   zIndex?: number;
   /** Static post-layout paint transform */
   transform?: Transform2D;
+  /** Static transform origin in the outer layout box; cannot be combined with pixel origins. */
+  transformOrigin?: BoxPosition;
   /** Declarative post-layout opacity/transform animation. */
   animate?: AnimationSpec;
   /** Logical layer assignment hint for layered SVG export */
@@ -408,6 +428,8 @@ export type BoxProps = {
   zIndex?: number;
   /** Static post-layout paint transform */
   transform?: Transform2D;
+  /** Static transform origin in the outer layout box; cannot be combined with pixel origins. */
+  transformOrigin?: BoxPosition;
   /** Declarative post-layout opacity/transform animation. */
   animate?: AnimationSpec;
   /** Logical layer assignment hint for layered SVG export */
@@ -554,6 +576,8 @@ export type TextProps = {
   zIndex?: number;
   /** Static post-layout paint transform */
   transform?: Transform2D;
+  /** Static transform origin in the outer layout box; cannot be combined with pixel origins. */
+  transformOrigin?: BoxPosition;
   /** Declarative post-layout opacity/transform animation. */
   animate?: AnimationSpec;
   /** Declarative animation of resolved cluster or line paint units. */
@@ -792,6 +816,8 @@ export type ImageProps = {
   zIndex?: number;
   /** Static post-layout paint transform */
   transform?: Transform2D;
+  /** Static transform origin in the outer layout box; cannot be combined with pixel origins. */
+  transformOrigin?: BoxPosition;
   /** Declarative post-layout opacity/transform animation. */
   animate?: AnimationSpec;
   /** Logical layer assignment hint for layered SVG export */
@@ -868,6 +894,8 @@ export type PathProps = {
   zIndex?: number;
   /** Static post-layout paint transform */
   transform?: Transform2D;
+  /** Static transform origin in the outer layout box; cannot be combined with pixel origins. */
+  transformOrigin?: BoxPosition;
   /** Declarative post-layout opacity/transform animation. */
   animate?: AnimationSpec;
   /** Logical layer assignment hint for layered SVG export */
@@ -937,6 +965,8 @@ export type SvgProps = {
   zIndex?: number;
   /** Static post-layout paint transform */
   transform?: Transform2D;
+  /** Static transform origin in the outer layout box; cannot be combined with pixel origins. */
+  transformOrigin?: BoxPosition;
   /** Declarative post-layout opacity/transform animation. */
   animate?: AnimationSpec;
   /** Logical layer assignment hint for layered SVG export */
@@ -1028,6 +1058,8 @@ type ShapeBaseProps = {
   /** Sibling-local paint order; higher paints later. Integers only. */
   zIndex?: number;
   transform?: Transform2D;
+  /** Static transform origin in the outer layout box; cannot be combined with pixel origins. */
+  transformOrigin?: BoxPosition;
   /** Declarative post-layout opacity/transform animation. */
   animate?: AnimationSpec;
   flexGrow?: number;
@@ -1068,11 +1100,13 @@ type ShapeBaseProps = {
   meta?: Readonly<Record<string, string>>;
 };
 
+/** Structural geometry and its node-level layout and paint properties. */
 export type ShapeProps = ShapeBaseProps & {
   geometry?: GeometryDoc;
   geometryId?: string;
 };
 
+/** Reusable symbol geometry and its node-level layout and paint properties. */
 export type SymbolProps = ShapeBaseProps & {
   symbol?: SymbolDefinition;
   symbolId?: string;

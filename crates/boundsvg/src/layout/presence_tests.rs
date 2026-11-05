@@ -10,6 +10,27 @@ use super::types::{
 use crate::wire::test_support::assert_optional_field;
 
 #[test]
+fn relative_transform_origin_has_closed_non_null_presence() {
+    let fixture = json!({"transformOrigin": {"x": 0.3, "y": 0.5}});
+    assert_optional_field::<VisualInput>(&fixture, "transformOrigin", |input| {
+        input.transform_origin.is_none()
+    });
+    for invalid in [
+        json!({}),
+        json!({"x": 0}),
+        json!({"x": null, "y": 0}),
+        json!({"x": "center", "y": 0}),
+        json!({"x": 0, "y": 0, "extra": 1}),
+        json!([0, 0]),
+        json!("center"),
+    ] {
+        assert!(
+            serde_json::from_value::<VisualInput>(json!({"transformOrigin": invalid})).is_err()
+        );
+    }
+}
+
+#[test]
 fn handlers_input_preserves_optional_presence() {
     let fixture = json!({"onClick": "handler", "onDoubleClick": "handler", "onContextMenu": "handler", "onPointerDown": "handler", "onPointerUp": "handler", "onPointerCancel": "handler", "onPointerMove": "handler", "onPointerEnter": "handler", "onPointerLeave": "handler", "onPointerOver": "handler", "onPointerOut": "handler", "onMouseDown": "handler", "onMouseUp": "handler", "onMouseMove": "handler", "onMouseEnter": "handler", "onMouseLeave": "handler", "onMouseOver": "handler", "onMouseOut": "handler", "onTouchStart": "handler", "onTouchEnd": "handler", "onTouchMove": "handler"});
     assert_optional_field::<HandlersInput>(&fixture, "onClick", |input| input.on_click.is_none());

@@ -49,3 +49,5 @@ export type {
   IRSvgNode,
   IRTextNode,
 } from "./ir/types.js";
+
+export type { BoxPosition, RelativePosition } from "./vnode/types.js";

@@ -121,7 +121,10 @@ const vnodeSceneFlexItem = {
   alignSelf: "direct",
 } as const;
 const vnodeSceneGridItem = { gridColumn: "direct", gridRow: "direct" } as const;
-const vnodeSceneTransform = { transform: "validated-copy" } as const;
+const vnodeSceneTransform = {
+  transform: "validated-copy",
+  transformOrigin: "validated-copy",
+} as const;
 const vnodeSceneAnimation = { animate: "direct" } as const;
 const vnodeSceneLayer = { layer: "direct" } as const;
 
@@ -540,7 +543,7 @@ const wasmFlexItem = {
   alignSelf: "layout-style",
 } as const;
 const wasmGridItem = { gridColumn: "layout-style", gridRow: "layout-style" } as const;
-const wasmTransform = { transform: "visual" } as const;
+const wasmTransform = { transform: "visual", transformOrigin: "visual" } as const;
 const wasmAnimation = { animate: "visual" } as const;
 const wasmLayer = { layer: "layered-only" } as const;
 const wasmNode = { type: "node-type" } as const;

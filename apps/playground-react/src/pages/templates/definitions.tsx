@@ -20,6 +20,50 @@ import type { TemplateDef } from "./types";
 
 /** JSX scenes offered by the template selector; paired scenes match the core presets. */
 export const TEMPLATE_DEFINITIONS: Record<string, TemplateDef> = {
+  "transform-origin": {
+    title: "Text Transform Origin",
+    description:
+      "Short and multiline Text use their own layout centers, including asymmetric padding.",
+    vnode: toVNode(
+      <Canvas width={880} height={420} background="#101827">
+        <Flex
+          direction="row"
+          width={880}
+          height={420}
+          gap={80}
+          padding={80}
+          alignItems="center"
+          justifyContent="center"
+        >
+          <Box background="#375574" borderWidth={2} borderColor="#8bc9e8">
+            <Text
+              font="NotoSansJP-woff2"
+              fontSizePx={32}
+              color="#ffffff"
+              padding={[12, 28, 20, 8]}
+              transformOrigin="center"
+              transform={{ rotateDeg: -15 }}
+            >
+              Short
+            </Text>
+          </Box>
+          <Box background="#654579" borderWidth={2} borderColor="#dcb2ef">
+            <Text
+              font="NotoSansJP-woff2"
+              fontSizePx={32}
+              color="#ffffff"
+              whiteSpace="pre-wrap"
+              padding={[12, 28, 20, 8]}
+              transformOrigin={{ x: 0.5, y: 0.5 }}
+              transform={{ rotateDeg: 15 }}
+            >
+              {"Longer text\nSecond line"}
+            </Text>
+          </Box>
+        </Flex>
+      </Canvas>,
+    ),
+  },
   terminal: {
     title: "Terminal Prism",
     description:
@@ -1142,7 +1186,7 @@ export const TEMPLATE_GROUPS: TemplateGroupDef[] = [
   {
     key: "composition",
     label: "Composition",
-    templateKeys: ["media", "design-expressions"],
+    templateKeys: ["media", "design-expressions", "transform-origin"],
   },
   {
     key: "text-basics",

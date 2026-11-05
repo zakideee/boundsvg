@@ -541,6 +541,33 @@ pub struct ImageInput {
     pub height: f32,
 }
 
+/// Dimensionless coordinates inside a node's outer layout box.
+/// Each axis is zero or a finite normal binary64 number through one.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(try_from = "BTreeMap<String, f64>")]
+pub struct RelativePosition {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl TryFrom<BTreeMap<String, f64>> for RelativePosition {
+    type Error = &'static str;
+
+    /// Consume exactly two named numeric axes rather than a positional sequence.
+    ///
+    /// # Errors
+    ///
+    /// Reject missing axes and unknown keys; numeric domains are checked by the IR owner.
+    fn try_from(mut axes: BTreeMap<String, f64>) -> Result<Self, Self::Error> {
+        if axes.len() != 2 {
+            return Err("relative position requires exactly x and y");
+        }
+        let x = axes.remove("x").ok_or("relative position requires x")?;
+        let y = axes.remove("y").ok_or("relative position requires y")?;
+        Ok(Self { x, y })
+    }
+}
+
 /// Raw visual props carried from the TS serializer for IR building.
 /// Values are transported uninterpreted (gradient strings, box-shadow
 /// strings, raw border radius); interpretation happens at IR build.
@@ -602,6 +629,12 @@ pub struct VisualInput {
         deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
     )]
     pub transform: Option<boundshape::Transform2D>,
+    /// Optional relative origin; present null is invalid and pixel origins cannot coexist.
+    #[serde(
+        default,
+        deserialize_with = "crate::wire::presence::deserialize_optional_non_null"
+    )]
+    pub transform_origin: Option<RelativePosition>,
     #[serde(
         default,
         deserialize_with = "crate::ir::wire_input::deserialize_optional_animation"
