@@ -4,10 +4,6 @@ title: Known Limitations
 
 # Known Limitations
 
-Static `transformOrigin` uses the outer layout box, including padding and border;
-it does not select glyph ink or child-paint bounds. Node animation retains a
-fixed layout-center pivot and text-unit animation retains its ink-center pivot.
-
 Documented gaps and sharp edges, so you can evaluate boundsvg honestly.
 Items here are known and triaged — please do not file bugs for them; see the
 [feature matrix](/reference/feature-matrix) for the full support table.
@@ -82,6 +78,9 @@ structured failure codes, and output differences across versions.
 
 ## Layout & visuals
 
+- Static `transformOrigin` uses the outer layout box, including padding and border;
+  it does not select glyph ink or child-paint bounds. Node animation retains a
+  fixed layout-center pivot and text-unit animation retains its ink-center pivot.
 - **No CSS stacking contexts.** `zIndex` reorders siblings within the same parent only; a child can never paint outside its parent's position in the paint order.
 - `position` supports `relative` and `absolute` only; `overflow` supports
   `visible` and `clip` only.

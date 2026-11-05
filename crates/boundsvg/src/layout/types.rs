@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::flow::geometry::FlowExclusionShape;
 use crate::font::FontStyle;
@@ -542,29 +542,63 @@ pub struct ImageInput {
 }
 
 /// Dimensionless coordinates inside a node's outer layout box.
-/// Each axis is zero or a finite normal binary64 number through one.
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(try_from = "BTreeMap<String, f64>")]
+/// Decode the map shape here; the IR builder validates the finite normal ratio domain.
+#[derive(Debug, Clone, Copy)]
 pub struct RelativePosition {
     pub x: f64,
     pub y: f64,
 }
 
-impl TryFrom<BTreeMap<String, f64>> for RelativePosition {
-    type Error = &'static str;
-
-    /// Consume exactly two named numeric axes rather than a positional sequence.
+impl<'de> Deserialize<'de> for RelativePosition {
+    /// Decode exactly one numeric x/y pair from a map.
     ///
     /// # Errors
     ///
-    /// Reject missing axes and unknown keys; numeric domains are checked by the IR owner.
-    fn try_from(mut axes: BTreeMap<String, f64>) -> Result<Self, Self::Error> {
-        if axes.len() != 2 {
-            return Err("relative position requires exactly x and y");
+    /// Reject duplicate or unknown keys, missing axes, wrong types, and sequences.
+    /// Numeric domains remain the IR builder's responsibility.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct RelativePositionVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for RelativePositionVisitor {
+            type Value = RelativePosition;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a map with exactly one numeric x and y")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut axes: A,
+            ) -> Result<Self::Value, A::Error> {
+                use serde::de::Error;
+
+                let mut position_x = None;
+                let mut position_y = None;
+                while let Some(axis) = axes.next_key::<String>()? {
+                    match axis.as_str() {
+                        "x" => {
+                            if position_x.is_some() {
+                                return Err(A::Error::duplicate_field("x"));
+                            }
+                            position_x = Some(axes.next_value::<f64>()?);
+                        }
+                        "y" => {
+                            if position_y.is_some() {
+                                return Err(A::Error::duplicate_field("y"));
+                            }
+                            position_y = Some(axes.next_value::<f64>()?);
+                        }
+                        _ => return Err(A::Error::unknown_field(&axis, &["x", "y"])),
+                    }
+                }
+                Ok(RelativePosition {
+                    x: position_x.ok_or_else(|| A::Error::missing_field("x"))?,
+                    y: position_y.ok_or_else(|| A::Error::missing_field("y"))?,
+                })
+            }
         }
-        let x = axes.remove("x").ok_or("relative position requires x")?;
-        let y = axes.remove("y").ok_or("relative position requires y")?;
-        Ok(Self { x, y })
+
+        deserializer.deserialize_map(RelativePositionVisitor)
     }
 }
 

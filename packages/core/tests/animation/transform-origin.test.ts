@@ -312,4 +312,33 @@ describe("layout-resolved static transform origins", () => {
     const timeline = engine.renderToAnimatedSvg(scene, { playback: { mode: "independent" } });
     expect(timeline).toContain("@keyframes");
   });
+
+  it("matches layout-resolved pixel origins on the document timeline", () => {
+    const bbox = sourceGroup(engine.renderToIR(boxScene()).root, "box").bbox;
+    const animate: AnimationSpec = {
+      durationMs: 100,
+      delayMs: 100,
+      fill: "none",
+      easing: "linear",
+      keyframes: [
+        { at: 0, transform: { rotateDeg: 90 } },
+        { at: 1, transform: { rotateDeg: 90 } },
+      ],
+    };
+    const relative = boxScene({
+      transformOrigin: { x: 0.3, y: 0.7 },
+      transform: { rotateDeg: -30, translateX: 10 },
+      animate,
+    });
+    const pixels = boxScene({
+      transform: { rotateDeg: -30, translateX: 10, originX: bbox.w * 0.3, originY: bbox.h * 0.7 },
+      animate,
+    });
+    for (const timeMs of [0, 50, 99, 100, 150, 199, 200, 201, 250, 300]) {
+      const playback = { mode: "timeline", durationMs: 300, iterations: 1 } as const;
+      expect(engine.renderToAnimatedSvg(relative, { playback, timeMs })).toBe(
+        engine.renderToAnimatedSvg(pixels, { playback, timeMs }),
+      );
+    }
+  });
 });

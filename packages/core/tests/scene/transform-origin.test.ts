@@ -4,6 +4,14 @@ import { createElement } from "../../src/vnode/create-element.js";
 import type { VNode } from "../../src/vnode/types.js";
 
 describe("scene transform origins", () => {
+  it("reports the keyword-or-ratio expectation for an invalid structural type", () => {
+    expect(() => fromSceneDocument({ type: "Box", children: [], transformOrigin: 5 })).toThrow(
+      expect.objectContaining({
+        code: "SCENE_DECODE_INVALID_VALUE",
+        context: expect.objectContaining({ expected: "box-position" }),
+      }),
+    );
+  });
   it("roundtrips and detaches explicit ratio objects in both directions", () => {
     const origin = { x: 0.3, y: 0.5 };
     const vnode = createElement("Box", {

@@ -35,6 +35,7 @@ export type SceneDecodeExpected =
   | "string-map"
   | "spacing"
   | "border-radius"
+  | "box-position"
   | "padding-inline"
   | "number-or-auto"
   | "number-or-line"
@@ -258,7 +259,10 @@ const gridItemFields = [
 ] as const;
 const transformFields = [
   optional("transform", recordSchema("transform")),
-  optional("transformOrigin", oneOf("record", stringSchema, recordSchema("relativePosition"))),
+  optional(
+    "transformOrigin",
+    oneOf("box-position", stringSchema, recordSchema("relativePosition")),
+  ),
 ] as const;
 const animationFields = [optional("animate", recordSchema("animation"))] as const;
 const layerFields = [optional("layer", stringSchema)] as const;

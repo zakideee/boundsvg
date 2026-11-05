@@ -650,7 +650,40 @@ function parseRustDtos(): RustInventory {
     variants: [],
     serdeAttributes: [],
   });
-  return { deriveCount, manualDeserializeCount: 1, dtos };
+  const positionText = readFileSync(resolve(rustRoot, "layout/types.rs"), "utf8");
+  const positionDeclaration = /pub struct RelativePosition\s*\{/.exec(positionText);
+  const positionDecoder = /impl<'de> Deserialize<'de> for RelativePosition\s*\{/.exec(positionText);
+  if (!positionDeclaration || !positionDecoder) {
+    throw new TypeError("Missing manual RelativePosition declaration or decoder");
+  }
+  const positionOpen = positionDeclaration.index + positionDeclaration[0].lastIndexOf("{");
+  const positionFields = parseRustFields(
+    positionText.slice(positionOpen + 1, findMatchingBrace(positionText, positionOpen)),
+    "deserialize",
+    null,
+  );
+  const positionDecoderOpen = positionDecoder.index + positionDecoder[0].lastIndexOf("{");
+  const positionBody = positionText.slice(
+    positionDecoderOpen + 1,
+    findMatchingBrace(positionText, positionDecoderOpen),
+  );
+  const requiredAxes = [...positionBody.matchAll(/missing_field\("([^"]+)"\)/g)]
+    .map((match) => match[1])
+    .sort();
+  expect(requiredAxes).toEqual(
+    positionFields
+      .filter((field) => field.required)
+      .map((field) => field.name)
+      .sort(),
+  );
+  dtos.set("RelativePosition", {
+    name: "RelativePosition",
+    direction: "deserialize",
+    fields: positionFields,
+    variants: [],
+    serdeAttributes: [],
+  });
+  return { deriveCount, manualDeserializeCount: 2, dtos };
 }
 
 function createTypeProgram(): { checker: ts.TypeChecker; program: ts.Program } {
