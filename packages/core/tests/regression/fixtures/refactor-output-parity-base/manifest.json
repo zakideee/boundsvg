@@ -1,6 +1,6 @@
 {
   "formatVersion": 3,
-  "referenceCommit": "4b3067f7e3255e56a24dac7f9859f126787bb47e",
+  "referenceCommit": "d2245a816d1b372c8b2ca374db182bc06f39d8d2",
   "contract": "structural-source-ownership",
   "artifacts": [
     "conformance/native-layered-parts.ir.json",
