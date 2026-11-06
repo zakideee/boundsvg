@@ -2156,7 +2156,7 @@ impl BoundSvgEngine {
 /// changes. The matching TS constant is
 /// `EXPECTED_WASM_SCHEMA_VERSION` in `packages/core/src/wasm/index.ts`;
 /// both sides must change in the same commit.
-pub const WASM_SCHEMA_VERSION: u32 = 37;
+pub const WASM_SCHEMA_VERSION: u32 = 38;
 
 /// Returns the WASM DTO schema version for the init-time handshake.
 #[wasm_bindgen]

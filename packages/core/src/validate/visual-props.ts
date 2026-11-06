@@ -4,6 +4,7 @@ import {
   type TimelineAuthoredDomainOwner,
 } from "../engine/timeline-domain-transport.js";
 import { FatalError } from "../errors.js";
+import { resolveTransformOrigin } from "../position.js";
 import { getUnsafeSvgReason } from "../svg/security.js";
 import { assertValidTransform2D } from "../transform.js";
 import type { VNode, VNodeFor, VNodeType } from "../vnode/types.js";
@@ -139,16 +140,34 @@ const ANIMATION_SUPPORTED_TYPES = new Set<VNodeType>([
   "TextOnPath",
 ]);
 
-/** Reject unsupported transform owners or channels outside the authored transform contract. */
+/** Reject a relative origin on a node that cannot own a static transform. */
+export function validateTransformOriginOwner(node: VNode, nid: string): void {
+  if (
+    Reflect.get(node.props as Record<string, unknown>, "transformOrigin") !== undefined &&
+    !TRANSFORM_SUPPORTED_TYPES.has(node.type)
+  ) {
+    throw new FatalError(
+      "VALIDATION",
+      `Validation error: ${node.type} does not support prop "transformOrigin"`,
+      {
+        stage: "validate",
+        nodeId: nid,
+      },
+    );
+  }
+}
+
+/** Reject unsupported transform owners, invalid channels, or conflicting relative origins. */
 export function validateTransformProp(node: VNode, nid: string): void {
   const transform = Reflect.get(node.props as Record<string, unknown>, "transform");
-  if (transform === undefined) {
+  const transformOrigin = Reflect.get(node.props as Record<string, unknown>, "transformOrigin");
+  if (transform === undefined && transformOrigin === undefined) {
     return;
   }
   if (!TRANSFORM_SUPPORTED_TYPES.has(node.type)) {
     throw new FatalError(
       "VALIDATION",
-      `Validation error: ${node.type} does not support prop "transform"`,
+      `Validation error: ${node.type} does not support prop "${transform === undefined ? "transformOrigin" : "transform"}"`,
       { stage: "validate", nodeId: nid },
     );
   }
@@ -158,6 +177,7 @@ export function validateTransformProp(node: VNode, nid: string): void {
     nodeId: nid,
     ownerName: node.type,
   });
+  resolveTransformOrigin(transformOrigin, transform, nid);
 }
 
 /** Accepted animation options; other record keys are rejected. */
@@ -611,6 +631,7 @@ export function validatePathNode(node: VNodeFor<"Path">, nid: string): void {
   }
 }
 
+/** Validate nested SVG content and its viewport properties. */
 export function validateSvgNode(node: VNodeFor<"Svg">, nid: string): void {
   if (node.children.length > 0) {
     throw new FatalError("VALIDATION", "Validation error: Svg must not have children", {
@@ -647,6 +668,7 @@ export function validateSvgNode(node: VNodeFor<"Svg">, nid: string): void {
   }
 }
 
+/** Validate structural geometry references and shape paint properties. */
 export function validateShapeNode(node: VNodeFor<"Shape">, nid: string): void {
   if (node.children.length > 0) {
     throw new FatalError("VALIDATION", "Validation error: Shape must not have children", {
@@ -675,6 +697,7 @@ export function validateShapeNode(node: VNodeFor<"Shape">, nid: string): void {
   }
 }
 
+/** Validate reusable symbol references and symbol paint properties. */
 export function validateSymbolNode(node: VNodeFor<"Symbol">, nid: string): void {
   if (node.children.length > 0) {
     throw new FatalError("VALIDATION", "Validation error: Symbol must not have children", {

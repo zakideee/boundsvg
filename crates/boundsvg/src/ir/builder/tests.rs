@@ -478,6 +478,76 @@ fn drops_identity_transform_and_full_opacity() {
 }
 
 #[test]
+fn static_origin_resolves_against_the_outer_layout_box() {
+    let ir = build_json(
+        json!({"nodeId": "root", "nodeType": "canvas", "children": [{
+            "nodeId": "card", "nodeType": "box", "children": [],
+            "visual": {"transform": {"rotateDeg": 90}, "transformOrigin": {"x": 0.5, "y": 0.5}}
+        }]}),
+        vec![
+            output("root", 0.0, 0.0, 200.0, 200.0),
+            output("card", 20.0, 30.0, 80.0, 40.0),
+        ],
+    );
+    assert_eq!(
+        ir["root"]["children"][0]["transform"],
+        json!({"rotateDeg": 90.0, "originX": 40.0, "originY": 20.0})
+    );
+}
+
+#[test]
+fn origin_only_does_not_create_a_paint_transform() {
+    let ir = build_json(
+        json!({"nodeId": "root", "nodeType": "canvas", "children": [{
+            "nodeId": "card", "nodeType": "box", "children": [],
+            "visual": {"transformOrigin": {"x": 0.3, "y": 1}}
+        }]}),
+        vec![
+            output("root", 0.0, 0.0, 200.0, 200.0),
+            output("card", 20.0, 30.0, 80.0, 40.0),
+        ],
+    );
+    assert!(ir["root"]["children"][0].get("transform").is_none());
+}
+
+#[test]
+fn raw_origins_reject_domain_owner_and_pixel_conflicts_before_paint() {
+    let cases = [
+        ("box", json!({"transformOrigin": {"x": -0.1, "y": 0}})),
+        (
+            "box",
+            json!({"transformOrigin": {"x": f64::MIN_POSITIVE / 2.0, "y": 0}}),
+        ),
+        (
+            "box",
+            json!({"transformOrigin": {"x": 1.000_000_000_000_000_2, "y": 0}}),
+        ),
+        ("canvas", json!({"transformOrigin": {"x": 0.5, "y": 0.5}})),
+        (
+            "box",
+            json!({"transformOrigin": {"x": 0.5, "y": 0.5}, "transform": {"originX": 0}}),
+        ),
+        (
+            "box",
+            json!({"transformOrigin": {"x": 0.5, "y": 0.5}, "transform": {"originY": 0}}),
+        ),
+    ];
+    for (node_type, visual) in cases {
+        let root = parse_node(
+            json!({"nodeId": "bad-origin", "nodeType": node_type, "children": [], "visual": visual}),
+        );
+        let error = build_ir(
+            &root,
+            &outputs_map(vec![output("bad-origin", 0.0, 0.0, 80.0, 40.0)]),
+        )
+        .expect_err("invalid relative origin must fail");
+        assert!(
+            matches!(error, EngineError::Structured { code, stage: Some(crate::diagnostics::PipelineStage::Ir), node_id: Some(node_id), .. } if code == "VALIDATION" && node_id == "bad-origin")
+        );
+    }
+}
+
+#[test]
 fn container_clip_uses_background_radius_only_for_clipped_box_flex_grid() {
     for node_type in ["box", "flex", "grid"] {
         for radius in [

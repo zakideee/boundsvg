@@ -39,6 +39,13 @@ and `Symbol` accept `animate?: AnimationSpec`. `InlineRect` accepts the same
 track inside rich text. Give animated logical nodes an explicit `id` so their
 generated resource names stay stable when siblings change.
 
+A node's static [`transformOrigin`](/api/core#static-transform-origins) uses
+its completed outer layout box. An opacity-only track keeps that static
+transform. When a transform track contributes, it replaces the entire static
+transform and uses the node center; outside its fill interval, the static
+pose returns. `transformOrigin` is not a keyframe field and does not change
+the ink-centered pivots of `animateUnits`.
+
 ```tsx
 import type { AnimationSpec } from "@boundsvg/core";
 

@@ -69,7 +69,7 @@ key. Decode external values with `decodeSceneDocument()` when a detached
 APIs validate the complete recursive structure, and `fromSceneDocument()`
 decodes exactly once.
 
-The current WASM schema is version 37. That internal bridge number is not
+The current WASM schema is version 38. That internal bridge number is not
 a Scene document field and must not be added to `.scene.json` files. Any future
 incompatible Scene format would require a separately documented migration;
 there is no runtime version-dispatch mode today.

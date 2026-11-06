@@ -230,6 +230,7 @@ const typeTargets: Record<string, TypeTarget[]> = {
   TextUnitMapEntry: [{ file: textTypesFile, typeName: "TextUnitMapEntry" }],
   TextUnitMap: [{ file: textTypesFile, typeName: "TextUnitMap" }],
   VisualInput: [{ file: layoutAdapterFile, typeName: "WasmVisualInput" }],
+  RelativePosition: [{ file: layoutAdapterFile, typeName: "WasmRelativePosition" }],
   PreferredFrame: [
     { file: layoutAdapterFile, typeName: "WasmTextInput", path: ["preferredFrame"] },
   ],
@@ -649,7 +650,40 @@ function parseRustDtos(): RustInventory {
     variants: [],
     serdeAttributes: [],
   });
-  return { deriveCount, manualDeserializeCount: 1, dtos };
+  const positionText = readFileSync(resolve(rustRoot, "layout/types.rs"), "utf8");
+  const positionDeclaration = /pub struct RelativePosition\s*\{/.exec(positionText);
+  const positionDecoder = /impl<'de> Deserialize<'de> for RelativePosition\s*\{/.exec(positionText);
+  if (!positionDeclaration || !positionDecoder) {
+    throw new TypeError("Missing manual RelativePosition declaration or decoder");
+  }
+  const positionOpen = positionDeclaration.index + positionDeclaration[0].lastIndexOf("{");
+  const positionFields = parseRustFields(
+    positionText.slice(positionOpen + 1, findMatchingBrace(positionText, positionOpen)),
+    "deserialize",
+    null,
+  );
+  const positionDecoderOpen = positionDecoder.index + positionDecoder[0].lastIndexOf("{");
+  const positionBody = positionText.slice(
+    positionDecoderOpen + 1,
+    findMatchingBrace(positionText, positionDecoderOpen),
+  );
+  const requiredAxes = [...positionBody.matchAll(/missing_field\("([^"]+)"\)/g)]
+    .map((match) => match[1])
+    .sort();
+  expect(requiredAxes).toEqual(
+    positionFields
+      .filter((field) => field.required)
+      .map((field) => field.name)
+      .sort(),
+  );
+  dtos.set("RelativePosition", {
+    name: "RelativePosition",
+    direction: "deserialize",
+    fields: positionFields,
+    variants: [],
+    serdeAttributes: [],
+  });
+  return { deriveCount, manualDeserializeCount: 2, dtos };
 }
 
 function createTypeProgram(): { checker: ts.TypeChecker; program: ts.Program } {
@@ -926,14 +960,14 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       "every derived or explicit manual wire DTO must be parsed",
     ).toBe(rustDtos.size);
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(164);
+    expect(rustDtos.size).toBe(165);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(1070);
+    ).toBe(1073);
     expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(111);
   });
 

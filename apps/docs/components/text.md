@@ -307,16 +307,17 @@ spend the ellipsis candidate budget.
 
 ### Box Model
 
-| Prop           | Type                                         | Description                                                                                                                                     |
-| -------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `padding`      | `number \| [number, number, number, number]` | Padding (uniform or [top, right, bottom, left])                                                                                                 |
-| `margin`       | `number \| [number, number, number, number]` | Margin (uniform or [top, right, bottom, left])                                                                                                  |
-| `opacity`      | `number`                                     | Opacity (0–1)                                                                                                                                   |
-| `zIndex`       | `number`                                     | Sibling-local paint order (integer; higher paints later)                                                                                        |
-| `meta`         | `Record<string, string>`                     | Metadata emitted as `data-boundsvg-meta-*` attributes and into the layered manifest (max 16 keys, `[a-z][a-z0-9-]{0,31}` keys, 256-char values) |
-| `transform`    | `Transform2D`                                | Static post-layout paint transform                                                                                                              |
-| `animate`      | `AnimationSpec`                              | Declarative opacity/transform track; see [Animation](/guides/animation)                                                                         |
-| `animateUnits` | `TextUnitAnimation`                          | Apply an opacity/transform track per resolved cluster or line; see [Text unit animation](/guides/animation#text-unit-animation)                 |
+| Prop              | Type                                         | Description                                                                                                                                     |
+| ----------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `padding`         | `number \| [number, number, number, number]` | Padding (uniform or [top, right, bottom, left])                                                                                                 |
+| `margin`          | `number \| [number, number, number, number]` | Margin (uniform or [top, right, bottom, left])                                                                                                  |
+| `opacity`         | `number`                                     | Opacity (0–1)                                                                                                                                   |
+| `zIndex`          | `number`                                     | Sibling-local paint order (integer; higher paints later)                                                                                        |
+| `meta`            | `Record<string, string>`                     | Metadata emitted as `data-boundsvg-meta-*` attributes and into the layered manifest (max 16 keys, `[a-z][a-z0-9-]{0,31}` keys, 256-char values) |
+| `transform`       | `Transform2D`                                | Static post-layout paint transform                                                                                                              |
+| `transformOrigin` | `BoxPosition`                                | Origin in the outer layout box; see [static transform origins](/api/core#static-transform-origins).                                             |
+| `animate`         | `AnimationSpec`                              | Declarative opacity/transform track; see [Animation](/guides/animation)                                                                         |
+| `animateUnits`    | `TextUnitAnimation`                          | Apply an opacity/transform track per resolved cluster or line; see [Text unit animation](/guides/animation#text-unit-animation)                 |
 
 ### Event / Identity
 

@@ -6,6 +6,7 @@ pub mod gradient;
 pub(crate) mod numeric_envelope;
 pub mod ownership;
 pub(crate) mod path_geometry;
+pub(crate) mod position;
 mod svg_id_rewrite;
 pub mod svg_security;
 pub(crate) mod text_paint;

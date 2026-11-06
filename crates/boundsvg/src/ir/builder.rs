@@ -46,12 +46,14 @@ use crate::layout::types::{
 /// TS `FatalError` paths).
 /// Returns structured text-animation unit or fragment budget errors when
 /// the scene exceeds the supported limits.
+/// Returns `VALIDATION` with the node id for invalid relative or resolved origins.
 pub fn build_ir<S: std::hash::BuildHasher>(
     input_root: &LayoutNodeInput,
     outputs: &HashMap<String, LayoutNodeOutput, S>,
 ) -> Result<Ir, EngineError> {
     fn validate_input(node: &LayoutNodeInput) -> Result<(), EngineError> {
         crate::layout::box_style::validate_box_style(node)?;
+        super::position::validate_transform_origin(node)?;
         for child in &node.children {
             validate_input(child)?;
         }
@@ -369,11 +371,14 @@ fn build_node<S: std::hash::BuildHasher>(
         .as_ref()
         .filter(|entries| !entries.is_empty())
         .cloned();
-    let transform = visual
+    let mut transform = visual
         .transform
         .as_ref()
         .filter(|value| has_transform(value))
         .cloned();
+    if let (Some(transform), Some(origin)) = (&mut transform, visual.transform_origin) {
+        super::position::resolve_transform_origin(transform, origin, bbox, node_id)?;
+    }
 
     Ok(IrNode {
         ownership: IrNodeOwnership::Source {

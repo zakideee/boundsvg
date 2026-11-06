@@ -1,15 +1,19 @@
 /**
  * Bidirectional conversion between VNode and SceneNode.
  */
+
 import { FatalError } from "../errors.js";
 import { validateContainerVisualProps } from "../layout/box-style.js";
+import { resolveTransformOrigin } from "../position.js";
 import { assertVNodeRichTextDepth } from "../text/rich-text-limits.js";
 import { assertValidTransform2D, type Transform2D } from "../transform.js";
+import { validateTransformOriginOwner } from "../validate/visual-props.js";
 import { createElement } from "../vnode/create-element.js";
 import type {
   AnimationSpec,
   BorderRadius,
   BoxOutlineStyle,
+  BoxPosition,
   CanvasProps,
   Spacing,
   VNode,
@@ -47,6 +51,7 @@ export function toSceneDocument(vnode: VNode): SceneNode {
 }
 
 function vnodeToScene(vnode: VNode): SceneNode {
+  validateTransformOriginOwner(vnode, getNodeId(vnode) ?? `<${vnode.type}>`);
   switch (vnode.type) {
     case "Canvas": {
       const { props } = vnode;
@@ -1528,6 +1533,7 @@ type GridItemLike = {
 
 type TransformLike = {
   transform?: Transform2D;
+  transformOrigin?: BoxPosition;
 };
 
 type AnimationLike = {
@@ -1605,16 +1611,22 @@ function pickTransformProps<T extends TransformLike>(
   props: T,
   nodeId: string,
 ): Partial<TransformLike> {
-  if (props.transform === undefined) {
-    return {};
-  }
   assertValidTransform2D(props.transform, {
     code: "SCENE_INVALID_TRANSFORM",
     stage: "validate",
     nodeId,
     ownerName: nodeId,
   });
-  return { transform: { ...props.transform } };
+  const relativeOrigin = resolveTransformOrigin(props.transformOrigin, props.transform, nodeId);
+  return {
+    ...(props.transform === undefined ? {} : { transform: { ...props.transform } }),
+    ...(relativeOrigin === undefined
+      ? {}
+      : {
+          transformOrigin:
+            typeof props.transformOrigin === "string" ? props.transformOrigin : relativeOrigin,
+        }),
+  };
 }
 
 function pickAnimationProps<T extends AnimationLike>(props: T): Partial<AnimationLike> {

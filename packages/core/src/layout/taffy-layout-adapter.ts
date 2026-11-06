@@ -3,6 +3,7 @@ import { DEFAULT_FONT_WEIGHT } from "../font/types.js";
 import { HANDLER_KEYS, type NodePosition } from "../ir/internal.js";
 import { generateNodeId } from "../ir/node-id.js";
 import type { HandlersRef } from "../ir/types.js";
+import { resolveTransformOrigin } from "../position.js";
 import type { ShapeRegistry } from "../shape/expand.js";
 import type { GeometryDoc, SymbolDefinition, Transform2D } from "../shape/types.js";
 import { uint8ToBase64 } from "../svg/utils.js";
@@ -63,6 +64,7 @@ type WasmLayoutInput = {
   fonts: WasmFontInput[];
 };
 
+/** Layout node and source visuals supplied to the WASM layout pipeline. */
 type WasmNodeInput = {
   nodeId: string;
   nodeType: string;
@@ -76,6 +78,9 @@ type WasmNodeInput = {
   visual?: WasmVisualInput;
 };
 
+/** Validated two-axis origin ratios consumed by the WASM layout backend. */
+type WasmRelativePosition = { x: number; y: number };
+
 /**
  * Raw visual props carried for IR building.
  *
@@ -85,6 +90,7 @@ type WasmNodeInput = {
  * already carried by {@link WasmTextInput} are not duplicated here; only text
  * visuals the text pipeline does not transport (color, alignment, stroke and
  * shadow layers, unset-vs-default weight) are included.
+ * Relative origins are validated ratios; their layout-box resolution stays in Rust.
  */
 type WasmVisualInput = {
   // Box visuals
@@ -99,6 +105,8 @@ type WasmVisualInput = {
   opacity?: number;
   zIndex?: number;
   transform?: Transform2D;
+  /** Validated ratios; resolved to pixel origins after Rust completes layout. */
+  transformOrigin?: WasmRelativePosition;
   animation?: AnimationSpec;
   inlineRectAnimations?: Record<string, AnimationSpec>;
   inlineDecorationAnimations?: Record<string, AnimationSpec>;
@@ -902,6 +910,11 @@ function buildVisualInput(
       visual.opacity = vnode.props.opacity;
       visual.zIndex = vnode.props.zIndex;
       visual.transform = vnode.props.transform;
+      visual.transformOrigin = resolveTransformOrigin(
+        vnode.props.transformOrigin,
+        vnode.props.transform,
+        vnode.props.id ?? `<${vnode.type}>`,
+      );
       visual.animation = vnode.props.animate;
       break;
     case "TextOnPath":

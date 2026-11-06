@@ -51,7 +51,7 @@ export const PRESET_GROUPS: PresetGroupDef[] = [
   {
     key: "composition",
     label: "Composition",
-    presetKeys: ["transform", "design-expressions", "z-index", "layered"],
+    presetKeys: ["transform", "transform-origin", "design-expressions", "z-index", "layered"],
   },
   {
     key: "interaction",

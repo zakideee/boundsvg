@@ -4,10 +4,61 @@ use crate::wire::test_support::{NumericWireType, assert_numeric_field};
 use serde_json::json;
 
 use super::types::{
-    HandlersInput, LayoutNodeInput, PartPaintOverrideInput, PreferredFrame, TaffyStyleInput,
-    TextFlowLayoutInput, TextInput, TextPathInput, VisualInput,
+    HandlersInput, LayoutNodeInput, PartPaintOverrideInput, PreferredFrame, RelativePosition,
+    TaffyStyleInput, TextFlowLayoutInput, TextInput, TextPathInput, VisualInput,
 };
 use crate::wire::test_support::assert_optional_field;
+
+#[test]
+fn relative_transform_origin_has_closed_non_null_presence() {
+    let fixture = json!({"transformOrigin": {"x": 0.3, "y": 0.5}});
+    assert_optional_field::<VisualInput>(&fixture, "transformOrigin", |input| {
+        input.transform_origin.is_none()
+    });
+    for invalid in [
+        json!({}),
+        json!({"x": 0}),
+        json!({"x": null, "y": 0}),
+        json!({"x": "center", "y": 0}),
+        json!({"x": 0, "y": 0, "extra": 1}),
+        json!([0, 0]),
+        json!("center"),
+    ] {
+        assert!(
+            serde_json::from_value::<VisualInput>(json!({"transformOrigin": invalid})).is_err()
+        );
+    }
+}
+
+#[test]
+fn relative_origin_direct_decode_rejects_duplicate_and_invalid_map_shapes() {
+    for (input, reason) in [
+        (r#"{"x":0.2,"x":0.8,"y":0}"#, "duplicate field `x`"),
+        (r#"{"x":0,"y":0.5,"y":2}"#, "duplicate field `y`"),
+        (r#"{"x":0,"y":0,"extra":1}"#, "unknown field `extra`"),
+        (r#"{"x":0}"#, "missing field `y`"),
+        ("[0,0]", "invalid type"),
+    ] {
+        let error = serde_json::from_str::<RelativePosition>(input).expect_err("invalid map");
+        assert!(error.to_string().contains(reason), "{error}");
+    }
+    let unchecked = serde_json::from_str::<RelativePosition>(r#"{"x":2,"y":0}"#)
+        .expect("the IR builder owns ratio domain validation");
+    assert_eq!(unchecked.x, 2.0);
+}
+
+#[test]
+fn value_preprocessing_retains_last_duplicates_for_existing_and_relative_fields() {
+    let relative_value: serde_json::Value =
+        serde_json::from_str(r#"{"x":0.2,"x":0.8,"y":0}"#).expect("Value input");
+    let relative: RelativePosition = serde_json::from_value(relative_value).expect("collapsed map");
+    assert_eq!(relative.x, 0.8);
+    let visual_input = r#"{"opacity":0.2,"opacity":0.8}"#;
+    assert!(serde_json::from_str::<VisualInput>(visual_input).is_err());
+    let visual_value: serde_json::Value = serde_json::from_str(visual_input).expect("Value input");
+    let visual: VisualInput = serde_json::from_value(visual_value).expect("collapsed map");
+    assert_eq!(visual.opacity, Some(0.8));
+}
 
 #[test]
 fn handlers_input_preserves_optional_presence() {

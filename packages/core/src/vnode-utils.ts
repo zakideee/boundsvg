@@ -125,3 +125,5 @@ function cloneWithProps(node: VNode, props: VNode["props"]): VNode {
     props,
   } as unknown as VNode;
 }
+
+export type { BoxPosition, RelativePosition } from "./vnode/types.js";

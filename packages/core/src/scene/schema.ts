@@ -15,6 +15,7 @@ import type {
   AnimationTransform2D,
   BoxOutlineStyle,
   PartPaintOverride,
+  RelativePosition,
   TextFlowExclusion,
   TextFlowExclusionMarginPx,
   TextUnitAnimation,
@@ -34,6 +35,7 @@ export type SceneDecodeExpected =
   | "string-map"
   | "spacing"
   | "border-radius"
+  | "box-position"
   | "padding-inline"
   | "number-or-auto"
   | "number-or-line"
@@ -104,6 +106,7 @@ export type RecordSchemaName =
   | "boxOutline"
   | "textPathInline"
   | "transform"
+  | "relativePosition"
   | "animationTransform"
   | "animationKeyframe"
   | "animation"
@@ -254,7 +257,13 @@ const gridItemFields = [
   optional("gridColumn", stringSchema),
   optional("gridRow", stringSchema),
 ] as const;
-const transformFields = [optional("transform", recordSchema("transform"))] as const;
+const transformFields = [
+  optional("transform", recordSchema("transform")),
+  optional(
+    "transformOrigin",
+    oneOf("box-position", stringSchema, recordSchema("relativePosition")),
+  ),
+] as const;
 const animationFields = [optional("animate", recordSchema("animation"))] as const;
 const layerFields = [optional("layer", stringSchema)] as const;
 
@@ -825,6 +834,7 @@ const nestedFields = {
     optional("strokeLinejoin", enumSchema(["miter", "round", "bevel"])),
     optional("strokeMiterlimit", numberSchema),
   ]),
+  relativePosition: fields([required("x", numberSchema), required("y", numberSchema)]),
   transform: fields([
     optional("translateX", numberSchema),
     optional("translateY", numberSchema),
@@ -1015,6 +1025,7 @@ type NestedRecordTypes = {
   boxOutline: BoxOutlineStyle;
   textPathInline: TextOnPathInlineSceneNode;
   transform: Transform2D;
+  relativePosition: RelativePosition;
   animationTransform: AnimationTransform2D;
   animationKeyframe: AnimationKeyframe;
   animation: AnimationSpec;
@@ -1059,6 +1070,7 @@ const NESTED_CATALOG_COMPLETENESS: {
   boxOutline: true,
   textPathInline: true,
   transform: true,
+  relativePosition: true,
   animationTransform: true,
   animationKeyframe: true,
   animation: true,
@@ -1108,6 +1120,7 @@ export const RECORD_SCHEMAS: Readonly<Record<RecordSchemaName, SceneRecordSchema
   boxOutline: catalogRecord(nestedFields.boxOutline),
   textPathInline: catalogRecord(textPathInlineFields),
   transform: catalogRecord(nestedFields.transform),
+  relativePosition: catalogRecord(nestedFields.relativePosition),
   animationTransform: catalogRecord(nestedFields.animationTransform),
   animationKeyframe: catalogRecord(nestedFields.animationKeyframe),
   animation: catalogRecord(nestedFields.animation),

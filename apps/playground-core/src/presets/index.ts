@@ -30,6 +30,7 @@ import { textMotionV3Preset } from "./text-motion-v3";
 import { textOnPathBasicsPreset } from "./text-on-path-basics";
 import { textPathMotionPreset } from "./text-path-motion";
 import { transformPreset } from "./transform";
+import { transformOriginPreset } from "./transform-origin";
 import { typingImeTimelinePreset } from "./typing-ime-timeline";
 import { variableFontPreset } from "./variable-font";
 import { verticalPreset } from "./vertical";
@@ -41,6 +42,7 @@ export const presets: Record<string, Preset> = {
   "animated-svg-timeline": animatedSvgTimelinePreset,
   fit: fitPreset,
   "design-expressions": designExpressionsPreset,
+  "transform-origin": transformOriginPreset,
   "font-fallback": fontFallbackPreset,
   "variable-font": variableFontPreset,
   grid: gridPreset,

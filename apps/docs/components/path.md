@@ -26,6 +26,7 @@ SVG path rendering.
 | `zIndex`           | `number`                        |          | —             | Sibling-local paint order (integer; higher paints later)                                                                                        |
 | `meta`             | `Record<string, string>`        |          | —             | Metadata emitted as `data-boundsvg-meta-*` attributes and into the layered manifest (max 16 keys, `[a-z][a-z0-9-]{0,31}` keys, 256-char values) |
 | `transform`        | `Transform2D`                   |          | —             | Static post-layout paint transform                                                                                                              |
+| `transformOrigin`  | `BoxPosition`                   |          | —             | Origin in the outer layout box; see [static transform origins](/api/core#static-transform-origins).                                             |
 | `animate`          | `AnimationSpec`                 |          | —             | Declarative opacity/transform track; see [Animation](/guides/animation)                                                                         |
 
 ::: warning

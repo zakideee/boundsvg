@@ -13,6 +13,7 @@ import {
 } from "../src/config";
 import { presets } from "../src/presets/index";
 
+/** Sample pairs selected for Core/React SVG parity coverage. */
 const MIRRORED_SAMPLE_KEYS = [
   "animated-svg-timeline",
   "decoration-path-fit",
@@ -21,6 +22,7 @@ const MIRRORED_SAMPLE_KEYS = [
   "rich-text-on-path",
   "text-on-path-basics",
   "text-path-motion",
+  "transform-origin",
   "typing-ime-timeline",
   "variable-font",
   "vertical-rich-ellipsis",
@@ -200,7 +202,7 @@ describe("mirrored core and React samples", () => {
 
   afterAll(() => engine.dispose());
 
-  it("renders all ten mirrored samples with semantic SVG equality", () => {
+  it("renders the selected mirrored samples with semantic SVG equality", () => {
     const byteEqualKeys: string[] = [];
     const normalizedCounts = new Map<string, { core: number; react: number }>();
 

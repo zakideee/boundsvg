@@ -55,6 +55,54 @@ uniform scale. It does not change layout or `inspectScene().visualBBox`, and
 the render method's `scale` option still scales the output resolution. Dashed strokes,
 non-uniform scale, and axis reflection are rejected for this mode.
 
+### Static transform origins
+
+`Flex`, `Grid`, `Box`, `Text`, `Image`, `Path`, `Svg`, `Shape`, and `Symbol`
+accept `transformOrigin?: BoxPosition` alongside their numeric `transform`.
+
+```ts
+type RelativePosition = { x: number; y: number };
+type BoxPosition =
+  | "top left"
+  | "top"
+  | "top right"
+  | "left"
+  | "center"
+  | "right"
+  | "bottom left"
+  | "bottom"
+  | "bottom right"
+  | RelativePosition;
+```
+
+The ratios refer to the node's completed outer layout box, including padding
+and border. For content-sized Text this is the final layout size, rather than
+the glyph ink bounds. Rotation and scale remain paint-only operations.
+
+```tsx
+<Text
+  font="Inter"
+  fontSizePx={32}
+  transformOrigin="center"
+  transform={{ rotateDeg: 90 }}
+>
+  Content-sized text
+</Text>
+```
+
+Each ratio must be `0`, or a finite number from `2 ** -1022` through `1`.
+Negative zero means zero; smaller positive values, out-of-range ratios,
+missing axes, extra keys, and invalid keywords are rejected. Keywords use the
+exact spelling shown above; percentage strings and reversed word order are
+not accepted. Both types are exported from Core, Core's `/vnode` and `/scene`
+entries, and React.
+
+Omitting `transformOrigin` preserves the existing pixel `originX`/`originY`
+behavior, with each missing pixel axis defaulting to zero. Combining the two
+origin forms is rejected even when a pixel origin is zero. An origin without
+a static transform adds no paint transform and does not change animation's
+pivot. `Canvas`, `TextOnPath`, and inline nodes do not accept this prop.
+
 ### Skew transforms
 
 `Transform2D` also accepts `skewXDeg` and `skewYDeg`. Composition is translate,
@@ -588,7 +636,7 @@ import {
 } from "@boundsvg/core/wasm";
 ```
 
-All nine functions require a matching schema-35 WASM module. A custom module
+All nine functions require a WASM module matching the installed Core package. A custom module
 must provide the complete capability set; `isShapeWasmAvailable()` is `true`
 only when all nine exports are functions. Each call also checks its own
 capability and throws `SHAPE_WASM_CAPABILITY_MISSING` when it is absent.
