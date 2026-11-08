@@ -2,10 +2,11 @@ import { Box, Canvas, Flex, Rt, Ruby, Text } from "@boundsvg/core";
 import { FONT_ALIAS as FA } from "../config";
 import type { Preset } from "../types";
 
+/** Compare natural long-reading alignment with horizontal and vertical annotation placement. */
 export const rubyPreset: Preset = {
   title: "Ruby Layout",
   description:
-    "Over and under ruby annotations in horizontal/vertical layouts with constrained multi-char wrap.",
+    "Natural long readings with bounded neighbor lending, plus horizontal/vertical over and under annotations.",
   source: `import { Box, Canvas, Flex, Rt, Ruby, Text } from "@boundsvg/core";
 
 const vnode = Canvas(
@@ -142,6 +143,18 @@ const vnode = Canvas(
             Rt({ fontSizePx: 11, lineHeight: 1, color: "#93c5fd" }, "みやこあんない"),
           ),
           "を片手に巡ります。",
+        ),
+      ),
+    ),
+  ),
+  Flex(
+    { direction: "column", position: "absolute", left: 704, top: 24, width: 200, height: 480 },
+    ...(["start", "center", "space-between", "space-around"] as const).map((rubyAlign) =>
+      Flex({ direction: "column", height: 112 },
+        Text({ font: "${FA}", fontSizePx: 11, color: "#94a3b8" }, rubyAlign),
+        Text({ font: "${FA}", fontSizePx: 48, color: "#f8fafc", width: 196, wrap: "none", lineHeight: 1.6 },
+          Ruby({ rubyAlign, rubyLineSizing: "stable" }, "行", Rt({ fontSizePx: 24, color: "#fca5a5" }, "おこな")),
+          "う",
         ),
       ),
     ),
@@ -356,6 +369,31 @@ const svg = engine.renderToSvg(vnode);`,
                 Rt({ fontSizePx: 11, lineHeight: 1, color: "#93c5fd" }, "みやこあんない"),
               ),
               "を片手に巡ります。",
+            ),
+          ),
+        ),
+      ),
+      Flex(
+        { direction: "column", position: "absolute", left: 704, top: 24, width: 200, height: 480 },
+        ...(["start", "center", "space-between", "space-around"] as const).map((rubyAlign) =>
+          Flex(
+            { direction: "column", height: 112 },
+            Text({ font: FA, fontSizePx: 11, color: "#94a3b8" }, rubyAlign),
+            Text(
+              {
+                font: FA,
+                fontSizePx: 48,
+                color: "#f8fafc",
+                width: 196,
+                wrap: "none",
+                lineHeight: 1.6,
+              },
+              Ruby(
+                { rubyAlign, rubyLineSizing: "stable" },
+                "行",
+                Rt({ fontSizePx: 24, color: "#fca5a5" }, "おこな"),
+              ),
+              "う",
             ),
           ),
         ),

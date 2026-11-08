@@ -7,7 +7,9 @@ import initWeb, {
 } from "../../../../crates/boundsvg/pkg-web/boundsvg.js";
 import type { WasmEngineInstance } from "../../src/wasm/types.js";
 
+/** Load the generated CommonJS binding alongside the independent Web binding. */
 const require = createRequire(import.meta.url);
+/** Node-side WASM exports checked against the Web engine in the same cases. */
 const nodeModule = require("../../wasm-pkg/boundsvg.js") as {
   BoundSvgEngine: new () => WasmEngineInstance;
   wasm_schema_version: () => number;
@@ -67,9 +69,9 @@ describe("relative origin node/web transport parity", () => {
     webEngine?.free();
   });
 
-  it("uses schema 38 and resolves both axes with the same output", () => {
-    expect(nodeModule.wasm_schema_version()).toBe(38);
-    expect(webVersion()).toBe(38);
+  it("uses schema 39 and resolves both axes with the same output", () => {
+    expect(nodeModule.wasm_schema_version()).toBe(39);
+    expect(webVersion()).toBe(39);
     for (const origin of [
       undefined,
       { x: 0.5, y: 0.5 },

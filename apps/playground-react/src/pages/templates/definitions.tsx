@@ -745,7 +745,7 @@ export const TEMPLATE_DEFINITIONS: Record<string, TemplateDef> = {
   ruby: {
     title: "Ruby Layout",
     description:
-      "Over and under ruby annotations in horizontal/vertical layouts with constrained multi-char wrap.",
+      "Natural long readings with bounded neighbor lending, plus horizontal/vertical over and under annotations.",
     vnode: toVNode(
       <Canvas width={920} height={540} background="#222222">
         <Flex direction="row" width={700} height={540} padding={24} gap={24}>
@@ -958,6 +958,31 @@ export const TEMPLATE_DEFINITIONS: Record<string, TemplateDef> = {
               </Text>
             </Flex>
           </Flex>
+        </Flex>
+        <Flex direction="column" position="absolute" left={704} top={24} width={200} height={480}>
+          {(["start", "center", "space-between", "space-around"] as const).map((rubyAlign) => (
+            <Flex key={rubyAlign} direction="column" height={112}>
+              <Text font="NotoSansJP-woff2" fontSizePx={11} color="#94a3b8">
+                {rubyAlign}
+              </Text>
+              <Text
+                font="NotoSansJP-woff2"
+                fontSizePx={48}
+                color="#f8fafc"
+                width={196}
+                wrap="none"
+                lineHeight={1.6}
+              >
+                <Ruby rubyAlign={rubyAlign} rubyLineSizing="stable">
+                  行
+                  <Rt fontSizePx={24} color="#fca5a5">
+                    おこな
+                  </Rt>
+                </Ruby>
+                う
+              </Text>
+            </Flex>
+          ))}
         </Flex>
       </Canvas>,
     ),

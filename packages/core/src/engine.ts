@@ -2154,7 +2154,9 @@ export class Engine {
     return invokeMeasurementTransport("layoutTextFlow", this.options.layoutTextFlowFn, input);
   }
 
-  /** Lay out text around exclusions through WASM after checking rich-text depth. */
+  /** Measure reserved cells and regions around exclusions. Render the original Text for glyph geometry.
+   * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID when the producer returns invalid facts or removed Ruby metadata.
+   */
   layoutTextFlowWithExclusions(input: TextFlowWithExclusionsInput): TextFlowWithExclusionsResult {
     this.ensureNotDisposed();
     if (!this.options.layoutTextFlowWithExclusionsFn) {
@@ -2195,7 +2197,9 @@ export class Engine {
     return invokeMeasurementTransport("shrinkwrapText", this.options.shrinkwrapTextFn, input);
   }
 
-  /** Find a fitted flow size through WASM after checking rich-text depth. */
+  /** Find a flow size and its measurement-only layout after checking rich-text depth.
+   * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID when the producer returns invalid nested flow facts.
+   */
   shrinkwrapFlow(input: ShrinkwrapFlowInput): ShrinkwrapFlowResult {
     this.ensureNotDisposed();
     if (!this.options.shrinkwrapFlowFn) {

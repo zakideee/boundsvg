@@ -45,6 +45,7 @@ import {
   type VNode,
 } from "@boundsvg/core";
 import {
+  assertTextFlowMeasurementOutput,
   isWasmIntrinsicInlineSizeResult,
   isWasmMeasureTextBlockResult,
   isWasmShrinkwrapFlowResult,
@@ -1609,7 +1610,7 @@ function isWorkerResponseSnapshot(value: object): value is WorkerResponse {
   }
 }
 
-/** Decode one response and its correlation ID from the same getter-free snapshot. */
+/** Decode a correlated getter-free response or return its typed flow-output failure. */
 export function decodeWorkerResponseMessage(
   value: unknown,
 ): WorkerMessageDecodeResult<WorkerResponse> {
@@ -1626,11 +1627,23 @@ export function decodeWorkerResponseMessage(
     if (type !== undefined && !snapshotResponseDiagnostics(snapshot, type)) {
       return { id, message: undefined };
     }
+    if (id !== undefined && type === "layout-text-flow-with-exclusions-ok") {
+      assertTextFlowMeasurementOutput(
+        getProperty(snapshot, "result"),
+        "layoutTextFlowWithExclusions",
+        "engine",
+      );
+    } else if (id !== undefined && type === "shrinkwrap-flow-ok") {
+      assertTextFlowMeasurementOutput(getProperty(snapshot, "result"), "shrinkwrapFlow", "engine");
+    }
     if (!isWorkerResponseSnapshot(snapshot)) {
       return { id, message: undefined };
     }
     return { id, message: snapshot };
-  } catch {
+  } catch (error) {
+    if (error instanceof FatalError) {
+      return { id, message: undefined, error };
+    }
     return { id, message: undefined };
   }
 }

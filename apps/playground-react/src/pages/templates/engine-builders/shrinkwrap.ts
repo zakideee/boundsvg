@@ -3,6 +3,7 @@ import {
   Canvas,
   type Engine,
   Flex,
+  Inline,
   InlineBox,
   Rt,
   Ruby,
@@ -14,7 +15,6 @@ import {
   CAPTION_RUBY_SPANS,
   FA,
   renderFlowFragments,
-  renderRubyFlowFragments,
   renderVerticalFlowFragments,
 } from "../../shared/flow-rendering";
 
@@ -127,6 +127,14 @@ function buildRubySection(engine: Engine, children: VNode[], xBase: number, yBas
   const thumbMargin = 6;
   const captionWidth = 350;
   const captionHeight = 200;
+  const captionContent = CAPTION_RUBY_SPANS.map((span) =>
+    Inline(
+      { color: span.color },
+      span.rubyText === undefined
+        ? span.text
+        : Ruby({}, span.text, Rt({ fontSizePx: span.rubyFontSizePx }, span.rubyText)),
+    ),
+  );
   const exclusions = [
     { kind: "rect" as const, x: 0, y: 0, width: thumbW, height: thumbH, marginPx: thumbMargin },
   ];
@@ -167,7 +175,25 @@ function buildRubySection(engine: Engine, children: VNode[], xBase: number, yBas
         borderRadius: 4,
       }),
     );
-    renderRubyFlowFragments(children, fixedResult, fontSize, lineHeight, "#e2e8f0", xBase, yBase);
+    children.push(
+      Text(
+        {
+          position: "absolute",
+          left: xBase,
+          top: yBase,
+          width: captionWidth,
+          height: captionHeight,
+          font: FA,
+          fontSizePx: fontSize,
+          lineHeight,
+          language: "ja",
+          wrap: "char",
+          color: "#e2e8f0",
+          flowExclusions: exclusions,
+        },
+        ...captionContent,
+      ),
+    );
 
     const shrinkwrap = engine.shrinkwrapFlow({
       text: "",
@@ -210,14 +236,24 @@ function buildRubySection(engine: Engine, children: VNode[], xBase: number, yBas
           borderRadius: 4,
         }),
       );
-      renderRubyFlowFragments(
-        children,
-        tightResult,
-        fontSize,
-        lineHeight,
-        "#e2e8f0",
-        xBase,
-        tightY,
+      children.push(
+        Text(
+          {
+            position: "absolute",
+            left: xBase,
+            top: tightY,
+            width: tightW,
+            height: captionHeight,
+            font: FA,
+            fontSizePx: fontSize,
+            lineHeight,
+            language: "ja",
+            wrap: "char",
+            color: "#e2e8f0",
+            flowExclusions: exclusions,
+          },
+          ...captionContent,
+        ),
       );
 
       children.push(
@@ -612,6 +648,7 @@ function buildVerticalSection(
   }
 }
 
+/** Compare plain and authored rich shrinkwrap scenes using the measured frame sizes. */
 export function buildShrinkwrapVNode(engine: Engine): VNode {
   const canvasWidth = 1080;
   const canvasHeight = 420;

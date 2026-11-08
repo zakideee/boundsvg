@@ -2550,6 +2550,22 @@ fn make_ruby_span(text: &str, ruby_text: &str, font_size_px: f64) -> FlowTextSpa
     }
 }
 
+fn assert_measurement_only_flow(result: &TextFlowWithExclusionsResult) {
+    let serialized = serde_json::to_value(result).expect("serializable flow facts");
+    assert!(serialized.get("topRubyOverflowPx").is_none());
+    assert!(serialized.get("bottomRubyOverflowPx").is_none());
+    for line in &result.lines {
+        for fragment in &line.fragments {
+            assert!(
+                serde_json::to_value(fragment)
+                    .expect("fragment facts")
+                    .get("ruby")
+                    .is_none()
+            );
+        }
+    }
+}
+
 #[test]
 fn ruby_basic() {
     let reg = make_registry();
@@ -2569,13 +2585,12 @@ fn ruby_basic() {
     assert!(result.exhausted);
     assert!(!result.lines.is_empty());
 
-    // Fragment should carry ruby annotation
-    let frag = &result.lines[0].fragments[0];
-    assert!(frag.ruby.is_some(), "fragment should have ruby annotation");
-    let ruby = frag.ruby.as_ref().unwrap();
-    assert_eq!(ruby.text, "かんじ");
-    assert_eq!(ruby.position, "over");
-    assert_eq!(ruby.align, "space-around");
+    let fragment = &result.lines[0].fragments[0];
+    assert_eq!(fragment.text, "漢字");
+    assert_eq!((fragment.char_start, fragment.char_end), (0, 1));
+    assert!((fragment.inline_advance_px - 40.0).abs() < 0.01);
+    assert!(fragment.style.is_none());
+    assert_measurement_only_flow(&result);
 }
 
 #[test]
@@ -2596,9 +2611,12 @@ fn ruby_position_under() {
     input.spans = Some(vec![span]);
 
     let result = layout_text_flow_with_exclusions(&input, &reg).unwrap();
-    let frag = &result.lines[0].fragments[0];
-    let ruby = frag.ruby.as_ref().unwrap();
-    assert_eq!(ruby.position, "under");
+    input.spans.as_mut().expect("spans")[0].ruby_position = Some("over".to_string());
+    let over = layout_text_flow_with_exclusions(&input, &reg).expect("over-side measurement");
+    assert!(
+        over.lines[0].fragments[0].baseline_offset > result.lines[0].fragments[0].baseline_offset
+    );
+    assert_measurement_only_flow(&result);
 }
 
 #[test]
@@ -2622,11 +2640,20 @@ fn ruby_mixed_with_plain() {
     let result = layout_text_flow_with_exclusions(&input, &reg).unwrap();
     assert!(result.exhausted);
 
-    let all_frags: Vec<_> = result.lines.iter().flat_map(|l| &l.fragments).collect();
-    let ruby_frags: Vec<_> = all_frags.iter().filter(|f| f.ruby.is_some()).collect();
-    let plain_frags: Vec<_> = all_frags.iter().filter(|f| f.ruby.is_none()).collect();
-    assert!(!ruby_frags.is_empty(), "should have ruby fragments");
-    assert!(!plain_frags.is_empty(), "should have plain fragments");
+    let fragments = result
+        .lines
+        .iter()
+        .flat_map(|line| &line.fragments)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fragments
+            .iter()
+            .map(|fragment| fragment.text.as_str())
+            .collect::<String>(),
+        "漢字テスト"
+    );
+    assert!(fragments.iter().all(|fragment| fragment.style.is_none()));
+    assert_measurement_only_flow(&result);
 }
 
 #[test]
@@ -2646,19 +2673,15 @@ fn ruby_non_breakable() {
     input.spans = Some(vec![make_ruby_span("漢字", "かんじ", 20.0)]);
 
     let result = layout_text_flow_with_exclusions(&input, &reg).unwrap();
-    // The ruby span should remain as a single fragment (not split between "漢" and "字")
-    for line in &result.lines {
-        for frag in &line.fragments {
-            if frag.ruby.is_some() {
-                // If ruby is present, the text should be the full base "漢字"
-                assert_eq!(
-                    frag.text, "漢字",
-                    "ruby base text should not be split: {:?}",
-                    frag.text
-                );
-            }
-        }
-    }
+    let fragments = result
+        .lines
+        .iter()
+        .flat_map(|line| &line.fragments)
+        .collect::<Vec<_>>();
+    assert_eq!(fragments.len(), 1);
+    assert_eq!(fragments[0].text, "漢字");
+    assert!(fragments[0].inline_advance_px > input.flow_box.width);
+    assert_measurement_only_flow(&result);
 }
 
 #[test]
@@ -2709,13 +2732,15 @@ fn ruby_annotation_style() {
     input.spans = Some(vec![span]);
 
     let result = layout_text_flow_with_exclusions(&input, &reg).unwrap();
-    let ruby = result.lines[0].fragments[0].ruby.as_ref().unwrap();
+    input.spans.as_mut().expect("spans")[0].ruby_font_size_px = Some(40.0);
+    let larger =
+        layout_text_flow_with_exclusions(&input, &reg).expect("large annotation measurement");
+    assert!(larger.lines[0].cross_size > result.lines[0].cross_size);
     assert!(
-        (ruby.style.font_size_px - 10.0).abs() < 0.01,
-        "ruby font size should be 10: {}",
-        ruby.style.font_size_px
+        larger.lines[0].fragments[0].inline_advance_px
+            > result.lines[0].fragments[0].inline_advance_px
     );
-    assert_eq!(ruby.style.color.as_deref(), Some("#ff0000"));
+    assert_measurement_only_flow(&larger);
 }
 
 #[test]
@@ -2744,24 +2769,11 @@ fn ruby_ellipsis_does_not_split_token() {
     input.ellipsis = Some(true);
 
     let result = layout_text_flow_with_exclusions(&input, &reg).unwrap();
-    // If ellipsis cuts before the ruby token, the ruby fragment should
-    // either be fully present (with annotation) or absent. No partial
-    // ruby base text with a full annotation.
-    for line in &result.lines {
-        for frag in &line.fragments {
-            if let Some(ruby) = &frag.ruby {
-                // If ruby is attached, the base text (ignoring trailing "…")
-                // must cover the full ruby base.
-                let base = frag.text.trim_end_matches('\u{2026}');
-                assert_eq!(
-                    base, "漢字",
-                    "ruby annotation must not be attached to partial base: {:?}",
-                    frag.text
-                );
-                assert_eq!(ruby.text, "かんじ");
-            }
-        }
+    for fragment in result.lines.iter().flat_map(|line| &line.fragments) {
+        assert_ne!(fragment.text.trim_end_matches('\u{2026}'), "漢");
+        assert_ne!(fragment.text.trim_end_matches('\u{2026}'), "字");
     }
+    assert_measurement_only_flow(&result);
 }
 
 #[test]
@@ -2788,26 +2800,17 @@ fn ruby_kinsoku_does_not_retreat_into_token() {
     ]);
 
     let result = layout_text_flow_with_exclusions(&input, &reg).unwrap();
-    // Ruby fragment must remain whole
-    for line in &result.lines {
-        for frag in &line.fragments {
-            if let Some(ruby) = &frag.ruby {
-                assert_eq!(
-                    frag.text, "漢字",
-                    "kinsoku must not split ruby base: {:?}",
-                    frag.text
-                );
-                assert_eq!(ruby.text, "かんじ");
-            }
-        }
-    }
+    let first = &result.lines[0].fragments[0];
+    assert_eq!(first.text, "漢字");
+    assert_eq!((first.char_start, first.char_end), (0, 1));
+    assert_measurement_only_flow(&result);
 }
 
 #[test]
 fn inline_empty_span_does_not_shift_style() {
     // Regression: empty spans are skipped during shaping. The segment-to-span
     // mapping must use span_index (not segment enumeration index) so that
-    // style and ruby metadata align correctly even when empty spans exist.
+    // plain-span styles align correctly even when empty spans exist.
     let reg = make_registry();
     let mut input = make_exclusion_input(
         "",
@@ -2822,8 +2825,8 @@ fn inline_empty_span_does_not_shift_style() {
     input.spans = Some(vec![
         // Empty span at index 0 — skipped during shaping
         make_span("", 20.0, Some("#000000")),
-        // Ruby span at index 1
-        make_ruby_span("漢字", "かんじ", 20.0),
+        // Nonempty plain span at index 1
+        make_span("漢字", 20.0, None),
         // Plain span at index 2
         make_span("テスト", 20.0, Some("#0000ff")),
     ]);
@@ -2832,16 +2835,6 @@ fn inline_empty_span_does_not_shift_style() {
     assert!(result.exhausted);
 
     let all_frags: Vec<_> = result.lines.iter().flat_map(|l| &l.fragments).collect();
-    // Ruby annotation should be on the "漢字" fragment, not on "テスト"
-    let ruby_frags: Vec<_> = all_frags.iter().filter(|f| f.ruby.is_some()).collect();
-    assert!(
-        !ruby_frags.is_empty(),
-        "should have ruby fragment despite empty span at index 0"
-    );
-    for frag in &ruby_frags {
-        let base = frag.text.trim_end_matches('\u{2026}');
-        assert_eq!(base, "漢字", "ruby should be on '漢字', not shifted");
-    }
     // Blue color should be on "テスト", not on "漢字"
     let blue_frags: Vec<_> = all_frags
         .iter()
@@ -5376,18 +5369,12 @@ fn shrinkwrap_flow_rich_text_vertical_ruby() {
     let result = shrinkwrap_flow(&input, &reg).unwrap();
     assert_eq!(result.status, ShrinkwrapStatusDto::Satisfied);
     assert!(result.used_height > 0.0);
-    assert!(
-        result
-            .layout
-            .lines
-            .iter()
-            .flat_map(|line| line.fragments.iter())
-            .any(|fragment| fragment.ruby.is_some())
-    );
+    assert!(!result.layout.lines.is_empty());
+    assert_measurement_only_flow(&result.layout);
 }
 
 #[test]
-fn shrinkwrap_flow_preserves_multilevel_ruby_metadata() {
+fn shrinkwrap_flow_measures_multilevel_ruby_without_paint_metadata() {
     let reg = make_registry();
     let input = ShrinkwrapFlowInput {
         text: String::new(),
@@ -5425,28 +5412,9 @@ fn shrinkwrap_flow_preserves_multilevel_ruby_metadata() {
     };
 
     let result = shrinkwrap_flow(&input, &reg).expect("multilevel ruby flow");
-    let ruby = result
-        .layout
-        .lines
-        .iter()
-        .flat_map(|line| line.fragments.iter())
-        .find_map(|fragment| fragment.ruby.as_ref())
-        .expect("ruby metadata");
-    assert_eq!(ruby.text, "はる");
-    assert_eq!(ruby.position, "over");
-    assert_eq!(ruby.offset_px, 3.0);
-    assert_eq!(ruby.line_sizing, "stable");
-    assert_eq!(ruby.levels.len(), 2);
-    assert_eq!(ruby.levels[0].text, "はる");
-    assert_eq!(ruby.levels[0].position, "over");
-    assert_eq!(ruby.levels[0].runs.len(), 2);
-    assert_eq!(
-        ruby.levels[0].runs[1].style.color.as_deref(),
-        Some("#fde68a")
-    );
-    assert_eq!(ruby.levels[1].text, "spring");
-    assert_eq!(ruby.levels[1].position, "under");
-    assert_eq!(ruby.levels[1].runs[0].style.font_size_px, 7.0);
+    assert_eq!(result.status, ShrinkwrapStatusDto::Satisfied);
+    assert!(result.used_height > input.font_size_px);
+    assert_measurement_only_flow(&result.layout);
 }
 
 #[test]

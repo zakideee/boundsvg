@@ -11,6 +11,7 @@ import {
   loadSubsetFont,
 } from "./test-prerequisites.js";
 
+/** Shared base style for intrinsic warning-delivery inputs. */
 const intrinsicWarningStyle: RichTextStyle = {
   font: "NotoSansJP",
   fontWeight: 400,
@@ -513,7 +514,8 @@ describe("Measurement WASM APIs", () => {
       ],
     });
     expect(richRubyFlow.layout.lines.map((line) => line.crossSize)).toEqual([40]);
-    expect(richRubyFlow.layout.topRubyOverflowPx).toBe(8);
+    expect(richRubyFlow.layout).not.toHaveProperty("topRubyOverflowPx");
+    expect(richRubyFlow.layout).not.toHaveProperty("bottomRubyOverflowPx");
   });
 
   it("keeps ruby shrinkwrap metrics route-independent and contains atomic bases", () => {

@@ -1,3 +1,5 @@
+//! Retain shaped plain inline runs and their grapheme-to-style mapping.
+
 use super::super::kinsoku::KinsokuProfile;
 use super::super::types::{NotdefInfo, TextShadowLayer, TextStrokeLayer};
 use crate::font::FontStyle;
@@ -16,7 +18,7 @@ pub struct RunSegment {
     pub start: usize,
     /// Last grapheme index (exclusive).
     pub end: usize,
-    /// Index into the original `spans` / `ruby_info` arrays.
+    /// Index into the original authored spans.
     /// Preserved even when empty spans are skipped during shaping.
     pub span_index: usize,
 }
@@ -41,23 +43,6 @@ pub(crate) struct SpanRef {
 ///
 /// Pixel-unit analog of `ShapedParagraph` for multi-font text. Cannot be
 /// relaid-out at different font sizes (advances are already in px).
-/// Ruby annotation metadata attached to a span/segment.
-pub struct RubyAnnotationMeta {
-    /// Annotation text (e.g. furigana).
-    pub text: String,
-    /// "over" or "under".
-    pub position: String,
-    /// "start", "center", "space-between", "space-around".
-    pub align: String,
-    /// Grapheme range [start, end) in the base text that this annotation covers.
-    pub grapheme_start: usize,
-    pub grapheme_end: usize,
-    /// Annotation font size in px.
-    pub font_size_px: f64,
-    /// Annotation color (if different from base).
-    pub color: Option<String>,
-}
-
 pub struct ShapedInlineRuns {
     /// Concatenated text from all spans.
     pub text: String,
@@ -75,20 +60,6 @@ pub struct ShapedInlineRuns {
     pub kinsoku_profile: Option<&'static KinsokuProfile>,
     /// Hanging punctuation chars (from base setting).
     pub hanging_chars: Option<&'static [char]>,
-    /// Per-grapheme non-breakable flag. `true` = cannot break at this position.
-    /// Used to keep ruby base text as an indivisible token.
-    pub non_breakable: Vec<bool>,
-    /// Ruby annotations attached to grapheme ranges.
-    pub ruby_annotations: Vec<RubyAnnotationMeta>,
     /// Characters that produced .notdef (`glyph_id=0`) during shaping.
     pub notdef_infos: Vec<NotdefInfo>,
-}
-
-/// Ruby info for a single span, passed alongside `TextSpanInput`.
-pub struct SpanRubyInfo {
-    pub ruby_text: String,
-    pub ruby_position: String,
-    pub ruby_align: String,
-    pub ruby_font_size_px: f64,
-    pub ruby_color: Option<String>,
 }

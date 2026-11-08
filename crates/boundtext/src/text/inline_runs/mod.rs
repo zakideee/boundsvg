@@ -1,7 +1,7 @@
-//! Inline runs (mixed-style text) support.
+//! Pre-shaped plain styled spans for the cursor-based flow APIs.
 //!
-//! When a text node has `<Inline>` children with different styles, each run
-//! (span) is shaped separately, then glyphs are merged for line breaking.
+//! Ruby-bearing flow documents use the rich planner. These run arrays retain
+//! plain shaping/style identities without encoding Ruby placement.
 //! After line breaking, each line is split into fragments matching the
 //! original run boundaries, and each fragment is re-shaped for precise width.
 
@@ -19,4 +19,4 @@ pub use flow_layout::{
 };
 pub use prepare::prepare_inline_runs;
 pub(crate) use prepare::{apply_inline_fragments, shape_inline_runs};
-pub use types::{RubyAnnotationMeta, RunSegment, ShapedInlineRuns, SpanRubyInfo};
+pub use types::{RunSegment, ShapedInlineRuns};

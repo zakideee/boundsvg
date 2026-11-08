@@ -1,9 +1,20 @@
-import { Box, type Engine, Flex, InlineBox, Rt, Ruby, Text, type VNode } from "@boundsvg/core";
+import {
+  Box,
+  type Engine,
+  Flex,
+  Inline,
+  InlineBox,
+  Rt,
+  Ruby,
+  Text,
+  type VNode,
+} from "@boundsvg/core";
 import { horizontalFlowCrossExtent } from "../../playground-shared/flow-metrics.js";
 import { FONT_ALIAS as FA } from "./config";
 import { renderFlowFragments, renderVerticalFlowFragments } from "./flow-helpers";
-import { CAPTION_RUBY_SPANS, renderRubyFlowFragments } from "./ruby-helpers";
+import { CAPTION_RUBY_SPANS } from "./ruby-helpers";
 
+/** Compare fixed and shrinkwrapped plain English measurements and previews. */
 export function buildShrinkwrapEnglishSection(
   engine: Engine,
   children: VNode[],
@@ -111,6 +122,7 @@ export function buildShrinkwrapEnglishSection(
   }
 }
 
+/** Compare vertical plain, exclusion-flow, and authored rich shrinkwrap scenes. */
 export function buildShrinkwrapVerticalSection(
   engine: Engine,
   children: VNode[],
@@ -476,6 +488,7 @@ export function buildShrinkwrapVerticalSection(
   }
 }
 
+/** Measure caption dimensions, then render its original Ruby content in the chosen flow frame. */
 export function buildShrinkwrapRubySection(
   engine: Engine,
   children: VNode[],
@@ -489,6 +502,14 @@ export function buildShrinkwrapRubySection(
   const thumbMargin = 6;
   const captionWidth = 350;
   const captionHeight = 200;
+  const captionContent = CAPTION_RUBY_SPANS.map((span) =>
+    Inline(
+      { color: span.color },
+      span.rubyText === undefined
+        ? span.text
+        : Ruby({}, span.text, Rt({ fontSizePx: span.rubyFontSizePx }, span.rubyText)),
+    ),
+  );
   const exclusions = [
     { kind: "rect" as const, x: 0, y: 0, width: thumbW, height: thumbH, marginPx: thumbMargin },
   ];
@@ -530,7 +551,25 @@ export function buildShrinkwrapRubySection(
         borderRadius: 4,
       }),
     );
-    renderRubyFlowFragments(children, fixedResult, fontSize, lineHeight, "#e2e8f0", xBase, yBase);
+    children.push(
+      Text(
+        {
+          position: "absolute",
+          left: xBase,
+          top: yBase,
+          width: captionWidth,
+          height: captionHeight,
+          font: FA,
+          fontSizePx: fontSize,
+          lineHeight,
+          language: "ja",
+          wrap: "char",
+          color: "#e2e8f0",
+          flowExclusions: exclusions,
+        },
+        ...captionContent,
+      ),
+    );
 
     // --- Shrinkwrapped (bottom) ---
     const shrinkwrap = engine.shrinkwrapFlow({
@@ -574,14 +613,24 @@ export function buildShrinkwrapRubySection(
           borderRadius: 4,
         }),
       );
-      renderRubyFlowFragments(
-        children,
-        tightResult,
-        fontSize,
-        lineHeight,
-        "#e2e8f0",
-        xBase,
-        tightY,
+      children.push(
+        Text(
+          {
+            position: "absolute",
+            left: xBase,
+            top: tightY,
+            width: tightW,
+            height: captionHeight,
+            font: FA,
+            fontSizePx: fontSize,
+            lineHeight,
+            language: "ja",
+            wrap: "char",
+            color: "#e2e8f0",
+            flowExclusions: exclusions,
+          },
+          ...captionContent,
+        ),
       );
 
       children.push(

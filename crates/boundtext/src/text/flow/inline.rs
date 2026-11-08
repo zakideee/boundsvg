@@ -1,3 +1,5 @@
+//! Adapt plain styled spans to shaped inline flow; Ruby-bearing documents use the rich planner.
+
 use crate::font::line_metrics::resolve_line_metrics_for_style;
 use crate::font::shaping::{
     ShapeOptions, format_css_font_feature_settings, format_css_font_variation_settings,
@@ -83,11 +85,10 @@ fn flow_span_to_text_span(
     }
 }
 
-/// Build [`TextSpanInput`] and [`inline_runs::SpanRubyInfo`] vectors from
-/// [`FlowTextSpan`] slices. This centralises the default resolution
-/// (ruby position = "over", align = "space-around", font-size = 50 % base)
-/// shared by `layout_flow_inline`, `layout_flow_vertical_inline`, and
-/// the shrinkwrap-flow inline path.
+/// Resolve shaping styles from flow spans before plain shaping or canonical rich conversion.
+///
+/// These inputs carry styles, not Ruby placement. Keep the original `FlowTextSpan`
+/// definitions when converting Ruby content, or use the public flow layout entrypoints.
 #[must_use]
 pub fn build_inline_runs_inputs(
     spans: &[FlowTextSpan],
@@ -97,7 +98,7 @@ pub fn build_inline_runs_inputs(
     language: Language,
     text_orientation: Option<&str>,
     shape_options: &ShapeOptions,
-) -> (Vec<TextSpanInput>, Vec<Option<inline_runs::SpanRubyInfo>>) {
+) -> Vec<TextSpanInput> {
     let default_font_style_str = match font_ctx.style {
         FontStyle::Italic => Some("italic"),
         FontStyle::Normal => None,
@@ -130,28 +131,7 @@ pub fn build_inline_runs_inputs(
         })
         .collect();
 
-    let ruby_info = spans
-        .iter()
-        .map(|span| {
-            span.ruby_text
-                .as_ref()
-                .map(|ruby_text| inline_runs::SpanRubyInfo {
-                    ruby_text: ruby_text.clone(),
-                    ruby_position: span
-                        .ruby_position
-                        .clone()
-                        .unwrap_or_else(|| "over".to_string()),
-                    ruby_align: span
-                        .ruby_align
-                        .clone()
-                        .unwrap_or_else(|| "space-around".to_string()),
-                    ruby_font_size_px: span.ruby_font_size_px.unwrap_or(font_size_px * 0.5),
-                    ruby_color: span.ruby_color.clone(),
-                })
-        })
-        .collect();
-
-    (text_spans, ruby_info)
+    text_spans
 }
 
 fn text_span_to_rich_style(
@@ -178,8 +158,7 @@ fn text_span_to_rich_style(
     }
 }
 
-/// Convert resolved legacy flow spans into rich-text nodes so preformatted
-/// shrinkwrap can preserve ruby metadata as well as forced newline behavior.
+/// Convert resolved flow spans into the canonical rich document used by ruby, fit, and ellipsis.
 #[must_use]
 pub fn build_flow_rich_text_inputs(
     flow_spans: &[FlowTextSpan],
@@ -253,10 +232,14 @@ fn scale_flow_span(span: &FlowTextSpan, scale: f64) -> FlowTextSpan {
 type PreparedInlineFlowInputs = (
     Vec<FlowTextSpan>,
     Vec<TextSpanInput>,
-    Vec<Option<inline_runs::SpanRubyInfo>>,
     inline_runs::ShapedInlineRuns,
 );
 
+/// Scale plain authored spans once and retain their effective shaping-run identities.
+///
+/// # Errors
+///
+/// Propagate font/shaper preparation failures, including incomplete glyph streams.
 pub(super) fn prepare_inline_flow_inputs(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
@@ -275,7 +258,7 @@ pub(super) fn prepare_inline_flow_inputs(
             .collect()
     };
     let letter_spacing_px = req.letter_spacing_px * scale;
-    let (text_spans, ruby_info) = build_inline_runs_inputs(
+    let text_spans = build_inline_runs_inputs(
         &spans,
         font_ctx,
         chosen_font_size_px,
@@ -290,10 +273,9 @@ pub(super) fn prepare_inline_flow_inputs(
         letter_spacing_px,
         req.language,
         req.hanging_punctuation,
-        &ruby_info,
         req.writing_mode == WritingMode::VerticalRl,
     )?;
-    Ok((spans, text_spans, ruby_info, shaped_runs))
+    Ok((spans, text_spans, shaped_runs))
 }
 
 /// Alphabetic baseline offset resolved from font metrics for flow fragments.
@@ -306,13 +288,18 @@ pub(super) fn default_alphabetic_baseline_offset_px(
     super::resolve_flow_baseline_offset_px(font_ctx, font_size_px, line_height, line_height_px)
 }
 
+/// Measure prepared plain spans against the provider at an already selected font size.
+///
+/// # Errors
+///
+/// Propagate shaping, invalid region, provider, and bounded-query failures.
 pub(super) fn measure_inline_flow_at_font_size(
     req: &FlowLayoutRequest<'_>,
     font_ctx: &FontContext<'_>,
     region_provider: &impl LayoutRegionProvider,
     chosen_font_size_px: f64,
 ) -> Result<FlowMeasure, crate::TextLayoutError> {
-    let (_, text_spans, _, shaped_runs) =
+    let (_, text_spans, shaped_runs) =
         prepare_inline_flow_inputs(req, font_ctx, chosen_font_size_px)?;
     let min_region_extent = req.min_region_width.unwrap_or(chosen_font_size_px);
 
@@ -436,50 +423,6 @@ pub(super) fn split_fragment_at_run_boundaries(
                 letter_spacing_px: span.letter_spacing_px,
                 color: span.color.clone(),
             }),
-            ruby: shaped_runs
-                .ruby_annotations
-                .iter()
-                .find(|annotation| {
-                    overlap_start <= annotation.grapheme_start
-                        && annotation.grapheme_end <= overlap_end
-                })
-                .map(|annotation| super::FlowRubyAnnotation {
-                    text: annotation.text.clone(),
-                    position: annotation.position.clone(),
-                    align: annotation.align.clone(),
-                    style: FlowFragmentStyle {
-                        font_family: span.font_family.first().cloned().unwrap_or_default(),
-                        font_weight: span.font_weight,
-                        font_style: match span.font_style {
-                            FontStyle::Italic => "italic".to_string(),
-                            FontStyle::Normal => "normal".to_string(),
-                        },
-                        font_size_px: annotation.font_size_px,
-                        letter_spacing_px: None,
-                        color: annotation.color.clone().or_else(|| span.color.clone()),
-                    },
-                    gap_px: crate::text::rich::ruby_gap_px(annotation.font_size_px),
-                    offset_px: 0.0,
-                    line_sizing: "css".to_string(),
-                    levels: vec![super::FlowRubyAnnotationLevel {
-                        text: annotation.text.clone(),
-                        position: annotation.position.clone(),
-                        runs: vec![super::FlowRubyAnnotationRun {
-                            text: annotation.text.clone(),
-                            style: FlowFragmentStyle {
-                                font_family: span.font_family.first().cloned().unwrap_or_default(),
-                                font_weight: span.font_weight,
-                                font_style: match span.font_style {
-                                    FontStyle::Italic => "italic".to_string(),
-                                    FontStyle::Normal => "normal".to_string(),
-                                },
-                                font_size_px: annotation.font_size_px,
-                                letter_spacing_px: None,
-                                color: annotation.color.clone().or_else(|| span.color.clone()),
-                            },
-                        }],
-                    }],
-                }),
             positioned_glyphs: Vec::new(),
             inline_rects: Vec::new(),
         });
@@ -553,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn flow_ruby_default_align_is_space_around() {
+    fn flow_ruby_conversion_preserves_base_and_annotation_styles() {
         let registry = FontRegistry::new();
         let families = vec!["NotoSansJP".to_string()];
         let font_style = FontStyle::Normal;
@@ -582,7 +525,7 @@ mod tests {
             ruby_color: None,
         }];
 
-        let (text_spans, ruby_info) = build_inline_runs_inputs(
+        let text_spans = build_inline_runs_inputs(
             &spans,
             &font_ctx,
             20.0,
@@ -591,12 +534,6 @@ mod tests {
             None,
             &ShapeOptions::default(),
         );
-        let ruby = ruby_info[0].as_ref().expect("ruby info");
-
-        assert_eq!(ruby.ruby_position, "over");
-        assert_eq!(ruby.ruby_align, "space-around");
-        assert_eq!(ruby.ruby_font_size_px, 10.0);
-
         let rich_text = build_flow_rich_text_inputs(&spans, &text_spans, Some(1.4), Some(40.0));
         let RichTextNodeInput::Ruby { style, rt, .. } = &rich_text[0] else {
             panic!("expected converted ruby node");

@@ -551,7 +551,7 @@ pub enum FlowOverflowReason {
     CannotFit,
 }
 
-/// Style for a flow fragment.
+/// Plain-span diagnostic style; canonical rich paths omit fragment style metadata.
 #[derive(Debug, Clone)]
 pub struct FlowFragmentStyle {
     pub font_family: String,
@@ -562,44 +562,6 @@ pub struct FlowFragmentStyle {
     pub color: Option<String>,
 }
 
-/// Ruby annotation attached to a flow fragment.
-#[derive(Debug, Clone)]
-pub struct FlowRubyAnnotationRun {
-    pub text: String,
-    pub style: FlowFragmentStyle,
-}
-
-/// One ruby annotation level with its position and styled text runs.
-#[derive(Debug, Clone)]
-pub struct FlowRubyAnnotationLevel {
-    pub text: String,
-    pub position: String,
-    pub runs: Vec<FlowRubyAnnotationRun>,
-}
-
-/// Ruby annotation attached to a flow fragment.
-#[derive(Debug, Clone)]
-pub struct FlowRubyAnnotation {
-    /// Annotation text (e.g. furigana reading).
-    pub text: String,
-    /// "over" (default) or "under".
-    pub position: String,
-    /// "start", "center", "space-between", "space-around" (default).
-    pub align: String,
-    /// Style for the annotation text.
-    pub style: FlowFragmentStyle,
-    /// Frame gap between annotation and base text (px), derived from
-    /// [`rich::ruby_gap_px`].
-    pub gap_px: f64,
-    /// Additional caller-requested displacement away from the base.
-    pub offset_px: f64,
-    /// Whether annotation extents reserve stable line space or CSS-like space.
-    pub line_sizing: String,
-    /// Every annotation level and its styled runs. The legacy top-level
-    /// text/position/style fields mirror the first level's first run.
-    pub levels: Vec<FlowRubyAnnotationLevel>,
-}
-
 /// Authored inline rectangle and its offset within a resolved flow fragment.
 #[derive(Debug, Clone)]
 pub(crate) struct FlowInlineRect {
@@ -607,31 +569,38 @@ pub(crate) struct FlowInlineRect {
     pub rect: super::types::InlineRectInput,
 }
 
-/// A single text fragment placed within a free region.
+/// A reserved cell placed within a free region, with native settled geometry for rendering.
 #[derive(Debug, Clone)]
 pub struct FlowFragment {
+    /// Display text for diagnostics, without Ruby readings.
     pub text: String,
+    /// Inclusive grapheme index on plain paths, or token index on canonical rich paths.
     pub char_start: usize,
+    /// Exclusive end in the same diagnostic index space as `char_start`.
     pub char_end: usize,
+    /// Physical x of the reserved cell in provider coordinates, not a glyph origin.
     pub x: f64,
+    /// Physical y of the reserved cell in provider coordinates, not an annotation origin.
     pub y: f64,
     /// Consumed inline advance in px (physical width for horizontal, physical height for vertical).
     pub inline_advance_px: f64,
     /// Available inline size of the region in px.
     pub available_inline_size_px: f64,
+    /// Region identity within the line or column's provider response.
     pub region_index: usize,
     /// Shared cross-axis reference offset in px: the horizontal alphabetic
     /// baseline from line top, or the vertical centerline from column left.
     pub baseline_offset: f64,
+    /// Intentional kinsoku/hanging tail or ellipsis diagnostic, when applicable.
     pub overflow_reason: Option<String>,
     /// Maximum reported inline overflow attributable to the intentional tail.
     pub intentional_overflow_px: f64,
+    /// Plain-span style facts; absent for all fragments of a canonical rich document.
     pub style: Option<FlowFragmentStyle>,
-    pub ruby: Option<FlowRubyAnnotation>,
-    /// Glyphs shaped and positioned by the flow engine. Kept internal so
-    /// renderers can paint a flow result without feeding fragment text back
-    /// through text layout.
+    /// Native glyphs shaped and positioned by the flow engine. Renderers consume
+    /// these directly; the public wire measurement projection omits them.
     pub positioned_glyphs: Vec<PositionedGlyph>,
+    /// Authored inline rectangles positioned within this native cell.
     pub(crate) inline_rects: Vec<FlowInlineRect>,
 }
 
@@ -938,8 +907,8 @@ fn run_flow_loop(
 /// Actual cross size of an inline (spans) flow line.
 ///
 /// Mixed-size runs combine the largest before-reference and after-reference
-/// extents, matching the render path's inline line-box calculation. Ruby
-/// extends the corresponding side of that line box.
+/// extents, matching the render path's inline line-box calculation. Ruby sources
+/// use canonical rich layout instead of this plain-span measurement path.
 fn inline_line_box_metrics(
     fragments: &[FlowFragment],
     font_ctx: &FontContext<'_>,
@@ -973,37 +942,7 @@ fn inline_line_box_metrics(
             explicit_line_height_px,
         );
         let (fragment_cross_size, fragment_reference_offset) =
-            if let Some(ruby) = fragment.ruby.as_ref() {
-                let ruby_extent =
-                    (ruby.style.font_size_px + ruby.gap_px).max(0.0) + ruby.offset_px.max(0.0);
-                if writing_mode == WritingMode::VerticalRl {
-                    let (left_extent, right_extent) = if ruby.position == "under" {
-                        (ruby_extent, 0.0)
-                    } else {
-                        (0.0, ruby_extent)
-                    };
-                    rich::resolve_vertical_css_ruby_line_box(
-                        metrics.line_height_px,
-                        style.font_size_px.max(1.0),
-                        left_extent,
-                        right_extent,
-                    )
-                } else {
-                    let (over_extent, under_extent) = if ruby.position == "under" {
-                        (0.0, ruby_extent)
-                    } else {
-                        (ruby_extent, 0.0)
-                    };
-                    rich::resolve_horizontal_css_ruby_line_box(
-                        metrics.line_height_px,
-                        metrics.baseline_offset_px,
-                        metrics.ascent_px,
-                        metrics.descent_px,
-                        over_extent,
-                        under_extent,
-                    )
-                }
-            } else if writing_mode == WritingMode::VerticalRl {
+            if writing_mode == WritingMode::VerticalRl {
                 (metrics.line_height_px, metrics.line_height_px * 0.5)
             } else {
                 (metrics.line_height_px, metrics.baseline_offset_px)
@@ -1348,8 +1287,7 @@ fn measure_flow_inline_with_styles_and_budgeted_provider(
         let mut probe_cross_size = line_height_px;
         let mut measured_cross_size = None;
         let mut measured_contained = false;
-        let stabilization_limit =
-            shaped_runs.segments.len() + shaped_runs.ruby_annotations.len() + 2;
+        let stabilization_limit = shaped_runs.segments.len() + 2;
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
             let regions = query_regions(
@@ -1517,8 +1455,7 @@ fn measure_flow_vertical_inline_with_styles_and_budgeted_provider(
         let mut probe_cross_size = column_width;
         let mut measured_cross_size = None;
         let mut measured_contained = false;
-        let stabilization_limit =
-            shaped_runs.segments.len() + shaped_runs.ruby_annotations.len() + 2;
+        let stabilization_limit = shaped_runs.segments.len() + 2;
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
             let probe_left = column_right - probe_cross_size;
@@ -1617,32 +1554,6 @@ fn measure_flow_vertical_inline_with_styles_and_budgeted_provider(
 // ---------------------------------------------------------------------------
 // Ruby overflow extents
 // ---------------------------------------------------------------------------
-
-/// Compute legacy ruby annotation extents on the over and under sides.
-///
-/// Returns `(top_extent_px, bottom_extent_px)` as font size plus frame gap.
-/// These values support consumers that manually reconstruct base and
-/// annotation fragments. They are not physical line-box overflow and must not
-/// be added to measured height. Uses [`rich::ruby_gap_px`] as the single source
-/// of truth for the frame gap.
-#[must_use]
-pub fn compute_ruby_overflow(flow_layout: &FlowLayoutResult) -> (f64, f64) {
-    let mut top_overflow: f64 = 0.0;
-    let mut bottom_overflow: f64 = 0.0;
-    for line in &flow_layout.lines {
-        for fragment in &line.fragments {
-            if let Some(ref ruby) = fragment.ruby {
-                let ruby_height = ruby.style.font_size_px + ruby.gap_px;
-                if ruby.position == "under" {
-                    bottom_overflow = bottom_overflow.max(ruby_height);
-                } else {
-                    top_overflow = top_overflow.max(ruby_height);
-                }
-            }
-        }
-    }
-    (top_overflow, bottom_overflow)
-}
 
 // ---------------------------------------------------------------------------
 // Public orchestrators
@@ -1801,7 +1712,6 @@ fn layout_flow_simple_fallback(
         req.letter_spacing_px,
         req.language,
         req.hanging_punctuation,
-        &[None],
         vertical,
     )?;
     if shaped.graphemes.is_empty() {
@@ -2003,7 +1913,9 @@ impl<'a> NormalizedFlowSource<'a> {
         }
         // Rich preparation owns whitespace for rich, fit, and ellipsis paths.
         // Normalizing those sources here would repeat that preparation.
-        if has_rich_text || request.fit.is_some() || request.ellipsis {
+        let has_ruby_spans =
+            spans.is_some_and(|spans| spans.iter().any(|span| span.ruby_text.is_some()));
+        if has_rich_text || has_ruby_spans || request.fit.is_some() || request.ellipsis {
             return Ok(Self {
                 text: Cow::Borrowed(request.text),
                 spans: spans.map(Cow::Borrowed),
@@ -2074,11 +1986,14 @@ pub(crate) fn layout_flow_with_regions_budgeted(
     // public input shape. Promoting legacy plain/spans inputs here prevents
     // this diagnostics API from retaining second truncation and fit engines
     // beside the resolved render path.
-    if req.ellipsis || req.fit.is_some() {
+    let has_ruby_spans = req
+        .spans
+        .is_some_and(|spans| spans.iter().any(|span| span.ruby_text.is_some()));
+    if has_ruby_spans || req.ellipsis || req.fit.is_some() {
         let mut canonical_req = req.clone();
         let canonical_nodes = if let Some(flow_spans) = req.spans.filter(|spans| !spans.is_empty())
         {
-            let (text_spans, _) = build_inline_runs_inputs(
+            let text_spans = build_inline_runs_inputs(
                 flow_spans,
                 font_ctx,
                 req.font_size_px,
@@ -2262,7 +2177,6 @@ pub(crate) fn layout_flow_with_regions_budgeted(
                         overflow_reason: fragment.overflow_reason.map(layout_overflow_reason_name),
                         intentional_overflow_px: fragment.intentional_overflow_px,
                         style: None,
-                        ruby: None,
                         positioned_glyphs: Vec::new(),
                         inline_rects: Vec::new(),
                     }
@@ -2404,7 +2318,7 @@ fn layout_resolved_flow_with_regions_budgeted(
     let resolved_rich_text;
 
     if let Some(flow_spans) = req.spans.filter(|spans| !spans.is_empty()) {
-        let (text_spans, _) = build_inline_runs_inputs(
+        let text_spans = build_inline_runs_inputs(
             flow_spans,
             font_ctx,
             req.font_size_px,
@@ -2735,7 +2649,6 @@ fn layout_flow_vertical(
                     overflow_reason: fragment.overflow_reason.map(layout_overflow_reason_name),
                     intentional_overflow_px: fragment.intentional_overflow_px,
                     style: None,
-                    ruby: None,
                     positioned_glyphs: Vec::new(),
                     inline_rects: Vec::new(),
                 }
@@ -2819,7 +2732,7 @@ fn layout_flow_inline(
         _ => Ok((req.font_size_px, None)),
     }?;
 
-    let (_scaled_spans, text_spans, _ruby_info, shaped_runs) =
+    let (_scaled_spans, text_spans, shaped_runs) =
         prepare_inline_flow_inputs(req, font_ctx, settled_font_size)?;
     let grapheme_count = shaped_runs.graphemes.len();
     let line_height_px = resolve_flow_line_height_px(
@@ -2863,8 +2776,7 @@ fn layout_flow_inline(
         let saved_cursor = cursor.clone();
         let mut probe_cross_size = line_height_px;
         let mut resolved_line = None;
-        let stabilization_limit =
-            shaped_runs.segments.len() + shaped_runs.ruby_annotations.len() + 2;
+        let stabilization_limit = shaped_runs.segments.len() + 2;
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
             let regions = query_regions(
@@ -3025,7 +2937,7 @@ fn layout_flow_vertical_inline(
         _ => Ok((req.font_size_px, None)),
     }?;
 
-    let (_scaled_spans, text_spans, _ruby_info, shaped_runs) =
+    let (_scaled_spans, text_spans, shaped_runs) =
         prepare_inline_flow_inputs(req, font_ctx, settled_font_size)?;
     let grapheme_count = shaped_runs.graphemes.len();
     let column_width = resolve_flow_line_height_px(
@@ -3064,8 +2976,7 @@ fn layout_flow_vertical_inline(
         let saved_cursor = cursor.clone();
         let mut probe_cross_size = column_width;
         let mut resolved_column = None;
-        let stabilization_limit =
-            shaped_runs.segments.len() + shaped_runs.ruby_annotations.len() + 2;
+        let stabilization_limit = shaped_runs.segments.len() + 2;
         for _ in 0..stabilization_limit {
             cursor = saved_cursor.clone();
             let probe_left = column_right - probe_cross_size;

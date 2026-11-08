@@ -15,6 +15,7 @@ use crate::font::{FontEntry, FontRegistry, FontStyle};
 mod flow_layout;
 mod line_layout;
 mod prepare;
+mod ruby_placement;
 
 use super::fit::selected_font_size_scale;
 use super::flow as text_flow;
@@ -305,7 +306,9 @@ struct LayoutToken {
     nested_decorations: Vec<NestedInlineBoxDecoration>,
     /// Complete fragmentable decoration ancestry (outermost first).
     decoration_memberships: Vec<DecorationMembership>,
-    flow_ruby: Option<text_flow::FlowRubyAnnotation>,
+    ruby_placement: Option<ruby_placement::Placement>,
+    /// Natural grapheme-frame advance, excluding authored tracking; absent on atomic objects.
+    lending_advance: Option<f64>,
     /// letterSpacing to re-add after this token when it is not stream-final.
     /// Per-token shaping drops inter-token tracking; see `build_tokens`.
     trailing_tracking_px: f64,
@@ -442,6 +445,10 @@ pub fn layout_rich_text(
 ///
 /// The authoritative engine uses this after proving complete-document
 /// overflow so fit probes are not repeated during ellipsis projection.
+///
+/// # Errors
+///
+/// Return the first shaping, placement, region-independent layout, or ellipsis failure.
 pub(crate) fn layout_rich_text_at_selected_font_size(
     req: &TextLayoutRequest,
     font_ctx: &FontContext<'_>,
@@ -781,32 +788,15 @@ pub fn measure_intrinsic_inline_size(
         });
     }
 
-    // min-content: largest single unbreakable token, including every nested
-    // decoration edge authored on that token.
-    let mut min_content_inline_size = prepared
-        .tokens
-        .iter()
-        .filter(|token| token.text != "\n")
-        .map(|token| {
-            token.advance
-                + token
-                    .decoration_memberships
-                    .iter()
-                    .map(|membership| membership.start_advance + membership.end_advance)
-                    .sum::<f64>()
-        })
-        .fold(0.0_f64, f64::max);
+    // An isolated atomic ruby cannot borrow from another min-content item.
     let text_indent = req.text_indent.unwrap_or(0.0);
-    if let Some(first_token) = prepared.tokens.first().filter(|token| token.text != "\n") {
-        min_content_inline_size = min_content_inline_size.max(
-            first_token.advance
-                + first_token
-                    .decoration_memberships
-                    .iter()
-                    .map(|membership| membership.start_advance + membership.end_advance)
-                    .sum::<f64>()
-                + text_indent,
-        );
+    let mut min_content_inline_size = 0.0_f64;
+    for (index, token) in prepared.tokens.iter().enumerate() {
+        if token.text == "\n" {
+            continue;
+        }
+        let width = effective_line_width(&prepared.tokens, index, index + 1, text_indent)?;
+        min_content_inline_size = min_content_inline_size.max(width);
     }
 
     // max-content: sum all advances per logical line/column, including decoration
@@ -821,7 +811,7 @@ pub fn measure_intrinsic_inline_size(
                 line_start,
                 i,
                 if line_start == 0 { text_indent } else { 0.0 },
-            );
+            )?;
             max_content_inline_size = max_content_inline_size.max(line_width);
             line_start = i + 1;
         }
@@ -832,7 +822,7 @@ pub fn measure_intrinsic_inline_size(
             line_start,
             prepared.tokens.len(),
             if line_start == 0 { text_indent } else { 0.0 },
-        );
+        )?;
         max_content_inline_size = max_content_inline_size.max(line_width);
     }
 
@@ -1907,6 +1897,20 @@ fn build_tokens_with_options(
         }
     }
 
+    ruby_placement::prepare_neighbor_loans(
+        &mut tokens,
+        req.hanging_punctuation,
+        RubyInkBoundsContext {
+            font_registry,
+            fallback_registry,
+            axis: if req.is_vertical() {
+                RubyInkAxis::Vertical
+            } else {
+                RubyInkAxis::Horizontal
+            },
+        },
+    )?;
+
     // Convert base-text ranges into one logical address space for the complete
     // rich-text node. Ruby annotations keep annotation-level cluster ranges:
     // they shape a separate source string and their public source role provides
@@ -2095,6 +2099,7 @@ fn build_flat_items(
                         token.trailing_tracking_px = segment.style.letter_spacing_px;
                         token
                     };
+                    token.lending_advance = None;
                     token.decoration_memberships.clone_from(memberships);
                     tokens.push(token);
                     item_index += 1;
@@ -2209,7 +2214,26 @@ fn build_flat_items(
                         fallback_registry,
                         req.is_vertical(),
                     ),
-                    RichInlineNode::Segment(_) | RichInlineNode::DecoratedSpan(_) => {
+                    RichInlineNode::DecoratedSpan(span) => {
+                        if req.is_vertical() {
+                            build_vertical_atomic_decorated_span_token(
+                                span,
+                                req,
+                                font_registry,
+                                fallback_registry,
+                                default_style,
+                            )?
+                        } else {
+                            build_horizontal_atomic_decorated_span_token(
+                                span,
+                                req,
+                                font_registry,
+                                fallback_registry,
+                                default_style,
+                            )?
+                        }
+                    }
+                    RichInlineNode::Segment(_) => {
                         return Err(rich_preparation_error());
                     }
                 };
@@ -2506,6 +2530,14 @@ fn distribute_contextually_shaped_mixed_tokens(
             )
         };
         token.text.clone_from(grapheme);
+        token.lending_advance = Some(
+            token.advance
+                - if index + 1 < graphemes.len() {
+                    style.letter_spacing_px
+                } else {
+                    0.0
+                },
+        );
         if index + 1 == graphemes.len() {
             // Whole-run shaping already includes internal tracking. Only the
             // shaping-run boundary still needs the stream-level compensation.
@@ -2570,7 +2602,8 @@ fn build_inline_rect_token(
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
         decoration_memberships: Vec::new(),
-        flow_ruby: None,
+        ruby_placement: None,
+        lending_advance: None,
         trailing_tracking_px: 0.0,
     }
 }
@@ -2599,7 +2632,8 @@ fn build_horizontal_plain_token_from_glyphs(
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
         decoration_memberships: Vec::new(),
-        flow_ruby: None,
+        ruby_placement: None,
+        lending_advance: Some(advance),
         trailing_tracking_px: 0.0,
     }
 }
@@ -2654,7 +2688,8 @@ fn build_vertical_plain_token_from_glyphs(
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
         decoration_memberships: Vec::new(),
-        flow_ruby: None,
+        ruby_placement: None,
+        lending_advance: Some(advance),
         trailing_tracking_px: 0.0,
     }
 }
@@ -2719,7 +2754,8 @@ fn build_vertical_combine_token(
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
         decoration_memberships: Vec::new(),
-        flow_ruby: None,
+        ruby_placement: None,
+        lending_advance: None,
         // The combined run is one atomic typographic character, but tracking
         // still belongs at its boundary with the following token.
         trailing_tracking_px: segment.style.letter_spacing_px,
@@ -2846,6 +2882,17 @@ fn build_horizontal_ruby_token(
         },
     )?;
 
+    let ruby_placement = ruby_placement::build_placement(
+        &glyphs,
+        advance,
+        base_baseline,
+        &level_ranges,
+        RubyInkBoundsContext {
+            font_registry,
+            fallback_registry,
+            axis: RubyInkAxis::Horizontal,
+        },
+    )?;
     let (kinsoku_start, kinsoku_end) = segment_kinsoku_edges(&ruby.base);
     Ok(LayoutToken {
         text: ruby
@@ -2863,17 +2910,10 @@ fn build_horizontal_ruby_token(
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
         decoration_memberships: Vec::new(),
-        flow_ruby: Some(build_flow_ruby_annotation(ruby)),
+        ruby_placement: Some(ruby_placement),
+        lending_advance: None,
         trailing_tracking_px: 0.0,
     })
-}
-
-/// Per-child cross-axis metrics used to compute the `InlineBox` token's
-/// final `reference_offset` and `cross_size`, then re-align all glyphs.
-struct ChildCrossMetrics {
-    reference_offset: f64,
-    after_reference: f64,
-    glyph_start: usize,
 }
 
 fn build_horizontal_atomic_decorated_span_token(
@@ -3032,61 +3072,6 @@ fn build_vertical_inline_box_token(
     )
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "atomic segment shaping keeps direction and geometry inputs explicit"
-)]
-fn shape_atomic_box_segment(
-    segment: &RichSegment,
-    is_vertical: bool,
-    req: &TextLayoutRequest,
-    font_registry: &FontRegistry,
-    fallback_registry: Option<&FontRegistry>,
-    default_style: &ResolvedStyle,
-    reference_offset: f64,
-    after_reference: f64,
-    cursor: f64,
-) -> RichLayoutResult<(Vec<PositionedGlyph>, f64, f64, f64)> {
-    if is_vertical && segment.combine {
-        let combine_token = build_vertical_combine_token(
-            segment,
-            req,
-            font_registry,
-            fallback_registry,
-            default_style,
-        )?;
-        let combine_reference_offset = combine_token.reference_offset;
-        let combine_after_reference = combine_token.cross_size - combine_reference_offset;
-        let mut combine_glyphs = combine_token.glyphs;
-        shift_glyphs_y(&mut combine_glyphs, cursor);
-        return Ok((
-            combine_glyphs,
-            combine_token.advance,
-            combine_reference_offset,
-            combine_after_reference,
-        ));
-    }
-
-    let (run_glyphs, run_advance) = if is_vertical {
-        shape_segment_run_vertical(
-            std::slice::from_ref(segment),
-            font_registry,
-            fallback_registry,
-            reference_offset,
-            cursor,
-        )?
-    } else {
-        shape_segment_run_horizontal(
-            std::slice::from_ref(segment),
-            font_registry,
-            fallback_registry,
-            reference_offset,
-            cursor,
-        )?
-    };
-    Ok((run_glyphs, run_advance, reference_offset, after_reference))
-}
-
 // Shared inner helper for `InlineBox` and atomic `DecoratedSpan` token
 // building. Handles child-node traversal, direction-dependent shaping
 // dispatch, and cross-axis realignment.
@@ -3111,283 +3096,139 @@ fn build_atomic_box_token_inner(
     let default_metrics =
         resolve_style_line_metrics(font_registry, fallback_registry, default_style);
     let base_measure = default_metrics.line_height_px;
-    let (base_ref, base_after) = if is_vertical {
-        (base_measure * 0.5, base_measure * 0.5)
+    let base_reference = if is_vertical {
+        base_measure * 0.5
     } else {
-        (
-            default_metrics.baseline_offset_px,
-            base_measure - default_metrics.baseline_offset_px,
-        )
+        default_metrics.baseline_offset_px
     };
     let content_offset = padding_inline[0] + border_width;
-
-    let mut glyphs = Vec::new();
-    let mut cursor = content_offset;
-    let mut text = String::new();
-    let mut child_metrics: Vec<ChildCrossMetrics> = Vec::new();
-    let mut nested_decorations: Vec<NestedInlineBoxDecoration> = Vec::new();
-    let mut inline_rects: Vec<NestedInlineRect> = Vec::new();
-    let mut kinsoku_start = None;
-    let mut kinsoku_end = None;
+    let mut tokens = Vec::new();
+    for child in children {
+        // An atomic box retains each child's shaping boundary and makes nested
+        // decorated spans atomic; its internal ruby cells still share the resolver.
+        let item = match child {
+            RichInlineNode::Segment(segment) => FlatBuildItem::Segment {
+                segment,
+                memberships: Vec::new(),
+            },
+            _ => FlatBuildItem::Atomic {
+                node: child,
+                memberships: Vec::new(),
+            },
+        };
+        let mut child_tokens = build_flat_items(
+            &[item],
+            req,
+            font_registry,
+            fallback_registry,
+            default_style,
+            false,
+        )?;
+        if let RichInlineNode::Segment(segment) = child
+            && !(is_vertical && segment.combine)
+        {
+            for token in &mut child_tokens {
+                let shift = base_reference - token.reference_offset;
+                if is_vertical {
+                    shift_glyphs_x(&mut token.glyphs, shift);
+                } else {
+                    shift_glyphs_y(&mut token.glyphs, shift);
+                }
+                token.reference_offset = base_reference;
+                token.cross_size = base_measure;
+            }
+        }
+        tokens.extend(child_tokens);
+    }
     let mut source_cursor = 0_u32;
     let mut byte_cursor = 0_u32;
-
-    for child in children {
-        let source_glyph_start = glyphs.len();
-        let child_text_start = text.len();
-        match child {
-            RichInlineNode::Segment(seg) => {
-                let (child_start, child_end) = segment_kinsoku_edges(std::slice::from_ref(seg));
-                extend_kinsoku_edges(&mut kinsoku_start, &mut kinsoku_end, child_start, child_end);
-                let glyph_start = glyphs.len();
-                let (seg_glyphs, seg_advance, reference_offset, after_reference) =
-                    shape_atomic_box_segment(
-                        seg,
-                        is_vertical,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                        base_ref,
-                        base_after,
-                        cursor,
-                    )?;
-                glyphs.extend(seg_glyphs);
-                cursor += seg_advance;
-                text.push_str(&seg.text);
-                child_metrics.push(ChildCrossMetrics {
-                    reference_offset,
-                    after_reference,
-                    glyph_start,
-                });
-            }
-            RichInlineNode::Ruby(ruby) => {
-                let glyph_start = glyphs.len();
-                let ruby_token = if is_vertical {
-                    build_vertical_ruby_token(
-                        ruby,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                } else {
-                    build_horizontal_ruby_token(
-                        ruby,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                };
-                extend_kinsoku_edges(
-                    &mut kinsoku_start,
-                    &mut kinsoku_end,
-                    ruby_token.kinsoku_start,
-                    ruby_token.kinsoku_end,
-                );
-                let mut ruby_glyphs = ruby_token.glyphs;
-                if is_vertical {
-                    shift_glyphs_y(&mut ruby_glyphs, cursor);
-                } else {
-                    shift_glyphs_x(&mut ruby_glyphs, cursor);
-                }
-                glyphs.extend(ruby_glyphs);
-                cursor += ruby_token.advance;
-                text.push_str(&ruby_token.text);
-                child_metrics.push(ChildCrossMetrics {
-                    reference_offset: ruby_token.reference_offset,
-                    after_reference: ruby_token.cross_size - ruby_token.reference_offset,
-                    glyph_start,
-                });
-            }
-            RichInlineNode::InlineRect(rect) => {
-                let glyph_start = glyphs.len();
-                let rect_token =
-                    build_inline_rect_token(rect, font_registry, fallback_registry, is_vertical);
-                let child_start = cursor;
-                cursor += rect_token.advance;
-                inline_rects.extend(rect_token.inline_rects.into_iter().map(|mut nested_rect| {
-                    nested_rect.offset += child_start;
-                    nested_rect
-                }));
-                child_metrics.push(ChildCrossMetrics {
-                    reference_offset: rect_token.reference_offset,
-                    after_reference: rect_token.cross_size - rect_token.reference_offset,
-                    glyph_start,
-                });
-            }
-            RichInlineNode::InlineBox(nested) => {
-                let glyph_start = glyphs.len();
-                let nested_token = if is_vertical {
-                    build_vertical_inline_box_token(
-                        nested,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                } else {
-                    build_horizontal_inline_box_token(
-                        nested,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                };
-                extend_kinsoku_edges(
-                    &mut kinsoku_start,
-                    &mut kinsoku_end,
-                    nested_token.kinsoku_start,
-                    nested_token.kinsoku_end,
-                );
-                let child_start = cursor;
-                let mut nested_glyphs = nested_token.glyphs;
-                if is_vertical {
-                    shift_glyphs_y(&mut nested_glyphs, cursor);
-                } else {
-                    shift_glyphs_x(&mut nested_glyphs, cursor);
-                }
-                glyphs.extend(nested_glyphs);
-                cursor += nested_token.advance;
-                text.push_str(&nested_token.text);
-                child_metrics.push(ChildCrossMetrics {
-                    reference_offset: nested_token.reference_offset,
-                    after_reference: nested_token.cross_size - nested_token.reference_offset,
-                    glyph_start,
-                });
-                if let Some(deco) = nested_token.inline_box_decoration {
-                    nested_decorations.push(NestedInlineBoxDecoration {
-                        offset: cursor - nested_token.advance,
-                        decoration: deco,
-                    });
-                }
-                for mut nd in nested_token.nested_decorations {
-                    nd.offset += cursor - nested_token.advance;
-                    nested_decorations.push(nd);
-                }
-                for mut nested_rect in nested_token.inline_rects {
-                    nested_rect.offset += child_start;
-                    inline_rects.push(nested_rect);
-                }
-            }
-            RichInlineNode::DecoratedSpan(nested) => {
-                let glyph_start = glyphs.len();
-                let nested_token = if is_vertical {
-                    build_vertical_atomic_decorated_span_token(
-                        nested,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                } else {
-                    build_horizontal_atomic_decorated_span_token(
-                        nested,
-                        req,
-                        font_registry,
-                        fallback_registry,
-                        default_style,
-                    )?
-                };
-                extend_kinsoku_edges(
-                    &mut kinsoku_start,
-                    &mut kinsoku_end,
-                    nested_token.kinsoku_start,
-                    nested_token.kinsoku_end,
-                );
-                let child_start = cursor;
-                let mut nested_glyphs = nested_token.glyphs;
-                if is_vertical {
-                    shift_glyphs_y(&mut nested_glyphs, cursor);
-                } else {
-                    shift_glyphs_x(&mut nested_glyphs, cursor);
-                }
-                glyphs.extend(nested_glyphs);
-                cursor += nested_token.advance;
-                text.push_str(&nested_token.text);
-                child_metrics.push(ChildCrossMetrics {
-                    reference_offset: nested_token.reference_offset,
-                    after_reference: nested_token.cross_size - nested_token.reference_offset,
-                    glyph_start,
-                });
-                if let Some(deco) = nested_token.inline_box_decoration {
-                    nested_decorations.push(NestedInlineBoxDecoration {
-                        offset: cursor - nested_token.advance,
-                        decoration: deco,
-                    });
-                }
-                for mut nd in nested_token.nested_decorations {
-                    nd.offset += cursor - nested_token.advance;
-                    nested_decorations.push(nd);
-                }
-                for mut nested_rect in nested_token.inline_rects {
-                    nested_rect.offset += child_start;
-                    inline_rects.push(nested_rect);
-                }
-            }
-        }
-        offset_glyph_source_identity(
-            &mut glyphs[source_glyph_start..],
-            source_cursor,
-            byte_cursor,
-        );
-        let child_text = &text[child_text_start..];
-        byte_cursor =
-            byte_cursor.saturating_add(u32::try_from(child_text.len()).unwrap_or(u32::MAX));
+    let mut kinsoku_start = None;
+    let mut kinsoku_end = None;
+    for token in &mut tokens {
+        offset_glyph_source_identity(&mut token.glyphs, source_cursor, byte_cursor);
         source_cursor = source_cursor
-            .saturating_add(u32::try_from(grapheme_split(child_text).len()).unwrap_or(u32::MAX));
+            .checked_add(
+                u32::try_from(grapheme_split(&token.text).len())
+                    .map_err(|_| rich_preparation_error())?,
+            )
+            .ok_or_else(rich_preparation_error)?;
+        byte_cursor = byte_cursor
+            .checked_add(u32::try_from(token.text.len()).map_err(|_| rich_preparation_error())?)
+            .ok_or_else(rich_preparation_error)?;
+        extend_kinsoku_edges(
+            &mut kinsoku_start,
+            &mut kinsoku_end,
+            token.kinsoku_start,
+            token.kinsoku_end,
+        );
     }
-
-    let (cross_size, reference_offset) = if child_metrics.is_empty() {
-        (base_measure, base_ref)
+    ruby_placement::prepare_neighbor_loans(
+        &mut tokens,
+        req.hanging_punctuation,
+        RubyInkBoundsContext {
+            font_registry,
+            fallback_registry,
+            axis: if is_vertical {
+                RubyInkAxis::Vertical
+            } else {
+                RubyInkAxis::Horizontal
+            },
+        },
+    )?;
+    let mut line = if is_vertical {
+        line_layout::assemble_vertical_line(&tokens, 0.0, &[])?
     } else {
-        let final_ref = child_metrics
-            .iter()
-            .map(|m| m.reference_offset)
-            .fold(0.0_f64, f64::max);
-        let final_after = child_metrics
-            .iter()
-            .map(|m| m.after_reference)
-            .fold(0.0_f64, f64::max);
-
-        let next_starts: Vec<usize> = child_metrics
-            .iter()
-            .skip(1)
-            .map(|m| m.glyph_start)
-            .chain(std::iter::once(glyphs.len()))
-            .collect();
-        for (metrics, &end) in child_metrics.iter().zip(next_starts.iter()) {
-            let delta = final_ref - metrics.reference_offset;
-            if delta.abs() > f64::EPSILON {
-                if is_vertical {
-                    shift_glyphs_x(&mut glyphs[metrics.glyph_start..end], delta);
-                } else {
-                    shift_glyphs_y(&mut glyphs[metrics.glyph_start..end], delta);
-                }
-            }
-        }
-
-        (final_ref + final_after, final_ref)
+        line_layout::assemble_horizontal_line(&tokens, 0.0, &[])?
     };
-
-    let children_advance = cursor - content_offset;
-    let reserved = padding_inline[0] + padding_inline[1] + border_width * 2.0;
-    let total_advance = children_advance + reserved;
-
+    if tokens.is_empty() {
+        line.cross_size = base_measure;
+        line.reference_offset = base_reference;
+    }
+    if is_vertical {
+        shift_glyphs_y(&mut line.glyphs, content_offset);
+    } else {
+        shift_glyphs_x(&mut line.glyphs, content_offset);
+    }
+    let total_advance = line.advance + padding_inline[0] + padding_inline[1] + border_width * 2.0;
+    if !total_advance.is_finite() {
+        return Err(rich_preparation_error());
+    }
+    let nested_decorations = line
+        .decorations
+        .into_iter()
+        .map(|decoration| NestedInlineBoxDecoration {
+            offset: decoration.offset + content_offset,
+            decoration: InlineBoxDecorationInput {
+                total_advance: decoration.advance,
+                cross_size: decoration.cross_size,
+                background: decoration.background,
+                border_color: decoration.border_color,
+                border_width: decoration.border_width,
+                border_radius: decoration.border_radius,
+                span_key: decoration.span_key,
+            },
+        })
+        .collect();
+    let inline_rects = line
+        .inline_rects
+        .into_iter()
+        .map(|rect| NestedInlineRect {
+            offset: rect.offset + content_offset,
+            rect: rect.rect,
+        })
+        .collect();
     Ok(LayoutToken {
-        text,
+        text: line.text,
         kinsoku_start,
         kinsoku_end,
         advance: total_advance,
-        cross_size,
-        reference_offset,
-        glyphs,
+        cross_size: line.cross_size,
+        reference_offset: line.reference_offset,
+        glyphs: line.glyphs,
         inline_rects,
         inline_box_decoration: Some(InlineBoxDecorationInput {
             total_advance,
-            cross_size,
+            cross_size: line.cross_size,
             background,
             border_color,
             border_width: if border_width > 0.0 {
@@ -3400,7 +3241,8 @@ fn build_atomic_box_token_inner(
         }),
         nested_decorations,
         decoration_memberships: Vec::new(),
-        flow_ruby: None,
+        ruby_placement: None,
+        lending_advance: None,
         trailing_tracking_px: 0.0,
     })
 }
@@ -3526,6 +3368,17 @@ fn build_vertical_ruby_token(
         },
     )?;
 
+    let ruby_placement = ruby_placement::build_placement(
+        &glyphs,
+        advance,
+        base_center_x,
+        &level_ranges,
+        RubyInkBoundsContext {
+            font_registry,
+            fallback_registry,
+            axis: RubyInkAxis::Vertical,
+        },
+    )?;
     let (kinsoku_start, kinsoku_end) = segment_kinsoku_edges(&ruby.base);
     Ok(LayoutToken {
         text: ruby
@@ -3543,7 +3396,8 @@ fn build_vertical_ruby_token(
         inline_box_decoration: None,
         nested_decorations: Vec::new(),
         decoration_memberships: Vec::new(),
-        flow_ruby: Some(build_flow_ruby_annotation(ruby)),
+        ruby_placement: Some(ruby_placement),
+        lending_advance: None,
         trailing_tracking_px: 0.0,
     })
 }
@@ -3578,6 +3432,13 @@ fn align_ruby_glyphs_horizontal(
         return;
     }
 
+    if delta < 0.0 {
+        if ruby_align != RubyAlign::Start {
+            shift_glyphs_x(glyphs, delta * 0.5);
+        }
+        return;
+    }
+
     let cluster_ranges = positioned_glyph_cluster_ranges(glyphs);
     match ruby_align {
         RubyAlign::Start => {}
@@ -3608,6 +3469,13 @@ fn align_ruby_glyphs_vertical(
 ) {
     let delta = target_advance - current_advance;
     if delta.abs() <= f64::EPSILON || glyphs.is_empty() {
+        return;
+    }
+
+    if delta < 0.0 {
+        if ruby_align != RubyAlign::Start {
+            shift_glyphs_y(glyphs, delta * 0.5);
+        }
         return;
     }
 
@@ -4200,72 +4068,6 @@ pub fn ruby_optical_overlap_px(_annotation_font_size_px: f64) -> f64 {
 #[must_use]
 pub fn ruby_min_ink_gap_px(_annotation_font_size_px: f64) -> f64 {
     1.0
-}
-
-fn build_flow_ruby_annotation(ruby: &RichRuby) -> text_flow::FlowRubyAnnotation {
-    let first_level: &[RichSegment] = ruby.rt_levels.first().map_or(&[], Vec::as_slice);
-    let rt_style = ruby
-        .rt_levels
-        .first()
-        .and_then(|level| level.first())
-        .map_or(&ruby.base[0].style, |segment| &segment.style);
-    let levels = ruby
-        .rt_levels
-        .iter()
-        .enumerate()
-        .map(|(level_index, level)| text_flow::FlowRubyAnnotationLevel {
-            text: level.iter().map(|segment| segment.text.as_str()).collect(),
-            position: match ruby_side_for_level(ruby.ruby_position, level_index) {
-                RubySide::Over => "over".to_string(),
-                RubySide::Under => "under".to_string(),
-            },
-            runs: level
-                .iter()
-                .map(|segment| text_flow::FlowRubyAnnotationRun {
-                    text: segment.text.clone(),
-                    style: flow_fragment_style_from_resolved(&segment.style),
-                })
-                .collect(),
-        })
-        .collect();
-    text_flow::FlowRubyAnnotation {
-        text: first_level
-            .iter()
-            .map(|segment| segment.text.as_str())
-            .collect(),
-        position: match ruby_side_for_level(ruby.ruby_position, 0) {
-            RubySide::Over => "over".to_string(),
-            RubySide::Under => "under".to_string(),
-        },
-        align: match ruby.ruby_align {
-            RubyAlign::Start => "start".to_string(),
-            RubyAlign::Center => "center".to_string(),
-            RubyAlign::SpaceBetween => "space-between".to_string(),
-            RubyAlign::SpaceAround => "space-around".to_string(),
-        },
-        style: flow_fragment_style_from_resolved(rt_style),
-        gap_px: ruby.ruby_gap_px,
-        offset_px: ruby.ruby_offset_px,
-        line_sizing: match ruby.ruby_line_sizing {
-            RubyLineSizing::Stable => "stable".to_string(),
-            RubyLineSizing::Css => "css".to_string(),
-        },
-        levels,
-    }
-}
-
-fn flow_fragment_style_from_resolved(style: &ResolvedStyle) -> text_flow::FlowFragmentStyle {
-    text_flow::FlowFragmentStyle {
-        font_family: style.font_families.first().cloned().unwrap_or_default(),
-        font_weight: style.font_weight,
-        font_style: match style.font_style {
-            FontStyle::Italic => "italic".to_string(),
-            FontStyle::Normal => "normal".to_string(),
-        },
-        font_size_px: style.font_size_px,
-        letter_spacing_px: Some(style.letter_spacing_px),
-        color: style.color.clone(),
-    }
 }
 
 fn shape_segment_run_horizontal(
@@ -5035,6 +4837,41 @@ mod tests {
         }
     }
 
+    fn test_resolved_style(font_size_px: f64) -> ResolvedStyle {
+        ResolvedStyle {
+            font_families: vec!["NotoSansJP".to_string()],
+            font_weight: 400,
+            font_style: FontStyle::Normal,
+            font_size_px,
+            line_height: None,
+            line_height_px: None,
+            letter_spacing_px: 0.0,
+            language: Some("ja".to_string()),
+            color: Some("#000".to_string()),
+            text_strokes: None,
+            text_shadows: None,
+            font_variation_settings: None,
+            font_feature_settings: None,
+            text_orientation: TextOrientation::Mixed,
+            text_decoration: None,
+        }
+    }
+
+    fn test_glyph(glyph_id: u32, cluster: u32, x_advance: f64, y_advance: f64) -> GlyphInfo {
+        GlyphInfo {
+            glyph_id,
+            x_advance,
+            y_advance,
+            x_offset: 0.0,
+            y_offset: 0.0,
+            cluster,
+            font_alias: Some("NotoSansJP".to_string()),
+            font_weight: Some(400),
+            font_style: Some(FontStyle::Normal),
+            rotation_deg: Some(0),
+        }
+    }
+
     #[test]
     fn inline_rect_zero_advance_keeps_line_width_and_paints_at_the_pen() {
         let registry = test_font_registry();
@@ -5164,7 +5001,8 @@ mod tests {
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         }
     }
@@ -6413,239 +6251,6 @@ mod tests {
     }
 
     #[test]
-    fn ruby_annotations_do_not_expand_base_inline_advance() {
-        let registry = test_font_registry();
-
-        let horizontal_plain_nodes = vec![RichTextNodeInput::Text {
-            text: "東京都".to_string(),
-        }];
-        let horizontal_ruby_nodes = vec![
-            RichTextNodeInput::Text {
-                text: "東".to_string(),
-            },
-            RichTextNodeInput::Ruby {
-                ruby_position: Some("over".to_string()),
-                ruby_align: Some("start".to_string()),
-                ruby_gap_px: None,
-                ruby_offset_px: None,
-                ruby_line_sizing: None,
-                style: test_style(38.0, "#f8fafc"),
-                base: vec![RichTextNodeInput::Text {
-                    text: "京".to_string(),
-                }],
-                rt: vec![RichTextNodeInput::Span {
-                    text: "きょう".to_string(),
-                    style: test_style(15.0, "#fca5a5"),
-                }],
-                rt_levels: Vec::new(),
-            },
-            RichTextNodeInput::Text {
-                text: "都".to_string(),
-            },
-        ];
-
-        let families = vec!["NotoSansJP".to_string()];
-        let font_ctx = FontContext {
-            registry: &registry,
-            fallback_registry: None,
-            families: &families,
-            weight: 400,
-            style: &FontStyle::Normal,
-        };
-        let horizontal_plain = layout_rich_text(
-            &TextLayoutRequest {
-                rich_text: Some(&horizontal_plain_nodes),
-                ..test_request()
-            },
-            &font_ctx,
-        )
-        .expect("horizontal plain layout");
-        let horizontal_ruby = layout_rich_text(
-            &TextLayoutRequest {
-                rich_text: Some(&horizontal_ruby_nodes),
-                ..test_request()
-            },
-            &font_ctx,
-        )
-        .expect("horizontal ruby layout");
-
-        let horizontal_plain_glyph = horizontal_plain.lines[0]
-            .positioned_glyphs
-            .as_ref()
-            .expect("horizontal plain glyphs")
-            .iter()
-            .find(|glyph| glyph.text == "都")
-            .expect("horizontal plain next glyph");
-        let horizontal_ruby_glyph = horizontal_ruby.lines[0]
-            .positioned_glyphs
-            .as_ref()
-            .expect("horizontal ruby glyphs")
-            .iter()
-            .find(|glyph| glyph.text == "都")
-            .expect("horizontal ruby next glyph");
-
-        assert!((horizontal_ruby.bbox.w - horizontal_plain.bbox.w).abs() < 0.01);
-        assert!((horizontal_ruby_glyph.origin_x - horizontal_plain_glyph.origin_x).abs() < 0.01);
-
-        let vertical_plain_nodes = vec![RichTextNodeInput::Text {
-            text: "古都案内".to_string(),
-        }];
-        let vertical_ruby_nodes = vec![
-            RichTextNodeInput::Text {
-                text: "古".to_string(),
-            },
-            RichTextNodeInput::Ruby {
-                ruby_position: Some("under".to_string()),
-                ruby_align: Some("start".to_string()),
-                ruby_gap_px: None,
-                ruby_offset_px: None,
-                ruby_line_sizing: None,
-                style: test_style(30.0, "#fde68a"),
-                base: vec![RichTextNodeInput::Text {
-                    text: "都".to_string(),
-                }],
-                rt: vec![RichTextNodeInput::Span {
-                    text: "みやこ".to_string(),
-                    style: test_style(12.0, "#93c5fd"),
-                }],
-                rt_levels: Vec::new(),
-            },
-            RichTextNodeInput::Text {
-                text: "案内".to_string(),
-            },
-        ];
-        let vertical_stable_ruby_nodes = vec![
-            RichTextNodeInput::Text {
-                text: "古".to_string(),
-            },
-            RichTextNodeInput::Ruby {
-                ruby_position: Some("under".to_string()),
-                ruby_align: Some("start".to_string()),
-                ruby_gap_px: None,
-                ruby_offset_px: None,
-                ruby_line_sizing: Some("stable".to_string()),
-                style: test_style(30.0, "#fde68a"),
-                base: vec![RichTextNodeInput::Text {
-                    text: "都".to_string(),
-                }],
-                rt: vec![RichTextNodeInput::Span {
-                    text: "みやこ".to_string(),
-                    style: test_style(12.0, "#93c5fd"),
-                }],
-                rt_levels: Vec::new(),
-            },
-            RichTextNodeInput::Text {
-                text: "案内".to_string(),
-            },
-        ];
-
-        let vertical_plain = layout_rich_text(
-            &TextLayoutRequest {
-                rich_text: Some(&vertical_plain_nodes),
-                font_size_px: 30.0,
-                max_height: Some(520.0),
-                max_width: 260.0,
-                line_height: Some(1.4),
-                writing_mode: WritingMode::VerticalRl,
-                ..test_request()
-            },
-            &font_ctx,
-        )
-        .expect("vertical plain layout");
-        let vertical_ruby = layout_rich_text(
-            &TextLayoutRequest {
-                rich_text: Some(&vertical_ruby_nodes),
-                font_size_px: 30.0,
-                max_height: Some(520.0),
-                max_width: 260.0,
-                line_height: Some(1.4),
-                writing_mode: WritingMode::VerticalRl,
-                ..test_request()
-            },
-            &font_ctx,
-        )
-        .expect("vertical ruby layout");
-        let vertical_stable_ruby = layout_rich_text(
-            &TextLayoutRequest {
-                rich_text: Some(&vertical_stable_ruby_nodes),
-                font_size_px: 30.0,
-                max_height: Some(520.0),
-                max_width: 260.0,
-                line_height: Some(1.4),
-                writing_mode: WritingMode::VerticalRl,
-                ..test_request()
-            },
-            &font_ctx,
-        )
-        .expect("vertical stable ruby layout");
-
-        let vertical_plain_glyph = vertical_plain.lines[0]
-            .positioned_glyphs
-            .as_ref()
-            .expect("vertical plain glyphs")
-            .iter()
-            .find(|glyph| glyph.text == "案")
-            .expect("vertical plain next glyph");
-        let vertical_ruby_glyph = vertical_ruby.lines[0]
-            .positioned_glyphs
-            .as_ref()
-            .expect("vertical ruby glyphs")
-            .iter()
-            .find(|glyph| glyph.text == "案")
-            .expect("vertical ruby next glyph");
-
-        assert!(
-            vertical_ruby.bbox.w > vertical_plain.bbox.w + 0.01,
-            "css vertical ruby should expand only when annotation exceeds the requested column pitch"
-        );
-        assert!(
-            vertical_stable_ruby.bbox.w > vertical_ruby.bbox.w + 0.01,
-            "stable vertical ruby should reserve more cross-axis space than css when both must expand"
-        );
-        assert!(vertical_stable_ruby.bbox.w > vertical_plain.bbox.w + 0.01);
-        assert!((vertical_ruby_glyph.origin_y - vertical_plain_glyph.origin_y).abs() < 0.01);
-    }
-
-    // -----------------------------------------------------------------------
-    // InlineBox tests
-    // -----------------------------------------------------------------------
-
-    fn test_resolved_style(font_size_px: f64) -> ResolvedStyle {
-        ResolvedStyle {
-            font_families: vec!["NotoSansJP".to_string()],
-            font_weight: 400,
-            font_style: FontStyle::Normal,
-            font_size_px,
-            line_height: None,
-            line_height_px: None,
-            letter_spacing_px: 0.0,
-            language: Some("ja".to_string()),
-            color: Some("#000".to_string()),
-            text_strokes: None,
-            text_shadows: None,
-            font_variation_settings: None,
-            font_feature_settings: None,
-            text_orientation: TextOrientation::Mixed,
-            text_decoration: None,
-        }
-    }
-
-    fn test_glyph(glyph_id: u32, cluster: u32, x_advance: f64, y_advance: f64) -> GlyphInfo {
-        GlyphInfo {
-            glyph_id,
-            x_advance,
-            y_advance,
-            x_offset: 0.0,
-            y_offset: 0.0,
-            cluster,
-            font_alias: Some("NotoSansJP".to_string()),
-            font_weight: Some(400),
-            font_style: Some(FontStyle::Normal),
-            rotation_deg: Some(0),
-        }
-    }
-
-    #[test]
     fn empty_segments_do_not_create_layout_tokens() {
         let mut style = test_resolved_style(72.0);
         style.letter_spacing_px = 12.0;
@@ -7112,7 +6717,8 @@ mod tests {
                 }),
                 nested_decorations: Vec::new(),
                 decoration_memberships: Vec::new(),
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
             test_break_token("!", 5.0),
@@ -7168,7 +6774,8 @@ mod tests {
                 }),
                 nested_decorations: Vec::new(),
                 decoration_memberships: Vec::new(),
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
         ];
@@ -7306,7 +6913,8 @@ mod tests {
             }),
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
 
@@ -7341,7 +6949,8 @@ mod tests {
                 }),
                 nested_decorations: Vec::new(),
                 decoration_memberships: Vec::new(),
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
             test_break_token("!", 5.0),
@@ -7392,7 +7001,8 @@ mod tests {
                 }),
                 nested_decorations: Vec::new(),
                 decoration_memberships: Vec::new(),
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
         ];
@@ -7442,11 +7052,12 @@ mod tests {
             }),
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
 
-        let column = assemble_vertical_line(&[narrow_token, wide_token], 0.0, &[]);
+        let column = assemble_vertical_line(&[narrow_token, wide_token], 0.0, &[]).expect("column");
 
         // reference_offset should be max of all tokens' reference_offset
         assert!(
@@ -7493,7 +7104,8 @@ mod tests {
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
         let narrow_ibox = LayoutToken {
@@ -7516,11 +7128,12 @@ mod tests {
             }),
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
 
-        let column = assemble_vertical_line(&[wide_plain, narrow_ibox], 0.0, &[]);
+        let column = assemble_vertical_line(&[wide_plain, narrow_ibox], 0.0, &[]).expect("column");
 
         // Column reference_offset = max(20, 10) = 20
         assert_eq!(column.decorations.len(), 1);
@@ -7559,7 +7172,8 @@ mod tests {
                 }),
                 nested_decorations: Vec::new(),
                 decoration_memberships: Vec::new(),
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
         ];
@@ -7639,7 +7253,8 @@ mod tests {
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
         let narrow_ibox = LayoutToken {
@@ -7662,7 +7277,8 @@ mod tests {
             }),
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
 
@@ -8022,7 +7638,8 @@ mod tests {
                         start_advance: if is_first { start_extra } else { 0.0 },
                         end_advance: if is_last { end_extra } else { 0.0 },
                     }],
-                    flow_ruby: None,
+                    ruby_placement: None,
+                    lending_advance: None,
                     trailing_tracking_px: 0.0,
                 }
             })
@@ -8053,7 +7670,7 @@ mod tests {
         // glyph advance: 3 * 10 = 30
         // decoration: start = 4 + 1 = 5, end = 6 + 1 = 7
         // total = 30 + 5 + 7 = 42
-        let width = effective_line_width(&tokens, 0, 3, 0.0);
+        let width = effective_line_width(&tokens, 0, 3, 0.0).expect("line width");
         assert!(
             (width - 42.0).abs() < 0.01,
             "effective width should be 42, got {width}"
@@ -8074,7 +7691,8 @@ mod tests {
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
         let decorated_b = LayoutToken {
@@ -8093,7 +7711,8 @@ mod tests {
                 start_advance: 5.0,
                 end_advance: 5.0,
             }],
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
         let plain_c = LayoutToken {
@@ -8108,11 +7727,13 @@ mod tests {
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
 
-        let width = effective_line_width(&[plain_a, decorated_b, plain_c], 0, 3, 0.0);
+        let width =
+            effective_line_width(&[plain_a, decorated_b, plain_c], 0, 3, 0.0).expect("line width");
         assert!(
             (width - 40.0).abs() < 0.01,
             "effective width should include internal decorated span padding/border: got {width}"
@@ -8369,7 +7990,8 @@ mod tests {
                 inline_box_decoration: None,
                 nested_decorations: Vec::new(),
                 decoration_memberships: Vec::new(),
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
             LayoutToken {
@@ -8388,7 +8010,8 @@ mod tests {
                     start_advance: 5.0,
                     end_advance: 5.0,
                 }],
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
             LayoutToken {
@@ -8403,7 +8026,8 @@ mod tests {
                 inline_box_decoration: None,
                 nested_decorations: Vec::new(),
                 decoration_memberships: Vec::new(),
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
         ];
@@ -8604,7 +8228,8 @@ mod tests {
                     start_advance: 0.0,
                     end_advance: 0.0,
                 }],
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
             // atomic InlineBox token
@@ -8628,7 +8253,8 @@ mod tests {
                 }),
                 nested_decorations: Vec::new(),
                 decoration_memberships: Vec::new(),
-                flow_ruby: None,
+                ruby_placement: None,
+                lending_advance: None,
                 trailing_tracking_px: 0.0,
             },
         ];
@@ -8969,7 +8595,7 @@ mod tests {
         let meta: Vec<DecorationSpanMeta> = vec![];
         let lines =
             break_tokens_horizontal(&tokens, 30.0, 0.0, WrapMode::None, None, None, &meta, false);
-        assert_eq!(lines.as_ref().map(std::vec::Vec::len), Some(1));
+        assert_eq!(lines.expect("finite line layout").len(), 1);
     }
 
     #[test]
@@ -9170,11 +8796,12 @@ mod tests {
             }),
             nested_decorations: vec![nested_deco],
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         };
 
-        let line = assemble_horizontal_line(&[outer_token], 0.0, &[]);
+        let line = assemble_horizontal_line(&[outer_token], 0.0, &[]).expect("line");
 
         // Outer decoration + nested decoration = 2 decorations
         assert_eq!(line.decorations.len(), 2);

@@ -1,9 +1,12 @@
+//! Serialize structured pipeline failures and recoverable diagnostics through one shared catalog.
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::text::types::{TextWarning, TextWarningCode};
 
+/// Envelope fields that diagnostic context must not shadow.
 const RESERVED_CONTEXT_KEYS: [&str; 6] =
     ["severity", "code", "message", "fallback", "stage", "nodeId"];
 
@@ -24,6 +27,7 @@ pub enum PipelineStage {
 }
 
 impl PipelineStage {
+    /// Return the stable stage name used by the shared diagnostic wire format.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -47,7 +51,6 @@ pub enum RecoverableCode {
     ImageSrcNotEmbedded,
     InlineBoxMaxDepth,
     KinsokuUnresolved,
-    LongRubyAnnotation,
     MissingGlyph,
     RubyInterCharacterFallback,
     ShapePartPaintUnknownPart,
@@ -58,6 +61,7 @@ pub enum RecoverableCode {
 }
 
 impl RecoverableCode {
+    /// Return the stable wire code used by diagnostic consumers.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -65,7 +69,6 @@ impl RecoverableCode {
             Self::ImageSrcNotEmbedded => "IMAGE_SRC_NOT_EMBEDDED",
             Self::InlineBoxMaxDepth => "INLINE_BOX_MAX_DEPTH",
             Self::KinsokuUnresolved => "KINSOKU_UNRESOLVED",
-            Self::LongRubyAnnotation => "LONG_RUBY_ANNOTATION",
             Self::MissingGlyph => "MISSING_GLYPH",
             Self::RubyInterCharacterFallback => "RUBY_INTER_CHARACTER_FALLBACK",
             Self::ShapePartPaintUnknownPart => "SHAPE_PART_PAINT_UNKNOWN_PART",
@@ -97,11 +100,6 @@ impl RecoverableCode {
                 PolicyMode::DerivedInternal,
                 "Use a forced line break.",
                 "Adjust the text or available inline size.",
-            ),
-            Self::LongRubyAnnotation => RecoverablePolicy::approved(
-                PolicyMode::DerivedInternal,
-                "Render without JLREQ overhang adjustment.",
-                "Shorten the annotation or adjust the base text.",
             ),
             Self::MissingGlyph => RecoverablePolicy::approved(
                 PolicyMode::DelegatedOpaque,
@@ -197,6 +195,7 @@ impl RecoverablePolicy {
     }
 }
 
+/// Reject diagnostic envelopes that violate the shared serialized contract.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DiagnosticContractError {
     #[error("diagnostic code must be stable SCREAMING_SNAKE_CASE")]
@@ -297,6 +296,11 @@ pub struct SerializedRecoverableError {
 }
 
 impl SerializedRecoverableError {
+    /// Build a recoverable diagnostic governed by the closed code policy.
+    ///
+    /// # Panics
+    ///
+    /// Panic if an internal caller supplies text or a stage that violates the code's policy.
     #[must_use]
     pub(crate) fn recoverable(
         code: RecoverableCode,
@@ -322,6 +326,11 @@ impl SerializedRecoverableError {
     }
 
     #[cfg(test)]
+    /// Build a fixture diagnostic without requiring a production catalog entry.
+    ///
+    /// # Panics
+    ///
+    /// Panic if the fixture's fields violate the serialized diagnostic contract.
     pub(crate) fn for_test(
         code: impl Into<String>,
         message: impl Into<String>,
@@ -371,7 +380,6 @@ pub(crate) fn text_warning_to_recoverable(
 ) -> SerializedRecoverableError {
     let code = match warning.code {
         TextWarningCode::InlineBoxMaxDepth => RecoverableCode::InlineBoxMaxDepth,
-        TextWarningCode::LongRubyAnnotation => RecoverableCode::LongRubyAnnotation,
         TextWarningCode::MissingGlyph => RecoverableCode::MissingGlyph,
         TextWarningCode::RubyInterCharacterFallback => RecoverableCode::RubyInterCharacterFallback,
     };

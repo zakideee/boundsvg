@@ -365,7 +365,6 @@ export type {
   TextFlowInput,
   TextFlowLine,
   TextFlowResult,
-  TextFlowRubyAnnotation,
   TextFlowWithExclusionsInput,
   TextFlowWithExclusionsResult,
   TextMeasureSpan,

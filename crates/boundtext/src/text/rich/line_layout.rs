@@ -1,3 +1,5 @@
+//! Select rich-text ranges and assemble their reserved inline cells and shared references.
+
 use std::collections::HashSet;
 
 use crate::text::engine::detect_constraint_overflow;
@@ -72,8 +74,7 @@ pub(super) fn layout_horizontal_tokens(
         req.uax14_breaks,
         decoration_spans,
         req.has_forced_newline_breaks(),
-    )
-    .ok_or_else(super::rich_preparation_error)?;
+    )?;
     let kinsoku_unresolved = lines.iter().any(|line| line.kinsoku_unresolved);
     let total_count = lines.len();
     if let Some(max_lines) = req.max_lines
@@ -226,8 +227,7 @@ pub(super) fn layout_vertical_tokens(
         req.uax14_breaks,
         decoration_spans,
         req.has_forced_newline_breaks(),
-    )
-    .ok_or_else(super::rich_preparation_error)?;
+    )?;
     let kinsoku_unresolved = columns.iter().any(|column| column.kinsoku_unresolved);
     let total_count = columns.len();
     if let Some(max_lines) = req.max_lines
@@ -450,16 +450,22 @@ pub(super) fn resolve_fragment_border_radius_vertical(
 /// This is used by line/column breaking and by final `LayoutLine.advance`, so it
 /// must count not only spans that align with the outer line boundaries but also
 /// decorated spans that start or end in the middle of an otherwise plain range.
+/// Measure the exact candidate slice, including ruby reservations and decoration edges.
+///
+/// # Errors
+///
+/// Return preparation failure if an inline accumulation is not finitely representable.
 pub(super) fn effective_line_width(
     tokens: &[LayoutToken],
     start: usize,
     end: usize,
     indent: f64,
-) -> f64 {
+) -> super::RichLayoutResult<f64> {
     let mut width = if start == 0 { indent } else { 0.0 };
     for index in start..end {
         let token = &tokens[index];
-        width += super::token_decoration_start_advance(token) + token.advance;
+        let cell = super::ruby_placement::resolve_cell(token, index > start, index + 1 < end)?;
+        width += super::token_decoration_start_advance(token) + cell.advance;
         for membership in &token.decoration_memberships {
             if index + 1 == end
                 || !super::has_decoration_span(&tokens[index + 1], membership.span_id)
@@ -467,8 +473,11 @@ pub(super) fn effective_line_width(
                 width += membership.end_advance;
             }
         }
+        if !width.is_finite() {
+            return Err(super::rich_preparation_error());
+        }
     }
-    width
+    Ok(width)
 }
 
 #[derive(Debug)]
@@ -528,10 +537,10 @@ fn assemble_empty_line(newline_token: &LayoutToken, indent: f64) -> LayoutLine {
 }
 
 /// Select horizontal token ranges using wrap, indentation, newline, and kinsoku constraints.
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "rich flow callers use Option to share the same break-helper contract"
-)]
+///
+/// # Errors
+///
+/// Return preparation failure when a candidate slice's reserved width is not finite.
 pub(super) fn break_tokens_horizontal(
     tokens: &[LayoutToken],
     max_width: f64,
@@ -541,9 +550,9 @@ pub(super) fn break_tokens_horizontal(
     uax14_breaks: Option<&[usize]>,
     decoration_spans: &[DecorationSpanMeta],
     force_newline_breaks: bool,
-) -> Option<Vec<LayoutLine>> {
+) -> super::RichLayoutResult<Vec<LayoutLine>> {
     if tokens.is_empty() {
-        return Some(vec![LayoutLine {
+        return Ok(vec![LayoutLine {
             text: String::new(),
             advance: 0.0,
             cross_size: 0.0,
@@ -555,11 +564,11 @@ pub(super) fn break_tokens_horizontal(
         }]);
     }
     if wrap == WrapMode::None && !force_newline_breaks {
-        return Some(vec![assemble_horizontal_line(
+        return Ok(vec![assemble_horizontal_line(
             tokens,
             indent,
             decoration_spans,
-        )]);
+        )?]);
     }
 
     let mut lines = Vec::new();
@@ -573,7 +582,7 @@ pub(super) fn break_tokens_horizontal(
         if force_newline_breaks && tokens[index].text == "\n" {
             let line_indent = if start == 0 { indent } else { 0.0 };
             lines.push(if index > start {
-                assemble_horizontal_line(&tokens[start..index], line_indent, decoration_spans)
+                assemble_horizontal_line(&tokens[start..index], line_indent, decoration_spans)?
             } else {
                 assemble_empty_line(&tokens[index], line_indent)
             });
@@ -592,7 +601,7 @@ pub(super) fn break_tokens_horizontal(
         // current line even when an earlier break opportunity existed.
         last_normal_break =
             update_last_normal_break(normal_break_set.as_deref(), index, last_normal_break);
-        let width = effective_line_width(tokens, start, index + 1, indent);
+        let width = effective_line_width(tokens, start, index + 1, indent)?;
         if width <= max_width || index == start {
             continue;
         }
@@ -619,7 +628,7 @@ pub(super) fn break_tokens_horizontal(
             &tokens[start..break_pos],
             if start == 0 { indent } else { 0.0 },
             decoration_spans,
-        );
+        )?;
         line.kinsoku_unresolved = resolution.kinsoku_unresolved;
         lines.push(line);
         start = break_pos;
@@ -631,20 +640,20 @@ pub(super) fn break_tokens_horizontal(
             &tokens[start..],
             if start == 0 { indent } else { 0.0 },
             decoration_spans,
-        ));
+        )?);
     } else if force_newline_breaks
         && let Some(newline_token) = tokens.last().filter(|token| token.text == "\n")
     {
         lines.push(assemble_empty_line(newline_token, 0.0));
     }
-    Some(lines)
+    Ok(lines)
 }
 
 /// Select vertical token ranges using wrap, indentation, newline, and kinsoku constraints.
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "rich flow callers use Option to share the same break-helper contract"
-)]
+///
+/// # Errors
+///
+/// Return preparation failure when a candidate column's reserved advance is not finite.
 pub(super) fn break_tokens_vertical(
     tokens: &[LayoutToken],
     max_height: f64,
@@ -654,9 +663,9 @@ pub(super) fn break_tokens_vertical(
     uax14_breaks: Option<&[usize]>,
     decoration_spans: &[DecorationSpanMeta],
     force_newline_breaks: bool,
-) -> Option<Vec<LayoutLine>> {
+) -> super::RichLayoutResult<Vec<LayoutLine>> {
     if tokens.is_empty() {
-        return Some(vec![LayoutLine {
+        return Ok(vec![LayoutLine {
             text: String::new(),
             advance: 0.0,
             cross_size: 0.0,
@@ -668,11 +677,11 @@ pub(super) fn break_tokens_vertical(
         }]);
     }
     if wrap == WrapMode::None && !force_newline_breaks {
-        return Some(vec![assemble_vertical_line(
+        return Ok(vec![assemble_vertical_line(
             tokens,
             indent,
             decoration_spans,
-        )]);
+        )?]);
     }
 
     let mut columns = Vec::new();
@@ -686,7 +695,7 @@ pub(super) fn break_tokens_vertical(
         if force_newline_breaks && tokens[index].text == "\n" {
             let column_indent = if start == 0 { indent } else { 0.0 };
             columns.push(if index > start {
-                assemble_vertical_line(&tokens[start..index], column_indent, decoration_spans)
+                assemble_vertical_line(&tokens[start..index], column_indent, decoration_spans)?
             } else {
                 assemble_empty_line(&tokens[index], column_indent)
             });
@@ -705,7 +714,7 @@ pub(super) fn break_tokens_vertical(
         // not ride along past an earlier break opportunity.
         last_normal_break =
             update_last_normal_break(normal_break_set.as_deref(), index, last_normal_break);
-        let height = effective_line_width(tokens, start, index + 1, indent);
+        let height = effective_line_width(tokens, start, index + 1, indent)?;
         if height <= max_height || index == start {
             continue;
         }
@@ -732,7 +741,7 @@ pub(super) fn break_tokens_vertical(
             &tokens[start..break_pos],
             if start == 0 { indent } else { 0.0 },
             decoration_spans,
-        );
+        )?;
         column.kinsoku_unresolved = resolution.kinsoku_unresolved;
         columns.push(column);
         start = break_pos;
@@ -744,21 +753,25 @@ pub(super) fn break_tokens_vertical(
             &tokens[start..],
             if start == 0 { indent } else { 0.0 },
             decoration_spans,
-        ));
+        )?);
     } else if force_newline_breaks
         && let Some(newline_token) = tokens.last().filter(|token| token.text == "\n")
     {
         columns.push(assemble_empty_line(newline_token, 0.0));
     }
-    Some(columns)
+    Ok(columns)
 }
 
 /// Align token reference offsets and gather horizontal glyphs, rectangles, and decoration ownership.
+///
+/// # Errors
+///
+/// Return preparation failure when the final slice's cell or consumed width is not finite.
 pub(super) fn assemble_horizontal_line(
     tokens: &[LayoutToken],
     indent: f64,
     decoration_spans: &[DecorationSpanMeta],
-) -> LayoutLine {
+) -> super::RichLayoutResult<LayoutLine> {
     let reference_offset = tokens
         .iter()
         .map(|t| t.reference_offset)
@@ -777,6 +790,7 @@ pub(super) fn assemble_horizontal_line(
     let mut active_decorations: Vec<ActiveDecoration> = Vec::new();
 
     for (index, token) in tokens.iter().enumerate() {
+        let cell = super::ruby_placement::resolve_cell(token, index > 0, index + 1 < tokens.len())?;
         let common_prefix =
             common_decoration_prefix(&active_decorations, &token.decoration_memberships);
         if index > 0 {
@@ -802,7 +816,7 @@ pub(super) fn assemble_horizontal_line(
         }
 
         let mut token_glyphs = token.glyphs.clone();
-        shift_glyphs_x(&mut token_glyphs, x);
+        shift_glyphs_x(&mut token_glyphs, x + cell.base_offset);
         shift_glyphs_y(&mut token_glyphs, reference_offset - token.reference_offset);
         glyphs.extend(token_glyphs);
 
@@ -842,7 +856,7 @@ pub(super) fn assemble_horizontal_line(
                 rect: inline_rect.rect.clone(),
             });
         }
-        x += token.advance;
+        x += cell.advance;
         text.push_str(&token.text);
     }
 
@@ -861,24 +875,28 @@ pub(super) fn assemble_horizontal_line(
     span_decorations.sort_by_key(|decoration| decoration.span_id);
     span_decorations.extend(atomic_decorations);
 
-    LayoutLine {
+    Ok(LayoutLine {
         text,
-        advance: effective_line_width(tokens, 0, tokens.len(), indent),
+        advance: effective_line_width(tokens, 0, tokens.len(), indent)?,
         cross_size,
         reference_offset,
         glyphs,
         decorations: span_decorations,
         inline_rects,
         kinsoku_unresolved: false,
-    }
+    })
 }
 
 /// Align token reference offsets and gather vertical glyphs, rectangles, and decoration ownership.
+///
+/// # Errors
+///
+/// Return preparation failure when the final slice's cell or consumed height is not finite.
 pub(super) fn assemble_vertical_line(
     tokens: &[LayoutToken],
     indent: f64,
     decoration_spans: &[DecorationSpanMeta],
-) -> LayoutLine {
+) -> super::RichLayoutResult<LayoutLine> {
     let reference_offset = tokens
         .iter()
         .map(|t| t.reference_offset)
@@ -896,6 +914,7 @@ pub(super) fn assemble_vertical_line(
     let mut active_decorations: Vec<ActiveDecoration> = Vec::new();
 
     for (index, token) in tokens.iter().enumerate() {
+        let cell = super::ruby_placement::resolve_cell(token, index > 0, index + 1 < tokens.len())?;
         let common_prefix =
             common_decoration_prefix(&active_decorations, &token.decoration_memberships);
         if index > 0 {
@@ -922,7 +941,7 @@ pub(super) fn assemble_vertical_line(
 
         let x_shift = reference_offset - token.reference_offset;
         let mut token_glyphs = token.glyphs.clone();
-        shift_glyphs_y(&mut token_glyphs, y);
+        shift_glyphs_y(&mut token_glyphs, y + cell.base_offset);
         shift_glyphs_x(&mut token_glyphs, x_shift);
         glyphs.extend(token_glyphs);
 
@@ -961,7 +980,7 @@ pub(super) fn assemble_vertical_line(
                 rect: inline_rect.rect.clone(),
             });
         }
-        y += token.advance;
+        y += cell.advance;
         text.push_str(&token.text);
     }
 
@@ -980,16 +999,16 @@ pub(super) fn assemble_vertical_line(
     span_decorations.sort_by_key(|decoration| decoration.span_id);
     span_decorations.extend(atomic_decorations);
 
-    LayoutLine {
+    Ok(LayoutLine {
         text,
-        advance: effective_line_width(tokens, 0, tokens.len(), indent),
+        advance: effective_line_width(tokens, 0, tokens.len(), indent)?,
         cross_size: reference_offset + after_reference,
         reference_offset,
         glyphs,
         decorations: span_decorations,
         inline_rects,
         kinsoku_unresolved: false,
-    }
+    })
 }
 
 /// Project supplied or computed Unicode line-break offsets onto token boundaries.

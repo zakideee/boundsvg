@@ -1,3 +1,4 @@
+/** Literal success bytes and digests for one measurement operation's wire contract. */
 export type TextLayoutRawSuccessFixture = {
   operation:
     | "layoutTextFlow"
@@ -19,7 +20,7 @@ export type TextLayoutRawSuccessFixture = {
   outputSha256: string;
 };
 
-/** Exact node/web success bytes captured from pre-migration base 836b0bde. */
+/** Base success bytes; schema 39 flow fixtures omit the retired rendering metadata. */
 export const textLayoutRawSuccessFixtures: readonly TextLayoutRawSuccessFixture[] = [
   {
     operation: "layoutTextFlow",
@@ -36,9 +37,9 @@ export const textLayoutRawSuccessFixtures: readonly TextLayoutRawSuccessFixture[
     inputJson:
       '{"text":"AB","fontFamily":"NotoSansJP","fontSizePx":16,"flowBox":{"x":0,"y":0,"width":100,"height":40},"exclusions":[]}',
     expectedOutputJson:
-      '{"lines":[{"fragments":[{"text":"AB","charStart":0,"charEnd":2,"x":0.0,"y":0.0,"inlineAdvancePx":20.240000000000002,"availableInlineSizePx":100.0,"regionIndex":0,"baselineOffset":15.68}],"lineIndex":0,"crossSize":19.2}],"exhausted":true,"usedLineCount":1,"topRubyOverflowPx":0.0,"bottomRubyOverflowPx":0.0}',
+      '{"lines":[{"fragments":[{"text":"AB","charStart":0,"charEnd":2,"x":0.0,"y":0.0,"inlineAdvancePx":20.240000000000002,"availableInlineSizePx":100.0,"regionIndex":0,"baselineOffset":15.68}],"lineIndex":0,"crossSize":19.2}],"exhausted":true,"usedLineCount":1}',
     inputSha256: "55bf40c58e99a928ef66903f8e585f8f3c6efe788fee17cd291654b274d2507d",
-    outputSha256: "66db9e44ee64a789bad7cac6b8d9c69e9e5cec51772f0a466ce0a631bfcd5d43",
+    outputSha256: "77b6526893dfc62801d0dc75253f6f348b5f2c2aac47711f567625cc65364ae0",
   },
   {
     operation: "measureTextBlock",
@@ -65,9 +66,9 @@ export const textLayoutRawSuccessFixtures: readonly TextLayoutRawSuccessFixture[
     inputJson:
       '{"text":"AB","fontFamily":"NotoSansJP","fontSizePx":16,"flowBox":{"x":0,"y":0,"width":100,"height":40},"exclusions":[],"targetLineCount":1}',
     expectedOutputJson:
-      '{"status":"satisfied","chosenWidthPx":20.3125,"usedLineCount":1,"usedHeight":19.2,"layout":{"lines":[{"fragments":[{"text":"AB","charStart":0,"charEnd":2,"x":0.0,"y":0.0,"inlineAdvancePx":20.240000000000002,"availableInlineSizePx":20.3125,"regionIndex":0,"baselineOffset":15.68}],"lineIndex":0,"crossSize":19.2}],"exhausted":true,"usedLineCount":1,"topRubyOverflowPx":0.0,"bottomRubyOverflowPx":0.0}}',
+      '{"status":"satisfied","chosenWidthPx":20.3125,"usedLineCount":1,"usedHeight":19.2,"layout":{"lines":[{"fragments":[{"text":"AB","charStart":0,"charEnd":2,"x":0.0,"y":0.0,"inlineAdvancePx":20.240000000000002,"availableInlineSizePx":20.3125,"regionIndex":0,"baselineOffset":15.68}],"lineIndex":0,"crossSize":19.2}],"exhausted":true,"usedLineCount":1}}',
     inputSha256: "93dbe261f06e4585f8705d4de868df6de431419904bdd01c7e43d3be0369f27a",
-    outputSha256: "902b30d64c40822a8d5d1a7bbba6ecfef15e61158ca8132f3f4ed165fd53c8c6",
+    outputSha256: "f9bfb29f1cd2c673b2912a313a8aa3dad3c50d0d273c8ba9a5b2faf74f7856f3",
   },
   {
     operation: "measureIntrinsicInlineSize",

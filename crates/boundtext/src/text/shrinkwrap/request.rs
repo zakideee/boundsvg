@@ -369,7 +369,7 @@ pub fn shrinkwrap_text(
     if force_newline && (has_spans || has_rich_text) {
         let converted_rich_text;
         let preformatted_rich_text = if let Some(flow_spans) = bt_spans_ref {
-            let (text_spans, _) = bt_flow::build_inline_runs_inputs(
+            let text_spans = bt_flow::build_inline_runs_inputs(
                 flow_spans,
                 font_ctx,
                 input.font_size_px,
@@ -911,7 +911,10 @@ pub fn shrinkwrap_flow(
         .as_ref()
         .filter(|spans| !spans.is_empty())
         .map_or_else(|| synthetic_spans, |spans| Some(spans.to_vec()));
-    if let Some(spans) = bt_spans.as_mut() {
+    let has_ruby_spans = bt_spans
+        .as_ref()
+        .is_some_and(|spans| spans.iter().any(|span| span.ruby_text.is_some()));
+    if !has_ruby_spans && let Some(spans) = bt_spans.as_mut() {
         let span_texts = spans
             .iter()
             .map(|span| span.text.as_str())
@@ -925,11 +928,35 @@ pub fn shrinkwrap_flow(
         }
     }
     let bt_spans_ref = bt_spans.as_deref();
-    let rich_text_ref = input.rich_text.filter(|nodes| !nodes.is_empty());
+    let canonical_ruby_nodes = if has_ruby_spans {
+        let flow_spans = bt_spans_ref.ok_or_else(|| shrinkwrap_preparation_error(font_ctx))?;
+        let text_spans = bt_flow::build_inline_runs_inputs(
+            flow_spans,
+            font_ctx,
+            input.font_size_px,
+            input.letter_spacing_px,
+            language,
+            input.shape_options.text_orientation.as_deref(),
+            &shape_options,
+        );
+        Some(bt_flow::build_flow_rich_text_inputs(
+            flow_spans,
+            &text_spans,
+            input.line_height,
+            input.line_height_px,
+        ))
+    } else {
+        None
+    };
+    let rich_text_ref = canonical_ruby_nodes
+        .as_deref()
+        .or(input.rich_text.filter(|nodes| !nodes.is_empty()));
+    let inline_spans_ref = if has_ruby_spans { None } else { bt_spans_ref };
+    let has_canonical_rich_text = rich_text_ref.is_some();
 
     // Shape: inline-runs path (spans) or plain paragraph path.
-    let inline_inputs = if let Some(bt_spans) = bt_spans_ref {
-        let (text_spans, ruby_info) = bt_flow::build_inline_runs_inputs(
+    let inline_inputs = if let Some(bt_spans) = inline_spans_ref {
+        let text_spans = bt_flow::build_inline_runs_inputs(
             bt_spans,
             font_ctx,
             input.font_size_px,
@@ -944,7 +971,6 @@ pub fn shrinkwrap_flow(
             input.letter_spacing_px,
             language,
             input.hanging_punctuation,
-            &ruby_info,
             is_vertical,
         )?;
         Some((text_spans, shaped_runs))
@@ -991,7 +1017,7 @@ pub fn shrinkwrap_flow(
         max_lines: input.max_lines,
         ellipsis: false,
         fit: None,
-        spans: bt_spans_ref,
+        spans: inline_spans_ref,
         rich_text: rich_text_ref,
         writing_mode,
         text_orientation: input.shape_options.text_orientation.as_deref(),
@@ -1065,7 +1091,7 @@ pub fn shrinkwrap_flow(
                 )
             }?;
             Ok((measurement.used_line_count, measurement.fits()))
-        } else if has_rich_text {
+        } else if has_canonical_rich_text {
             let req = build_req(bt_fb);
             let result = layout_shrinkwrap_candidate(&req, font_ctx, &regions)?;
             let fits = result.exhausted && bt_flow::flow_layout_is_contained(&result);

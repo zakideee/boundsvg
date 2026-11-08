@@ -1,5 +1,6 @@
 import type { Engine, RenderAnimatedSvgOptions, VNode } from "@boundsvg/core";
 
+/** Authored sample scene, its displayed source, and optional animation metadata. */
 export type Preset = {
   title: string;
   description: string;
@@ -14,6 +15,7 @@ export type Preset = {
   animatedSvgOptions?: RenderAnimatedSvgOptions;
 };
 
+/** Active obstacle section and pointer offset within the scene. */
 export type DragTarget = {
   preset: string;
   section: string;
@@ -21,19 +23,5 @@ export type DragTarget = {
   offsetY: number;
 };
 
+/** Hit obstacle section with the pointer offset needed to preserve dragging position. */
 export type HitResult = { section: string; offsetX: number; offsetY: number };
-
-export type RubyFrag = {
-  text: string;
-  x: number;
-  y: number;
-  availableInlineSizePx: number;
-  baselineOffset?: number;
-  style?: { fontSizePx?: number; color?: string };
-  ruby?: {
-    text: string;
-    position: string;
-    style: { fontSizePx: number; color?: string };
-    gapPx: number;
-  };
-};

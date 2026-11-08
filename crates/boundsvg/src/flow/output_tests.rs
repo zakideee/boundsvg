@@ -38,8 +38,6 @@ fn flow_output() -> TextFlowWithExclusionsResult {
         overflow_reason: None,
         chosen_font_size_px: Some(16.0),
         warnings: Vec::new(),
-        top_ruby_overflow_px: 0.0,
-        bottom_ruby_overflow_px: 0.0,
     }
 }
 
@@ -146,7 +144,6 @@ fn flow_chosen_size_and_fragment_spacing_fail_at_the_output_boundary() {
                 region_index: 0,
                 baseline_offset: 12.0,
                 overflow_reason: None,
-                ruby: None,
                 style: Some(TextFlowFragmentStyle {
                     font_family: "Fixture".to_string(),
                     font_weight: 400,

@@ -4,14 +4,19 @@ import {
   type Engine,
   type GeometryDoc,
   geometryToFlowExclusion,
+  Inline,
   Path,
+  Rt,
+  Ruby,
   Shape,
   Text,
   type VNode,
 } from "@boundsvg/core";
 
 // One geometry drives both the drawn circle obstacle and its text exclusion.
+/** Quarter-circle tangent handle length for radius 50 in the 100-unit viewBox. */
 const CIRCLE_KAPPA = 27.614237;
+/** One circle geometry shared by the painted obstacle and its native flow exclusion. */
 const CIRCLE_GEOMETRY: GeometryDoc = {
   viewBox: { width: 100, height: 100 },
   root: {
@@ -28,7 +33,6 @@ import {
   FA,
   renderFlowFragments,
   renderFlowWarnings,
-  renderRubyFlowFragments,
   renderStyledFlowFragments,
   renderVerticalColumnFragments,
   renderVerticalFlowFragments,
@@ -39,6 +43,7 @@ import type { FlowObstacles, FlowRichObstacles } from "./obstacle-types";
 // Text Flow preset
 // ---------------------------------------------------------------------------
 
+/** Build draggable plain-text flow previews and their obstacle geometry. */
 export function buildTextFlowVNode(engine: Engine, obs: FlowObstacles): VNode {
   const canvasWidth = 800;
   const rowHeight = 360;
@@ -484,6 +489,36 @@ function buildRubySection(
   const fontSize = 15;
   const lineHeight = 1.9;
   const rubyRect = obs.rubyRect;
+  const spans = [
+    { text: "枕草子", rubyText: "まくらのそうし", rubyFontSizePx: 7 },
+    { text: "　" },
+    { text: "春", rubyText: "はる", rubyFontSizePx: 7 },
+    { text: "はあけぼの。" },
+    { text: "白", rubyText: "しろ", rubyFontSizePx: 7 },
+    { text: "くなりゆく" },
+    { text: "山際", rubyText: "やまぎわ", rubyFontSizePx: 7 },
+    { text: "、" },
+    { text: "紫", rubyText: "むらさき", rubyFontSizePx: 7, color: "#a78bfa" },
+    { text: "だちたる" },
+    { text: "雲", rubyText: "くも", rubyFontSizePx: 7 },
+    { text: "の" },
+    { text: "細", rubyText: "ほそ", rubyFontSizePx: 7 },
+    { text: "くたなびきたる。" },
+    { text: "夏", rubyText: "なつ", rubyFontSizePx: 7 },
+    { text: "は" },
+    { text: "夜", rubyText: "よる", rubyFontSizePx: 7 },
+    { text: "。" },
+    { text: "月", rubyText: "つき", rubyFontSizePx: 7 },
+    { text: "のころはさらなり、" },
+    { text: "闇", rubyText: "やみ", rubyFontSizePx: 7 },
+    { text: "もなほ、" },
+    { text: "蛍", rubyText: "ほたる", rubyFontSizePx: 7, color: "#86efac" },
+    { text: "の" },
+    { text: "多", rubyText: "おお", rubyFontSizePx: 7 },
+    { text: "く" },
+    { text: "飛", rubyText: "と", rubyFontSizePx: 7 },
+    { text: "びちがひたる。" },
+  ];
   try {
     const result = engine.layoutTextFlowWithExclusions({
       fontFamily: FA,
@@ -503,36 +538,7 @@ function buildRubySection(
           marginPx: 6,
         },
       ],
-      spans: [
-        { text: "枕草子", rubyText: "まくらのそうし", rubyFontSizePx: 7 },
-        { text: "　" },
-        { text: "春", rubyText: "はる", rubyFontSizePx: 7 },
-        { text: "はあけぼの。" },
-        { text: "白", rubyText: "しろ", rubyFontSizePx: 7 },
-        { text: "くなりゆく" },
-        { text: "山際", rubyText: "やまぎわ", rubyFontSizePx: 7 },
-        { text: "、" },
-        { text: "紫", rubyText: "むらさき", rubyFontSizePx: 7, color: "#a78bfa" },
-        { text: "だちたる" },
-        { text: "雲", rubyText: "くも", rubyFontSizePx: 7 },
-        { text: "の" },
-        { text: "細", rubyText: "ほそ", rubyFontSizePx: 7 },
-        { text: "くたなびきたる。" },
-        { text: "夏", rubyText: "なつ", rubyFontSizePx: 7 },
-        { text: "は" },
-        { text: "夜", rubyText: "よる", rubyFontSizePx: 7 },
-        { text: "。" },
-        { text: "月", rubyText: "つき", rubyFontSizePx: 7 },
-        { text: "のころはさらなり、" },
-        { text: "闇", rubyText: "やみ", rubyFontSizePx: 7 },
-        { text: "もなほ、" },
-        { text: "蛍", rubyText: "ほたる", rubyFontSizePx: 7, color: "#86efac" },
-        { text: "の" },
-        { text: "多", rubyText: "おお", rubyFontSizePx: 7 },
-        { text: "く" },
-        { text: "飛", rubyText: "と", rubyFontSizePx: 7 },
-        { text: "びちがひたる。" },
-      ],
+      spans,
     });
     children.push(...renderFlowWarnings(result.warnings, 284, 18));
     children.push(
@@ -547,7 +553,41 @@ function buildRubySection(
         borderRadius: 4,
       }),
     );
-    renderRubyFlowFragments(children, result, fontSize, lineHeight, "#e2e8f0", 0, 0);
+    children.push(
+      Text(
+        {
+          position: "absolute",
+          left: 284,
+          top: 30,
+          width: 260,
+          height: sectionHeight - 40,
+          font: FA,
+          fontSizePx: fontSize,
+          lineHeight,
+          language: "ja",
+          wrap: "char",
+          color: "#e2e8f0",
+          flowExclusions: [
+            {
+              kind: "rect",
+              x: rubyRect.x - 284,
+              y: rubyRect.y - 30,
+              width: rubyRect.w,
+              height: rubyRect.h,
+              marginPx: 6,
+            },
+          ],
+        },
+        ...spans.map((span) =>
+          Inline(
+            { color: span.color },
+            span.rubyText === undefined
+              ? span.text
+              : Ruby({}, span.text, Rt({ fontSizePx: span.rubyFontSizePx }, span.rubyText)),
+          ),
+        ),
+      ),
+    );
   } catch (error) {
     children.push(
       Box(
@@ -558,6 +598,7 @@ function buildRubySection(
   }
 }
 
+/** Build rich, vertical, and Ruby obstacle scenes from their authored content. */
 export function buildFlowRichVNode(engine: Engine, obs: FlowRichObstacles): VNode {
   const canvasWidth = 560;
   const rowHeight = 280;

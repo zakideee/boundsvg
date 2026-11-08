@@ -177,7 +177,6 @@ describe("recoverable warning delivery", () => {
     );
 
     expect(kinsokuCodes).toContain("KINSOKU_UNRESOLVED");
-    expect(rubyCodes).toContain("LONG_RUBY_ANNOTATION");
     expect(rubyCodes).toContain("RUBY_INTER_CHARACTER_FALLBACK");
     expect(depthCodes).toContain("INLINE_BOX_MAX_DEPTH");
   });

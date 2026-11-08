@@ -22,7 +22,7 @@ describe("Rust serde / TypeScript bridge round-trip", () => {
     });
   });
 
-  it("preserves nested ruby span data through flow input and result DTOs", () => {
+  it("measures ruby spans without publishing paint metadata", () => {
     const result = engine.layoutTextFlowWithExclusions({
       text: "",
       fontFamily: "NotoSansJP",
@@ -43,26 +43,13 @@ describe("Rust serde / TypeScript bridge round-trip", () => {
     });
 
     const fragment = result.lines[0]?.fragments[0];
-    const ruby = fragment?.ruby;
-    expect(fragment?.ruby).toMatchObject({
-      text: "かんじ",
-      position: "under",
-      align: "center",
-      style: { fontSizePx: 9, color: "#d946ef" },
-      lineSizing: "css",
-      levels: [
-        {
-          text: "かんじ",
-          position: "under",
-          runs: [{ text: "かんじ", style: { fontSizePx: 9, color: "#d946ef" } }],
-        },
-      ],
-    });
-    expect(Number.isFinite(ruby?.gapPx)).toBe(true);
-    expect(ruby?.gapPx).toBeGreaterThanOrEqual(0);
-    expect(Number.isFinite(ruby?.offsetPx)).toBe(true);
-    expect(result.topRubyOverflowPx).toBe(0);
-    expect(result.bottomRubyOverflowPx).toBeGreaterThan(0);
+    expect(fragment).toMatchObject({ text: "漢字", charStart: 0, charEnd: 1 });
+    expect(fragment).not.toHaveProperty("ruby");
+    expect(fragment).not.toHaveProperty("style");
+    expect(fragment?.inlineAdvancePx).toBeGreaterThan(0);
+    expect(Number.isFinite(fragment?.baselineOffset)).toBe(true);
+    expect(result).not.toHaveProperty("topRubyOverflowPx");
+    expect(result).not.toHaveProperty("bottomRubyOverflowPx");
   });
 
   it("round-trips every flow overflow variant", () => {

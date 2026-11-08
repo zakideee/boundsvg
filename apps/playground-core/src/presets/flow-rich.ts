@@ -7,11 +7,12 @@ import {
 } from "../flow-section-builders";
 import type { Preset } from "../types";
 
+/** Compare styled, vertical, and authored Ruby flow around draggable obstacles. */
 export const flowRichPreset: Preset = {
   title: "Flow Rich, Vertical & Ruby",
   description:
     "Rich text spans and ruby annotations share the top row; vertical-rl columns use the full bottom row with an intentional missing-glyph tofu marker. Drag obstacles to reflow.",
-  source: `import { Box, Canvas, Text } from "@boundsvg/core";
+  source: `import { Box, Canvas, Rt, Ruby, Text } from "@boundsvg/core";
 
 // Rich text spans: mixed sizes and colors with obstacle avoidance
 const result = engine.layoutTextFlowWithExclusions({
@@ -54,23 +55,22 @@ const vert = engine.layoutTextFlowWithExclusions({
   exclusions: [{ kind: "rect", x: 460, y: 380, width: 60, height: 70, marginPx: 6 }],
 });
 
-// Ruby annotations with obstacle
-const ruby = engine.layoutTextFlowWithExclusions({
-  fontFamily: "${FA}", fontSizePx: 15, lineHeight: 1.9,
-  text: "", language: "ja", wrap: "char",
-  flowBox: { x: 284, y: 30, width: 260, height: 240 },
-  exclusions: [{ kind: "rect", x: 440, y: 60, width: 90, height: 50, marginPx: 6 }],
-  spans: [
-    { text: "枕草子", rubyText: "まくらのそうし", rubyFontSizePx: 7 },
-    { text: "　" },
-    { text: "春", rubyText: "はる", rubyFontSizePx: 7 },
-    { text: "はあけぼの。…" },
-  ],
-});
+// Render original Ruby content; measurement fragments are diagnostic cells.
+const ruby = Text({
+  font: "${FA}", fontSizePx: 15, lineHeight: 1.9,
+  language: "ja", wrap: "char", color: "#e2e8f0",
+  position: "absolute", left: 284, top: 30, width: 260, height: 240,
+  flowExclusions: [{ kind: "rect", x: 156, y: 30, width: 90, height: 50, marginPx: 6 }],
+},
+  Ruby({}, "枕草子", Rt({ fontSizePx: 7 }, "まくらのそうし")),
+  "　", Ruby({}, "春", Rt({ fontSizePx: 7 }, "はる")),
+  "はあけぼの。…",
+);
 
 const vnode = Canvas(
   { width: 560, height: 560, background: "#1a1a1a" },
   ...children,
+  ruby,
 );
 
 const svg = engine.renderToSvg(vnode);`,

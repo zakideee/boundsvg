@@ -21,7 +21,7 @@ Items here are known and triaged — please do not file bugs for them; see the
 - **Japanese typesetting is JLREQ-informed, not JLREQ-conformant.** The
   default `JaTypesettingV1` profile fixes a deterministic subset for release:
   greedy line breaking, Japanese kinsoku, vertical orientation, manual TCY, and
-  ruby side/gap contracts with tunable gap/offset. It does not implement full line adjustment,
+  ruby side/gap contracts with tunable gap/offset and bounded lending from adjacent kana or `、。，．・` within the final line/region. It does not implement full line adjustment,
   full inter-character ruby layout, inter-character compression/expansion, warichu, complex jukugo ruby, or
   paragraph-level optimal breaking.
 - `textOrientation: "sideways"` is not implemented; tate-chu-yoko

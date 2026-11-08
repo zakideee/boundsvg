@@ -1,3 +1,5 @@
+//! Lay out rich tokens in provider regions using the same reserved cells as ordinary text.
+
 use crate::TextLayoutError;
 use crate::font::FontContext;
 use crate::text::kinsoku::{
@@ -5,10 +7,7 @@ use crate::text::kinsoku::{
     intentional_hanging_overflow_px, is_single_hanging_grapheme, is_valid_break_boundary,
 };
 use crate::text::paragraph::LayoutOverflowReason;
-use crate::text::types::{
-    FitMode, InlineBoxDecoration, TextLayoutRequest, TextWarning, WrapMode,
-    is_rich_text_fit_certified_monotone,
-};
+use crate::text::types::{FitMode, InlineBoxDecoration, TextLayoutRequest, TextWarning, WrapMode};
 
 use super::TextOrientation;
 use super::line_layout::{
@@ -30,14 +29,12 @@ pub(crate) fn layout_rich_flow_with_regions(
     font_ctx: &FontContext<'_>,
     region_provider: &impl text_flow::LayoutRegionProvider,
 ) -> Result<text_flow::FlowLayoutResult, TextLayoutError> {
-    let content_search_kind = if req.letter_spacing_px < 0.0
-        || req.line_height.is_some_and(|value| value < 0.0)
-        || !is_rich_text_fit_certified_monotone(req.rich_text)
-    {
-        text_flow::FitSearchKind::Uncertified
-    } else {
-        region_provider.fit_search_kind()
-    };
+    let content_search_kind =
+        if super::is_text_fit_certified_monotone(&text_layout_request_for_flow(req)) {
+            region_provider.fit_search_kind()
+        } else {
+            text_flow::FitSearchKind::Uncertified
+        };
     let (settled_font_size, fit_overflow) = match req.fit {
         Some("shrink") => {
             let min_size = req
@@ -420,7 +417,7 @@ fn materialize_horizontal_flow_decorations(
                     &tokens[token_start..token_end],
                     0.0,
                     decoration_spans,
-                );
+                )?;
                 for decoration in assembled.decorations {
                     let span_id = decoration.span_id;
                     pending.push(PendingFlowDecoration {
@@ -476,7 +473,7 @@ fn materialize_vertical_flow_decorations(
             let token_end = column.fragments[group_end - 1].char_end;
             if token_start < token_end && token_end <= tokens.len() {
                 let assembled =
-                    assemble_vertical_line(&tokens[token_start..token_end], 0.0, decoration_spans);
+                    assemble_vertical_line(&tokens[token_start..token_end], 0.0, decoration_spans)?;
                 for decoration in assembled.decorations {
                     let span_id = decoration.span_id;
                     let cross_offset = if span_id.is_some() {
@@ -610,7 +607,8 @@ fn layout_rich_flow_horizontal(
                 &mut cursor,
                 &regions,
                 line_top,
-            ) else {
+            )?
+            else {
                 resolved_line = None;
                 break;
             };
@@ -776,7 +774,7 @@ fn layout_rich_flow_vertical(
                     &mut cursor,
                     &regions,
                     probe_left,
-                )
+                )?
             else {
                 resolved_column = None;
                 break;
@@ -857,16 +855,17 @@ fn layout_next_rich_flow_line(
     cursor: &mut usize,
     regions: &[(f64, f64)],
     line_top: f64,
-) -> Option<(Vec<text_flow::FlowFragment>, f64, bool)> {
+) -> Result<Option<(Vec<text_flow::FlowFragment>, f64, bool)>, TextLayoutError> {
     if *cursor >= tokens.len() {
-        return None;
+        return Ok(None);
     }
     if tokens[*cursor].text == "\n" {
         *cursor += 1;
-        return Some((Vec::new(), 0.0, true));
+        return Ok(Some((Vec::new(), 0.0, true)));
     }
 
     let mut fragments = Vec::new();
+    let mut base_offsets = Vec::new();
     let mut line_reference_offset = 0.0_f64;
     let mut line_after_reference = 0.0_f64;
     let mut ended_with_hard_break = false;
@@ -899,7 +898,7 @@ fn layout_next_rich_flow_line(
             wrap,
             *cursor,
             region_width,
-        );
+        )?;
         let start = *cursor;
         let resolution = resolve_rich_region_overflow(
             tokens,
@@ -911,7 +910,7 @@ fn layout_next_rich_flow_line(
             start,
             initial_end,
             region_width,
-        );
+        )?;
         let end = resolution.end;
         if end <= start {
             continue;
@@ -933,7 +932,9 @@ fn layout_next_rich_flow_line(
         let mut offset = 0.0_f64;
         for index in start..end {
             let token = &tokens[index];
-            let width = flow_token_advance(tokens, index, end);
+            let cell = super::ruby_placement::resolve_cell(token, index > start, index + 1 < end)?;
+            base_offsets.push(cell.base_offset);
+            let width = flow_token_advance(tokens, start, index, end)?;
             fragments.push(text_flow::FlowFragment {
                 text: token.text.clone(),
                 char_start: index,
@@ -954,7 +955,6 @@ fn layout_next_rich_flow_line(
                     0.0
                 },
                 style: None,
-                ruby: token.flow_ruby.clone(),
                 positioned_glyphs: Vec::new(),
                 inline_rects: token
                     .inline_rects
@@ -977,15 +977,15 @@ fn layout_next_rich_flow_line(
     }
 
     if fragments.is_empty() {
-        None
+        Ok(None)
     } else {
-        for fragment in &mut fragments {
+        for (fragment, base_offset) in fragments.iter_mut().zip(base_offsets) {
             fragment.baseline_offset = line_reference_offset;
             let token = &tokens[fragment.char_start];
             let mut positioned_glyphs = token.glyphs.clone();
             super::shift_glyphs_x(
                 &mut positioned_glyphs,
-                fragment.x + super::token_decoration_start_advance(token),
+                fragment.x + super::token_decoration_start_advance(token) + base_offset,
             );
             super::shift_glyphs_y(
                 &mut positioned_glyphs,
@@ -996,11 +996,11 @@ fn layout_next_rich_flow_line(
             }
             fragment.positioned_glyphs = positioned_glyphs;
         }
-        Some((
+        Ok(Some((
             fragments,
             line_reference_offset + line_after_reference,
             ended_with_hard_break,
-        ))
+        )))
     }
 }
 
@@ -1014,16 +1014,17 @@ fn layout_next_rich_flow_column(
     cursor: &mut usize,
     regions: &[(f64, f64)],
     column_left: f64,
-) -> Option<(Vec<text_flow::FlowFragment>, f64, bool)> {
+) -> Result<Option<(Vec<text_flow::FlowFragment>, f64, bool)>, TextLayoutError> {
     if *cursor >= tokens.len() {
-        return None;
+        return Ok(None);
     }
     if tokens[*cursor].text == "\n" {
         *cursor += 1;
-        return Some((Vec::new(), 0.0, true));
+        return Ok(Some((Vec::new(), 0.0, true)));
     }
 
     let mut fragments = Vec::new();
+    let mut base_offsets = Vec::new();
     let mut reference_offset = 0.0_f64;
     let mut after_reference = 0.0_f64;
     let mut ended_with_hard_break = false;
@@ -1056,7 +1057,7 @@ fn layout_next_rich_flow_column(
             wrap,
             *cursor,
             region_height,
-        );
+        )?;
         let start = *cursor;
         let resolution = resolve_rich_region_overflow(
             tokens,
@@ -1068,7 +1069,7 @@ fn layout_next_rich_flow_column(
             start,
             initial_end,
             region_height,
-        );
+        )?;
         let end = resolution.end;
         if end <= start {
             continue;
@@ -1090,7 +1091,9 @@ fn layout_next_rich_flow_column(
         let mut offset = 0.0_f64;
         for index in start..end {
             let token = &tokens[index];
-            let height = flow_token_advance(tokens, index, end);
+            let cell = super::ruby_placement::resolve_cell(token, index > start, index + 1 < end)?;
+            base_offsets.push(cell.base_offset);
+            let height = flow_token_advance(tokens, start, index, end)?;
             fragments.push(text_flow::FlowFragment {
                 text: token.text.clone(),
                 char_start: index,
@@ -1111,7 +1114,6 @@ fn layout_next_rich_flow_column(
                     0.0
                 },
                 style: None,
-                ruby: token.flow_ruby.clone(),
                 positioned_glyphs: Vec::new(),
                 inline_rects: token
                     .inline_rects
@@ -1134,9 +1136,9 @@ fn layout_next_rich_flow_column(
     }
 
     if fragments.is_empty() {
-        None
+        Ok(None)
     } else {
-        for fragment in &mut fragments {
+        for (fragment, base_offset) in fragments.iter_mut().zip(base_offsets) {
             fragment.baseline_offset = reference_offset;
             let token = &tokens[fragment.char_start];
             let mut positioned_glyphs = token.glyphs.clone();
@@ -1146,18 +1148,18 @@ fn layout_next_rich_flow_column(
             );
             super::shift_glyphs_y(
                 &mut positioned_glyphs,
-                fragment.y + super::token_decoration_start_advance(token),
+                fragment.y + super::token_decoration_start_advance(token) + base_offset,
             );
             for glyph in &mut positioned_glyphs {
                 glyph.absolute_position = Some(true);
             }
             fragment.positioned_glyphs = positioned_glyphs;
         }
-        Some((
+        Ok(Some((
             fragments,
             reference_offset + after_reference,
             ended_with_hard_break,
-        ))
+        )))
     }
 }
 
@@ -1171,25 +1173,25 @@ fn resolve_rich_region_end(
     wrap: WrapMode,
     start: usize,
     max_advance: f64,
-) -> usize {
+) -> Result<usize, TextLayoutError> {
     if start >= tokens.len() {
-        return start;
+        return Ok(start);
     }
     if wrap == WrapMode::None {
         if !allow_hanging {
-            return start;
+            return Ok(start);
         }
         let mut end = start;
         while end < tokens.len() && tokens[end].text != "\n" {
             end += 1;
         }
-        return end.max(start + 1);
+        return Ok(end.max(start + 1));
     }
 
     let mut last_normal_break = None;
     for index in start..tokens.len() {
         if tokens[index].text == "\n" {
-            return index;
+            return Ok(index);
         }
 
         let preserve_unbreakable_word = allow_hanging
@@ -1202,7 +1204,7 @@ fn resolve_rich_region_end(
         if preserve_unbreakable_word {
             last_normal_break = update_last_normal_break(break_set, index, last_normal_break);
         }
-        let width = effective_line_width(tokens, start, index + 1, 0.0);
+        let width = effective_line_width(tokens, start, index + 1, 0.0)?;
         if width <= max_advance + text_flow::INLINE_CONTAINMENT_EPSILON
             || (allow_hanging && index == start)
         {
@@ -1231,11 +1233,11 @@ fn resolve_rich_region_end(
             token_texts,
             profile,
         ) {
-            return break_pos;
+            return Ok(break_pos);
         }
 
         if !allow_hanging {
-            return start;
+            return Ok(start);
         }
         if preserve_unbreakable_word {
             // Keep an unbreakable word/atomic run intact, even when that means
@@ -1244,16 +1246,18 @@ fn resolve_rich_region_end(
             continue;
         }
 
-        return super::super::kinsoku::avoid_non_breaking_pair_split_by_boundary(
-            token_texts,
-            index + 1,
-            start,
-            |boundary| kinsoku_profile_at_boundary(tokens, boundary, profile),
-        )
-        .max(start + 1);
+        return Ok(
+            super::super::kinsoku::avoid_non_breaking_pair_split_by_boundary(
+                token_texts,
+                index + 1,
+                start,
+                |boundary| kinsoku_profile_at_boundary(tokens, boundary, profile),
+            )
+            .max(start + 1),
+        );
     }
 
-    tokens.len()
+    Ok(tokens.len())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1277,13 +1281,13 @@ fn resolve_rich_region_overflow(
     start: usize,
     initial_end: usize,
     capacity: f64,
-) -> RichRegionResolution {
+) -> Result<RichRegionResolution, TextLayoutError> {
     if initial_end <= start {
-        return RichRegionResolution {
+        return Ok(RichRegionResolution {
             end: initial_end,
             overflow_reason: None,
             intentional_overflow_px: 0.0,
-        };
+        });
     }
 
     let hanging_overflow_px = if allow_hanging && wrap != WrapMode::None {
@@ -1294,13 +1298,13 @@ fn resolve_rich_region_overflow(
             initial_end,
             capacity,
             hanging_chars,
-        )
+        )?
     } else {
         0.0
     };
     let mut end = initial_end;
     let mut intentional_overflow_px = hanging_overflow_px;
-    let mut current_advance = effective_line_width(tokens, start, end, 0.0);
+    let mut current_advance = effective_line_width(tokens, start, end, 0.0)?;
 
     if allow_hanging && wrap != WrapMode::None {
         // When backward kinsoku adjustment cannot produce a legal boundary,
@@ -1312,7 +1316,7 @@ fn resolve_rich_region_overflow(
                 !is_valid_break_boundary(token_texts, end, boundary_profile)
             })
         {
-            let next_advance = effective_line_width(tokens, start, end + 1, 0.0);
+            let next_advance = effective_line_width(tokens, start, end + 1, 0.0)?;
             let absorbed_advance = (next_advance - current_advance).max(0.0);
             intentional_overflow_px = add_bounded_intentional_overflow_px(
                 intentional_overflow_px,
@@ -1324,7 +1328,7 @@ fn resolve_rich_region_overflow(
         }
     }
 
-    RichRegionResolution {
+    Ok(RichRegionResolution {
         end,
         overflow_reason: if end > initial_end {
             Some(LayoutOverflowReason::KinsokuAbsorb)
@@ -1334,7 +1338,7 @@ fn resolve_rich_region_overflow(
             None
         },
         intentional_overflow_px,
-    }
+    })
 }
 
 fn kinsoku_token_texts(tokens: &[super::LayoutToken]) -> Vec<&str> {
@@ -1359,26 +1363,33 @@ fn rich_region_hanging_overflow_px(
     end: usize,
     capacity: f64,
     hanging_chars: Option<&[char]>,
-) -> f64 {
+) -> Result<f64, TextLayoutError> {
     if end <= start + 1 || end > tokens.len() {
-        return 0.0;
+        return Ok(0.0);
     }
     let advances = (start..end)
-        .map(|index| flow_token_advance(tokens, index, end))
-        .collect::<Vec<_>>();
-    intentional_hanging_overflow_px(
+        .map(|index| flow_token_advance(tokens, start, index, end))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(intentional_hanging_overflow_px(
         0,
         advances.len(),
         &advances,
         capacity,
         &token_texts[start..end],
         hanging_chars,
-    )
+    ))
 }
 
-fn flow_token_advance(tokens: &[super::LayoutToken], index: usize, region_end: usize) -> f64 {
+fn flow_token_advance(
+    tokens: &[super::LayoutToken],
+    region_start: usize,
+    index: usize,
+    region_end: usize,
+) -> Result<f64, TextLayoutError> {
     let token = &tokens[index];
-    let mut advance = token.advance + super::token_decoration_start_advance(token);
+    let cell =
+        super::ruby_placement::resolve_cell(token, index > region_start, index + 1 < region_end)?;
+    let mut advance = cell.advance + super::token_decoration_start_advance(token);
     for membership in &token.decoration_memberships {
         if index + 1 == region_end
             || !super::has_decoration_span(&tokens[index + 1], membership.span_id)
@@ -1386,7 +1397,10 @@ fn flow_token_advance(tokens: &[super::LayoutToken], index: usize, region_end: u
             advance += membership.end_advance;
         }
     }
-    advance
+    if !advance.is_finite() {
+        return Err(super::rich_preparation_error());
+    }
+    Ok(advance)
 }
 
 #[cfg(test)]
@@ -1406,7 +1420,8 @@ mod tests {
             inline_box_decoration: None,
             nested_decorations: Vec::new(),
             decoration_memberships: Vec::new(),
-            flow_ruby: None,
+            ruby_placement: None,
+            lending_advance: None,
             trailing_tracking_px: 0.0,
         }
     }
@@ -1435,7 +1450,8 @@ mod tests {
             WrapMode::Word,
             0,
             3.0,
-        );
+        )
+        .expect("finite flow geometry");
 
         assert_eq!(end, tokens.len());
     }
@@ -1462,7 +1478,8 @@ mod tests {
                 WrapMode::Word,
                 0,
                 3.0,
-            ),
+            )
+            .expect("finite flow geometry"),
             3
         );
 
@@ -1486,7 +1503,8 @@ mod tests {
                 WrapMode::Word,
                 0,
                 3.0,
-            ),
+            )
+            .expect("finite flow geometry"),
             local_en.len()
         );
 
@@ -1512,7 +1530,8 @@ mod tests {
                 WrapMode::Word,
                 0,
                 3.0,
-            ),
+            )
+            .expect("finite flow geometry"),
             neutral_word_then_ja_punctuation.len()
         );
 
@@ -1538,7 +1557,8 @@ mod tests {
                 WrapMode::Word,
                 0,
                 1.0,
-            ),
+            )
+            .expect("finite flow geometry"),
             ja_open_then_neutral_word.len()
         );
     }
@@ -1561,7 +1581,8 @@ mod tests {
             WrapMode::Word,
             0,
             1.0,
-        );
+        )
+        .expect("finite flow geometry");
 
         assert_eq!(initial_end, 1);
 
@@ -1575,7 +1596,8 @@ mod tests {
             0,
             initial_end,
             1.0,
-        );
+        )
+        .expect("finite flow geometry");
 
         assert_eq!(resolution.end, 2);
         assert_eq!(
@@ -1605,7 +1627,8 @@ mod tests {
             WrapMode::Word,
             0,
             3.0,
-        );
+        )
+        .expect("finite flow geometry");
 
         assert_eq!(end, 11);
     }
@@ -1628,7 +1651,8 @@ mod tests {
             WrapMode::Word,
             0,
             3.0,
-        );
+        )
+        .expect("finite flow geometry");
 
         assert_eq!(end, 0);
     }
@@ -1653,7 +1677,8 @@ mod tests {
             WrapMode::Char,
             0,
             3.0,
-        );
+        )
+        .expect("finite flow geometry");
 
         assert_eq!(end, 3);
     }
@@ -1680,6 +1705,7 @@ mod tests {
             &[(0.0, 1.0)],
             0.0,
         )
+        .expect("finite flow geometry")
         .expect("horizontal rich flow line");
         let mut vertical_cursor = 0;
         let (vertical_fragments, _, _) = layout_next_rich_flow_column(
@@ -1693,6 +1719,7 @@ mod tests {
             &[(0.0, 1.0)],
             0.0,
         )
+        .expect("finite flow geometry")
         .expect("vertical rich flow column");
 
         for (cursor, fragments) in [
@@ -1739,7 +1766,8 @@ mod tests {
             0,
             1,
             1.0,
-        );
+        )
+        .expect("finite flow geometry");
 
         assert_eq!(resolution.end, tokens.len());
         assert_eq!(
@@ -1779,7 +1807,8 @@ mod tests {
                 0,
                 1,
                 1.0,
-            );
+            )
+            .expect("finite flow geometry");
 
             assert_eq!(resolution.end, 1, "texts={token_texts:?}");
             assert_eq!(resolution.overflow_reason, None, "texts={token_texts:?}");
@@ -1806,7 +1835,8 @@ mod tests {
                     0,
                     1,
                     1.0,
-                );
+                )
+                .expect("finite flow geometry");
 
                 assert_eq!(resolution.end, 2, "text={text} wrap={wrap:?}");
                 assert_eq!(
