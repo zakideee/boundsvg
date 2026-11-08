@@ -1,5 +1,6 @@
 import { FatalError } from "../errors.js";
 import type { MeasurementTextLayoutOperation } from "../text/layout-operation.js";
+import { assertTextFlowMeasurementOutput } from "../wasm/protocol-decoders.js";
 
 /** Invoke one measurement producer through the operation-aware error boundary. */
 export function invokeMeasurementTransport<Input, Result>(
@@ -8,7 +9,11 @@ export function invokeMeasurementTransport<Input, Result>(
   input: Input,
 ): Result {
   try {
-    return transport(input);
+    const measurementResult = transport(input);
+    if (operation === "layoutTextFlowWithExclusions" || operation === "shrinkwrapFlow") {
+      assertTextFlowMeasurementOutput(measurementResult, operation);
+    }
+    return measurementResult;
   } catch (error) {
     let isFatalError = false;
     try {

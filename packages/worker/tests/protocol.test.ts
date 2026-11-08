@@ -1362,8 +1362,6 @@ describe("isWorkerResponse", () => {
           exhausted: false,
           usedLineCount: 0,
           warnings: [warning],
-          topRubyOverflowPx: 0,
-          bottomRubyOverflowPx: 0,
         },
       },
     });

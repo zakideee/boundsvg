@@ -44,7 +44,6 @@ boundsvg	crates/boundsvg/src/flow/types.rs	ShrinkwrapTextResult	chosen_width_px	
 boundsvg	crates/boundsvg/src/flow/types.rs	ShrinkwrapTextResult	max_line_width	maxLineWidth	omit-none
 boundsvg	crates/boundsvg/src/flow/types.rs	ShrinkwrapTextResult	used_width	usedWidth	omit-none
 boundsvg	crates/boundsvg/src/flow/types.rs	TextFlowFragment	overflow_reason	overflowReason	omit-none
-boundsvg	crates/boundsvg/src/flow/types.rs	TextFlowFragment	ruby	ruby	omit-none
 boundsvg	crates/boundsvg/src/flow/types.rs	TextFlowFragment	style	style	omit-none
 boundsvg	crates/boundsvg/src/flow/types.rs	TextFlowFragmentStyle	color	color	omit-none
 boundsvg	crates/boundsvg/src/flow/types.rs	TextFlowFragmentStyle	letter_spacing_px	letterSpacingPx	omit-none

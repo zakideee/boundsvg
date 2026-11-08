@@ -915,7 +915,48 @@ describe("Real WASM pipeline", () => {
     expect(textNodes.every((node) => node.bbox.y + node.bbox.h <= 460)).toBe(true);
   });
 
-  it("keeps horizontal ruby inline flow anchored and expands vertical columns for side annotations", () => {
+  it.each([
+    { size: 80, width: 100, fitMaxProbes: 12 },
+    { size: 1200, width: 1500, fitMaxProbes: undefined },
+  ])("fits a long Ruby at $size px with the existing probe budget", ({
+    size,
+    width,
+    fitMaxProbes,
+  }) => {
+    const scene = createElement(
+      "Canvas",
+      { width: 1600, height: 2200 },
+      createElement(
+        "Text",
+        {
+          font: "NotoSansJP",
+          fontSizePx: size,
+          width,
+          height: 10000,
+          wrap: "none",
+          fit: "shrink",
+          lineHeight: 1,
+          minFontSizePx: 8,
+          shrinkEpsilonPx: 0.25,
+          shrinkMaxIterations: 12,
+          fitMaxProbes,
+        },
+        createElement("Ruby", {}, "行", createElement("Rt", { fontSizePx: size / 2 }, "おこな")),
+        "う",
+      ),
+    );
+    const rendered = engine.renderToIR(scene);
+    const textNode = findTextNode(rendered.root);
+    expect(textNode?.lines).toHaveLength(1);
+    expect(textNode!.lines![0]!.width).toBeLessThanOrEqual(width);
+    // Full-width frames and a half-kana loan give width = 2.25 * fitted size.
+    const fittedSize = textNode!.lines![0]!.width / 2.25;
+    expect(fittedSize).toBeLessThanOrEqual(width / 2.25);
+    expect(width / 2.25 - fittedSize).toBeLessThanOrEqual(0.25);
+    expect(engine.renderToSvg(scene)).toContain("<svg");
+  });
+
+  it("reserves long horizontal readings and expands vertical columns for side annotations", () => {
     const horizontalPlain = createElement(
       "Canvas",
       { width: 420, height: 240, background: "#101826" },
@@ -979,12 +1020,14 @@ describe("Real WASM pipeline", () => {
     const verticalRubyNode = findTextNode(engine.renderToIR(verticalRuby).root);
 
     expect(horizontalRubyNode!.bbox.h).toBeGreaterThan(horizontalPlainNode!.bbox.h);
-    expect(horizontalRubyNode!.bbox.w).toBeCloseTo(horizontalPlainNode!.bbox.w, 4);
+    // Three 19px kana need 57px around a 38px base. Neither adjacent kanji lends.
+    expect(horizontalRubyNode!.bbox.w).toBeCloseTo(horizontalPlainNode!.bbox.w + 19, 4);
     expect(verticalRubyNode!.bbox.w).toBeGreaterThan(verticalPlainNode!.bbox.w + 2);
-    expect(verticalRubyNode!.bbox.h).toBeCloseTo(verticalPlainNode!.bbox.h, 4);
+    // The default 15px annotation needs 45px along a 30px vertical base.
+    expect(verticalRubyNode!.bbox.h).toBeCloseTo(verticalPlainNode!.bbox.h + 15, 4);
   });
 
-  it("does not push neighboring base glyphs when ruby is wider than its base", () => {
+  it("moves neighboring kanji by the reserved overflow of a start-aligned reading", () => {
     const horizontalPlain = createElement(
       "Canvas",
       { width: 420, height: 220, background: "#101826" },
@@ -1074,8 +1117,11 @@ describe("Real WASM pipeline", () => {
     const verticalPlainNext = verticalPlainGlyphs.find((glyph) => glyph.text === "案");
     const verticalRubyNext = verticalRubyGlyphs.find((glyph) => glyph.text === "案");
 
-    expect(horizontalRubyNext?.originX).toBeCloseTo(horizontalPlainNext?.originX ?? 0, 4);
-    expect(verticalRubyNext?.originY).toBeCloseTo(verticalPlainNext?.originY ?? 0, 4);
+    expect(horizontalRubyNext).toBeDefined();
+    expect(verticalRubyNext).toBeDefined();
+    // Full-width readings consume 3*15px and 3*12px, respectively.
+    expect(horizontalRubyNext?.originX).toBeCloseTo((horizontalPlainNext?.originX ?? 0) + 7, 4);
+    expect(verticalRubyNext?.originY).toBeCloseTo((verticalPlainNext?.originY ?? 0) + 6, 4);
   });
 
   it("keeps constrained vertical ruby samples wrapped across multiple columns", () => {

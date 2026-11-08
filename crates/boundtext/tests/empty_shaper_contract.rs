@@ -239,15 +239,7 @@ fn span_rich_and_ruby_reject_empty_single_family_shaping() -> Result<(), Box<dyn
 
     let spans = vec![span("A")];
     expect_phase(
-        prepare_inline_runs(
-            &spans,
-            &font_context,
-            0.0,
-            Language::En,
-            false,
-            &[None],
-            false,
-        ),
+        prepare_inline_runs(&spans, &font_context, 0.0, Language::En, false, false),
         TextPreparationPhase::SpanShaping,
     );
 
@@ -396,16 +388,7 @@ fn typed_shaping_failures_reach_every_layout_caller_and_do_not_poison_recovery()
         }
         let spans = vec![span("A")];
         assert_eq!(
-            prepare_inline_runs(
-                &spans,
-                &font_context,
-                0.0,
-                Language::En,
-                false,
-                &[None],
-                false,
-            )
-            .err(),
+            prepare_inline_runs(&spans, &font_context, 0.0, Language::En, false, false,).err(),
             Some(TextLayoutError::Font(failure.clone()))
         );
         assert_rich_shaping_failure(&font_context, &failure);

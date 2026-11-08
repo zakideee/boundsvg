@@ -1642,7 +1642,7 @@ fn rich_ellipsis_omits_atomic_output_and_diagnostics_as_a_unit() {
             text: "A".to_string(),
         },
         RichTextNodeInput::Ruby {
-            ruby_position: Some("over".to_string()),
+            ruby_position: Some("inter-character".to_string()),
             ruby_align: Some("center".to_string()),
             ruby_gap_px: None,
             ruby_offset_px: None,
@@ -1709,7 +1709,7 @@ fn rich_ellipsis_omits_atomic_output_and_diagnostics_as_a_unit() {
     );
     assert!(
         layout_result.warnings.iter().all(|warning| {
-            warning.code != TextWarningCode::LongRubyAnnotation
+            warning.code != TextWarningCode::RubyInterCharacterFallback
                 && !warning.message.contains("10FFFF")
         }),
         "omitted atomic descendants must not commit owned warnings: {:?}",
@@ -1730,7 +1730,7 @@ fn rich_ellipsis_commits_warning_owned_by_a_retained_atomic_node() {
     };
     let rich_text = vec![
         RichTextNodeInput::Ruby {
-            ruby_position: Some("over".to_string()),
+            ruby_position: Some("inter-character".to_string()),
             ruby_align: Some("center".to_string()),
             ruby_gap_px: None,
             ruby_offset_px: None,
@@ -1768,7 +1768,7 @@ fn rich_ellipsis_commits_warning_owned_by_a_retained_atomic_node() {
         layout_result
             .warnings
             .iter()
-            .any(|warning| warning.code == TextWarningCode::LongRubyAnnotation),
+            .any(|warning| warning.code == TextWarningCode::RubyInterCharacterFallback),
         "a warning owned by the retained atomic node must be committed: {:?}",
         layout_result.warnings
     );

@@ -35,7 +35,6 @@ export type {
   TextFlowInput,
   TextFlowLine,
   TextFlowResult,
-  TextFlowRubyAnnotation,
   TextFlowWithExclusionsInput,
   TextFlowWithExclusionsResult,
   Uax14BreakFn,
@@ -69,6 +68,7 @@ export {
   wasmUax14LineBreaks,
 } from "./wasm/index.js";
 export {
+  assertTextFlowMeasurementOutput,
   isWasmIntrinsicInlineSizeResult,
   isWasmMeasureTextBlockResult,
   isWasmShrinkwrapFlowResult,

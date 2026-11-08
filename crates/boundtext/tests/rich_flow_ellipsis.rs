@@ -162,7 +162,7 @@ fn rich_flow_ellipsis_commits_only_retained_authored_node_warnings() {
     annotation_style.font_size_px = 8.0;
     let rich_text = vec![
         RichTextNodeInput::Ruby {
-            ruby_position: Some("over".to_string()),
+            ruby_position: Some("inter-character".to_string()),
             ruby_align: Some("center".to_string()),
             ruby_gap_px: None,
             ruby_offset_px: None,
@@ -232,7 +232,7 @@ fn rich_flow_ellipsis_commits_only_retained_authored_node_warnings() {
         flow_layout
             .warnings
             .iter()
-            .any(|warning| warning.code == TextWarningCode::LongRubyAnnotation),
+            .any(|warning| warning.code == TextWarningCode::RubyInterCharacterFallback),
         "retained atomic warning must survive flow projection: {:?}",
         flow_layout.warnings
     );

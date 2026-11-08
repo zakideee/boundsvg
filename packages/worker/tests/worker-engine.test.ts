@@ -1570,8 +1570,6 @@ describe("WorkerEngine", () => {
                 lines: [],
                 exhausted: false,
                 usedLineCount: 0,
-                topRubyOverflowPx: 0,
-                bottomRubyOverflowPx: 0,
               },
             });
             break;
@@ -1608,8 +1606,6 @@ describe("WorkerEngine", () => {
                   lines: [],
                   exhausted: false,
                   usedLineCount: 0,
-                  topRubyOverflowPx: 0,
-                  bottomRubyOverflowPx: 0,
                 },
               },
             });
@@ -1643,6 +1639,30 @@ describe("WorkerEngine", () => {
       });
       await expect(engine.measureIntrinsicInlineSize({} as never)).resolves.toMatchObject({
         minContentInlineSize: 0,
+      });
+      engine.dispose();
+    });
+
+    it("preserves the typed output failure when a legacy flow producer returns removed metadata", async () => {
+      const engine = await createEngine(mockWorker);
+      mockWorker.postMessage.mockImplementation((request: WorkerRequest) => {
+        if (request.type === "layout-text-flow-with-exclusions") {
+          mockWorker.respondUnknown({
+            id: request.id,
+            type: "layout-text-flow-with-exclusions-ok",
+            result: { lines: [], exhausted: true, usedLineCount: 0, topRubyOverflowPx: undefined },
+          });
+        }
+      });
+      await expect(engine.layoutTextFlowWithExclusions({} as never)).rejects.toMatchObject({
+        code: "TEXT_LAYOUT_OUTPUT_INVALID",
+        stage: "engine",
+        context: {
+          operation: "layoutTextFlowWithExclusions",
+          phase: "decode",
+          protocolPath: "$.topRubyOverflowPx",
+          received: "removed field",
+        },
       });
       engine.dispose();
     });

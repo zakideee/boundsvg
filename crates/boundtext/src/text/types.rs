@@ -1,3 +1,5 @@
+//! Define authored text requests, resolved geometry, overflow states, and recoverable warnings.
+
 use serde::{Deserialize, Serialize};
 
 use crate::font::FontStyle;
@@ -1387,7 +1389,6 @@ pub fn first_excess_rich_text_depth(nodes: &[RichTextNodeInput]) -> Option<usize
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TextWarningCode {
     InlineBoxMaxDepth,
-    LongRubyAnnotation,
     MissingGlyph,
     RubyInterCharacterFallback,
 }
@@ -1398,10 +1399,6 @@ impl TextWarningCode {
             Self::InlineBoxMaxDepth => (
                 "Skip the inline box above the supported nesting depth.",
                 "Reduce inline-box nesting depth.",
-            ),
-            Self::LongRubyAnnotation => (
-                "Render without JLREQ overhang adjustment.",
-                "Shorten the annotation or adjust the base text.",
             ),
             Self::MissingGlyph => (
                 "Render the missing glyph as blank.",

@@ -4,7 +4,7 @@ title: Rt
 
 # Rt
 
-Ruby annotation text. Must appear as the sole Rt child inside a Ruby node.
+Ruby annotation text. Must appear inside a Ruby node. Multiple Rt children form separate annotation levels; the first is the primary reading.
 
 ## Props
 

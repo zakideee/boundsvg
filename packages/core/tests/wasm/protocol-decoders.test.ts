@@ -18,6 +18,7 @@ import {
 import type { RenderToIrEnvelope, WasmEngineInstance } from "../../src/wasm/types.js";
 import { circularClip } from "../helpers/box-clip.js";
 
+/** Finite baseline rectangle used by independent wire fixtures. */
 const bbox = { x: 0, y: 0, w: 100, h: 40 };
 
 /** Build the canonical wire envelope containing every supported output field and derived Path metadata. */
@@ -699,7 +700,7 @@ describe("WASM protocol decoders", () => {
     );
   });
 
-  it("decodes all six measurement result contracts including nested flow and ruby fields", () => {
+  it("decodes all six measurement result contracts including nested measurement-only flow fields", () => {
     const warning = {
       severity: "recoverable",
       code: "FLOW",
@@ -743,22 +744,6 @@ describe("WASM protocol decoders", () => {
               baselineOffset: 12,
               overflowReason: "ellipsis",
               style: fragmentStyle,
-              ruby: {
-                text: "えー",
-                position: "over",
-                align: "center",
-                style: fragmentStyle,
-                gapPx: 1,
-                offsetPx: 2,
-                lineSizing: "stable",
-                levels: [
-                  {
-                    text: "えー",
-                    position: "over",
-                    runs: [{ text: "えー", style: fragmentStyle }],
-                  },
-                ],
-              },
             },
           ],
           lineIndex: 0,
@@ -770,8 +755,6 @@ describe("WASM protocol decoders", () => {
       overflowReason: "maxLinesTruncated",
       chosenFontSizePx: 16,
       warnings: [warning],
-      topRubyOverflowPx: 8,
-      bottomRubyOverflowPx: 0,
     };
     expect(decodeTextFlowWithExclusionsResult(JSON.stringify(flow))).toEqual(flow);
     expect(
@@ -939,8 +922,6 @@ describe("WASM protocol decoders", () => {
             exhausted: true,
             usedLineCount: 0,
             overflowReason: "overflow",
-            topRubyOverflowPx: 0,
-            bottomRubyOverflowPx: 0,
           }),
         ),
       "TEXT_LAYOUT_OUTPUT_INVALID",
@@ -977,9 +958,7 @@ describe("WASM protocol decoders", () => {
             layout: {
               lines: [],
               exhausted: true,
-              usedLineCount: 0,
-              topRubyOverflowPx: "0",
-              bottomRubyOverflowPx: 0,
+              usedLineCount: "0",
             },
           }),
         ),

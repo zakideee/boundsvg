@@ -260,6 +260,20 @@ interpreted as an empty region or a rejected fit/ellipsis candidate.
 - **Inline spans** (`TextSpanInput`): Per-span font family, weight, style, size, color, letter spacing
 - **Ruby annotations** (`RichTextNodeInput::Ruby`): Base text with `<rt>` annotation, configurable position and alignment
 
+Long readings keep their natural cluster spacing. `start` fixes the leading
+edge; the other alignments fix the natural center. The base moves as one block.
+Each final line/column/region reserves reading overflow after bounded lending
+from an immediately adjacent unannotated kana or `、。，．・`. Lending excludes
+tracking/padding and interfering ink; the reading must also lie entirely on the
+outward side of the neighbor's ink, away from the base. Horizontal over/vertical
+under require annotation.max <= neighbor.min on the cross axis; horizontal
+under/vertical over require neighbor.max <= annotation.min. The loan is bounded
+by half the neighbor's natural glyph-frame advance and the reading edge cluster's
+font size. Existing style/provider fit certification and work limits apply. Short
+positive space distribution is unchanged. Intrinsic, wrap, flow, fit, and
+ellipsis use the same reserved cells. Signed authored tracking remains accepted;
+it is not clamped to manufacture a nonnegative base advance.
+
 Ordinary spans adapt to the same rich planner as recursive rich text. Adjacent
 paint-only changes (color, strokes, shadows, or decoration) do not reset
 shaping; an indivisible cluster crossing such a boundary uses the paint of its
@@ -299,6 +313,39 @@ RegionIntervalLimit, InvariantViolation}` and their closed reason enums.
   `Eq`; borrow or clone values where ownership requires it.
 
 These are breaking changes for the `0.x` Rust crate contract.
+
+### Ruby flow measurement migration
+
+`FlowFragment` no longer contains `ruby`. `FlowRubyAnnotation`, its level/run
+types, and `compute_ruby_overflow` are removed. Native `positioned_glyphs` remains
+the settled renderer geometry; no public wire glyph DTO replaces the removed
+metadata. The boundsvg schema 39 projection also removes
+`TextFlowRubyAnnotation` and its level/run types, and the two global Ruby overflow
+fields, including inside shrinkwrap results. Fragment coordinates describe the
+physical top-left of a reserved cell, not the base or reading paint origin.
+
+Ruby-bearing `FlowTextSpan` documents now use the canonical rich planner even
+without fit or ellipsis. That path does not return fragment `style`, including
+ordinary fragments within the same document. Its diagnostic ranges count rich
+tokens; the plain path retains grapheme ranges. They are not paint/source
+identities. Whitespace normalization belongs to the rich planner once.
+
+`build_inline_runs_inputs` now returns `Vec<TextSpanInput>` instead of a tuple.
+It is a shaping-style adapter, not a Ruby layout result. Keep the original
+`FlowTextSpan` definitions for canonical rich conversion, or pass Ruby-bearing
+spans to the public flow entrypoints instead of laying out these plain style inputs.
+`prepare_inline_runs` no longer accepts the Ruby-info argument.
+`SpanRubyInfo`, `RubyAnnotationMeta`,
+and `ShapedInlineRuns::{ruby_annotations, non_breakable}` are removed. Plain
+inline shaping and flow APIs retain their existing purpose and behavior.
+`TextWarningCode::LongRubyAnnotation` is removed; long readings are placed by
+the resolver instead. Update exhaustive warning matches. Other warnings retain
+their delivery behavior.
+
+Recheck long-reading widths, line/region membership, fit, ellipsis, and output
+snapshots. Unit source and Ruby-level identity remain stable, while line/visual
+order and ink-centered transforms may change. Render the original content through
+the renderer rather than reconstructing Ruby from measurement fragments.
 
 ## Font backend migration
 

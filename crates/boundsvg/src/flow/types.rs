@@ -10,6 +10,7 @@ use crate::text::types::RichTextNodeInput;
 // WASM DTO types (serde-annotated, kept for JSON bridge)
 // ---------------------------------------------------------------------------
 
+/// Accept plain text with authored per-line region widths.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowInput {
@@ -89,6 +90,7 @@ pub(crate) struct TextFlowInput {
     pub font_feature_settings: Option<String>,
 }
 
+/// Report one plain flow line and its diagnostic grapheme range.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowLine {
@@ -99,6 +101,7 @@ pub(crate) struct TextFlowLine {
     pub available_inline_size_px: f64,
 }
 
+/// Report plain flow lines, exhaustion, and recoverable diagnostics.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowResult {
@@ -112,6 +115,7 @@ pub(crate) struct TextFlowResult {
 // Exclusion-based flow layout DTOs
 // ---------------------------------------------------------------------------
 
+/// Accept authored content and exclusion geometry for canonical boundtext measurement.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowWithExclusionsInput {
@@ -336,6 +340,7 @@ pub(crate) struct FlowTextSpanDto {
     pub ruby_color: Option<String>,
 }
 
+/// Retain plain-span style facts for diagnostics, without defining a rendering recipe.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowFragmentStyle {
@@ -349,47 +354,18 @@ pub(crate) struct TextFlowFragmentStyle {
     pub color: Option<String>,
 }
 
-/// Ruby annotation attached to a flow fragment.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct TextFlowRubyAnnotation {
-    /// Annotation text (e.g. furigana reading).
-    pub text: String,
-    /// "over" (default) or "under".
-    pub position: String,
-    /// "start", "center", "space-between", "space-around" (default).
-    pub align: String,
-    /// Style for the annotation text.
-    pub style: TextFlowFragmentStyle,
-    /// Gap between annotation and base text (px).
-    pub gap_px: f64,
-    pub offset_px: f64,
-    pub line_sizing: String,
-    pub levels: Vec<TextFlowRubyAnnotationLevel>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct TextFlowRubyAnnotationRun {
-    pub text: String,
-    pub style: TextFlowFragmentStyle,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct TextFlowRubyAnnotationLevel {
-    pub text: String,
-    pub position: String,
-    pub runs: Vec<TextFlowRubyAnnotationRun>,
-}
-
+/// Report a reserved cell and diagnostic range; render the authored Text to obtain glyph placement.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowFragment {
     pub text: String,
+    /// Start of a grapheme range on plain paths, or a token range on canonical rich paths.
     pub char_start: usize,
+    /// Exclusive end in the same diagnostic index space as `char_start`.
     pub char_end: usize,
+    /// Physical flow-coordinate x of the reserved cell, not the base glyph's paint origin.
     pub x: f64,
+    /// Physical flow-coordinate y of the reserved cell, not an annotation paint origin.
     pub y: f64,
     /// Consumed inline advance in px (physical width for horizontal, physical height for vertical).
     pub inline_advance_px: f64,
@@ -404,11 +380,11 @@ pub(crate) struct TextFlowFragment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overflow_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Plain-span diagnostic style; absent for every fragment of a canonical rich document.
     pub style: Option<TextFlowFragmentStyle>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ruby: Option<TextFlowRubyAnnotation>,
 }
 
+/// Report one line or column's measured cross-axis size and region fragments.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowExclusionLine {
@@ -432,6 +408,7 @@ pub(crate) enum FlowOverflowReason {
     CannotFit,
 }
 
+/// Report measured layout facts without exposing a fragment-based text rendering protocol.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextFlowWithExclusionsResult {
@@ -444,18 +421,13 @@ pub(crate) struct TextFlowWithExclusionsResult {
     pub chosen_font_size_px: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<SerializedRecoverableError>,
-    /// Legacy over-side annotation extent (font size + frame gap) for manual
-    /// fragment rendering. Never add this value to a measured height.
-    pub top_ruby_overflow_px: f64,
-    /// Legacy under-side annotation extent (font size + frame gap) for manual
-    /// fragment rendering. Never add this value to a measured height.
-    pub bottom_ruby_overflow_px: f64,
 }
 
 // ---------------------------------------------------------------------------
 // Measure text block DTOs
 // ---------------------------------------------------------------------------
 
+/// Accept content and frame constraints for block measurement.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MeasureTextBlockInput {
@@ -571,6 +543,7 @@ pub(crate) struct MeasureTextBlockLineDto {
     pub kinsoku_unresolved: bool,
 }
 
+/// Report measured block dimensions and optional line diagnostics.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MeasureTextBlockResult {
@@ -586,6 +559,7 @@ pub(crate) struct MeasureTextBlockResult {
 // Shrinkwrap text DTOs
 // ---------------------------------------------------------------------------
 
+/// Accept content and bounded inline-size search controls.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ShrinkwrapTextInput {
@@ -718,6 +692,7 @@ pub(crate) enum ShrinkwrapStatusDto {
     Infeasible,
 }
 
+/// Report the chosen inline size and measured block dimensions.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ShrinkwrapTextResult {
@@ -738,6 +713,7 @@ pub(crate) struct ShrinkwrapTextResult {
 // Shrinkwrap flow DTOs
 // ---------------------------------------------------------------------------
 
+/// Accept authored content, exclusions, and bounded flow-size search controls.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ShrinkwrapFlowInput {
@@ -864,6 +840,7 @@ pub(crate) struct ShrinkwrapFlowInput {
     pub font_feature_settings: Option<String>,
 }
 
+/// Report the selected flow frame and its measurement-only layout.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ShrinkwrapFlowResultDto {
@@ -884,6 +861,7 @@ pub(crate) struct ShrinkwrapFlowResultDto {
 // Intrinsic inline-size DTOs
 // ---------------------------------------------------------------------------
 
+/// Accept content for min-content and max-content inline measurement.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct IntrinsicInlineSizeInput {
@@ -968,6 +946,7 @@ pub(crate) struct IntrinsicInlineSizeInput {
     pub font_feature_settings: Option<String>,
 }
 
+/// Report intrinsic inline dimensions and recoverable diagnostics.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct IntrinsicInlineSizeResult {

@@ -225,9 +225,9 @@
     }
   },
   {
-    "id": "ruby-horizontal-long-rt-warning",
+    "id": "ruby-horizontal-long-natural-spacing",
     "category": "ruby",
-    "description": "長いルビは描画しつつ Experimental warning を出す",
+    "description": "長いルビの自然な字間を保ち、必要な配置幅を予約する",
     "request": {
       "text": "",
       "rich_text": [
@@ -261,7 +261,7 @@
     "expected": {
       "overflow": "none",
       "line_count": 1,
-      "warning_codes": ["LONG_RUBY_ANNOTATION"],
+      "warning_codes": [],
       "glyph_assertions": [
         { "text": "き", "font_size_px": 12, "relative_to": "今", "position": "above" }
       ]

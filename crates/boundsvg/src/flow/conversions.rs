@@ -1,8 +1,10 @@
+//! Project boundtext measurement facts and diagnostics without reconstructing text geometry.
+
 use super::geometry;
 use super::types::{
     FlowOverflowReason, FlowTextSpanDto, ShrinkwrapStatusDto, TextFlowExclusionLine,
-    TextFlowFragment, TextFlowFragmentStyle, TextFlowLine, TextFlowResult, TextFlowRubyAnnotation,
-    TextFlowRubyAnnotationLevel, TextFlowRubyAnnotationRun, TextFlowWithExclusionsResult,
+    TextFlowFragment, TextFlowFragmentStyle, TextFlowLine, TextFlowResult,
+    TextFlowWithExclusionsResult,
 };
 use crate::diagnostics::text_warning_to_recoverable;
 use crate::text::flow as bt_flow;
@@ -117,37 +119,6 @@ pub(super) fn convert_fragment_style(style: &bt_flow::FlowFragmentStyle) -> Text
     }
 }
 
-/// Convert a `bt_flow::FlowRubyAnnotation` to `TextFlowRubyAnnotation`.
-pub(super) fn convert_ruby_annotation(
-    ruby: &bt_flow::FlowRubyAnnotation,
-) -> TextFlowRubyAnnotation {
-    TextFlowRubyAnnotation {
-        text: ruby.text.clone(),
-        position: ruby.position.clone(),
-        align: ruby.align.clone(),
-        style: convert_fragment_style(&ruby.style),
-        gap_px: ruby.gap_px,
-        offset_px: ruby.offset_px,
-        line_sizing: ruby.line_sizing.clone(),
-        levels: ruby
-            .levels
-            .iter()
-            .map(|level| TextFlowRubyAnnotationLevel {
-                text: level.text.clone(),
-                position: level.position.clone(),
-                runs: level
-                    .runs
-                    .iter()
-                    .map(|run| TextFlowRubyAnnotationRun {
-                        text: run.text.clone(),
-                        style: convert_fragment_style(&run.style),
-                    })
-                    .collect(),
-            })
-            .collect(),
-    }
-}
-
 /// Convert a `bt_flow::FlowFragment` to `TextFlowFragment`.
 pub(super) fn convert_fragment(frag: &bt_flow::FlowFragment) -> TextFlowFragment {
     TextFlowFragment {
@@ -162,7 +133,6 @@ pub(super) fn convert_fragment(frag: &bt_flow::FlowFragment) -> TextFlowFragment
         baseline_offset: frag.baseline_offset,
         overflow_reason: frag.overflow_reason.clone(),
         style: frag.style.as_ref().map(convert_fragment_style),
-        ruby: frag.ruby.as_ref().map(convert_ruby_annotation),
     }
 }
 
@@ -193,7 +163,6 @@ pub(super) fn convert_simple_result(result: bt_flow::FlowSimpleResult) -> TextFl
 pub(super) fn convert_flow_result(
     result: bt_flow::FlowLayoutResult,
 ) -> TextFlowWithExclusionsResult {
-    let (top_ruby_overflow_px, bottom_ruby_overflow_px) = bt_flow::compute_ruby_overflow(&result);
     TextFlowWithExclusionsResult {
         lines: result
             .lines
@@ -213,11 +182,10 @@ pub(super) fn convert_flow_result(
             .iter()
             .map(|warning| text_warning_to_recoverable(warning, None))
             .collect(),
-        top_ruby_overflow_px,
-        bottom_ruby_overflow_px,
     }
 }
 
+/// Project the shrinkwrap outcome into the shared serialized status vocabulary.
 pub(super) fn convert_shrinkwrap_status(
     status: shrinkwrap::ShrinkwrapStatus,
 ) -> ShrinkwrapStatusDto {

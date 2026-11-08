@@ -174,6 +174,11 @@ closed SVG path geometry; `x` and `y` default to `0`, and `fillRule` defaults to
 </Text>
 ```
 
+Ruby and styled content remain inside this one Text node, so the renderer uses
+the same settled placement as measurement. Public flow fragments describe
+reserved cells and diagnostic ranges; they cannot reconstruct Ruby paint.
+See [Ruby measurement migration](./ruby#measurement-and-migration).
+
 The minimum region setting follows the inline axis: it filters narrow widths
 in horizontal text and narrow heights in vertical text. Moving an exclusion is
 a layout change, so materialize its current geometry into a new static scene

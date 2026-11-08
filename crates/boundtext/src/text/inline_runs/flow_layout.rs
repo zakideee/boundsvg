@@ -1,3 +1,5 @@
+//! Fill plain styled-run regions along the horizontal or vertical inline axis.
+
 use super::super::paragraph::{BreakCursor, LayoutLine, LayoutLineFragment};
 use super::super::types::WrapMode;
 use super::types::ShapedInlineRuns;
@@ -17,6 +19,7 @@ pub fn layout_next_flow_column_inline(
     layout_next_flow_line_inline(shaped, cursor, regions, wrap)
 }
 
+/// Fill the next plain styled column while retaining authored newline boundaries.
 pub fn layout_next_flow_column_inline_with_forced_newlines(
     shaped: &ShapedInlineRuns,
     cursor: &mut BreakCursor,
@@ -39,6 +42,7 @@ pub fn layout_next_flow_line_inline(
     layout_next_flow_line_inline_impl(shaped, cursor, regions, wrap, false)
 }
 
+/// Fill the next plain styled line while retaining authored newline boundaries.
 pub fn layout_next_flow_line_inline_with_forced_newlines(
     shaped: &ShapedInlineRuns,
     cursor: &mut BreakCursor,
@@ -84,17 +88,6 @@ fn layout_next_flow_line_inline_impl(
     let mut fragments = Vec::new();
     let last_region = regions.len() - 1;
 
-    // Helper: find_breakable but reject non-breakable positions (ruby interior)
-    let find_breakable_checked =
-        |wrap, i, frag_start, uax14: Option<&[bool]>, chars: &[&str], prev| {
-            let candidate = find_breakable(wrap, i, frag_start, uax14, chars, prev);
-            // Reject positions flagged as non-breakable (inside ruby tokens)
-            match candidate {
-                Some(pos) if pos < shaped.non_breakable.len() && shaped.non_breakable[pos] => prev,
-                _ => candidate,
-            }
-        };
-
     // --- Non-last regions: wrap-aware fill (no kinsoku) ---
     for (region_idx, &(_x, width)) in regions[..last_region].iter().enumerate() {
         if cursor.char_index >= line_limit {
@@ -107,7 +100,7 @@ fn layout_next_flow_line_inline_impl(
         let mut last_breakable = None;
 
         for i in frag_start..line_limit {
-            last_breakable = find_breakable_checked(
+            last_breakable = find_breakable(
                 wrap,
                 i,
                 frag_start,
@@ -117,22 +110,13 @@ fn layout_next_flow_line_inline_impl(
             );
 
             if used + advances[i] > width {
-                let mut break_pos = match wrap {
+                let break_pos = match wrap {
                     WrapMode::None => frag_start,
                     WrapMode::Char => i,
                     WrapMode::Word => last_breakable
                         .filter(|&bp| bp > frag_start)
                         .unwrap_or(frag_start),
                 };
-                // Retreat to the start of an atomic ruby range while keeping
-                // any legal non-ruby prefix in the current region.
-                while break_pos > frag_start
-                    && break_pos < shaped.non_breakable.len()
-                    && shaped.non_breakable[break_pos]
-                {
-                    break_pos -= 1;
-                }
-
                 if break_pos > frag_start {
                     frag_end = break_pos;
                     used = advances[frag_start..break_pos].iter().sum();
@@ -171,7 +155,7 @@ fn layout_next_flow_line_inline_impl(
         let mut last_breakable = None;
 
         for i in line_start..line_limit {
-            last_breakable = find_breakable_checked(
+            last_breakable = find_breakable(
                 wrap,
                 i,
                 line_start,
@@ -193,7 +177,7 @@ fn layout_next_flow_line_inline_impl(
                 {
                     continue;
                 }
-                let Some(mut break_pos) = last_breakable
+                let Some(break_pos) = last_breakable
                     .filter(|&candidate| candidate > line_start)
                     .or_else(|| {
                         (wrap == WrapMode::Char || shaped.kinsoku_profile.is_some()).then_some(i)
@@ -202,26 +186,9 @@ fn layout_next_flow_line_inline_impl(
                     continue;
                 };
 
-                // Non-breakable guard: if the break_pos falls inside a
-                // non-breakable range (ruby token), absorb forward until
-                // the end of the non-breakable range.
-                while break_pos < grapheme_count
-                    && break_pos < shaped.non_breakable.len()
-                    && shaped.non_breakable[break_pos]
-                {
-                    break_pos += 1;
-                }
-
-                // Apply kinsoku if available, but never retreat into a
-                // non-breakable range (ruby token interior).
                 let final_pos = if let Some(profile) = shaped.kinsoku_profile {
                     let adjusted = apply_kinsoku(&chars_ref, break_pos, line_start, profile);
                     if adjusted <= line_start {
-                        break_pos
-                    } else if adjusted < shaped.non_breakable.len()
-                        && shaped.non_breakable[adjusted]
-                    {
-                        // kinsoku retreated into a ruby token — reject
                         break_pos
                     } else {
                         adjusted
@@ -266,10 +233,7 @@ fn layout_next_flow_line_inline_impl(
         };
         if let Some(profile) = shaped.kinsoku_profile {
             let original_end = frag_end;
-            while frag_end < line_limit
-                && (!is_valid_break_boundary(&chars_ref, frag_end, profile)
-                    || shaped.non_breakable.get(frag_end).copied().unwrap_or(false))
-            {
+            while frag_end < line_limit && !is_valid_break_boundary(&chars_ref, frag_end, profile) {
                 used += advances[frag_end];
                 intentional_overflow_px = add_bounded_intentional_overflow_px(
                     intentional_overflow_px,
@@ -372,7 +336,7 @@ mod tests {
     use crate::text::inline_runs::types::ShapedInlineRuns;
     use crate::text::kinsoku::get_kinsoku_profile;
 
-    fn ruby_after_opening_bracket() -> ShapedInlineRuns {
+    fn opening_bracket_sequence() -> ShapedInlineRuns {
         ShapedInlineRuns {
             text: "「注音符い".to_string(),
             grapheme_advances_px: vec![10.0; 5],
@@ -385,54 +349,13 @@ mod tests {
             uax14_break_flags: None,
             kinsoku_profile: get_kinsoku_profile(Some("ja")),
             hanging_chars: None,
-            // The ruby base covers [1, 4), so only its interior boundaries
-            // at 2 and 3 are locked.
-            non_breakable: vec![false, false, true, true, false],
-            ruby_annotations: Vec::new(),
             notdef_infos: Vec::new(),
         }
     }
 
     #[test]
-    fn kinsoku_absorption_does_not_stop_inside_ruby() {
-        let shaped = ruby_after_opening_bracket();
-        let mut cursor = BreakCursor::default();
-
-        let line =
-            layout_next_flow_line_inline(&shaped, &mut cursor, &[(0.0, 10.0)], WrapMode::Char)
-                .expect("flow line");
-
-        assert_eq!(line.fragments.len(), 1);
-        let fragment = &line.fragments[0];
-        assert_eq!(fragment.char_start, 0);
-        assert_eq!(fragment.char_end, 4);
-        assert_eq!(fragment.inline_advance_px, 40.0);
-        assert_eq!(fragment.intentional_overflow_px, 10.0);
-        assert!(
-            fragment.inline_advance_px > 10.0 + fragment.intentional_overflow_px,
-            "an atomic ruby wider than two regions must remain uncontained"
-        );
-        assert_eq!(
-            fragment.overflow_reason,
-            Some(crate::text::paragraph::LayoutOverflowReason::KinsokuAbsorb)
-        );
-    }
-
-    #[test]
-    fn vertical_wrapper_preserves_ruby_during_kinsoku_absorption() {
-        let shaped = ruby_after_opening_bracket();
-        let mut cursor = BreakCursor::default();
-
-        let column =
-            layout_next_flow_column_inline(&shaped, &mut cursor, &[(0.0, 10.0)], WrapMode::Char)
-                .expect("flow column");
-
-        assert_eq!(column.fragments[0].char_end, 4);
-    }
-
-    #[test]
     fn kinsoku_allowance_does_not_hide_preexisting_overflow() {
-        let mut shaped = ruby_after_opening_bracket();
+        let mut shaped = opening_bracket_sequence();
         shaped.grapheme_advances_px[0] = 20.0;
         let mut cursor = BreakCursor::default();
 
@@ -441,7 +364,7 @@ mod tests {
                 .expect("flow line");
         let fragment = &line.fragments[0];
 
-        assert_eq!(fragment.inline_advance_px, 50.0);
+        assert_eq!(fragment.inline_advance_px, 30.0);
         assert_eq!(fragment.intentional_overflow_px, 10.0);
         assert!(
             fragment.inline_advance_px > 10.0 + fragment.intentional_overflow_px,
@@ -463,8 +386,6 @@ mod tests {
             uax14_break_flags: None,
             kinsoku_profile: None,
             hanging_chars: crate::text::kinsoku::get_hanging_chars(true),
-            non_breakable: vec![false; 4],
-            ruby_annotations: Vec::new(),
             notdef_infos: Vec::new(),
         };
         let mut cursor = BreakCursor::default();
@@ -496,8 +417,6 @@ mod tests {
             uax14_break_flags: None,
             kinsoku_profile: None,
             hanging_chars: crate::text::kinsoku::get_hanging_chars(true),
-            non_breakable: vec![false; 5],
-            ruby_annotations: Vec::new(),
             notdef_infos: Vec::new(),
         };
         let mut cursor = BreakCursor::default();
@@ -530,8 +449,6 @@ mod tests {
             uax14_break_flags: None,
             kinsoku_profile: None,
             hanging_chars: crate::text::kinsoku::get_hanging_chars(true),
-            non_breakable: vec![false; 8],
-            ruby_annotations: Vec::new(),
             notdef_infos: Vec::new(),
         };
         let mut cursor = BreakCursor::default();

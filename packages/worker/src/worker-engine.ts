@@ -273,10 +273,14 @@ export class WorkerEngine {
 
     this.handleMessage = (event: MessageEvent) => {
       const data: unknown = event.data;
-      const { id: responseId, message: response } = decodeWorkerResponseMessage(data);
+      const { id: responseId, message: response, error } = decodeWorkerResponseMessage(data);
       if (response === undefined) {
         if (responseId !== undefined) {
-          if (this.scheduler.receive(responseId, undefined)) {
+          const failedResponse: WorkerResponse | undefined =
+            error === undefined
+              ? undefined
+              : { id: responseId, type: "error", error: error.toJSON() };
+          if (this.scheduler.receive(responseId, failedResponse)) {
             return;
           }
         }
@@ -948,7 +952,9 @@ export class WorkerEngine {
     return response.result;
   }
 
-  /** Request WASM flow layout around exclusions from the Worker with optional logical cancellation. */
+  /** Request measured flow cells and regions with optional logical cancellation.
+   * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID when the producer returns removed metadata or invalid facts.
+   */
   async layoutTextFlowWithExclusions(
     input: TextFlowWithExclusionsInput,
     requestOptions?: WorkerRequestOptions,
@@ -1013,7 +1019,9 @@ export class WorkerEngine {
     return response.result;
   }
 
-  /** Request a WASM fitted flow size from the Worker with optional logical cancellation. */
+  /** Request a chosen flow frame and its measurement-only layout with optional cancellation.
+   * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID when nested flow output violates the contract.
+   */
   async shrinkwrapFlow(
     input: ShrinkwrapFlowInput,
     requestOptions?: WorkerRequestOptions,

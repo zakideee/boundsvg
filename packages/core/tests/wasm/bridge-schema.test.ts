@@ -99,17 +99,6 @@ const typeTargets: Record<string, TypeTarget[]> = {
   TextFlowLayoutInput: [{ file: layoutAdapterFile, typeName: "WasmTextInput", path: ["flow"] }],
   TextFlowLine: [{ file: wasmIndexFile, typeName: "TextFlowLine" }],
   TextFlowResult: [{ file: wasmIndexFile, typeName: "TextFlowResult" }],
-  TextFlowRubyAnnotation: [{ file: wasmIndexFile, typeName: "TextFlowRubyAnnotation" }],
-  TextFlowRubyAnnotationLevel: [
-    { file: wasmIndexFile, typeName: "TextFlowRubyAnnotation", path: ["levels", "[]"] },
-  ],
-  TextFlowRubyAnnotationRun: [
-    {
-      file: wasmIndexFile,
-      typeName: "TextFlowRubyAnnotation",
-      path: ["levels", "[]", "runs", "[]"],
-    },
-  ],
   TextFlowWithExclusionsInput: [{ file: wasmIndexFile, typeName: "TextFlowWithExclusionsInput" }],
   TextFlowWithExclusionsResult: [{ file: wasmIndexFile, typeName: "TextFlowWithExclusionsResult" }],
   FontInput: [{ file: layoutAdapterFile, typeName: "WasmFontInput" }],
@@ -960,14 +949,14 @@ describe("boundsvg WASM serde / TypeScript entry and exit schema", () => {
       "every derived or explicit manual wire DTO must be parsed",
     ).toBe(rustDtos.size);
     expect([...rustDtos.keys()].sort()).toEqual(mappedNames);
-    expect(rustDtos.size).toBe(165);
+    expect(rustDtos.size).toBe(162);
     expect(
       [...rustDtos.values()].reduce(
         (sum, dto) =>
           sum + dto.fields.length + dto.variants.flatMap((variant) => variant.fields).length,
         0,
       ),
-    ).toBe(1073);
+    ).toBe(1057);
     expect([...rustDtos.values()].reduce((sum, dto) => sum + dto.variants.length, 0)).toBe(111);
   });
 

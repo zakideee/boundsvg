@@ -1,7 +1,8 @@
+//! Normalize authored rich content once and resolve inherited shaping styles.
+
 use crate::font::FontStyle;
 use crate::font::shaping::{format_css_font_feature_settings, format_css_font_variation_settings};
 use crate::text::fit::selected_font_size_scale;
-use crate::text::grapheme::grapheme_split;
 use crate::text::types::{RichTextNodeInput, RichTextStyleInput, TextWarning, TextWarningCode};
 
 use super::{
@@ -10,6 +11,11 @@ use super::{
     TextLayoutRequest,
 };
 
+/// Flatten and normalize content at a selected size, retaining annotation and decoration ownership.
+///
+/// # Errors
+///
+/// Return font/style preparation failures without replacing the authored content.
 pub(super) fn prepare_rich_text(
     req: &TextLayoutRequest,
     font_ctx: &crate::font::FontContext<'_>,
@@ -163,6 +169,7 @@ pub(super) fn coalesce_shaping_segments(nodes: &mut Vec<RichInlineNode>) {
     *nodes = merged;
 }
 
+/// Detect decoration ownership that requires the rich planner for span or recursive input.
 pub(super) fn request_has_text_decoration(req: &TextLayoutRequest<'_>) -> bool {
     req.spans
         .is_some_and(|spans| spans.iter().any(|span| span.text_decoration.is_some()))
@@ -258,6 +265,7 @@ pub(super) fn are_resolved_styles_shaping_equivalent(
         && left.text_orientation == right.text_orientation
 }
 
+/// Resolve inherited defaults and scale pixel metrics to the selected font size.
 pub(super) fn build_default_style(
     req: &TextLayoutRequest,
     default_font_families: &[String],
@@ -289,6 +297,7 @@ pub(super) fn build_default_style(
     }
 }
 
+/// Apply authored overrides while retaining inherited values and line-height precedence.
 pub(super) fn resolve_style(
     input: &RichTextStyleInput,
     fallback: &ResolvedStyle,
@@ -535,6 +544,7 @@ fn expand_tabs_in_decoration_runs(segment: &mut RichSegment, tab_size: u32) {
     }
 }
 
+/// Append rich inline nodes with inherited styles and recoverable fallback diagnostics.
 pub(super) fn flatten_rich_nodes_with_warnings(
     nodes: &[RichTextNodeInput],
     current_style: &ResolvedStyle,
@@ -596,11 +606,8 @@ pub(super) fn flatten_rich_nodes_with_warnings(
                 let mut base_nodes = Vec::new();
                 flatten_ruby_segments(base, &ruby_style, &mut base_nodes, scale);
                 let rt_level_nodes = flatten_ruby_levels(rt, rt_levels, &ruby_style, scale);
-                if !base_nodes.is_empty() && !rt_level_nodes.is_empty() {
+                if !base_nodes.is_empty() {
                     let warning_start = warnings.len();
-                    for rt_nodes in &rt_level_nodes {
-                        push_long_ruby_annotation_warning(&base_nodes, rt_nodes, warnings);
-                    }
                     let resolved_position = resolve_ruby_position(ruby_position.as_deref());
                     if resolved_position == RubyPosition::InterCharacter {
                         push_inter_character_fallback_warning(warnings);
@@ -751,11 +758,8 @@ fn flatten_inline_box_children(
                 let mut base_nodes = Vec::new();
                 flatten_ruby_segments(base, &ruby_style, &mut base_nodes, scale);
                 let rt_level_nodes = flatten_ruby_levels(rt, rt_levels, &ruby_style, scale);
-                if !base_nodes.is_empty() && !rt_level_nodes.is_empty() {
+                if !base_nodes.is_empty() {
                     let warning_start = warnings.len();
-                    for rt_nodes in &rt_level_nodes {
-                        push_long_ruby_annotation_warning(&base_nodes, rt_nodes, warnings);
-                    }
                     let resolved_position = resolve_ruby_position(ruby_position.as_deref());
                     if resolved_position == RubyPosition::InterCharacter {
                         push_inter_character_fallback_warning(warnings);
@@ -974,48 +978,12 @@ fn flatten_ruby_segments(
     }
 }
 
-fn push_long_ruby_annotation_warning(
-    base_nodes: &[RichSegment],
-    rt_nodes: &[RichSegment],
-    warnings: &mut Vec<TextWarning>,
-) {
-    let base_advance = estimate_ruby_inline_advance(base_nodes);
-    let rt_advance = estimate_ruby_inline_advance(rt_nodes);
-    if rt_advance <= base_advance + 0.01 {
-        return;
-    }
-
-    let base_text: String = base_nodes
-        .iter()
-        .map(|segment| segment.text.as_str())
-        .collect();
-    let rt_text: String = rt_nodes
-        .iter()
-        .map(|segment| segment.text.as_str())
-        .collect();
-
-    warnings.push(TextWarning::recoverable(
-        TextWarningCode::LongRubyAnnotation,
-        format!(
-            "Ruby annotation \"{rt_text}\" is wider than base text \"{base_text}\"; long ruby overhang is experimental"
-        ),
-        "rendered-without-jlreq-overhang-adjustment",
-    ));
-}
-
 fn push_inter_character_fallback_warning(warnings: &mut Vec<TextWarning>) {
     warnings.push(TextWarning::recoverable(
         TextWarningCode::RubyInterCharacterFallback,
         "rubyPosition=\"inter-character\" is not implemented yet; rendering as over ruby",
         "ruby-position-over",
     ));
-}
-
-fn estimate_ruby_inline_advance(segments: &[RichSegment]) -> f64 {
-    segments
-        .iter()
-        .map(|segment| grapheme_split(&segment.text).len() as f64 * segment.style.font_size_px)
-        .sum()
 }
 
 /// Collect notdef warnings from all positioned glyphs across layout tokens.

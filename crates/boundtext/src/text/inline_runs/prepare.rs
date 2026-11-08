@@ -6,7 +6,7 @@ use super::super::paragraph::build_uax14_break_set;
 use super::super::types::{
     Language, Line, LineFragment, NotdefInfo, TextOrientation, TextRunStyle, TextSpanInput,
 };
-use super::types::{RubyAnnotationMeta, RunSegment, ShapedInlineRuns, SpanRef, SpanRubyInfo};
+use super::types::{RunSegment, ShapedInlineRuns, SpanRef};
 use crate::font::FontContext;
 use crate::font::FontRegistry;
 use crate::font::shaping::{
@@ -18,8 +18,7 @@ use crate::text::engine::{build_byte_to_char_map, build_char_byte_offsets};
 /// Build `ShapedInlineRuns` from spans.
 ///
 /// Shapes each span once via `shape_inline_runs`, then computes per-grapheme
-/// advances from the merged glyph array. `ruby_info` is a parallel array
-/// of optional ruby metadata per span (same length as `spans`).
+/// advances from the merged glyph array.
 /// When `vertical` is true, shapes with vertical writing mode and computes
 /// vertical advances (`y_advance` with `x_advance` fallback).
 ///
@@ -33,7 +32,6 @@ pub fn prepare_inline_runs(
     default_letter_spacing_px: f64,
     language: Language,
     hanging_punctuation: bool,
-    ruby_info: &[Option<SpanRubyInfo>],
     vertical: bool,
 ) -> Result<ShapedInlineRuns, crate::TextLayoutError> {
     let writing_mode = if vertical { Some("vertical-rl") } else { None };
@@ -86,32 +84,6 @@ pub fn prepare_inline_runs(
     // UAX#14 break flags (reuse paragraph.rs logic)
     let uax14_break_flags = build_uax14_break_set(&chars_ref, None, &text);
 
-    // Ruby: mark non-breakable ranges and collect annotations
-    let count = graphemes.len();
-    let mut non_breakable = vec![false; count];
-    let mut ruby_annotations = Vec::new();
-
-    for seg in &segments {
-        if let Some(ruby) = ruby_info.get(seg.span_index).and_then(|r| r.as_ref()) {
-            // Mark all positions within this span as non-breakable
-            // (the first position at seg.start is breakable — only interior positions are locked)
-            let lock_start = (seg.start + 1).min(count);
-            let lock_end = seg.end.min(count);
-            for is_non_breakable in &mut non_breakable[lock_start..lock_end] {
-                *is_non_breakable = true;
-            }
-            ruby_annotations.push(RubyAnnotationMeta {
-                text: ruby.ruby_text.clone(),
-                position: ruby.ruby_position.clone(),
-                align: ruby.ruby_align.clone(),
-                grapheme_start: seg.start,
-                grapheme_end: seg.end,
-                font_size_px: ruby.ruby_font_size_px,
-                color: ruby.ruby_color.clone(),
-            });
-        }
-    }
-
     // Detect .notdef glyphs (glyph_id=0) and map back to characters
     let notdef_infos = collect_inline_notdef(&glyphs, &text);
 
@@ -124,8 +96,6 @@ pub fn prepare_inline_runs(
         uax14_break_flags,
         kinsoku_profile,
         hanging_chars,
-        non_breakable,
-        ruby_annotations,
         notdef_infos,
     })
 }

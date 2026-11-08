@@ -76,7 +76,7 @@ let wasmModule: WasmModule | null = null;
  * `crates/boundsvg/src/lib.rs`; both sides change in the same commit.
  * Bump whenever a WASM-boundary DTO shape or export signature changes.
  */
-export const EXPECTED_WASM_SCHEMA_VERSION = 38;
+export const EXPECTED_WASM_SCHEMA_VERSION = 39;
 
 function assertWasmSchemaVersion(preloaded: WasmModule): void {
   const readSchemaVersion = preloaded.wasm_schema_version;
@@ -2149,7 +2149,7 @@ export type TextMeasureSpan = {
   rubyColor?: string;
 };
 
-/** Per-fragment style for inline runs (populated when spans are used) */
+/** Plain-span diagnostic style. Canonical rich paths do not produce fragment styles. */
 export type TextFlowFragmentStyle = {
   fontFamily: string;
   fontWeight: number;
@@ -2159,31 +2159,16 @@ export type TextFlowFragmentStyle = {
   color?: string;
 };
 
-/** Ruby annotation attached to a flow fragment */
-export type TextFlowRubyAnnotation = {
-  text: string;
-  position: string;
-  align: string;
-  style: TextFlowFragmentStyle;
-  /** Gap between annotation and base text (px). */
-  gapPx: number;
-  /** Additional displacement away from the base (px). */
-  offsetPx: number;
-  lineSizing: "stable" | "css";
-  /** All annotation levels; top-level fields mirror the first level. */
-  levels: Array<{
-    text: string;
-    position: "over" | "under";
-    runs: Array<{ text: string; style: TextFlowFragmentStyle }>;
-  }>;
-};
-
-/** A text fragment placed within one free region of a visual line */
+/** A measured reserved cell and diagnostic source range; render the authored Text for paint geometry. */
 export type TextFlowFragment = {
   text: string;
+  /** Grapheme index on plain paths, or token index on canonical rich paths. */
   charStart: number;
+  /** Exclusive end in the same diagnostic index space as charStart. */
   charEnd: number;
+  /** Physical flow x of the reserved cell, including the flowBox origin. */
   x: number;
+  /** Physical flow y of the reserved cell, including the flowBox origin. */
   y: number;
   /** Consumed inline advance in px (physical width for horizontal, physical height for vertical). */
   inlineAdvancePx: number;
@@ -2194,8 +2179,8 @@ export type TextFlowFragment = {
    *  line top, or vertical centerline from column left. */
   baselineOffset: number;
   overflowReason?: "kinsokuAbsorb" | "hangingPunctuation" | "ellipsis";
+  /** Absent for every fragment when the document uses the canonical rich path, including Ruby-bearing spans. */
   style?: TextFlowFragmentStyle;
-  ruby?: TextFlowRubyAnnotation;
 };
 
 /** A visual line with one or more fragments */
@@ -2213,7 +2198,7 @@ export type TextFlowExclusionLine = {
 /** Why the flow layout stopped before consuming all text. */
 export type FlowOverflowReason = "maxLinesTruncated" | "flowBoxExhausted" | "cannotFit";
 
-/** Result of text flow with shape exclusions */
+/** Measured flow facts; fragments do not define a text rendering protocol. */
 export type TextFlowWithExclusionsResult = {
   lines: TextFlowExclusionLine[];
   exhausted: boolean;
@@ -2221,10 +2206,6 @@ export type TextFlowWithExclusionsResult = {
   overflowReason?: FlowOverflowReason;
   chosenFontSizePx?: number;
   warnings?: SerializedRecoverableError[];
-  /** Over-side ruby annotation extent (font size + gap); never add it to measured height. */
-  topRubyOverflowPx: number;
-  /** Under-side ruby annotation extent (font size + gap); never add it to measured height. */
-  bottomRubyOverflowPx: number;
 };
 
 // ---------------------------------------------------------------------------

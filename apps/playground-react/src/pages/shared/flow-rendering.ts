@@ -1,11 +1,15 @@
 import { Box, Text, type VNode } from "@boundsvg/core";
+import type { TextFlowFragment } from "@boundsvg/core/wasm";
 
+/** Injected font alias used by the flow scene examples. */
 export const FA = "NotoSansJP-woff2";
 
+/** Format a measured dimension for a preview caption. */
 export function formatPx(value: number): string {
   return `${value.toFixed(1)}px`;
 }
 
+/** Show recoverable measurement warnings alongside the preview. */
 export function renderFlowWarnings(
   warnings: Array<{ code?: string; message?: string }> | undefined,
   x: number,
@@ -37,6 +41,7 @@ export function renderFlowWarnings(
   ];
 }
 
+/** Approximate a plain-text measurement preview; Ruby scenes render authored content directly. */
 export function renderFlowFragments(
   children: VNode[],
   result: { lines: Array<{ fragments: Array<Record<string, unknown>> }> },
@@ -127,21 +132,7 @@ export function renderVerticalFlowFragments(
   }
 }
 
-type RubyFrag = {
-  text: string;
-  x: number;
-  y: number;
-  availableInlineSizePx: number;
-  baselineOffset?: number;
-  style?: { fontSizePx?: number; color?: string };
-  ruby?: {
-    text: string;
-    position: string;
-    style: { fontSizePx: number; color?: string };
-    gapPx: number;
-  };
-};
-
+/** Authored caption spans shared by measurement and the Text/Ruby scene. */
 export const CAPTION_RUBY_SPANS = [
   { text: "春", rubyText: "はる", rubyFontSizePx: 7 },
   { text: "はあけぼの。" },
@@ -161,22 +152,6 @@ export const CAPTION_RUBY_SPANS = [
   { text: "。" },
 ];
 
-function rubyInsets(ruby: RubyFrag["ruby"]): {
-  top: number;
-  bottom: number;
-  gap: number;
-  over: boolean;
-  fontSize: number;
-} {
-  if (!ruby) {
-    return { top: 0, bottom: 0, gap: 0, over: true, fontSize: 7 };
-  }
-  const fontSize = ruby.style.fontSizePx;
-  const gap = ruby.gapPx;
-  const over = ruby.position !== "under";
-  return { top: over ? fontSize + gap : 0, bottom: over ? 0 : fontSize + gap, gap, over, fontSize };
-}
-
 /** Render styled flow fragments with per-fragment font size, color, and baseline shift. */
 export function renderStyledFlowFragments(
   children: VNode[],
@@ -189,7 +164,7 @@ export function renderStyledFlowFragments(
 ): void {
   const lhPx = defaultFs * defaultLh;
   for (const line of result.lines) {
-    for (const frag of line.fragments as RubyFrag[]) {
+    for (const frag of line.fragments as TextFlowFragment[]) {
       const fragFs = frag.style?.fontSizePx ?? defaultFs;
       const fragColor = frag.style?.color ?? defaultColor;
       const fragAscent = fragFs * 0.8;
@@ -261,76 +236,6 @@ export function renderVerticalColumnFragments(
             },
             frag.text,
           ),
-        ),
-      );
-    }
-  }
-}
-
-export function renderRubyFlowFragments(
-  children: VNode[],
-  result: { lines: Array<{ fragments: Array<Record<string, unknown>> }> },
-  fontSize: number,
-  lineHeight: number,
-  color: string,
-  offsetX: number,
-  offsetY: number,
-): void {
-  const lhPx = fontSize * lineHeight;
-  for (const line of result.lines) {
-    for (const frag of line.fragments as RubyFrag[]) {
-      const fragFs = frag.style?.fontSizePx ?? fontSize;
-      const fragColor = frag.style?.color ?? color;
-      const rubyInset = rubyInsets(frag.ruby);
-      const fragAscent = fragFs * 0.8;
-      const yShift = (frag.baselineOffset ?? fragAscent) - fragAscent;
-
-      const fragChildren: VNode[] = [
-        Box(
-          { position: "absolute", left: 0, top: rubyInset.top },
-          Text(
-            {
-              font: FA,
-              fontSizePx: fragFs,
-              color: fragColor,
-              language: "ja",
-              wrap: "none",
-              lineHeight: 1,
-            },
-            frag.text,
-          ),
-        ),
-      ];
-      if (frag.ruby) {
-        fragChildren.unshift(
-          Box(
-            {
-              position: "absolute",
-              left: 0,
-              top: rubyInset.over ? 0 : rubyInset.top + lhPx + rubyInset.gap,
-            },
-            Text(
-              {
-                font: FA,
-                fontSizePx: rubyInset.fontSize,
-                color: frag.ruby.style.color ?? "#94a3b8",
-              },
-              frag.ruby.text,
-            ),
-          ),
-        );
-      }
-      children.push(
-        Box(
-          {
-            position: "absolute",
-            left: frag.x + offsetX,
-            top: frag.y - rubyInset.top + yShift + offsetY,
-            width: frag.availableInlineSizePx,
-            height: rubyInset.top + lhPx + rubyInset.bottom,
-            overflow: "clip",
-          },
-          ...fragChildren,
         ),
       );
     }

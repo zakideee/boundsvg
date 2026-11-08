@@ -14,7 +14,6 @@ import type {
   TextFlowFragmentStyle,
   TextFlowLine,
   TextFlowResult,
-  TextFlowRubyAnnotation,
   TextFlowWithExclusionsResult,
 } from "./index.js";
 import type { RenderToIrEnvelope, RenderToSvgEnvelope, WasmIrOutput } from "./types.js";
@@ -38,8 +37,17 @@ type DecodeJsonError =
   | { code: string; description: string }
   | { operation: MeasurementTextLayoutOperation };
 
+/** Shared text-leaf check for serialized producer results. */
 const isString: Guard<string> = (value): value is string => typeof value === "string";
+/** Shared numeric wire-type check; domain restrictions belong to result-specific guards. */
 const isNumber: Guard<number> = (value): value is number => typeof value === "number";
+/** Accept finite numeric facts from the changed flow output boundary. */
+const isFiniteNumber: Guard<number> = (number): number is number =>
+  typeof number === "number" && Number.isFinite(number);
+/** Accept diagnostic indices and counts representable by the JavaScript boundary. */
+const isFlowIndex: Guard<number> = (index): index is number =>
+  typeof index === "number" && Number.isSafeInteger(index) && index >= 0;
+/** Require boolean wire flags without truthiness coercion. */
 const isBoolean: Guard<boolean> = (value): value is boolean => typeof value === "boolean";
 let lastFailurePath: string | undefined;
 let lastFailureDescription: string | undefined;
@@ -141,6 +149,27 @@ function objectGuard<Value extends object>(shape: ObjectShape<Value>): Guard<Val
   };
 }
 
+function withoutRemovedFields<Value extends object>(
+  guard: Guard<Value>,
+  removedKeys: readonly string[],
+): Guard<Value> {
+  return (output: unknown, path = "$"): output is Value => {
+    if (isRecord(output)) {
+      for (const key of removedKeys) {
+        // Own presence is invalid even when its value is undefined. Do not
+        // invoke a removed field's getter merely to describe its rejection.
+        if (Object.hasOwn(output, key)) {
+          lastFailurePath ??= `${path}.${key}`;
+          lastFailureDescription ??= "removed field";
+          lastFailureSafeDescription ??= "removed field";
+          return false;
+        }
+      }
+    }
+    return guard(output, path);
+  };
+}
+
 function decodeJson<Value>(json: string, guard: Guard<Value>, error: DecodeJsonError): Value {
   let parsed: unknown;
   lastFailurePath = undefined;
@@ -207,12 +236,14 @@ function decodeJson<Value>(json: string, guard: Guard<Value>, error: DecodeJsonE
   return parsed;
 }
 
+/** Accept canonical recoverable envelopes before warning rehydration. */
 const isSerializedRecoverableError: Guard<SerializedRecoverableError> = (
   value,
   path = "$warning",
 ): value is SerializedRecoverableError =>
   RecoverableError.isSerialized(value) || recordFailure(path, value);
 
+/** Validate structural IR and retain the structural validator's precise failure location. */
 const isWasmIrOutput: Guard<WasmIrOutput> = (value, path = "$ir"): value is WasmIrOutput => {
   if (validateStructuralIR(value)) {
     return true;
@@ -223,11 +254,13 @@ const isWasmIrOutput: Guard<WasmIrOutput> = (value, path = "$ir"): value is Wasm
   return false;
 };
 
+/** Validate the IR result and its separate canonical warning delivery envelope. */
 const isRenderToIrEnvelope = objectGuard<RenderToIrEnvelope>({
   ir: required(isWasmIrOutput),
   warnings: required(arrayOf(isSerializedRecoverableError)),
 } satisfies ObjectShape<RenderToIrEnvelope>);
 
+/** Validate SVG output, optional IR, text ownership IDs, and canonical warnings together. */
 const isRenderToSvgEnvelope = objectGuard<RenderToSvgEnvelope>({
   svg: required(isString),
   ir: optional(isWasmIrOutput),
@@ -243,6 +276,7 @@ type DecodedAnimationStateSample = {
   transform?: { a: number; b: number; c: number; d: number; e: number; f: number };
 };
 
+/** Validate the six coefficients carried by sampled animation transforms. */
 const isAnimationAffineMatrix = objectGuard<NonNullable<DecodedAnimationStateSample["transform"]>>({
   a: required(isNumber),
   b: required(isNumber),
@@ -261,6 +295,7 @@ const isSourceRef = objectGuard<IRSourceRef>({
   nodeId: required(isString),
 } satisfies ObjectShape<IRSourceRef>);
 
+/** Validate sampled animation facts together with their source occurrence reference. */
 const isAnimationStateSample = objectGuard<DecodedAnimationStateSample>({
   nodeIndex: required(isSnapshotOrdinal),
   source: required(isSourceRef),
@@ -269,6 +304,7 @@ const isAnimationStateSample = objectGuard<DecodedAnimationStateSample>({
   transform: optional(isAnimationAffineMatrix),
 } satisfies ObjectShape<DecodedAnimationStateSample>);
 
+/** Validate plain per-line flow facts in their existing grapheme index space. */
 const isTextFlowLine = objectGuard<TextFlowLine>({
   text: required(isString),
   charStart: required(isNumber),
@@ -277,75 +313,62 @@ const isTextFlowLine = objectGuard<TextFlowLine>({
   availableInlineSizePx: required(isNumber),
 } satisfies ObjectShape<TextFlowLine>);
 
+/** Validate plain flow lines, exhaustion, and optional recoverable diagnostics. */
 const isTextFlowResult = objectGuard<TextFlowResult>({
   lines: required(arrayOf(isTextFlowLine)),
   exhausted: required(isBoolean),
   warnings: optional(arrayOf(isSerializedRecoverableError)),
 } satisfies ObjectShape<TextFlowResult>);
 
+/** Validate plain-span diagnostic styles without defining settled glyph paint. */
 const isTextFlowFragmentStyle = objectGuard<TextFlowFragmentStyle>({
   fontFamily: required(isString),
-  fontWeight: required(isNumber),
+  fontWeight: required(isFiniteNumber),
   fontStyle: required(isString),
-  fontSizePx: required(isNumber),
-  letterSpacingPx: optional(isNumber),
+  fontSizePx: required(isFiniteNumber),
+  letterSpacingPx: optional(isFiniteNumber),
   color: optional(isString),
 } satisfies ObjectShape<TextFlowFragmentStyle>);
 
-type RubyLevel = TextFlowRubyAnnotation["levels"][number];
-type RubyRun = RubyLevel["runs"][number];
-const isRubyRun = objectGuard<RubyRun>({
-  text: required(isString),
-  style: required(isTextFlowFragmentStyle),
-} satisfies ObjectShape<RubyRun>);
-const isRubyLevel = objectGuard<RubyLevel>({
-  text: required(isString),
-  position: required(literal("over", "under")),
-  runs: required(arrayOf(isRubyRun)),
-} satisfies ObjectShape<RubyLevel>);
-const isRubyAnnotation = objectGuard<TextFlowRubyAnnotation>({
-  text: required(isString),
-  position: required(isString),
-  align: required(isString),
-  style: required(isTextFlowFragmentStyle),
-  gapPx: required(isNumber),
-  offsetPx: required(isNumber),
-  lineSizing: required(literal("stable", "css")),
-  levels: required(arrayOf(isRubyLevel)),
-} satisfies ObjectShape<TextFlowRubyAnnotation>);
+/** Validate reserved-cell facts and reject retired Ruby rendering metadata. */
+const isTextFlowFragment = withoutRemovedFields(
+  objectGuard<TextFlowFragment>({
+    text: required(isString),
+    charStart: required(isFlowIndex),
+    charEnd: required(isFlowIndex),
+    x: required(isFiniteNumber),
+    y: required(isFiniteNumber),
+    inlineAdvancePx: required(isFiniteNumber),
+    availableInlineSizePx: required(isFiniteNumber),
+    regionIndex: required(isFlowIndex),
+    baselineOffset: required(isFiniteNumber),
+    overflowReason: optional(literal("kinsokuAbsorb", "hangingPunctuation", "ellipsis")),
+    style: optional(isTextFlowFragmentStyle),
+  } satisfies ObjectShape<TextFlowFragment>),
+  ["ruby"],
+);
 
-const isTextFlowFragment = objectGuard<TextFlowFragment>({
-  text: required(isString),
-  charStart: required(isNumber),
-  charEnd: required(isNumber),
-  x: required(isNumber),
-  y: required(isNumber),
-  inlineAdvancePx: required(isNumber),
-  availableInlineSizePx: required(isNumber),
-  regionIndex: required(isNumber),
-  baselineOffset: required(isNumber),
-  overflowReason: optional(literal("kinsokuAbsorb", "hangingPunctuation", "ellipsis")),
-  style: optional(isTextFlowFragmentStyle),
-  ruby: optional(isRubyAnnotation),
-} satisfies ObjectShape<TextFlowFragment>);
-
+/** Validate one measured line or column and its region fragments. */
 const isTextFlowExclusionLine = objectGuard<TextFlowExclusionLine>({
   fragments: required(arrayOf(isTextFlowFragment)),
-  lineIndex: required(isNumber),
-  crossSize: required(isNumber),
+  lineIndex: required(isFlowIndex),
+  crossSize: required(isFiniteNumber),
 } satisfies ObjectShape<TextFlowExclusionLine>);
 
-const isTextFlowWithExclusionsResult = objectGuard<TextFlowWithExclusionsResult>({
-  lines: required(arrayOf(isTextFlowExclusionLine)),
-  exhausted: required(isBoolean),
-  usedLineCount: required(isNumber),
-  overflowReason: optional(literal("maxLinesTruncated", "flowBoxExhausted", "cannotFit")),
-  chosenFontSizePx: optional(isNumber),
-  warnings: optional(arrayOf(isSerializedRecoverableError)),
-  topRubyOverflowPx: required(isNumber),
-  bottomRubyOverflowPx: required(isNumber),
-} satisfies ObjectShape<TextFlowWithExclusionsResult>);
+/** Validate measurement-only flow results shared by WASM, Core, and Worker producers. */
+const isTextFlowWithExclusionsResult = withoutRemovedFields(
+  objectGuard<TextFlowWithExclusionsResult>({
+    lines: required(arrayOf(isTextFlowExclusionLine)),
+    exhausted: required(isBoolean),
+    usedLineCount: required(isFlowIndex),
+    overflowReason: optional(literal("maxLinesTruncated", "flowBoxExhausted", "cannotFit")),
+    chosenFontSizePx: optional(isFiniteNumber),
+    warnings: optional(arrayOf(isSerializedRecoverableError)),
+  } satisfies ObjectShape<TextFlowWithExclusionsResult>),
+  ["topRubyOverflowPx", "bottomRubyOverflowPx"],
+);
 
+/** Validate optional per-line diagnostics within block measurements. */
 const isMeasureTextBlockLine = objectGuard<MeasureTextBlockLine>({
   charStart: required(isNumber),
   charEnd: required(isNumber),
@@ -354,6 +377,7 @@ const isMeasureTextBlockLine = objectGuard<MeasureTextBlockLine>({
   kinsokuUnresolved: required(isBoolean),
 } satisfies ObjectShape<MeasureTextBlockLine>);
 
+/** Validate block dimensions and optional line diagnostics. */
 const isMeasureTextBlockResult = objectGuard<MeasureTextBlockResult>({
   lineCount: required(isNumber),
   usedWidth: required(isNumber),
@@ -361,6 +385,7 @@ const isMeasureTextBlockResult = objectGuard<MeasureTextBlockResult>({
   lines: optional(arrayOf(isMeasureTextBlockLine)),
 } satisfies ObjectShape<MeasureTextBlockResult>);
 
+/** Require exactly one axis-dependent set of text shrinkwrap dimensions. */
 const isShrinkwrapTextResult: Guard<ShrinkwrapTextResult> = (
   value,
 ): value is ShrinkwrapTextResult => {
@@ -385,15 +410,17 @@ const isShrinkwrapTextResult: Guard<ShrinkwrapTextResult> = (
   return horizontal || vertical;
 };
 
+/** Apply the flow contract to the layout nested inside a selected shrinkwrap frame. */
 const isShrinkwrapFlowResult = objectGuard<ShrinkwrapFlowResult>({
   status: required(literal("satisfied", "infeasible")),
-  chosenWidthPx: optional(isNumber),
-  chosenHeightPx: optional(isNumber),
-  usedLineCount: required(isNumber),
-  usedHeight: required(isNumber),
+  chosenWidthPx: optional(isFiniteNumber),
+  chosenHeightPx: optional(isFiniteNumber),
+  usedLineCount: required(isFlowIndex),
+  usedHeight: required(isFiniteNumber),
   layout: required(isTextFlowWithExclusionsResult),
 } satisfies ObjectShape<ShrinkwrapFlowResult>);
 
+/** Validate intrinsic inline dimensions and their optional recoverable diagnostics. */
 const isIntrinsicInlineSizeResult = objectGuard<IntrinsicInlineSizeResult>({
   minContentInlineSize: required(isNumber),
   maxContentInlineSize: required(isNumber),
@@ -411,29 +438,62 @@ function testDecodedValue<Value>(value: unknown, guard: Guard<Value>): value is 
   }
 }
 
+/**
+ * Validate a producer or Worker flow result at the engine boundary.
+ * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID for removed fields or invalid measured facts.
+ */
+export function assertTextFlowMeasurementOutput(
+  output: unknown,
+  operation: "layoutTextFlowWithExclusions" | "shrinkwrapFlow",
+): void {
+  const guard: Guard<ShrinkwrapFlowResult | TextFlowWithExclusionsResult> =
+    operation === "shrinkwrapFlow" ? isShrinkwrapFlowResult : isTextFlowWithExclusionsResult;
+  if (testDecodedValue(output, guard)) {
+    return;
+  }
+  throw new FatalError(
+    "TEXT_LAYOUT_OUTPUT_INVALID",
+    "Text layout transport returned an invalid result.",
+    {
+      stage: "engine",
+      context: {
+        operation,
+        phase: "decode",
+        protocolPath: lastFailurePath ?? "$",
+        received: lastFailureSafeDescription ?? typeof output,
+      },
+    },
+  );
+}
+
 /** Strict value predicates shared by the WASM and Worker trust boundaries. */
 export function isWasmTextFlowResult(value: unknown): value is TextFlowResult {
   return testDecodedValue(value, isTextFlowResult);
 }
 
+/** Check measured exclusion-flow facts, including absence of removed rendering fields. */
 export function isWasmTextFlowWithExclusionsResult(
   value: unknown,
 ): value is TextFlowWithExclusionsResult {
   return testDecodedValue(value, isTextFlowWithExclusionsResult);
 }
 
+/** Check the existing block-measurement output contract. */
 export function isWasmMeasureTextBlockResult(value: unknown): value is MeasureTextBlockResult {
   return testDecodedValue(value, isMeasureTextBlockResult);
 }
 
+/** Check the existing axis-dependent text shrinkwrap output contract. */
 export function isWasmShrinkwrapTextResult(value: unknown): value is ShrinkwrapTextResult {
   return testDecodedValue(value, isShrinkwrapTextResult);
 }
 
+/** Check shrinkwrap facts and their nested measurement-only flow layout. */
 export function isWasmShrinkwrapFlowResult(value: unknown): value is ShrinkwrapFlowResult {
   return testDecodedValue(value, isShrinkwrapFlowResult);
 }
 
+/** Check the existing intrinsic-size output contract. */
 export function isWasmIntrinsicInlineSizeResult(
   value: unknown,
 ): value is IntrinsicInlineSizeResult {
@@ -470,28 +530,46 @@ export function decodeAnimationStateSamples(json: string): DecodedAnimationState
   });
 }
 
+/** Decode plain per-line flow facts and recoverable diagnostics.
+ * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID for malformed or invalid producer output.
+ */
 export function decodeTextFlowResult(json: string): TextFlowResult {
   return decodeJson(json, isTextFlowResult, { operation: "layoutTextFlow" });
 }
 
+/** Decode measurement-only flow cells and reject removed paint metadata.
+ * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID when JSON or measured facts violate the contract.
+ */
 export function decodeTextFlowWithExclusionsResult(json: string): TextFlowWithExclusionsResult {
   return decodeJson(json, isTextFlowWithExclusionsResult, {
     operation: "layoutTextFlowWithExclusions",
   });
 }
 
+/** Decode block dimensions and optional line diagnostics.
+ * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID for malformed or invalid producer output.
+ */
 export function decodeMeasureTextBlockResult(json: string): MeasureTextBlockResult {
   return decodeJson(json, isMeasureTextBlockResult, { operation: "measureTextBlock" });
 }
 
+/** Decode the chosen inline size and measured block dimensions.
+ * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID for malformed or invalid producer output.
+ */
 export function decodeShrinkwrapTextResult(json: string): ShrinkwrapTextResult {
   return decodeJson(json, isShrinkwrapTextResult, { operation: "shrinkwrapText" });
 }
 
+/** Decode a fitted frame and validate its nested measurement-only flow layout.
+ * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID when JSON or measured facts violate the contract.
+ */
 export function decodeShrinkwrapFlowResult(json: string): ShrinkwrapFlowResult {
   return decodeJson(json, isShrinkwrapFlowResult, { operation: "shrinkwrapFlow" });
 }
 
+/** Decode intrinsic inline dimensions and recoverable diagnostics.
+ * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID for malformed or invalid producer output.
+ */
 export function decodeIntrinsicInlineSizeResult(json: string): IntrinsicInlineSizeResult {
   return decodeJson(json, isIntrinsicInlineSizeResult, {
     operation: "measureIntrinsicInlineSize",
