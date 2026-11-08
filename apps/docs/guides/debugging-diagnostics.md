@@ -108,31 +108,38 @@ measurement methods: `layoutTextFlow`, `layoutTextFlowWithExclusions`,
 `measureTextBlock`, `shrinkwrapText`, `shrinkwrapFlow`, and
 `measureIntrinsicInlineSize`. Every diagnostic carries a closed operation name
 in `context.operation`; render uses `renderTextLayout`. Direct Engine calls,
-browser WASM, and Worker calls preserve the same code, message, stage, node ID,
-and context.
+browser WASM, and Worker calls preserve an existing diagnostic's code, message,
+stage, node ID, and context during propagation. The stage records where the
+failure was first detected; initial output validation at a different boundary
+can produce a different stage.
 
-| Code                             | Fixed message                                     | Stage      |
-| -------------------------------- | ------------------------------------------------- | ---------- |
-| `TEXT_LAYOUT_INPUT_INVALID`      | Text layout request is invalid.                   | `validate` |
-| `TEXT_FONT_UNAVAILABLE`          | No requested font is available for text layout.   | `text`     |
-| `TEXT_LAYOUT_PREPARATION_FAILED` | Text layout preparation failed.                   | `text`     |
-| `TEXT_FIT_INVALID_STEP`          | Text fit step is invalid.                         | `text`     |
-| `TEXT_FIT_PROBE_LIMIT`           | Text fit probe limit was exceeded.                | `text`     |
-| `TEXT_ELLIPSIS_CANDIDATE_LIMIT`  | Text ellipsis candidate limit was exceeded.       | `text`     |
-| `RICH_TEXT_MAX_DEPTH`            | Rich text depth limit was exceeded.               | `validate` |
-| `INLINE_RECT_COMPLEXITY_LIMIT`   | Inline rectangle limit was exceeded.              | `text`     |
-| `TEXT_REGION_QUERY_INVALID`      | Text region query is invalid.                     | `text`     |
-| `TEXT_REGION_PROVIDER_FAILED`    | Text region provider failed.                      | `text`     |
-| `TEXT_FLOW_REGION_INVALID`       | Text flow region is invalid.                      | `text`     |
-| `TEXT_REGION_QUERY_LIMIT`        | Text region query limit was exceeded.             | `text`     |
-| `TEXT_REGION_INTERVAL_LIMIT`     | Text region interval limit was exceeded.          | `text`     |
-| `TEXT_LAYOUT_INVARIANT`          | Text layout invariant failed.                     | `text`     |
-| `TEXT_LAYOUT_OUTPUT_INVALID`     | Text layout transport returned an invalid result. | `wasm`     |
-| `TEXT_LAYOUT_PANIC`              | Text layout failed unexpectedly.                  | `wasm`     |
-| `TEXT_LAYOUT_WASM_FAILED`        | Text layout WASM transport failed.                | `wasm`     |
-| `TEXT_LAYOUT_TRANSPORT_FAILED`   | Text layout transport failed.                     | `engine`   |
-| `TEXT_LAYOUT_RESULT_MISSING`     | Text layout result is missing required text data. | `text`     |
-| `TEXT_PATH_LAYOUT_UNAVAILABLE`   | Text-on-path layout is unavailable.               | `text`     |
+| Code                             | Fixed message                                     | Stage             |
+| -------------------------------- | ------------------------------------------------- | ----------------- |
+| `TEXT_LAYOUT_INPUT_INVALID`      | Text layout request is invalid.                   | `validate`        |
+| `TEXT_FONT_UNAVAILABLE`          | No requested font is available for text layout.   | `text`            |
+| `TEXT_LAYOUT_PREPARATION_FAILED` | Text layout preparation failed.                   | `text`            |
+| `TEXT_FIT_INVALID_STEP`          | Text fit step is invalid.                         | `text`            |
+| `TEXT_FIT_PROBE_LIMIT`           | Text fit probe limit was exceeded.                | `text`            |
+| `TEXT_ELLIPSIS_CANDIDATE_LIMIT`  | Text ellipsis candidate limit was exceeded.       | `text`            |
+| `RICH_TEXT_MAX_DEPTH`            | Rich text depth limit was exceeded.               | `validate`        |
+| `INLINE_RECT_COMPLEXITY_LIMIT`   | Inline rectangle limit was exceeded.              | `text`            |
+| `TEXT_REGION_QUERY_INVALID`      | Text region query is invalid.                     | `text`            |
+| `TEXT_REGION_PROVIDER_FAILED`    | Text region provider failed.                      | `text`            |
+| `TEXT_FLOW_REGION_INVALID`       | Text flow region is invalid.                      | `text`            |
+| `TEXT_REGION_QUERY_LIMIT`        | Text region query limit was exceeded.             | `text`            |
+| `TEXT_REGION_INTERVAL_LIMIT`     | Text region interval limit was exceeded.          | `text`            |
+| `TEXT_LAYOUT_INVARIANT`          | Text layout invariant failed.                     | `text`            |
+| `TEXT_LAYOUT_OUTPUT_INVALID`     | Text layout transport returned an invalid result. | `wasm` / `engine` |
+| `TEXT_LAYOUT_PANIC`              | Text layout failed unexpectedly.                  | `wasm`            |
+| `TEXT_LAYOUT_WASM_FAILED`        | Text layout WASM transport failed.                | `wasm`            |
+| `TEXT_LAYOUT_TRANSPORT_FAILED`   | Text layout transport failed.                     | `engine`          |
+| `TEXT_LAYOUT_RESULT_MISSING`     | Text layout result is missing required text data. | `text`            |
+| `TEXT_PATH_LAYOUT_UNAVAILABLE`   | Text-on-path layout is unavailable.               | `text`            |
+
+Decoded WASM output uses stage `wasm` for `TEXT_LAYOUT_OUTPUT_INVALID`.
+Core-injected producer results and Worker responses reported as successful
+`layoutTextFlowWithExclusions` or `shrinkwrapFlow` measurements are validated
+at the `engine` boundary, including the nested shrinkwrap layout.
 
 Font parsing, outline extraction and shaping errors can also propagate through
 these layout operations. Their codes, fixed messages, stages and typed reason
