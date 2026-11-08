@@ -444,13 +444,11 @@ pub(super) fn resolve_fragment_border_radius_vertical(
     }
 }
 
-/// Compute the effective line width for a token range, including decoration
-/// start/end advance for every decorated span that appears inside the range.
+/// Measure the exact candidate slice, including ruby reservations and decoration edges.
 ///
 /// This is used by line/column breaking and by final `LayoutLine.advance`, so it
 /// must count not only spans that align with the outer line boundaries but also
 /// decorated spans that start or end in the middle of an otherwise plain range.
-/// Measure the exact candidate slice, including ruby reservations and decoration edges.
 ///
 /// # Errors
 ///

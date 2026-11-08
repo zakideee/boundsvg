@@ -438,13 +438,13 @@ function testDecodedValue<Value>(value: unknown, guard: Guard<Value>): value is 
   }
 }
 
-/** Validate a flow producer result with the same contract used by WASM and Worker responses.
+/**
+ * Validate a producer or Worker flow result at the engine boundary.
  * @throws {FatalError} TEXT_LAYOUT_OUTPUT_INVALID for removed fields or invalid measured facts.
  */
 export function assertTextFlowMeasurementOutput(
   output: unknown,
   operation: "layoutTextFlowWithExclusions" | "shrinkwrapFlow",
-  stage: "wasm" | "engine",
 ): void {
   const guard: Guard<ShrinkwrapFlowResult | TextFlowWithExclusionsResult> =
     operation === "shrinkwrapFlow" ? isShrinkwrapFlowResult : isTextFlowWithExclusionsResult;
@@ -455,7 +455,7 @@ export function assertTextFlowMeasurementOutput(
     "TEXT_LAYOUT_OUTPUT_INVALID",
     "Text layout transport returned an invalid result.",
     {
-      stage,
+      stage: "engine",
       context: {
         operation,
         phase: "decode",

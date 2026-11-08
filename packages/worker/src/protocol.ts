@@ -1631,10 +1631,9 @@ export function decodeWorkerResponseMessage(
       assertTextFlowMeasurementOutput(
         getProperty(snapshot, "result"),
         "layoutTextFlowWithExclusions",
-        "engine",
       );
     } else if (id !== undefined && type === "shrinkwrap-flow-ok") {
-      assertTextFlowMeasurementOutput(getProperty(snapshot, "result"), "shrinkwrapFlow", "engine");
+      assertTextFlowMeasurementOutput(getProperty(snapshot, "result"), "shrinkwrapFlow");
     }
     if (!isWorkerResponseSnapshot(snapshot)) {
       return { id, message: undefined };

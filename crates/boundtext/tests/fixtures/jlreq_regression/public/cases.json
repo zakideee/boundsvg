@@ -37,9 +37,9 @@
     }
   },
   {
-    "id": "ruby.horizontal.group.long.warning",
+    "id": "ruby.horizontal.group.long.reserved",
     "category": "jlreq-ruby",
-    "description": "長いルビは warning を出し、baseline で観測する",
+    "description": "長いグループルビの自然な字間を保ち、行端の不足幅を予約する",
     "request": {
       "text": "",
       "rich_text": [

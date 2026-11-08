@@ -29,6 +29,8 @@ still distribute positive free space. The base moves as one block, without
 stretching its internal character spacing. These rules apply along the inline
 axis in horizontal and vertical text, at every annotation level.
 
+Short or equal-width readings can also require reservation when their control bounds extend beyond the base range.
+
 A reading may use space over the immediately adjacent, unannotated kana
 character or one of `、。，．・` in the same line, column, and exclusion region.
 Each side can use at most half of that character's natural glyph-frame advance

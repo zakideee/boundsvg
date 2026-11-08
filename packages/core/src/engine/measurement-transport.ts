@@ -11,7 +11,7 @@ export function invokeMeasurementTransport<Input, Result>(
   try {
     const measurementResult = transport(input);
     if (operation === "layoutTextFlowWithExclusions" || operation === "shrinkwrapFlow") {
-      assertTextFlowMeasurementOutput(measurementResult, operation, "engine");
+      assertTextFlowMeasurementOutput(measurementResult, operation);
     }
     return measurementResult;
   } catch (error) {

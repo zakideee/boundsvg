@@ -76,7 +76,7 @@ describe("measurement-only flow output", () => {
             : flow;
         const protocolPath =
           operation === "shrinkwrapFlow" ? `$.layout.${fieldPath}` : `$.${fieldPath}`;
-        expect(() => assertTextFlowMeasurementOutput(output, operation, "engine")).toThrowError(
+        expect(() => assertTextFlowMeasurementOutput(output, operation)).toThrowError(
           expect.objectContaining({
             code: "TEXT_LAYOUT_OUTPUT_INVALID",
             stage: "engine",
@@ -110,7 +110,7 @@ describe("measurement-only flow output", () => {
       },
     });
     expect(() =>
-      assertTextFlowMeasurementOutput(flow, "layoutTextFlowWithExclusions", "engine"),
+      assertTextFlowMeasurementOutput(flow, "layoutTextFlowWithExclusions"),
     ).toThrowError(
       expect.objectContaining({ context: expect.objectContaining({ received: "removed field" }) }),
     );
@@ -118,7 +118,7 @@ describe("measurement-only flow output", () => {
     const futureFlow = Object.assign(createFlowFacts(), { futureField: { untouched: true } });
     Object.setPrototypeOf(futureFlow, { topRubyOverflowPx: 0 });
     expect(() =>
-      assertTextFlowMeasurementOutput(futureFlow, "layoutTextFlowWithExclusions", "engine"),
+      assertTextFlowMeasurementOutput(futureFlow, "layoutTextFlowWithExclusions"),
     ).not.toThrow();
   });
 
@@ -129,7 +129,7 @@ describe("measurement-only flow output", () => {
   ])("rejects nonfinite measured numbers %s while retaining signed advances", (invalidNumber) => {
     const flow = createFlowFacts();
     expect(() =>
-      assertTextFlowMeasurementOutput(flow, "layoutTextFlowWithExclusions", "engine"),
+      assertTextFlowMeasurementOutput(flow, "layoutTextFlowWithExclusions"),
     ).not.toThrow();
     for (const key of [
       "x",
@@ -141,7 +141,7 @@ describe("measurement-only flow output", () => {
       const invalidFlow = createFlowFacts();
       invalidFlow.lines[0]!.fragments[0]![key] = invalidNumber;
       expect(() =>
-        assertTextFlowMeasurementOutput(invalidFlow, "layoutTextFlowWithExclusions", "engine"),
+        assertTextFlowMeasurementOutput(invalidFlow, "layoutTextFlowWithExclusions"),
       ).toThrowError(
         expect.objectContaining({
           context: expect.objectContaining({
