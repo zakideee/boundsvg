@@ -160,10 +160,19 @@ Native hit testing is not a pixel-alpha test.
 Frame rectangles include their own boundary, but canonical BoxClips and the IR
 viewport use strict interiors. Their straight and elliptical outer boundaries
 exclude Frame candidates, including Frames that only touch a clip. Fractional
-points immediately inside remain eligible: this does not disable an entire
-one-pixel strip. At identity integer placement and DPR 1, an integer query on the
-left/top outer boundary can coincide with the first painted pixel column/row
-while still excluding the Frame.
+points immediately inside remain eligible for direct queries. At identity integer
+placement and DPR 1, an integer query on the left/top outer boundary can coincide
+with the first painted pixel column/row while still excluding the Frame.
+
+Trusted input can report different coordinates from a direct query. In recorded
+DPR 1 observations with integer placement, a direct query at (10.25, 60) selected
+a Frame, but a trusted click requested there arrived with integer CSS px event
+coordinates (10, 60) and did not select that Frame. An integer interior click at
+(12, 60) selected the Frame. Browsers that report pointerdown/up and click at
+different coordinate precision can resolve these event types to different targets
+within one operation. These finite examples do not establish uniform behavior
+throughout a pixel column or row, at other DPRs, for touch input, or across all
+browsers and versions.
 
 Only Frame candidates pass through the IR viewport gate. Native paint keeps the
 browser's boundary behavior and can still target a valid handler-bearing

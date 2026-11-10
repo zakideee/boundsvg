@@ -32,8 +32,14 @@ and deliver its handler while a neighboring Box's color is visible. Frame gates 
 reapply Core clips to native paint, eliminate every visually hidden callback, or
 fully restore earlier Browser hit behavior; SVG/PNG emission is unchanged.
 An integer left/top boundary query at identity/DPR 1 may coincide with
-the first painted pixel; fractional interior points remain eligible, so this is
-not a one-pixel-wide exclusion band. Floating transforms are not snapped: tiny
+the first painted pixel; fractional interior points remain eligible for direct
+queries. In recorded DPR 1 observations with integer placement, trusted clicks
+requested at (10.25, 60) arrived with integer CSS px coordinates (10, 60) and did
+not select the Frame; the interior control (12, 60) selected it. Different
+coordinate precision for pointerdown/up and click can yield different resolved
+targets within one operation. These finite examples do not establish uniform
+behavior throughout a pixel column or row, at other DPRs, for touch input, or
+across all browsers and versions. Floating transforms are not snapped: tiny
 computed overlaps can remain even at an authored ideal contact.
 `isPointInViewport` is available from `@boundsvg/core/scene` for the same pure IR
 viewport predicate; dimensions are checked and callers supply finite IR-root points.
