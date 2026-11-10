@@ -149,7 +149,7 @@ describe("useInteractiveSvg", () => {
     expect(snapshot!.svg).toBeNull();
     expect(snapshot!.ir).toBeNull();
     expect(snapshot!.error).toBeNull();
-    expect(snapshot!.hoverSource).toBeNull();
+    expect(snapshot!.hover).toEqual({ status: "inactive" });
     expect(typeof snapshot!.containerRef).toBe("function");
     expect(renderToSvgAndIR).not.toHaveBeenCalled();
   });
@@ -179,7 +179,7 @@ describe("useInteractiveSvg", () => {
     expect(snapshot!.svg).toContain("<svg");
     expect(snapshot!.ir).not.toBeNull();
     expect(snapshot!.error).toBeNull();
-    expect(snapshot!.hoverSource).toBeNull();
+    expect(snapshot!.hover).toEqual({ status: "pending" });
     expect(renderToSvgAndIR).toHaveBeenCalledTimes(1);
     expect(renderToSvgAndIR).toHaveBeenCalledWith(vnode, {
       textPathMode: "merged",

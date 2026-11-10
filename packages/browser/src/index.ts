@@ -2,7 +2,7 @@
  * @boundsvg/browser
  *
  * Browser runtime for boundsvg. Provides WASM module loading and
- * SVG DOM utilities (coordinate translation, path hit-testing).
+ * SVG DOM utilities and current-scene interaction.
  *
  * Usage:
  *   import { loadWasmModule } from "@boundsvg/browser";
@@ -22,8 +22,20 @@ export type {
 export { clearFontCache, createFontLoader, preloadFonts } from "./fonts.js";
 export type { ImageLoaderOptions } from "./images.js";
 export { createBrowserImageLoader } from "./images.js";
+export type {
+  EventCallback,
+  InteractiveHandlerProps,
+  PointerEventInfo,
+  SvgCoordinateResult,
+  SvgCoordinateUnavailable,
+  SvgHitQueryResult,
+  SvgHoverState,
+  SvgQueryFailure,
+  SvgQueryUnavailable,
+  TextContextMenuHit,
+} from "./interaction-types.js";
 export type { IRDomBinding } from "./ir-dom-binding.js";
-export { bindIRToSvg, nativePathCandidates } from "./ir-dom-binding.js";
+export { bindIRToSvg } from "./ir-dom-binding.js";
 export type { ComposeLayeredSvgInlineOptions } from "./layered.js";
 export {
   composeLayeredSvgInline,
@@ -37,5 +49,10 @@ export {
   pngToDataUrl,
   revokePngObjectUrl,
 } from "./png.js";
-export { resolveHitTarget, translateSvgCoords, verifyPathGeometry } from "./svg-event-utils.js";
+export { queryCurrentSvgHit, translateSvgCoords } from "./svg-event-utils.js";
+export type {
+  SvgInteractionController,
+  SvgInteractionScene,
+} from "./svg-interaction-controller.js";
+export { createSvgInteractionController } from "./svg-interaction-controller.js";
 export { type LoadWasmModuleOptions, loadWasmModule } from "./wasm.js";

@@ -14,6 +14,7 @@ import { BoundSvgContext } from "../src/context.js";
 import { useInteractiveSvg } from "../src/hooks/use-interactive-svg.js";
 import type { BoundSvgContextValue, PointerEventInfo } from "../src/types.js";
 import { toInteractiveVNode } from "../src/utils/to-interactive-vnode.js";
+import { installSvgDomPrimitives } from "./svg-dom-primitives.js";
 
 const fontPath = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -36,25 +37,11 @@ beforeAll(async () => {
     ],
   });
 
-  // happy-dom does not implement SVG CTM methods. Keep the real browser
-  // coordinate helper in the test and provide only an identity CTM primitive.
-  Object.defineProperty(SVGSVGElement.prototype, "createSVGPoint", {
-    configurable: true,
-    value() {
-      return {
-        x: 0,
-        y: 0,
-        matrixTransform() {
-          return { x: this.x, y: this.y };
-        },
-      };
-    },
-  });
-  Object.defineProperty(SVGSVGElement.prototype, "getScreenCTM", {
-    configurable: true,
-    value() {
-      return { inverse: () => ({}) };
-    },
+  installSvgDomPrimitives((x, y) => {
+    const svg = document.querySelector("svg");
+    return x >= 100 && x < 150 && y >= 0 && y < 40
+      ? (svg?.querySelector("rect,path") ?? null)
+      : svg;
   });
 });
 
@@ -112,6 +99,17 @@ describe("interactive React boundary against real WASM and browser helpers", () 
     const surface = document.querySelector('[data-surface="real"]');
     expect(surface).toBeInstanceOf(HTMLDivElement);
     expect(surface?.querySelector("svg")).toBeInstanceOf(SVGSVGElement);
+    const frame = surface?.querySelector(
+      '[data-boundsvg-node-id="target"][data-boundsvg-role="source"]',
+    );
+    if (!frame) {
+      throw new TypeError("Missing actual emitted Frame");
+    }
+    // happy-dom does not apply the authored transform; supply that one declared pose.
+    Object.defineProperty(frame, "getScreenCTM", {
+      configurable: true,
+      value: () => ({ a: 1, b: 0, c: 0, d: 1, e: 100, f: 0 }),
+    });
 
     await act(async () => {
       surface?.dispatchEvent(new MouseEvent("click", { clientX: 10, clientY: 10 }));
@@ -121,8 +119,8 @@ describe("interactive React boundary against real WASM and browser helpers", () 
     expect(onClick).toHaveBeenCalledTimes(1);
     expect(onClick.mock.calls[0]?.[0]).toMatchObject({
       nodeId: "target",
-      svgX: 110,
-      svgY: 10,
+      point: { svgX: 110, svgY: 10 },
+      cause: "input",
     });
 
     await act(async () => {

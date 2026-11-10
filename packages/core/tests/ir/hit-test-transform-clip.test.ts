@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acceptsHitClips } from "../../src/ir/hit-geometry.js";
+import { evaluateHitClips } from "../../src/ir/hit-geometry.js";
 import { buildHitTestIndex, hitTest } from "../../src/ir/hit-test.js";
 import type { IR, IRNode } from "../../src/ir/types.js";
 import { circularClip } from "../helpers/box-clip.js";
@@ -113,6 +113,70 @@ describe("hitTest with transforms", () => {
 });
 
 describe("hitTest with clipping", () => {
+  for (const entryCount of [15, 16, 17]) {
+    for (const edge of ["left", "right", "top", "bottom"] as const) {
+      it(`ranks a boundary-only closed Frame at the ${edge} edge with ${entryCount} entries`, () => {
+        const clip = { x: 20, y: 10, w: 100, h: 80 };
+        const tree = ir({
+          ownership: { role: "source" },
+          type: "group",
+          nodeId: "root",
+          bbox: { x: 0, y: 0, w: 300, h: 100 },
+          children: [
+            ...Array.from(
+              { length: entryCount - 2 },
+              (_, index): IRNode => ({
+                ownership: { role: "source" },
+                type: "rect",
+                nodeId: `filler-${index}`,
+                bbox: { x: 200 + index, y: 80, w: 1, h: 1 },
+              }),
+            ),
+            {
+              ownership: { role: "source" },
+              type: "group",
+              nodeId: "clipper",
+              bbox: clip,
+              clip: circularClip(clip, 0),
+              children: [
+                { ownership: { role: "source" }, type: "rect", nodeId: "paint", bbox: clip },
+                {
+                  ownership: { role: "source", on: { onClick: "select" } },
+                  type: "group",
+                  nodeId: "frame",
+                  bbox: {
+                    ...clip,
+                    x: edge === "left" ? -80 : edge === "right" ? 120 : 20,
+                    y: edge === "top" ? -70 : edge === "bottom" ? 90 : 10,
+                  },
+                  children: [],
+                },
+              ],
+            },
+          ],
+        });
+        const point = {
+          x: edge === "left" ? 20 : edge === "right" ? 120 : 70,
+          y: edge === "top" ? 10 : edge === "bottom" ? 90 : 50,
+        };
+        const direction = {
+          x: edge === "left" ? 1 : edge === "right" ? -1 : 0,
+          y: edge === "top" ? 1 : edge === "bottom" ? -1 : 0,
+        };
+        const index = buildHitTestIndex(tree);
+        expect(index.queryTopmost(point.x, point.y)?.nodeId).toBe("frame");
+        expect(index.queryCandidates(point.x, point.y).map((hit) => hit.source.nodeId)).toEqual([
+          "frame",
+          "paint",
+        ]);
+        expect(
+          index.queryTopmost(point.x + 2 * direction.x, point.y + 2 * direction.y)?.nodeId,
+        ).toBe("paint");
+        expect(index.queryTopmost(point.x - 2 * direction.x, point.y - 2 * direction.y)).toBeNull();
+      });
+    }
+  }
+
   for (const entryCount of [15, 16, 17]) {
     for (const edge of ["left", "right", "top", "bottom"] as const) {
       it(`rejects a fully clipped adjacent node at the ${edge} edge with ${entryCount} entries`, () => {
@@ -290,10 +354,10 @@ describe("resolved clip corner admission", () => {
     { w: 100, h: 0 },
   ])("treats a zero-area contour %j as empty", ({ w, h }) => {
     expect(
-      acceptsHitClips(
+      evaluateHitClips(
         {
           parent: null,
-          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          pose: { matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, linearWitnesses: [] },
           geometry: {
             kind: "boxContour",
             bbox: { x: 0, y: 0, w, h },
@@ -307,17 +371,17 @@ describe("resolved clip corner admission", () => {
         },
         { x: 0, y: 0 },
       ),
-    ).toBe(false);
+    ).toEqual({ status: "ready", contains: false });
   });
 
   it.each([
     -1, 50.00000000000001, 80,
   ])("rejects unresolved radius %s through hit geometry", (radius) => {
     expect(() =>
-      acceptsHitClips(
+      evaluateHitClips(
         {
           parent: null,
-          matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+          pose: { matrix: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, linearWitnesses: [] },
           geometry: {
             kind: "boxContour",
             bbox: { x: 0, y: 0, w: 100, h: 100 },

@@ -1,4 +1,4 @@
-import { bindIRToSvg, verifyPathGeometry } from "@boundsvg/browser/events";
+import { bindIRToSvg, queryCurrentSvgHit } from "@boundsvg/browser/events";
 import type { IR, VNode } from "@boundsvg/core";
 import { buildHitTestIndex, buildIRSourceIndex, hitTest } from "@boundsvg/core/scene";
 import { type EventCallback, InteractiveBoundSvg } from "@boundsvg/react/interactive";
@@ -13,8 +13,7 @@ type CallbackDelivery = {
   nodeId: string;
   handlerName: string;
   eventType: string;
-  svgX: number;
-  svgY: number;
+  point: import("@boundsvg/core/scene").SvgPoint | null;
 };
 /** Snapshot exposed only by this local test page, which is excluded from Pages builds. */
 type HarnessSnapshot = {
@@ -41,9 +40,8 @@ const recordDelivery: EventCallback = (info) => {
   deliveries.push({
     nodeId: info.nodeId,
     handlerName: info.handlerName,
-    eventType: info.nativeEvent.type,
-    svgX: info.svgX,
-    svgY: info.svgY,
+    eventType: info.cause === "input" ? info.nativeEvent.type : "scene",
+    point: info.point,
   });
 };
 
@@ -132,7 +130,11 @@ type ClipHitHarness = {
   armCapture: typeof armPointerCapture;
   coreHit: (x: number, y: number) => string | null;
   coreCandidates: (x: number, y: number) => string[];
-  pathGeometry: (sourceIndex: number, clientX: number, clientY: number) => boolean | null;
+  currentHitMatchesSource: (
+    sourceIndex: number,
+    clientX: number,
+    clientY: number,
+  ) => boolean | null;
 };
 
 declare global {
@@ -150,22 +152,15 @@ window.boundsvgClipHit = {
     deliveries = [];
   },
   armCapture: armPointerCapture,
-  pathGeometry: (sourceIndex, clientX, clientY) => {
+  currentHitMatchesSource: (sourceIndex, clientX, clientY) => {
     const scope = mountElement?.shadowRoot ?? mountElement;
     const svg = scope?.querySelector("svg");
     if (!renderedIr || !svg) {
       return null;
     }
     const index = buildIRSourceIndex(renderedIr);
-    const primary = index.sources.get(sourceIndex)?.primaryNodeIndex;
-    if (
-      primary === undefined ||
-      primary === null ||
-      index.nodes.get(primary)?.node.type !== "path"
-    ) {
-      return null;
-    }
-    return verifyPathGeometry(bindIRToSvg(svg, index), primary, clientX, clientY);
+    const query = queryCurrentSvgHit(bindIRToSvg(svg, index), clientX, clientY);
+    return query.status === "ready" ? query.hit?.sourceIndex === sourceIndex : null;
   },
   coreHit: (x, y) => (renderedIr ? (hitTest(renderedIr, x, y)?.nodeId ?? null) : null),
   coreCandidates: (x, y) =>

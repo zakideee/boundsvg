@@ -1,7 +1,7 @@
-import { bindIRToSvg, resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
+import { translateSvgCoords } from "@boundsvg/browser";
 import { createPngObjectUrl } from "@boundsvg/browser/png";
 import { createResourceIdPrefix, type Engine } from "@boundsvg/core";
-import { buildHitTestIndex, buildInspectHitTestIndex, type IR } from "@boundsvg/core/scene";
+import { buildInspectHitTestIndex, buildIRSourceIndex, type IR } from "@boundsvg/core/scene";
 import { getElement } from "../../playground-shared/dom.js";
 import { escapeHtml } from "../../playground-shared/html-utils.js";
 import {
@@ -28,17 +28,12 @@ function resolveOverlayDisplay(): EventEffectOverlayDisplayOptions {
 
 function createHitTester(ir: IR): InspectHitTestFn {
   const index = buildInspectHitTestIndex(ir);
-  let binding: ReturnType<typeof bindIRToSvg> | null = null;
   return (svgEl, clientX, clientY) => {
     const coords = translateSvgCoords(svgEl, clientX, clientY);
-    if (!coords) {
-      return null;
+    if (coords.status !== "ready") {
+      return coords;
     }
-    const candidates = index.queryCandidates(coords.x, coords.y);
-    if (binding?.root !== svgEl) {
-      binding = bindIRToSvg(svgEl, index.sourceIndex);
-    }
-    return resolveHitTarget(binding, candidates, clientX, clientY);
+    return { ...coords, hit: index.queryTopmost(coords.point.svgX, coords.point.svgY) };
   };
 }
 
@@ -119,9 +114,9 @@ export function renderPreset(engine: Engine, key: string): void {
   coreState.cachedIr = ir;
   svgOutput.innerHTML = svg;
 
-  if (key === "mouse") {
+  if (key === "mouse" || key === "live-interaction") {
     // Build spatial index and handler map
-    const index = buildHitTestIndex(ir);
+    const index = buildIRSourceIndex(ir);
 
     // Setup event listeners (includes its own overlay + hover glow)
     const mouseHandle = setupMouseEvents(
@@ -130,6 +125,7 @@ export function renderPreset(engine: Engine, key: string): void {
       index,
       resolveOverlayDisplay(),
       highlightSvgSourceLine,
+      preset.animationDurationMs === undefined ? "static" : "animated",
     );
     coreState.inspectHandle = mouseHandle;
     coreState.activeMouseCleanup = () => {

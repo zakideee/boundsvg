@@ -32,6 +32,42 @@ export type IRSourceIndex = Readonly<{
   sources: ReadonlyMap<number, IRSourceInfo>;
 }>;
 
+/** A canonical source Group with no primary geometry and at least one handler reference. */
+export function isSemanticFrame(source: IRSourceInfo): boolean {
+  return (
+    source.primaryNodeIndex === null &&
+    source.node.type === "group" &&
+    source.node.ownership.role === "source" &&
+    source.node.ownership.on !== undefined &&
+    Object.keys(source.node.ownership.on).length > 0
+  );
+}
+
+/**
+ * Select the outermost handler-bearing semantic Frame ancestor, or the hit itself.
+ * References must belong to this exact index; labels are not persistent identities.
+ * @throws {FatalError} VALIDATION for a foreign or stale source reference.
+ */
+export function resolveInteractionTarget(
+  index: IRSourceIndex,
+  hitSource: IRSourceRef,
+): IRSourceRef {
+  let info = index.sources.get(hitSource.sourceIndex);
+  if (!info || info.source !== hitSource) {
+    throw new FatalError("VALIDATION", "Interaction source belongs to another IR snapshot.", {
+      stage: "ir",
+    });
+  }
+  let target = hitSource;
+  while (info) {
+    if (isSemanticFrame(info)) {
+      target = info.source;
+    }
+    info = info.parentSourceIndex === null ? undefined : index.sources.get(info.parentSourceIndex);
+  }
+  return target;
+}
+
 type MutableOccurrence = Omit<IRNodeOccurrence, "leaveOrder"> & { leaveOrder: number };
 type MutableSourceInfo = Omit<IRSourceInfo, "primaryNodeIndex"> & {
   primaryNodeIndex: number | null;

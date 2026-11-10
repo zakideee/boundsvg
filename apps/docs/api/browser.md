@@ -112,72 +112,184 @@ rather than assuming immediate cancellation.
 
 ## Related entry points
 
-| Entry point                | Use case                                                                                 |
-| -------------------------- | ---------------------------------------------------------------------------------------- |
-| `@boundsvg/browser/wasm`   | Load the web-target WASM module                                                          |
-| `@boundsvg/browser/fonts`  | Fetch and cache font definitions in browser applications                                 |
-| `@boundsvg/browser/png`    | Convert PNG bytes to Blob, data URL, or object URL                                       |
-| `@boundsvg/browser/assets` | Inspect PNG dimensions and trigger user-initiated download                               |
-| `@boundsvg/browser/events` | Translate DOM client coordinates to SVG user space and resolve path-geometry hit targets |
+| Entry point                | Use case                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| `@boundsvg/browser/wasm`   | Load the web-target WASM module                                                         |
+| `@boundsvg/browser/fonts`  | Fetch and cache font definitions in browser applications                                |
+| `@boundsvg/browser/png`    | Convert PNG bytes to Blob, data URL, or object URL                                      |
+| `@boundsvg/browser/assets` | Inspect PNG dimensions and trigger user-initiated download                              |
+| `@boundsvg/browser/events` | Query current native paint/semantic Frames and attach the shared interaction controller |
 
 ## DOM hit testing and source ownership
 
-Use `@boundsvg/browser/events` with one prepared index for the SVG's exact IR
-snapshot. Render with `nodeIdMetadata: "include"`. The outer SVG viewport is
-an envelope; source anchors, physical endpoints and text-unit carriers have
-separate metadata. Node-ID labels can repeat and must not be used as DOM keys.
+Render with `nodeIdMetadata: "include"`, build one source index for the exact IR,
+and bind the actual outer SVG. Labels can repeat; use snapshot-local refs and
+physical ordinals rather than node-ID DOM lookups.
 
 ```ts
-import { buildHitTestIndex } from "@boundsvg/core/scene";
 import {
-  bindIRToSvg,
-  nativePathCandidates,
-  resolveHitTarget,
-  translateSvgCoords,
-} from "@boundsvg/browser/events";
+  buildIRSourceIndex,
+  resolveInteractionTarget,
+} from "@boundsvg/core/scene";
+import { bindIRToSvg, queryCurrentSvgHit } from "@boundsvg/browser/events";
 
-const index = buildHitTestIndex(ir);
-const binding = bindIRToSvg(svgElement, index.sourceIndex);
-
-function pickSource(clientX: number, clientY: number) {
-  const point = translateSvgCoords(svgElement, clientX, clientY);
-  if (!point) {
-    return null;
-  }
-  const candidates = index.queryCandidates(point.x, point.y);
-  for (const native of nativePathCandidates(binding, index, {
-    clientX,
-    clientY,
-    x: point.x,
-    y: point.y,
-  })) {
-    if (!candidates.some((candidate) => candidate.source === native.source)) {
-      candidates.push(native);
-    }
-  }
-  candidates.sort((left, right) => right.order - left.order);
-  return resolveHitTarget(binding, candidates, clientX, clientY);
+const index = buildIRSourceIndex(ir);
+const binding = bindIRToSvg(svgElement, index);
+const query = queryCurrentSvgHit(binding, clientX, clientY);
+if (query.status === "ready") {
+  const target = query.hit ? resolveInteractionTarget(index, query.hit) : null;
 }
 ```
 
-The result is a snapshot-local `IRSourceRef`. Native Path candidates retain the
-same canvas, clip and tree-order gates, including canvas-scaled strokes outside
-the layout frame. `verifyPathGeometry(binding, geometryNodeIndex, clientX,
-clientY)` refines a physical Path endpoint; it no longer accepts a node-ID label.
+`queryCurrentSvgHit` reads current native paint and semantic Frames. A Frame is
+a handler-bearing source Group without primary paint. Its local area is a
+closed rectangle, including corners, restricted by its own and ancestor
+library BoxClips at their current endpoint poses. Zero-area Frames and
+zero-column Frame poses are empty. Positive-size empty Text Frames can receive
+events if their source has no primary occurrence. Ordinary empty Text can retain
+an empty content Text primary; its positive layout box alone does not make it a
+Frame. Painted Text, parts, Image and embedded Svg use native hit behavior.
+Native hit testing is not a pixel-alpha test.
 
-`binding.sourceForElement(element)` resolves semantic ownership.
-`occurrenceForElement(element)` resolves its physical endpoint or an associated
-ancestor. `elementForNode(nodeIndex)` returns the registered endpoint itself.
-For node-animation controls, require a source-role occurrence **and**
-`binding.elementForNode(occurrence.nodeIndex) === animationTarget`. A text-unit
-carrier can resolve to its source without being that source's animation target.
-Generated wrappers and unit carriers are not node-animation aliases.
+A positive-size Frame whose closed rectangle meets a library clip only at a
+shared boundary still contains that boundary. It participates in the same IR
+ranking even when its paint was fully culled; an interior overlap area is not
+required. Snapshot Frame queries use the same containment rule.
 
-Rebuild the index and binding when the IR or SVG element changes, and clear old
-hover and selection references. Incomplete or mismatched documents have no
-registered endpoints. Embedded Svg markup remains opaque and another SVG
-scope's metadata is not registered. These markers describe rendering ownership;
-they are not authorization credentials.
+An empty semantic Frame does not suppress native paint in its subtree. Some
+browsers, including WebKit, can still report zero-scale paint as a native hit;
+that paint can dispatch to its outermost handler-bearing ancestor. A zero-area
+Frame therefore does not guarantee that its descendants cannot receive events.
+
+Paint enter-order and Frame leave-order share one IR ranking. Handlerless paint
+still occludes lower sources. The event target is the outermost handler-bearing
+Frame ancestor, or the selected source itself. Paint overflowing a parent Frame
+can still target that ancestor. HTML or another SVG in front blocks the query;
+owned shadow hosts are checked from the Document inward, with actual SVG-root
+reachability required in the innermost scope. Closed shadows and slots do not
+borrow another SVG's metadata.
+
+Frame geometry supports library-owned bbox/BoxClip shapes and library-generated
+2D static transforms and animation states. Current screen prefixes and native CSS
+local linear values provide evidence alongside the endpoint's current screen CTM.
+Typed OM values and their native matrices must both be 2D; where that capability
+is absent, native CSSOM matrix parsing is used. Native `none` supplies no local
+witness; it does not reactivate an authored attribute. Failed native acquisition
+is unavailable, with no weaker representation or old IR fallback.
+
+External individual `scale`/`rotate`/`translate`, arbitrary 3D/perspective and
+relative values that cannot be resolved natively are outside the semantic Frame
+guarantee. Even planar `translateZ(0)` or `matrix3d` representations can become
+unavailable when their native value is not 2D. External zero-scale may retain a
+browser's identity CTM behavior. Native paint continues to use browser hit testing.
+Changing external clip/mask geometry, SMIL clip shapes,
+`pointer-events`, `visibility` or `display` is not promised to make a semantic
+Frame match native paint. Arbitrary 3D/perspective transforms are outside this
+Frame contract. Native paint retains browser behavior for those paint features.
+A rounded outer frame without a BoxClip still has rectangular semantic corners;
+no missing producer/radius information is inferred.
+
+Only `{ status: "ready", point, hit: null }` is a normal miss. `point` is the
+finite Core `SvgPoint` pair `{svgX, svgY}`. Invalid client coordinates or an
+incomplete binding return `invalid` (`nonFiniteClientPoint`/`bindingMismatch`).
+Missing, nonfinite, degenerate or unresolved root coordinates return
+`unavailable` (`detached`/`coordinatesUnavailable`); unavailable native scope
+APIs return `hitTestUnavailable`. Failed Frame/clip arithmetic also remains
+unavailable. There is no proportional CTM fallback or old bbox rescue.
+`translateSvgCoords(root, clientX, clientY)` returns the same coordinate states
+without performing hit testing. It projects the coefficients returned by the
+browser; it does not independently diagnose every CSS zero-scale pose.
+
+`binding.isComplete` reports endpoint admission. `sourceForElement` resolves
+semantic ownership, `occurrenceForElement` the physical occurrence, and
+`elementForNode` the actual endpoint. Embedded Svg markup is opaque. A text-unit
+carrier may resolve to Text without being its source animation endpoint.
+Rebind after replacing the IR/root/topology; current pose changes do not require
+rebinding. Snapshot refs are not persistent application identities.
+
+Frame ranks are prepared in descending order. A known higher native paint or
+Frame winner prevents lower candidates from being read; required higher-candidate
+failures remain unavailable. Current matrices and local native values are shared
+only within each query. For the necessary unique SVG ancestry U, screen reads,
+style reads and native matrix conversions are each at most U; no permanent pose
+cache or observer is installed.
+
+### Shared interaction controller
+
+`createSvgInteractionController(container)` owns listeners, hover, gestures,
+callback groups, cursor, pointermove coalescing and stationary reevaluation.
+Connect one committed scene with `setScene`, and call its idempotent `dispose`
+when the container lifetime ends. React and vanilla consumers use the same
+controller.
+
+```ts
+import { buildTextMap } from "@boundsvg/core/scene";
+import {
+  createSvgInteractionController,
+  type SvgHoverState,
+} from "@boundsvg/browser/events";
+const controller = createSvgInteractionController(container);
+function handleHoverState(hover: SvgHoverState): void {
+  console.log(hover);
+}
+controller.setScene({
+  binding,
+  renderMode: "animated",
+  handlers,
+  textMap: buildTextMap(index),
+  onHoverState: handleHoverState,
+  onHoverChange(source) {
+    console.log(source);
+  },
+});
+// On actual container disposal:
+controller.dispose();
+```
+
+`onHoverState` is seeded for a new receiver or IR source index, even if the hover
+value is unchanged. With the same receiver, IR and state, it is not notified
+again. Vanilla callers should reuse the receiver across handler-only `setScene`
+updates, as with `handleHoverState` above; do not create a fresh receiver on each
+synchronous recommit from that callback. This rule does not guarantee convergence
+of arbitrary application feedback loops.
+
+Static scenes have no idle RAF. Animated scenes keep at most one RAF while an
+observed primary position is known, visible and connected, including native
+miss/pause/finish. External pointer locations do not wake an unknown attachment.
+Stationary reevaluation emits boundary groups, never synthetic move/down/up/click.
+Blur/hidden freeze logical hover and lose physical position; a fresh eligible
+container input resumes. Lost pointer capture is not gesture termination.
+Primary touch termination clears hover and its known position. Compatibility
+mouse events and clicks still query and dispatch their real callbacks, but do
+not establish a new hover pointer after touch. A subsequent primary non-touch
+pointer lifecycle input, such as enter, move or down, restores hover tracking.
+A click being a PointerEvent does not by itself establish that authority.
+Fresh attachments continue to accept MouseEvent-only input.
+External owned up/cancel reaching Document bubble cancels the down owner once.
+Terminals not observed by either container or Document may leave ownership until
+new evidence, incompatible scene or dispose. Dispose/context teardown is silent.
+
+Started callback groups and actual discrete inputs retain their original
+snapshot through scene updates. Unstarted hover/move is discarded when its
+scene expires. Handler-only updates retain DOM/clock and use the latest committed
+callbacks; whole-topology correspondence governs canonical ref migration.
+`SvgHoverState` is inactive/pending/ready/invalid/unavailable; only ready has a
+source field. `onHoverChange` reports logical target changes, not every canonical
+ref replacement.
+
+Automatic text-copy menus require a native Text witness from the selected paint
+or an ancestor Frame, plus its matching TextMap. A separate foreground Frame
+blocks the lower Text menu even when both resolve to the same outer target.
+The target's explicit `onContextMenu` takes priority. Static labels keep line
+copy in animated documents when their own units and physical ancestors have no
+IR-authored tracks; animated Text/ancestor tracks have a null sampled line point.
+External CSS motion does not resample the snapshot TextMap or guarantee current
+line selection, even when native paint and the interactive target move correctly.
+
+The obsolete `nativePathCandidates`, `resolveHitTarget`, `verifyPathGeometry`
+and live Path-candidate API are removed. For snapshot inspection, use Core
+`buildInspectHitTestIndex`/`buildHitTestIndex` directly and keep coordinate failure
+separate from a successful snapshot miss. Snapshot bounds are not current paint.
 
 ## WASM shape capabilities
 

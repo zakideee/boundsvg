@@ -1,12 +1,8 @@
 // @vitest-environment happy-dom
-import { bindIRToSvg, nativePathCandidates, resolveHitTarget } from "@boundsvg/browser/events";
+import { bindIRToSvg, queryCurrentSvgHit } from "@boundsvg/browser/events";
 import type { IR, IRNode } from "@boundsvg/core";
 import { initNodeWasm } from "@boundsvg/core/node";
-import {
-  buildHitTestIndex,
-  buildInspectHitTestIndex,
-  buildIRSourceIndex,
-} from "@boundsvg/core/scene";
+import { buildInspectHitTestIndex, buildIRSourceIndex } from "@boundsvg/core/scene";
 import { createWasmEngineInstance, type WasmEngineHandle } from "@boundsvg/core/wasm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -64,7 +60,7 @@ describe("emitted IR ownership binding", () => {
         occurrence.node.ownership.role === "source",
       );
     }
-    expect(resolveHitTarget(binding, index.queryCandidates(10, 10), 10, 10)).toEqual({
+    expect(index.queryTopmost(10, 10)).toEqual({
       sourceIndex: 5,
       nodeId: "card",
     });
@@ -87,10 +83,6 @@ describe("emitted IR ownership binding", () => {
     expect(fake).not.toBeNull();
     expect(first.binding.sourceForElement(fake!)).toEqual({ sourceIndex: 1, nodeId: "embedded" });
     expect(first.binding.sourceForElement(second.binding.elementForNode(2)!)).toBeNull();
-    const otherIndex = buildHitTestIndex(second.ir);
-    expect(
-      nativePathCandidates(first.binding, otherIndex, { clientX: 1, clientY: 1, x: 1, y: 1 }),
-    ).toEqual([]);
   });
 
   it("rejects partial documents, noncanonical ordinals and stale candidate references", () => {
@@ -100,11 +92,15 @@ describe("emitted IR ownership binding", () => {
       const broken = bindIRToSvg(current.svg, current.index.sourceIndex);
       expect(broken.elementForNode(0)).toBeNull();
     }
-    const previous = mount(group("root", [rect("old")]));
     const current = mount(group("root", [rect("new")]));
-    expect(
-      resolveHitTarget(current.binding, previous.index.queryCandidates(10, 10), 10, 10),
-    ).toBeNull();
+    const broken = bindIRToSvg(
+      current.svg.cloneNode(false) as SVGSVGElement,
+      current.index.sourceIndex,
+    );
+    expect(queryCurrentSvgHit(broken, 10, 10)).toEqual({
+      status: "invalid",
+      reason: "bindingMismatch",
+    });
     expect(buildIRSourceIndex(current.ir).sources.get(1)?.source.nodeId).toBe("new");
   });
 

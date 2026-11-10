@@ -352,7 +352,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
-        run: pnpm exec playwright install chromium --with-deps firefox
+        run: pnpm exec playwright install chromium --with-deps firefox webkit
 
       - name: Build (full chain for E2E)
         run: pnpm run test:e2e:prepare

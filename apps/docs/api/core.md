@@ -1022,8 +1022,8 @@ Returns an `IRSourceRef` for the topmost conservative source candidate at canvas
 `(x, y)`, or `null`. Path geometry/stroke bounds can extend beyond its layout
 `bbox`. Explicit rectangular and rounded clips exclude invisible portions of
 their owner and descendants in the clip's original coordinates. Candidate
-bounds still contain Path holes or curve whitespace; Browser/React interaction
-checks actual Path fill/stroke for the final target. Supply IR from the matching
+bounds still contain Path holes or curve whitespace. These are snapshot queries;
+Browser/React interaction uses current native paint and semantic Frames independently. Supply IR from the matching
 engine version: missing canonical `pathGeometry` raises `FatalError` with code
 `VALIDATION`. Regenerate older IR from the scene rather than substituting layout
 bounds. Prepare repeated queries with `buildHitTestIndex(ir)` or
@@ -1675,6 +1675,34 @@ origins even when they have no primary text themselves. `TextMap.sourceIndex`
 is the ancestry authority; the old duplicated `parentMap` is removed.
 
 See [Choosing an API](/reference/api-selection) for bbox semantics, animation sampling, and cost.
+
+### Current Frame geometry and coordinates
+
+`SvgPoint` is the shared finite `{svgX, svgY}` type used by callbacks and matching
+TextMap/caret consumers. `resolveInteractionTarget(index, hitSource)` selects the
+outermost handler-bearing no-primary ancestor, or the hit itself; foreign/stale
+refs raise structured VALIDATION.
+
+`applyInverseAffineMatrixToPoint(matrix, point)` returns ready/degenerate/unavailable.
+It directly projects a finite point without materializing an inverse. Zero columns
+are distinct from unresolved determinant or nonfinite derived results.
+`isSemanticFrame(sourceInfo)` identifies a canonical source Group with no primary
+geometry and at least one handler reference. Eligibility is independent of area,
+current pose and the current callback Map.
+
+`queryFrameContainment(bbox, pose, clips, clientPoint)` returns ready.contains or
+unavailable. A `HitPose` has a required `matrix` and `linearWitnesses` array; a
+`HitClip` has `parent`, `pose` and canonical `geometry`. Witnesses are linear
+evidence, never transforms composed into the main position. Snapshot callers pass
+their IR matrix with `linearWitnesses: []`.
+
+All required coefficients, bbox endpoints and clips must be valid first. Then
+proven emptiness (zero area, an empty clip, a finite zero column or computed
+exclusion) takes priority over another constraint's unresolved/overflowed
+calculation. Without an empty proof, calculation failure remains unavailable.
+Frame, inner clip and ancestor order only determines which failure is reported.
+These pure functions read no DOM or clock and do not interpret external CSS or
+native paint.
 
 ## `@boundsvg/core/vnode`
 

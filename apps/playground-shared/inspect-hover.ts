@@ -5,11 +5,11 @@
  * shows the transformed inspection quad for the element under the cursor via
  * EventEffectOverlay.setInspectHighlight(). Callers can select other geometry.
  *
- * Hit-test logic is injected by the caller to avoid runtime imports from
- * `@boundsvg/browser` and `@boundsvg/core/scene` (playground-shared is not
- * a workspace package and cannot resolve those at build time).
+ * Callers inject their snapshot hit test. The shared presentation imports the
+ * Browser result type only; it does not own a second live query implementation.
  */
 
+import type { SvgHitQueryResult } from "@boundsvg/browser/events";
 import type { IR, IRSourceRef } from "@boundsvg/core/scene";
 import {
   buildNodeBBoxMap,
@@ -21,13 +21,13 @@ export type { EventEffectOverlayDisplayOptions } from "./event-effects.js";
 
 /**
  * A function that hit-tests the rendered SVG at the given client coordinates
- * and returns the source occurrence of the element under the cursor, or `null`.
+ * and returns snapshot containment separately from coordinate failures.
  */
 export type InspectHitTestFn = (
   svgEl: SVGSVGElement,
   clientX: number,
   clientY: number,
-) => IRSourceRef | null;
+) => SvgHitQueryResult;
 
 /**
  * Handle returned by `setupInspectHover`.
@@ -79,11 +79,18 @@ export function setupInspectHover(
   });
 
   let lastInspected: IRSourceRef | null = null;
+  let hasCoordinateFailure = false;
 
   const onMouseMove = (e: MouseEvent): void => {
-    const source = hitTest(svgEl, e.clientX, e.clientY);
-
-    if (source !== lastInspected) {
+    const query = hitTest(svgEl, e.clientX, e.clientY);
+    if (query.status !== "ready") {
+      hasCoordinateFailure = true;
+      overlay.setInspectHighlight(null);
+      return;
+    }
+    const source = query.hit;
+    if (hasCoordinateFailure || source !== lastInspected) {
+      hasCoordinateFailure = false;
       lastInspected = source;
       overlay.setInspectHighlight(source);
       onHoverChange?.(source);
@@ -91,6 +98,7 @@ export function setupInspectHover(
   };
 
   const onMouseLeave = (): void => {
+    hasCoordinateFailure = false;
     if (lastInspected) {
       lastInspected = null;
       overlay.setInspectHighlight(null);
@@ -109,6 +117,7 @@ export function setupInspectHover(
       svgEl.removeEventListener("mouseleave", onMouseLeave);
     },
     highlight: (source: IRSourceRef | null) => {
+      hasCoordinateFailure = false;
       if (source !== lastInspected) {
         lastInspected = source;
         overlay.setInspectHighlight(source);

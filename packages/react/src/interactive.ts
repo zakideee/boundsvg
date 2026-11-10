@@ -1,5 +1,10 @@
 // @boundsvg/react/interactive — Interactive SVG components, hooks, and event types
 
+export type {
+  SvgCoordinateResult,
+  SvgHitQueryResult,
+  SvgHoverState,
+} from "@boundsvg/browser/events";
 export type { InteractiveBoundSvgProps } from "./components/interactive-boundsvg.js";
 export { InteractiveBoundSvg } from "./components/interactive-boundsvg.js";
 export type {

@@ -14,12 +14,14 @@ import {
 } from "@boundsvg/react";
 import { buildMeasurementsVNode } from "./engine-builders/measurements";
 import { buildShrinkwrapVNode } from "./engine-builders/shrinkwrap";
+import { LIVE_INTERACTION_TEMPLATE } from "./live-interaction";
 import { TEMPLATE_IMAGE_DATA_URL, TERMINAL_TEMPLATE } from "./terminal-assets";
 import { TEXT_MOTION_TEMPLATE_DEFINITIONS } from "./text-motion-templates";
 import type { TemplateDef } from "./types";
 
 /** JSX scenes offered by the template selector; paired scenes match the core presets. */
 export const TEMPLATE_DEFINITIONS: Record<string, TemplateDef> = {
+  "live-interaction": LIVE_INTERACTION_TEMPLATE,
   "transform-origin": {
     title: "Text Transform Origin",
     description:
@@ -1235,6 +1237,7 @@ export const TEMPLATE_GROUPS: TemplateGroupDef[] = [
     key: "text-motion",
     label: "Text Motion",
     templateKeys: [
+      "live-interaction",
       "animated-svg-timeline",
       "typing-ime-timeline",
       "text-on-path-basics",

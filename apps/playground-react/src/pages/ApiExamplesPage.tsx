@@ -82,7 +82,7 @@ const handlers = new Map<string, EventCallback>([
   ["handleHover", (info) => console.log("hover", info.nodeId)],
 ]);
 
-const { svg, hoverSource, containerRef, isReady } = useInteractiveSvg(
+const { svg, hover, containerRef, isReady } = useInteractiveSvg(
   vnode,
   handlers,
   { showPointerCursor: true },
@@ -318,7 +318,7 @@ function InteractiveHookSurface({
   handlers: Map<string, EventCallback>;
   renderOptions?: SharedRenderOptions;
 }) {
-  const { svg, hoverSource, containerRef, error, isReady } = useInteractiveSvg(vnode, handlers, {
+  const { svg, hover, containerRef, error, isReady } = useInteractiveSvg(vnode, handlers, {
     renderOptions,
     showPointerCursor: true,
   });
@@ -344,9 +344,9 @@ function InteractiveHookSurface({
         className="rendered-content"
         dangerouslySetInnerHTML={{ __html: svg }}
       />
-      {hoverSource && (
+      {hover.status === "ready" && hover.source && (
         <p className="api-status-label">
-          hoverSource: <code>{hoverSource.nodeId}</code>
+          hover: <code>{hover.source.nodeId}</code>
         </p>
       )}
     </div>
@@ -410,7 +410,7 @@ function InteractiveComponentSurface({ renderOptions }: { renderOptions?: Shared
       </InteractiveBoundSvg>
       {hovered && (
         <p className="api-status-label">
-          hoverSource: <code>{hovered.nodeId}</code>
+          Hover target: <code>{hovered.nodeId}</code>
         </p>
       )}
     </div>

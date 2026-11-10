@@ -212,33 +212,78 @@ export function applyAffineMatrixToPoint(matrix: AffineMatrix, point: Point2D): 
   };
 }
 
-/**
- * Map a world point into the matrix's source coordinates. A singular matrix
- * has no painted area and returns null. Normalizing each column avoids
- * overflowing the determinant for finite, large supported scales.
- */
-export function applyInverseAffineMatrixToPoint(
-  matrix: AffineMatrix,
-  point: Point2D,
-): Point2D | null {
+/** Derived failures that prevent a finite inverse projection. */
+export type AffineProjectionUnavailableReason =
+  | "nonFiniteMatrix"
+  | "unresolvedDeterminant"
+  | "nonFiniteProjection";
+
+/** A finite inverse projection, a zero column, or an unresolved calculation. */
+export type AffinePointProjection =
+  | Readonly<{ status: "ready"; point: Point2D }>
+  | Readonly<{ status: "degenerate"; reason: "zeroColumn" }>
+  | Readonly<{ status: "unavailable"; reason: AffineProjectionUnavailableReason }>;
+
+/** Package-internal normalized basis shared by inverse projection and pose witnesses. */
+type AffineLinearClassification =
+  | Readonly<{
+      status: "ready";
+      xScale: number;
+      yScale: number;
+      normA: number;
+      normB: number;
+      normC: number;
+      normD: number;
+      determinant: number;
+    }>
+  | Exclude<AffinePointProjection, { status: "ready" }>;
+
+/** Classify linear coefficients without constructing an inverse or applying a witness as a transform. */
+export function classifyAffineLinear(
+  matrix: Readonly<Pick<AffineMatrix, "a" | "b" | "c" | "d">>,
+): AffineLinearClassification {
+  if (![matrix.a, matrix.b, matrix.c, matrix.d].every(Number.isFinite)) {
+    return { status: "unavailable", reason: "nonFiniteMatrix" };
+  }
   const xScale = Math.max(Math.abs(matrix.a), Math.abs(matrix.b));
   const yScale = Math.max(Math.abs(matrix.c), Math.abs(matrix.d));
-  if (!Number.isFinite(xScale) || !Number.isFinite(yScale) || xScale === 0 || yScale === 0) {
-    return null;
+  if (xScale === 0 || yScale === 0) {
+    return { status: "degenerate", reason: "zeroColumn" };
   }
   const normA = matrix.a / xScale;
   const normB = matrix.b / xScale;
   const normC = matrix.c / yScale;
   const normD = matrix.d / yScale;
   const determinant = normA * normD - normB * normC;
-  if (determinant === 0 || !Number.isFinite(determinant)) {
-    return null;
+  return determinant === 0 || !Number.isFinite(determinant)
+    ? { status: "unavailable", reason: "unresolvedDeterminant" }
+    : { status: "ready", xScale, yScale, normA, normB, normC, normD, determinant };
+}
+
+/**
+ * Project a finite point directly into the matrix's source coordinates.
+ * Column normalization avoids overflowing the determinant without constructing
+ * an inverse matrix. A zero column is distinct from an unresolved determinant.
+ */
+export function applyInverseAffineMatrixToPoint(
+  matrix: Readonly<AffineMatrix>,
+  point: Readonly<Point2D>,
+): AffinePointProjection {
+  if (![matrix.e, matrix.f].every(Number.isFinite)) {
+    return { status: "unavailable", reason: "nonFiniteMatrix" };
   }
+  const linear = classifyAffineLinear(matrix);
+  if (linear.status !== "ready") {
+    return linear;
+  }
+  const { xScale, yScale, normA, normB, normC, normD, determinant } = linear;
   const deltaX = point.x - matrix.e;
   const deltaY = point.y - matrix.f;
   const x = (normD * deltaX - normC * deltaY) / determinant / xScale;
   const y = (normA * deltaY - normB * deltaX) / determinant / yScale;
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  return Number.isFinite(x) && Number.isFinite(y)
+    ? { status: "ready", point: { x, y } }
+    : { status: "unavailable", reason: "nonFiniteProjection" };
 }
 
 /** Append each shear around the resolved origin without changing multiplication order. */

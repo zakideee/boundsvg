@@ -1,16 +1,36 @@
 import { FatalError } from "../errors.js";
-import { type AffineMatrix, applyInverseAffineMatrixToPoint, type Point2D } from "../transform.js";
+import {
+  type AffineMatrix,
+  type AffineProjectionUnavailableReason,
+  applyInverseAffineMatrixToPoint,
+  classifyAffineLinear,
+  type Point2D,
+} from "../transform.js";
 import type { BBox, BoxClip, IRPathNode } from "./types.js";
 
 /** Extrema may be infinite only during conservative internal interval arithmetic. */
 export type HitBounds = { minX: number; minY: number; maxX: number; maxY: number };
 
-/** One shared ancestor link; coordinates belong to the pre-transform clip. */
-export type HitClip = {
+/** Main local-to-target matrix plus linear evidence, never a list of transforms to compose. */
+export type HitPose = Readonly<{
+  matrix: Readonly<AffineMatrix>;
+  linearWitnesses: readonly Readonly<Pick<AffineMatrix, "a" | "b" | "c" | "d">>[];
+}>;
+
+/** Innermost clip at the head, then parent ancestors; coordinates belong to each pre-transform clip. */
+export type HitClip = Readonly<{
   parent: HitClip | null;
-  matrix: AffineMatrix;
+  pose: HitPose;
   geometry: BoxClip;
-};
+}>;
+
+/** Checked local containment; calculation failures are not ordinary misses. */
+export type HitContainmentResult =
+  | Readonly<{ status: "ready"; contains: boolean }>
+  | Readonly<{
+      status: "unavailable";
+      reason: AffineProjectionUnavailableReason | "nonFiniteGeometry";
+    }>;
 
 /** Convert layout bounds without interpreting them as Path paint geometry. */
 export function bboxHitBounds(bbox: BBox): HitBounds {
@@ -192,7 +212,6 @@ function pointInBoxClip(point: Point2D, clip: BoxClip): boolean {
   if (clip.kind === "empty") {
     return false;
   }
-  assertResolvedBoxClip(clip);
   if (clip.bbox.w === 0 || clip.bbox.h === 0 || !pointInHitBBox(point, clip.bbox)) {
     return false;
   }
@@ -225,13 +244,121 @@ function pointInBoxClip(point: Point2D, clip: BoxClip): boolean {
   return true;
 }
 
-/** Check a shared clip chain without allocating or reparsing Path data per pointer. */
-export function acceptsHitClips(clip: HitClip | null, point: Point2D): boolean {
-  for (let current = clip; current; current = current.parent) {
-    const local = applyInverseAffineMatrixToPoint(current.matrix, point);
-    if (!local || !pointInBoxClip(local, current.geometry)) {
-      return false;
+type HitConstraint = Readonly<{
+  pose: HitPose;
+  geometry: BoxClip | Readonly<{ kind: "frame"; bbox: Readonly<BBox> }>;
+}>;
+
+/** Validate the entire constraint set before an empty proof can suppress a derived failure. */
+function evaluateConstraints(
+  constraints: readonly HitConstraint[],
+  point: Readonly<Point2D>,
+): HitContainmentResult {
+  let invalid: HitContainmentResult | null = null;
+  const projections = new Map<
+    HitPose["matrix"],
+    ReturnType<typeof applyInverseAffineMatrixToPoint>
+  >();
+  const classifications = new Map<
+    HitPose["linearWitnesses"][number],
+    ReturnType<typeof classifyAffineLinear>
+  >();
+  const checked = constraints.map(({ geometry, pose }) => {
+    if (geometry.kind === "boxContour") {
+      assertResolvedBoxClip(geometry);
+    }
+    if (geometry.kind === "frame") {
+      const bbox = geometry.bbox;
+      if (
+        ![bbox.x, bbox.y, bbox.w, bbox.h, bbox.x + bbox.w, bbox.y + bbox.h].every(Number.isFinite)
+      ) {
+        invalid ??= { status: "unavailable", reason: "nonFiniteGeometry" };
+      }
+    }
+    let projection = projections.get(pose.matrix);
+    if (!projection) {
+      projection = applyInverseAffineMatrixToPoint(pose.matrix, point);
+      projections.set(pose.matrix, projection);
+    }
+    if (projection.status === "unavailable" && projection.reason === "nonFiniteMatrix") {
+      invalid ??= projection;
+    }
+    const witnesses = pose.linearWitnesses.map((witness) => {
+      let classification = classifications.get(witness);
+      if (!classification) {
+        classification = classifyAffineLinear(witness);
+        classifications.set(witness, classification);
+      }
+      if (classification.status === "unavailable" && classification.reason === "nonFiniteMatrix") {
+        invalid ??= classification;
+      }
+      return classification;
+    });
+    return { geometry, projection, witnesses };
+  });
+  if (invalid) {
+    return invalid;
+  }
+  let isEmpty = false;
+  let failure: HitContainmentResult | null = null;
+  for (const { geometry, projection, witnesses } of checked) {
+    if (geometry.kind === "empty" || geometry.bbox.w === 0 || geometry.bbox.h === 0) {
+      isEmpty = true;
+      continue;
+    }
+    if (projection.status === "degenerate") {
+      isEmpty = true;
+    } else if (projection.status === "unavailable") {
+      failure ??= projection;
+    } else if (
+      !(geometry.kind === "frame"
+        ? pointInHitBBox(projection.point, geometry.bbox)
+        : pointInBoxClip(projection.point, geometry))
+    ) {
+      isEmpty = true;
+    }
+    for (const linear of witnesses) {
+      if (linear.status === "degenerate") {
+        isEmpty = true;
+      } else if (linear.status === "unavailable") {
+        failure ??= linear;
+      }
     }
   }
-  return true;
+  return isEmpty
+    ? { status: "ready", contains: false }
+    : (failure ?? { status: "ready", contains: true });
+}
+
+/** Stable diagnostic order is inner-to-outer; established emptiness outranks derived failure. */
+export function evaluateHitClips(
+  clip: HitClip | null,
+  point: Readonly<Point2D>,
+): HitContainmentResult {
+  const constraints: HitConstraint[] = [];
+  for (let current = clip; current; current = current.parent) {
+    constraints.push(current);
+  }
+  return evaluateConstraints(constraints, point);
+}
+
+/**
+ * Evaluate a semantic Frame using its current pose and canonical ancestor clips.
+ * Validate all inputs first, then prefer proven emptiness over derived failures.
+ * Diagnostics retain Frame, innermost clip, ancestor order. Native SVG paint and
+ * external CSS geometry are outside this pure boundary.
+ * @throws {FatalError} VALIDATION for a noncanonical BoxClip in the supplied IR chain.
+ */
+// biome-ignore lint/complexity/useMaxParams: The pure boundary keeps geometry, pose, clip chain and client point explicit.
+export function queryFrameContainment(
+  bbox: Readonly<BBox>,
+  pose: HitPose,
+  clips: HitClip | null,
+  clientPoint: Readonly<Point2D>,
+): HitContainmentResult {
+  const constraints: HitConstraint[] = [{ pose, geometry: { kind: "frame", bbox } }];
+  for (let current = clips; current; current = current.parent) {
+    constraints.push(current);
+  }
+  return evaluateConstraints(constraints, clientPoint);
 }

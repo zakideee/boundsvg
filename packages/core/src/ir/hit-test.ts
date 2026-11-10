@@ -6,16 +6,22 @@ import {
   multiplyAffineMatrices,
 } from "../transform.js";
 import {
-  acceptsHitClips,
   bboxHitBounds,
+  evaluateHitClips,
   type HitBounds,
   type HitClip,
   intersectHitBounds,
   pathWorldHitBounds,
   pointInHitBBox,
+  queryFrameContainment,
   worldHitBounds,
 } from "./hit-geometry.js";
-import { buildIRSourceIndex, type IRSourceIndex, type IRSourceRef } from "./source-index.js";
+import {
+  buildIRSourceIndex,
+  type IRSourceIndex,
+  type IRSourceRef,
+  isSemanticFrame,
+} from "./source-index.js";
 import { buildFilteredSpatialIndex } from "./spatial-index.js";
 import type { BBox, IR, IRNode } from "./types.js";
 
@@ -31,7 +37,6 @@ export type IRHitIndex = {
   sourceIndex: IRSourceIndex;
   queryTopmost: (x: number, y: number) => IRSourceRef | null;
   queryCandidates: (x: number, y: number) => IRHitCandidate[];
-  pathCandidateForSource: (sourceIndex: number, x: number, y: number) => IRHitCandidate | null;
 };
 
 type HitEntry = {
@@ -45,7 +50,11 @@ type HitContext = { matrix: AffineMatrix; clip: HitClip | null; visible: HitBoun
 function resolveNodeHitGeometry(
   node: IRNode,
   parent: HitContext | undefined,
-  { policy, canvas }: { policy: "interaction" | "inspection"; canvas: BBox },
+  {
+    policy,
+    canvas,
+    isFrame,
+  }: { policy: "interaction" | "inspection"; canvas: BBox; isFrame: boolean },
 ) {
   const matrix = multiplyAffineMatrices(
     parent?.matrix ?? createIdentityAffineMatrix(),
@@ -54,7 +63,7 @@ function resolveNodeHitGeometry(
   let clip = parent?.clip ?? null;
   let visible = parent ? parent.visible : bboxHitBounds(canvas);
   if (node.type === "group" && node.clip) {
-    clip = { parent: clip, matrix, geometry: node.clip };
+    clip = { parent: clip, pose: { matrix, linearWitnesses: [] }, geometry: node.clip };
     visible =
       visible && node.clip.kind === "boxContour"
         ? intersectHitBounds(visible, worldHitBounds(matrix, bboxHitBounds(node.clip.bbox)))
@@ -76,7 +85,8 @@ function resolveNodeHitGeometry(
     context: { matrix, clip, visible },
     geometry: {
       bbox:
-        bounds && bounds.minX < bounds.maxX && bounds.minY < bounds.maxY
+        // A closed Frame can meet its clip only at a boundary; paint keeps its area policy.
+        bounds && (isFrame || (bounds.minX < bounds.maxX && bounds.minY < bounds.maxY))
           ? {
               x: bounds.minX,
               y: bounds.minY,
@@ -86,19 +96,34 @@ function resolveNodeHitGeometry(
           : null,
       accepts(x: number, y: number) {
         const point = { x, y };
+        if (!pointInHitBBox(point, canvas)) {
+          return false;
+        }
+        if (isFrame) {
+          const contained = queryFrameContainment(
+            node.bbox,
+            { matrix, linearWitnesses: [] },
+            clip,
+            point,
+          );
+          return contained.status === "ready" && contained.contains;
+        }
         const localPoint = applyInverseAffineMatrixToPoint(matrix, point);
-        return (
-          pointInHitBBox(point, canvas) &&
-          localPoint !== null &&
-          (node.type !== "group" || pointInHitBBox(localPoint, node.bbox)) &&
-          acceptsHitClips(clip, point)
-        );
+        // Snapshot selection retains its conservative miss policy for failed projections.
+        if (
+          localPoint.status !== "ready" ||
+          (node.type === "group" && !pointInHitBBox(localPoint.point, node.bbox))
+        ) {
+          return false;
+        }
+        const clipped = evaluateHitClips(clip, point);
+        return clipped.status === "ready" && clipped.contains;
       },
     },
   };
 }
 
-/** Find the topmost source; native Path fill/stroke refinement remains a browser responsibility.
+/** Find the topmost source in an IR snapshot, including conservative Path bounds.
  * @throws {FatalError} VALIDATION for invalid ownership or Path output geometry.
  */
 export function hitTest(ir: IR, x: number, y: number): IRSourceRef | null {
@@ -117,6 +142,14 @@ export function buildHitTestIndex(ir: IR): IRHitIndex {
  */
 export function prepareHitIndex(ir: IR, policy: "interaction" | "inspection"): IRHitIndex {
   const sourceIndex = buildIRSourceIndex(ir);
+  const frameNodes = new Set<number>();
+  if (policy === "interaction") {
+    for (const source of sourceIndex.sources.values()) {
+      if (isSemanticFrame(source)) {
+        frameNodes.add(source.source.sourceIndex);
+      }
+    }
+  }
   const canvas = { x: 0, y: 0, w: ir.width, h: ir.height };
   const contexts = new Map<number, HitContext>();
   const geometry = new Map<
@@ -126,22 +159,20 @@ export function prepareHitIndex(ir: IR, policy: "interaction" | "inspection"): I
   for (const occurrence of sourceIndex.nodes.values()) {
     const parent =
       occurrence.parentNodeIndex === null ? undefined : contexts.get(occurrence.parentNodeIndex);
-    const resolved = resolveNodeHitGeometry(occurrence.node, parent, { policy, canvas });
+    const resolved = resolveNodeHitGeometry(occurrence.node, parent, {
+      policy,
+      canvas,
+      isFrame: frameNodes.has(occurrence.nodeIndex),
+    });
     contexts.set(occurrence.nodeIndex, resolved.context);
     geometry.set(occurrence.nodeIndex, resolved.geometry);
   }
   const entries: HitEntry[] = [];
-  const paths = new Map<
-    number,
-    { candidate: IRHitCandidate; accepts: (x: number, y: number) => boolean }
-  >();
   for (const source of sourceIndex.sources.values()) {
     if (
       source.primaryNodeIndex === null &&
       policy === "interaction" &&
-      (source.node.ownership.role !== "source" ||
-        !source.node.ownership.on ||
-        Object.keys(source.node.ownership.on).length === 0)
+      !frameNodes.has(source.source.sourceIndex)
     ) {
       continue;
     }
@@ -168,9 +199,6 @@ export function prepareHitIndex(ir: IR, policy: "interaction" | "inspection"): I
         accepts: resolved.accepts,
       });
     }
-    if (occurrence.node.type === "path") {
-      paths.set(source.source.sourceIndex, { candidate, accepts: resolved.accepts });
-    }
   }
   const spatial = buildFilteredSpatialIndex(canvas, entries);
   return {
@@ -179,10 +207,6 @@ export function prepareHitIndex(ir: IR, policy: "interaction" | "inspection"): I
       return spatial.queryCandidates(x, y)[0]?.source ?? null;
     },
     queryCandidates: spatial.queryCandidates,
-    pathCandidateForSource(sourceOrdinal, x, y) {
-      const path = paths.get(sourceOrdinal);
-      return path?.accepts(x, y) ? path.candidate : null;
-    },
   };
 }
 

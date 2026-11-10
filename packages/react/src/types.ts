@@ -13,60 +13,11 @@ import type { WorkerEngine } from "@boundsvg/worker";
 // Interactive event types
 // ---------------------------------------------------------------------------
 
-/** Information passed to event handler callbacks */
-export type PointerEventInfo = {
-  /** Source occurrence in the event's rendered IR snapshot. */
-  source: import("@boundsvg/core/scene").IRSourceRef;
-  /** The handler name string (auto-generated ID or user-specified string) */
-  handlerName: string;
-  /** The nodeId of the IR node that was hit */
-  nodeId: string;
-  /** SVG-space X coordinate */
-  svgX: number;
-  /** SVG-space Y coordinate */
-  svgY: number;
-  /**
-   * Original DOM event.
-   *
-   * Touch-originated events (onTouchStart/End/Move) receive a PointerEvent
-   * with `pointerType === "touch"`, NOT a native TouchEvent. This is by design:
-   * native TouchEvent is unreliable on real mobile browsers for SVG elements
-   * (touchend/touchmove may be silently suppressed). The Pointer Events API
-   * unifies mouse/touch/pen and works reliably across all modern browsers.
-   *
-   * TouchEvent is retained in the union for API compatibility but will not
-   * be passed in practice.
-   */
-  nativeEvent: PointerEvent | MouseEvent | TouchEvent;
-};
-
-/** Callback function for interactive events */
-export type EventCallback = (info: PointerEventInfo) => void;
-
-/** Event handler props that accept both string references and callback functions */
-export type InteractiveHandlerProps = {
-  onClick?: EventCallback | string;
-  onDoubleClick?: EventCallback | string;
-  onContextMenu?: EventCallback | string;
-  onPointerDown?: EventCallback | string;
-  onPointerUp?: EventCallback | string;
-  onPointerCancel?: EventCallback | string;
-  onPointerMove?: EventCallback | string;
-  onPointerEnter?: EventCallback | string;
-  onPointerLeave?: EventCallback | string;
-  onPointerOver?: EventCallback | string;
-  onPointerOut?: EventCallback | string;
-  onMouseDown?: EventCallback | string;
-  onMouseUp?: EventCallback | string;
-  onMouseMove?: EventCallback | string;
-  onMouseEnter?: EventCallback | string;
-  onMouseLeave?: EventCallback | string;
-  onMouseOver?: EventCallback | string;
-  onMouseOut?: EventCallback | string;
-  onTouchStart?: EventCallback | string;
-  onTouchEnd?: EventCallback | string;
-  onTouchMove?: EventCallback | string;
-};
+export type {
+  EventCallback,
+  InteractiveHandlerProps,
+  PointerEventInfo,
+} from "@boundsvg/browser/events";
 
 /** Font definition for BoundSvgProvider */
 export type FontDefinition = {

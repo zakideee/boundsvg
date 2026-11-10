@@ -7,6 +7,7 @@ import {
   type Point2D,
 } from "../transform.js";
 import type { IRSourceIndex, IRSourceRef } from "./source-index.js";
+import type { SvgPoint } from "./types.js";
 
 /** Source-range roles distinguishing ordinary content from ruby base and annotation. */
 export type TextSourceRole = "content" | "rubyBase" | "rubyAnnotation";
@@ -114,7 +115,7 @@ export function buildTextSelectionMap(sourceIndex: IRSourceIndex): TextSelection
 export function findTextCaretAtPoint(
   selectionMap: TextSelectionMap,
   sourceIndex: number,
-  point: { svgX: number; svgY: number },
+  point: SvgPoint,
 ): TextCaret | null {
   const node = selectionMap.nodes.get(sourceIndex);
   if (!node || node.glyphs.length === 0) {

@@ -8,9 +8,8 @@ export const mousePreset: Preset = {
   description:
     "21 event types: click, dblclick, contextMenu, pointerDown/Up/Move/Enter/Leave/Over/Out/Cancel, mouseDown/Up/Move/Enter/Leave/Over/Out, touchStart/End/Move.",
   source: `import { Canvas, Flex, Path, Text } from "@boundsvg/core";
-import {
-  buildHitTestIndex,
-} from "@boundsvg/core/scene";
+import { buildIRSourceIndex, buildTextMap } from "@boundsvg/core/scene";
+import { bindIRToSvg, createSvgInteractionController } from "@boundsvg/browser/events";
 
 // 1. Build VNode with event handler IDs
 const vnode = Canvas(
@@ -173,28 +172,30 @@ const vnode = Canvas(
     ),
     Text({ font: "${FA}", fontSizePx: 12,
       color: "#475569", wrap: "char" },
-      "20 event types supported via Quadtree hit-test"),
+      "Current native paint and rectangular Frame interaction"),
   ),
 );
 
-// 2. Render with IR
-const { svg, ir } = engine.renderToSvgAndIR(vnode);
+// 2. Render SVG and IR from one pipeline run
+const { svg, ir } = engine.renderToSvgAndIR(vnode, {
+  nodeIdMetadata: "include",
+});
+container.innerHTML = svg;
+const root = container.querySelector("svg");
+if (!root) throw new Error("Expected rendered SVG");
 
-// 3. Build hit-test index + handler map
-const index = buildHitTestIndex(ir);
-
-// 4. Dispatch events via SVG coordinate hit-test
-const svgEl = document.querySelector("svg")!;
-svgEl.addEventListener("click", (e) => {
-  const { x, y } = svgCoords(e);
-  const source = index.queryTopmost(x, y);
-  const node = source ? index.sourceIndex.sources.get(source.sourceIndex)?.node : undefined;
-  const handlers = node?.ownership.role === "source" ? node.ownership.on : undefined;
-  if (source) {
-    const irHandlers = handlers;
-    if (irHandlers?.onClick) console.log("click", source.nodeId, x, y);
-  }
-});`,
+// 3. Connect current paint and Frame interaction
+const index = buildIRSourceIndex(ir);
+const controller = createSvgInteractionController(container);
+controller.setScene({
+  binding: bindIRToSvg(root, index),
+  renderMode: "static",
+  handlers: new Map([["card-1", (info) => console.log(info)]]),
+  textMap: buildTextMap(index),
+  onHoverState: (hover) => console.log(hover),
+});
+// On container disposal: controller.dispose();
+`,
   build: () =>
     Canvas(
       { width: 800, height: 680, background: "#1e1e1e" },
@@ -435,7 +436,7 @@ svgEl.addEventListener("click", (e) => {
         ),
         Text(
           { font: FA, fontSizePx: 12, color: "#475569", wrap: "char" },
-          "20 event types supported via Quadtree hit-test",
+          "Current native paint and rectangular Frame interaction",
         ),
       ),
     ),

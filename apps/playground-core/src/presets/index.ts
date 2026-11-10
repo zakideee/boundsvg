@@ -10,6 +10,7 @@ import { graphemeClustersPreset } from "./grapheme-clusters";
 import { gridPreset } from "./grid";
 import { inlinePrimitivesPreset } from "./inline-primitives";
 import { layeredPreset } from "./layered";
+import { liveInteractionPreset } from "./live-interaction";
 import { measurementsPreset } from "./measurements";
 import { mousePreset } from "./mouse";
 import { partInspectionPreset } from "./part-inspection";
@@ -58,6 +59,7 @@ export const presets: Record<string, Preset> = {
   shrinkwrap: shrinkwrapPreset,
   measurements: measurementsPreset,
   mouse: mousePreset,
+  "live-interaction": liveInteractionPreset,
   "shape-primitives": shapePrimitivesPreset,
   "shape-ops": shapeBooleanOpsPreset,
   "shape-opacity": shapeOpacityPreset,
