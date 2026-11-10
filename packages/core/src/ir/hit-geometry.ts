@@ -343,13 +343,15 @@ export function evaluateHitClips(
 }
 
 /**
- * Evaluate a semantic Frame using its current pose and canonical ancestor clips.
- * Validate all inputs first, then prefer proven emptiness over derived failures.
+ * Evaluate a semantic Frame using its supplied pose and canonical ancestor clips.
+ * Validate geometry, poses and clips first, then prefer proven emptiness over derived failures.
+ * The caller guarantees a finite point in the same query coordinates as every pose:
+ * client CSS px for Browser calls, IR root px for snapshots. The point is not rechecked.
  * Diagnostics retain Frame, innermost clip, ancestor order. Native SVG paint and
  * external CSS geometry are outside this pure boundary.
  * @throws {FatalError} VALIDATION for a noncanonical BoxClip in the supplied IR chain.
  */
-// biome-ignore lint/complexity/useMaxParams: The pure boundary keeps geometry, pose, clip chain and client point explicit.
+// biome-ignore lint/complexity/useMaxParams: The pure boundary keeps geometry, pose, clip chain and query-space point explicit.
 export function queryFrameContainment(
   bbox: Readonly<BBox>,
   pose: HitPose,

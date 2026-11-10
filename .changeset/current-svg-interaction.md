@@ -25,9 +25,28 @@ not promised to match native paint for those Frames.
 Frames meeting a clip only at a shared boundary still include that boundary and
 participate in IR ranking, even when their paint was culled.
 
-Frame poses now share current screen-prefix and native local linear evidence.
-Core `queryFrameContainment` accepts `HitPose`, and `HitClip.matrix` is replaced
-by `HitClip.pose`; snapshot callers pass explicit empty `linearWitnesses`.
+The React `useInteractiveSvg` container must contain exactly one outer SVG
+(`ownerSVGElement === null`). HTML wrappers around that SVG are supported;
+nested SVG paint does not count as another outer root. No outer SVG or multiple
+outer SVGs yield `hover: { status: "invalid", reason: "bindingMismatch" }` and no
+input callback delivery from that binding until a matching single root is available.
+
+`translateSvgCoords` now returns `SvgCoordinateResult` instead of `{x, y} | null`.
+Check `result.status === "ready"` before reading `result.point.svgX` and
+`result.point.svgY`; replace old `point.x`/`point.y` reads. The other states are
+`invalid` (`nonFiniteClientPoint`) and `unavailable` (`detached` or
+`coordinatesUnavailable`), rather than normal coordinate absence.
+
+New exports from `@boundsvg/core/scene` include `HitPose`, `HitClip`,
+`HitContainmentResult`, `queryFrameContainment` and `isSemanticFrame`. A `HitPose`
+contains a main matrix and linear witnesses; a `HitClip` contains `parent`,
+`pose` and canonical `geometry`. These interfaces were not previously public. The checked
+`applyInverseAffineMatrixToPoint` projection and shared `SvgPoint` are also new
+scene exports.
+Snapshot consumers of the new query supply their IR matrix with explicit empty
+`linearWitnesses`. Its point must be finite and in the same query coordinate
+system as the poses: client CSS px for Browser queries, IR root px for snapshots.
+The caller guarantees finiteness; the pure query does not recheck the point.
 Use `isSemanticFrame` for canonical eligibility. Valid empty evidence takes
 priority over unresolved calculations after all required inputs are validated.
 External individual scale/rotate/translate and arbitrary 3D are outside the Frame

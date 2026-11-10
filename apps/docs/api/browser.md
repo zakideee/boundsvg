@@ -126,6 +126,12 @@ Render with `nodeIdMetadata: "include"`, build one source index for the exact IR
 and bind the actual outer SVG. Labels can repeat; use snapshot-local refs and
 physical ordinals rather than node-ID DOM lookups.
 
+React's `useInteractiveSvg` discovers exactly one outer SVG in its container
+(`ownerSVGElement === null`). A single SVG inside HTML wrappers is supported;
+multiple outer SVGs or no outer SVG produce `invalid`/`bindingMismatch` and no
+input callbacks from that binding. Nested SVG paint is not an additional outer root. Manual Browser
+callers pass the intended root explicitly to `bindIRToSvg`.
+
 ```ts
 import {
   buildIRSourceIndex,
@@ -199,6 +205,54 @@ unavailable. There is no proportional CTM fallback or old bbox rescue.
 `translateSvgCoords(root, clientX, clientY)` returns the same coordinate states
 without performing hit testing. It projects the coefficients returned by the
 browser; it does not independently diagnose every CSS zero-scale pose.
+
+### Coordinate-result migration
+
+`translateSvgCoords` previously returned `{ x, y } | null`. It now returns the
+`SvgCoordinateResult` discriminated union, exported from `@boundsvg/browser` and
+`@boundsvg/browser/events`:
+
+```ts
+type SvgCoordinateResult =
+  | Readonly<{
+      status: "ready";
+      point: Readonly<{ svgX: number; svgY: number }>;
+    }>
+  | Readonly<{ status: "invalid"; reason: "nonFiniteClientPoint" }>
+  | Readonly<{
+      status: "unavailable";
+      reason: "detached" | "coordinatesUnavailable";
+    }>;
+```
+
+A truthiness or null check no longer narrows the result. Replace old `point.x`
+and `point.y` reads with `result.point.svgX` and `result.point.svgY` after checking
+`status`. For example:
+
+```ts
+import { translateSvgCoords } from "@boundsvg/browser/events";
+
+function logSvgCoordinates(
+  root: SVGSVGElement,
+  event: PointerEvent | MouseEvent,
+) {
+  const coordinates = translateSvgCoords(root, event.clientX, event.clientY);
+  if (coordinates.status === "ready") {
+    console.log(coordinates.point.svgX, coordinates.point.svgY);
+  } else if (coordinates.status === "invalid") {
+    // nonFiniteClientPoint
+    console.warn(coordinates.reason);
+  } else {
+    // detached or coordinatesUnavailable
+    console.warn(coordinates.reason);
+  }
+}
+```
+
+`bindingMismatch` and `hitTestUnavailable` belong to current hit queries, not to
+this coordinate-only result. None of its failure states is a successful hit miss.
+
+### Binding lifetime and current reads
 
 `binding.isComplete` reports endpoint admission. `sourceForElement` resolves
 semantic ownership, `occurrenceForElement` the physical occurrence, and

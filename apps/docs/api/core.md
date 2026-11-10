@@ -1690,11 +1690,24 @@ are distinct from unresolved determinant or nonfinite derived results.
 geometry and at least one handler reference. Eligibility is independent of area,
 current pose and the current callback Map.
 
+`HitPose`, `HitClip`, `HitContainmentResult`, `queryFrameContainment` and
+`isSemanticFrame` are new exports from `@boundsvg/core/scene`; they were not
+public interfaces in earlier releases. The checked
+`applyInverseAffineMatrixToPoint` function, its affine projection types and
+`SvgPoint` are also new scene exports.
+
 `queryFrameContainment(bbox, pose, clips, clientPoint)` returns ready.contains or
 unavailable. A `HitPose` has a required `matrix` and `linearWitnesses` array; a
 `HitClip` has `parent`, `pose` and canonical `geometry`. Witnesses are linear
 evidence, never transforms composed into the main position. Snapshot callers pass
 their IR matrix with `linearWitnesses: []`.
+
+Despite the parameter name `clientPoint`, the point uses the same query
+coordinate system as every supplied pose: Browser calls use client CSS px;
+snapshot calls use IR root px. The caller must supply finite `x` and `y`.
+The pure function does not revalidate the point; geometry, poses and clips are
+the checked inputs. Do not pass an unchecked client event directly to this Core
+boundary; the Browser coordinate/query APIs validate their own client inputs.
 
 All required coefficients, bbox endpoints and clips must be valid first. Then
 proven emptiness (zero area, an empty clip, a finite zero column or computed

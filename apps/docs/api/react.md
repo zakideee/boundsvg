@@ -426,6 +426,14 @@ Memoize the markup object to retain the same DOM and native animation clock
 when the SVG bytes are unchanged. The hook follows the actual container ref and
 rebinding at commit; it does not measure DOM during React render.
 
+The attached container must contain exactly one outer SVG, meaning an SVG whose
+`ownerSVGElement` is `null`. It can sit inside HTML wrappers within the container;
+SVG elements nested inside that outer SVG are not additional roots. Earlier
+versions bound the first matching SVG. With no outer SVG or multiple outer SVGs,
+`hover` becomes `{ status: "invalid", reason: "bindingMismatch" }` and no input
+callbacks are delivered from that binding. Render a single matching SVG before expecting input
+callbacks; `isReady` alone reports render success, not binding success.
+
 | Return         | Type                                     | Description                                |
 | -------------- | ---------------------------------------- | ------------------------------------------ |
 | `svg`          | `string \| null`                         | Rendered SVG                               |
