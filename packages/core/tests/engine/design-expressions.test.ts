@@ -81,19 +81,31 @@ describe("text paint, skew, and independent box surfaces", () => {
           80,
         );
       const scene = makeScene(input);
+      const canonicalScene = makeScene(canonical);
       const ir = engine.renderToIR(scene);
+      const canonicalIr = engine.renderToIR(canonicalScene);
       const index = buildHitTestIndex(ir);
       const png = engine.renderToPng(scene);
-      expect(engine.renderToSvg(scene)).toBe(engine.renderToSvg(makeScene(canonical)));
-      expect(png).toEqual(engine.renderToPng(makeScene(canonical)));
+      expect(engine.renderToSvg(scene)).toBe(engine.renderToSvg(canonicalScene));
+      expect(png).toEqual(engine.renderToPng(canonicalScene));
       expect(colorAt(png, 0, 0)).toEqual([255, 0, 0, 255]);
+      // With radius 12 at the top right, center (68,12) gives 242 > 144 at (79,1),
+      // but 128 < 144 at (76,4). These interior coordinates distinguish the radius.
       for (const [x, y, expected] of [
-        [0, 0, "target"],
+        [0, 0, null],
+        [79, 0, null],
+        [0, 40, null],
+        [80, 40, null],
+        [40, 80, null],
         [40, 40, "target"],
-        [79, 0, hasRoundedCorners ? null : "target"],
+        [1, 1, "target"],
+        [79, 1, hasRoundedCorners ? null : "target"],
+        [76, 4, "target"],
       ] as const) {
-        expect(hitTest(ir, x, y)?.nodeId ?? null).toBe(expected);
-        expect(index.queryTopmost(x, y)?.nodeId ?? null).toBe(expected);
+        const hit = hitTest(ir, x, y);
+        expect(hit?.nodeId ?? null).toBe(expected);
+        expect(index.queryTopmost(x, y)).toEqual(hit);
+        expect(hit).toEqual(hitTest(canonicalIr, x, y));
       }
     });
   }
