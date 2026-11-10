@@ -93,11 +93,14 @@ function buildPartPaintCanvas(): VNode {
   return Canvas({ width: 920, height: 330, background: "#1a1a1a" }, ...children);
 }
 
+/** Demonstrates per-part paint overrides for normal, hover, and active states of one geometry. */
 export const partPaintPreset: Preset = {
   title: "Part Paint",
   description:
     "State-variant assets from one geometry: partPaint overrides individual parts (merged over the base paint - unset fields inherit) without duplicating the GeometryDoc. The hover state recolors only the ribbon; active also lights up the gem with its own stroke.",
-  source: `import { Canvas, Shape } from "@boundsvg/core";
+  source: `import { Canvas, Shape, type GeometryDoc } from "@boundsvg/core";
+
+const BADGE_GEOMETRY = ${JSON.stringify(BADGE_GEOMETRY, null, 2)} satisfies GeometryDoc;
 
 // Same GeometryDoc, three states - override only what changes per part.
 const baseProps = { geometry: BADGE_GEOMETRY, width: 260, height: 180,

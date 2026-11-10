@@ -147,7 +147,9 @@ export const partInspectionPreset: Preset = {
   title: "Part Inspection",
   description:
     "Part identity survives to the output: emitPartIds tags one path per addressable part (data-boundsvg-part-id) - the structural Shape-IR emits parts as native paths in the document, not as a nested compiled svg. evaluateGeometryParts exposes per-part bounds for the dashed overlays, and meta rides along as data-boundsvg-meta-*.",
-  source: `import { Canvas, Shape, evaluateGeometryParts } from "@boundsvg/core";
+  source: `import { Canvas, Shape, evaluateGeometryParts, type GeometryDoc } from "@boundsvg/core";
+
+const BADGE_GEOMETRY = ${JSON.stringify(BADGE_GEOMETRY, null, 2)} satisfies GeometryDoc;
 
 // Parts follow the authoring tree: group children stay addressable,
 // a boolean node fuses into ONE part, unnamed nodes get positional ids.

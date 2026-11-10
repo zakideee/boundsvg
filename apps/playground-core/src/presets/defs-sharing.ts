@@ -81,11 +81,14 @@ function buildDefsSharingCanvas(engine?: Engine): VNode {
   return buildCanvas(buildStamps(true), note);
 }
 
+/** Demonstrates shared SVG definitions for repeated shapes with identical paths and paint. */
 export const defsSharingPreset: Preset = {
   title: "Defs Sharing",
   description:
     "Byte-identical shape parts (same path data and paint) hoist automatically into <defs> and render as <use> references - on by default, and a no-op when nothing repeats. The caption compares real output sizes for shared vs uniquely-tinted stamps; check the Rendered SVG source for the sp-* defs.",
-  source: `import { Canvas, Shape } from "@boundsvg/core";
+  source: `import { Canvas, Shape, type GeometryDoc } from "@boundsvg/core";
+
+const STAMP_GEOMETRY = ${JSON.stringify(STAMP_GEOMETRY, null, 2)} satisfies GeometryDoc;
 
 // Repetition is free: identical (d + paint) parts dedupe into <defs>.
 const positions = [{ left: 60, top: 80 }, { left: 200, top: 80 }, { left: 340, top: 80 }];
