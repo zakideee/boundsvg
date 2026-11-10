@@ -6,7 +6,7 @@ import {
   classifyAffineLinear,
   type Point2D,
 } from "../transform.js";
-import type { BBox, BoxClip, IRPathNode } from "./types.js";
+import type { BBox, BoxClip, IR, IRPathNode } from "./types.js";
 
 /** Extrema may be infinite only during conservative internal interval arithmetic. */
 export type HitBounds = { minX: number; minY: number; maxX: number; maxY: number };
@@ -17,7 +17,7 @@ export type HitPose = Readonly<{
   linearWitnesses: readonly Readonly<Pick<AffineMatrix, "a" | "b" | "c" | "d">>[];
 }>;
 
-/** Innermost clip at the head, then parent ancestors; coordinates belong to each pre-transform clip. */
+/** Innermost strict-interior clip at the head, then parent ancestors; coordinates are pre-transform. */
 export type HitClip = Readonly<{
   parent: HitClip | null;
   pose: HitPose;
@@ -184,7 +184,7 @@ export function pointInHitBBox(point: Point2D, bbox: BBox): boolean {
   );
 }
 
-/** Reject unresolved clip corners before geometric hit membership can disagree with paint. */
+/** Require canonical clip extents and corners before containment. */
 function assertResolvedBoxClip(clip: Extract<BoxClip, { kind: "boxContour" }>): void {
   const { bbox, corners } = clip;
   if (
@@ -207,12 +207,17 @@ function assertResolvedBoxClip(clip: Extract<BoxClip, { kind: "boxContour" }>): 
   }
 }
 
-/** Test the exact resolved elliptical corners used by the native clip emitter. */
+/** Test the strict interior of the resolved contour; floating comparisons use no tolerance. */
 function pointInBoxClip(point: Point2D, clip: BoxClip): boolean {
   if (clip.kind === "empty") {
     return false;
   }
-  if (clip.bbox.w === 0 || clip.bbox.h === 0 || !pointInHitBBox(point, clip.bbox)) {
+  if (
+    point.x <= clip.bbox.x ||
+    point.y <= clip.bbox.y ||
+    point.x >= clip.bbox.x + clip.bbox.w ||
+    point.y >= clip.bbox.y + clip.bbox.h
+  ) {
     return false;
   }
   const { bbox, corners } = clip;
@@ -238,10 +243,34 @@ function pointInBoxClip(point: Point2D, clip: BoxClip): boolean {
       (isLeft ? point.x < center.x : point.x > center.x) &&
       (isTop ? point.y < center.y : point.y > center.y)
     ) {
-      return Math.hypot((point.x - center.x) / radius.rx, (point.y - center.y) / radius.ry) <= 1;
+      return Math.hypot((point.x - center.x) / radius.rx, (point.y - center.y) / radius.ry) < 1;
     }
   }
   return true;
+}
+
+/**
+ * Test the strict interior of the IR viewport in IR root px; zero dimensions are empty.
+ * The caller guarantees a finite point. Its coordinates are not rechecked here.
+ * Dimensions are required, finite and nonnegative, and are checked on each call.
+ * @throws {FatalError} VALIDATION for noncanonical viewport dimensions.
+ */
+export function isPointInViewport(
+  dimensions: Readonly<Pick<IR, "width" | "height">>,
+  point: Readonly<Point2D>,
+): boolean {
+  const contour = {
+    kind: "boxContour",
+    bbox: { x: 0, y: 0, w: dimensions.width, h: dimensions.height },
+    corners: [
+      { rx: 0, ry: 0 },
+      { rx: 0, ry: 0 },
+      { rx: 0, ry: 0 },
+      { rx: 0, ry: 0 },
+    ],
+  } satisfies Extract<BoxClip, { kind: "boxContour" }>;
+  assertResolvedBoxClip(contour);
+  return pointInBoxClip(point, contour);
 }
 
 type HitConstraint = Readonly<{
@@ -343,7 +372,7 @@ export function evaluateHitClips(
 }
 
 /**
- * Evaluate a semantic Frame using its supplied pose and canonical ancestor clips.
+ * Evaluate a closed semantic Frame using its supplied pose and strict-interior canonical clips.
  * Validate geometry, poses and clips first, then prefer proven emptiness over derived failures.
  * The caller guarantees a finite point in the same query coordinates as every pose:
  * client CSS px for Browser calls, IR root px for snapshots. The point is not rechecked.

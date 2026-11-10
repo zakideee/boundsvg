@@ -157,10 +157,35 @@ an empty content Text primary; its positive layout box alone does not make it a
 Frame. Painted Text, parts, Image and embedded Svg use native hit behavior.
 Native hit testing is not a pixel-alpha test.
 
-A positive-size Frame whose closed rectangle meets a library clip only at a
-shared boundary still contains that boundary. It participates in the same IR
-ranking even when its paint was fully culled; an interior overlap area is not
-required. Snapshot Frame queries use the same containment rule.
+Frame rectangles include their own boundary, but canonical BoxClips and the IR
+viewport use strict interiors. Their straight and elliptical outer boundaries
+exclude Frame candidates, including Frames that only touch a clip. Fractional
+points immediately inside remain eligible: this does not disable an entire
+one-pixel strip. At identity integer placement and DPR 1, an integer query on the
+left/top outer boundary can coincide with the first painted pixel column/row
+while still excluding the Frame.
+
+Only Frame candidates pass through the IR viewport gate. Native paint keeps the
+browser's boundary behavior and can still target a valid handler-bearing
+ancestor, even outside that Frame domain. Snapshot queries instead apply the
+strict viewport and clip gates to every candidate, including paint candidates.
+Native paint and Core snapshot results need not agree on an outer boundary.
+
+Native hit testing can select paint that only touches a clip boundary.
+Observations at fixed query coordinates include a background Box receiving its
+handler callback while the neighboring Box's color is the visible raster pixel.
+This can occur even with strict Frame gates; which paint the browser selects is
+not a fixed cross-browser guarantee. The gates remove semantic Frame
+supplementation at those boundaries without reapplying Core clips to native
+paint. They do not guarantee removal of every visually hidden callback or full
+restoration of earlier Browser hit behavior. SVG/PNG emission and valid native
+paint callbacks to ancestor handlers are preserved.
+
+Strict comparisons use the supplied floating coefficients without tolerance.
+Different rounded transforms can leave a tiny overlap even when authored shapes
+touch in ideal real arithmetic (for example, composed 90°/−90° rotations).
+Comparisons against the same computed straight edge are complementary; this is
+not an exact-contact guarantee for rounded corners or differently rounded poses.
 
 An empty semantic Frame does not suppress native paint in its subtree. Some
 browsers, including WebKit, can still report zero-scale paint as a native hit;
@@ -262,11 +287,21 @@ Rebind after replacing the IR/root/topology; current pose changes do not require
 rebinding. Snapshot refs are not persistent application identities.
 
 Frame ranks are prepared in descending order. A known higher native paint or
-Frame winner prevents lower candidates from being read; required higher-candidate
-failures remain unavailable. Current matrices and local native values are shared
-only within each query. For the necessary unique SVG ancestry U, screen reads,
-style reads and native matrix conversions are each at most U; no permanent pose
-cache or observer is installed.
+Frame winner prevents lower candidates from being read. A Frame's endpoint,
+pose and clips are required only when its rank can win and the point is inside
+the IR viewport. Outside that viewport, those Frame reads are skipped: even a
+throwing Frame getter remains unobserved and the native hit or miss remains
+`ready`. The same getter at an interior point is `unavailable` when that Frame's
+rank is eligible.
+
+Noncanonical IR dimensions are checked when the shared Core viewport function
+is actually called, after native scope and rank admission; this is not eager
+validation of every Frame. Binding, root projection and native scope checks
+retain their precedence. Eligible Frame constraints still validate required
+inputs before preferring established emptiness over derived failures. Current
+matrices and local native values are shared only within each query. For the
+necessary unique SVG ancestry U, screen reads, style reads and native matrix
+conversions are each at most U; no permanent pose cache or observer is installed.
 
 ### Shared interaction controller
 

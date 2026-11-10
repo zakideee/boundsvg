@@ -1,7 +1,7 @@
 // @boundsvg/core/scene — IR query and analysis operations
 
 export type { HitClip, HitContainmentResult, HitPose } from "./ir/hit-geometry.js";
-export { queryFrameContainment } from "./ir/hit-geometry.js";
+export { isPointInViewport, queryFrameContainment } from "./ir/hit-geometry.js";
 export type { IRHitCandidate, IRHitIndex } from "./ir/hit-test.js";
 export {
   buildHitTestIndex,

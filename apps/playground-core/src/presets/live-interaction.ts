@@ -26,7 +26,7 @@ const HANDLERS = {
 export const liveInteractionPreset: Preset = {
   title: "Live paint and Frames",
   description:
-    "Keep the pointer still. Paint follows the native stack; rectangular Frames use current endpoint poses and library BoxClips. The midpoint has zero Frame width. External individual transforms/3D and clip/mask/style mutations are outside the Frame guarantee.",
+    "Keep the pointer still. Paint follows the native stack; rectangular Frames use current endpoint poses and strict clip/viewport interiors. The midpoint has zero Frame width. External individual transforms/3D and clip/mask/style mutations are outside the Frame guarantee.",
   animationDurationMs: 2400,
   source: `import { Box, Canvas, Path, Text, type Engine } from "@boundsvg/core";
 import { buildIRSourceIndex, buildTextMap } from "@boundsvg/core/scene";

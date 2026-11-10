@@ -6,6 +6,7 @@ import {
   type HitContainmentResult,
   type HitPose,
   type IRNodeOccurrence,
+  isPointInViewport,
   queryFrameContainment,
 } from "@boundsvg/core/scene";
 import type { SvgCoordinateResult, SvgHitQueryResult } from "./interaction-types.js";
@@ -307,7 +308,16 @@ export function querySvgInteraction(
     }
     return { status: "unavailable" };
   };
-  for (const frame of frames) {
+  const eligibleFrames =
+    frames[0] &&
+    frames[0].occurrence.leaveOrder > order &&
+    isPointInViewport(binding.sourceIndex.ir, {
+      x: coordinate.point.svgX,
+      y: coordinate.point.svgY,
+    })
+      ? frames
+      : [];
+  for (const frame of eligibleFrames) {
     if (frame.occurrence.leaveOrder <= order) {
       break;
     }

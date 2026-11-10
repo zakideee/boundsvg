@@ -407,7 +407,10 @@ inside `result`.
 Render a VNode tree with current SVG paint/Frame interaction. Path, Rect,
 Image, parts, Text and opaque Svg paint follow native hits. Handler-bearing
 no-primary Frames use closed IR rectangles and library BoxClips with live
-endpoint poses. Frame corners and positive-size empty Text Frames are included.
+endpoint poses. Frame corners and positive-size empty Text Frames are included
+subject to the strict interiors of canonical BoxClips and the IR viewport.
+Clip/viewport outer boundaries exclude Frame candidates; native paint keeps its
+browser behavior and can still reach an ancestor handler.
 External clip/mask/SMIL shape, pointer-events, visibility and display mutations
 are not promised for semantic Frames. See [Browser interaction](/api/browser#dom-hit-testing-and-source-ownership)
 for ranking, supported geometry and failure states.

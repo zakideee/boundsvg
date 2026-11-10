@@ -1021,7 +1021,9 @@ using CSS gradient strings in scene authoring; the engine resolves them once.
 Returns an `IRSourceRef` for the topmost conservative source candidate at canvas point
 `(x, y)`, or `null`. Path geometry/stroke bounds can extend beyond its layout
 `bbox`. Explicit rectangular and rounded clips exclude invisible portions of
-their owner and descendants in the clip's original coordinates. Candidate
+their owner and descendants in the clip's original coordinates. Clip outer boundaries
+(straight or elliptical) and the IR viewport outer boundary are excluded. Frame
+rectangles themselves remain closed, subject to those strict gates. Candidate
 bounds still contain Path holes or curve whitespace. These are snapshot queries;
 Browser/React interaction uses current native paint and semantic Frames independently. Supply IR from the matching
 engine version: missing canonical `pathGeometry` raises `FatalError` with code
@@ -1695,6 +1697,24 @@ current pose and the current callback Map.
 public interfaces in earlier releases. The checked
 `applyInverseAffineMatrixToPoint` function, its affine projection types and
 `SvgPoint` are also new scene exports.
+
+`isPointInViewport(dimensions, point)` tests the strict interior of the IR viewport.
+Pass `{ width, height }` and `{ x, y }` in IR root px. Dimensions are required,
+finite and nonnegative; noncanonical dimensions throw `FatalError` (`VALIDATION`)
+when queried, and zero dimensions are empty. The caller guarantees a finite
+point; this pure function does not validate the point again.
+
+```ts
+import { isPointInViewport } from "@boundsvg/core/scene";
+const isInsideViewport = isPointInViewport(ir, { x: 0.25, y: 20 });
+```
+
+The same predicate gates `engine.hitTest`, `hitTest`, `buildHitTestIndex` and
+`buildInspectHitTestIndex` queries once per query. Their boundary selections
+change: neither viewport nor canonical clip outer boundaries are candidates,
+including previously selectable snapshot paint on those boundaries. This does
+not change SVG or raster output. Floating transforms are compared as supplied;
+a tiny rounded overlap is not snapped into an ideal shared boundary.
 
 `queryFrameContainment(bbox, pose, clips, clientPoint)` returns ready.contains or
 unavailable. A `HitPose` has a required `matrix` and `linearWitnesses` array; a

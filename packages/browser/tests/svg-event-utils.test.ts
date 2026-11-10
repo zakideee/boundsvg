@@ -362,3 +362,60 @@ it("retains derived containment failure and its Frame/clip input locations priva
   });
   expect(query.result).toEqual({ status: "unavailable", reason: "coordinatesUnavailable" });
 });
+
+it("prunes outside-viewport Frames before a throwing pose getter and retains the inside failure", () => {
+  const scene = fixture();
+  const getter = vi.fn(() => {
+    throw new TypeError("Frame pose unavailable");
+  });
+  Object.defineProperty(scene.endpoints.get(3)!, "getScreenCTM", { value: getter });
+  expect(querySvgInteraction(scene.binding, 220, 80).result).toEqual({
+    status: "ready",
+    point: { svgX: 220, svgY: 80 },
+    hit: null,
+  });
+  expect(getter).not.toHaveBeenCalled();
+  const inside = querySvgInteraction(scene.binding, 80, 80);
+  expect(inside.result).toEqual({ status: "unavailable", reason: "coordinatesUnavailable" });
+  expect(inside.failure).toMatchObject({ phase: "frame", nodeIndex: 3 });
+  expect(getter).toHaveBeenCalledTimes(1);
+});
+
+it("retains native paint outside the Frame viewport domain without reading an ineligible Frame", () => {
+  const scene = fixture(false, "back");
+  const getter = vi.fn(() => {
+    throw new TypeError("Frame pose must remain unread");
+  });
+  Object.defineProperty(scene.endpoints.get(4)!, "getScreenCTM", { value: getter });
+  Object.defineProperty(document, "elementsFromPoint", {
+    configurable: true,
+    value: () => [scene.endpoints.get(1)!],
+  });
+  const query = querySvgInteraction(scene.binding, 220, 80);
+  expect(query.result).toEqual({
+    status: "ready",
+    point: { svgX: 220, svgY: 80 },
+    hit: scene.binding.sourceIndex.sources.get(1)!.source,
+  });
+  expect(query.paint).toBe(scene.binding.sourceIndex.nodes.get(1));
+  expect(getter).not.toHaveBeenCalled();
+});
+
+it("uses projected IR root coordinates for the viewport gate under translated scaled SVGs", () => {
+  const scene = fixture();
+  Object.defineProperty(scene.binding.root, "getScreenCTM", {
+    value: () => ({ a: 2, b: 0, c: 0, d: 2, e: 100, f: 40 }),
+  });
+  const getter = vi.fn(() => {
+    throw new TypeError("Frame pose unavailable");
+  });
+  Object.defineProperty(scene.endpoints.get(3)!, "getScreenCTM", { value: getter });
+  expect(querySvgInteraction(scene.binding, 100, 120).result).toEqual({
+    status: "ready",
+    point: { svgX: 0, svgY: 40 },
+    hit: null,
+  });
+  expect(getter).not.toHaveBeenCalled();
+  expect(querySvgInteraction(scene.binding, 100.5, 120).result.status).toBe("unavailable");
+  expect(getter).toHaveBeenCalledTimes(1);
+});

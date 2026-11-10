@@ -337,7 +337,7 @@ test("mounted Path holes fall through to the back sibling", async ({ page }) => 
 });
 
 for (const edge of ["left", "right", "top", "bottom"] as const) {
-  test(`closed Frame meeting its clip only at the ${edge} boundary keeps IR precedence`, async ({
+  test(`strict clip ${edge} boundary excludes an adjacent Frame and preserves native paint`, async ({
     page,
   }, testInfo) => {
     const scene = createElement(
@@ -396,7 +396,7 @@ for (const edge of ["left", "right", "top", "bottom"] as const) {
       await mountInteractive(page, scene);
       const observations = [];
       for (const control of [
-        { name: "boundary", x: point.x, y: point.y, expected: "underlay" },
+        { name: "boundary", x: point.x, y: point.y, expected: null },
         {
           name: "inside",
           x: point.x + 2 * direction.x,
@@ -421,8 +421,15 @@ for (const edge of ["left", "right", "top", "bottom"] as const) {
             snapshotHit: window.boundsvgClipHit.coreHit(x, y),
           };
         }, control);
+        // The snapshot excludes clip boundaries; current paint follows this browser's native top.
+        const currentExpected =
+          control.name === "boundary"
+            ? ["card", "underlay"].includes(current.nativeSource ?? "")
+              ? current.nativeSource
+              : null
+            : control.expected;
         const expectedSource = [...sources.sources.values()].find(
-          (source) => source.source.nodeId === control.expected,
+          (source) => source.source.nodeId === currentExpected,
         );
         const currentMatches = expectedSource
           ? await page.evaluate(
@@ -441,7 +448,7 @@ for (const edge of ["left", "right", "top", "bottom"] as const) {
           callbacks,
           nodeSnapshot: snapshot.queryTopmost(control.x, control.y),
         });
-        await testInfo.attach("closed-frame-boundary-control", {
+        await testInfo.attach("strict-clip-boundary-control", {
           body: JSON.stringify(observations.at(-1)),
           contentType: "application/json",
         });
@@ -450,7 +457,7 @@ for (const edge of ["left", "right", "top", "bottom"] as const) {
         if (expectedSource) {
           expect(currentMatches).toBe(true);
         }
-        expect(callbacks).toEqual(control.expected ? [control.expected] : []);
+        expect(callbacks).toEqual(currentExpected ? [currentExpected] : []);
       }
     } finally {
       engine.dispose();

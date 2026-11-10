@@ -11,6 +11,7 @@ import {
   type HitBounds,
   type HitClip,
   intersectHitBounds,
+  isPointInViewport,
   pathWorldHitBounds,
   pointInHitBBox,
   queryFrameContainment,
@@ -85,8 +86,7 @@ function resolveNodeHitGeometry(
     context: { matrix, clip, visible },
     geometry: {
       bbox:
-        // A closed Frame can meet its clip only at a boundary; paint keeps its area policy.
-        bounds && (isFrame || (bounds.minX < bounds.maxX && bounds.minY < bounds.maxY))
+        bounds && bounds.minX < bounds.maxX && bounds.minY < bounds.maxY
           ? {
               x: bounds.minX,
               y: bounds.minY,
@@ -96,9 +96,6 @@ function resolveNodeHitGeometry(
           : null,
       accepts(x: number, y: number) {
         const point = { x, y };
-        if (!pointInHitBBox(point, canvas)) {
-          return false;
-        }
         if (isFrame) {
           const contained = queryFrameContainment(
             node.bbox,
@@ -201,12 +198,14 @@ export function prepareHitIndex(ir: IR, policy: "interaction" | "inspection"): I
     }
   }
   const spatial = buildFilteredSpatialIndex(canvas, entries);
+  const queryCandidates = (x: number, y: number): IRHitCandidate[] =>
+    isPointInViewport(ir, { x, y }) ? spatial.queryCandidates(x, y) : [];
   return {
     sourceIndex,
     queryTopmost(x, y) {
-      return spatial.queryCandidates(x, y)[0]?.source ?? null;
+      return queryCandidates(x, y)[0]?.source ?? null;
     },
-    queryCandidates: spatial.queryCandidates,
+    queryCandidates,
   };
 }
 

@@ -115,7 +115,7 @@ describe("hitTest with transforms", () => {
 describe("hitTest with clipping", () => {
   for (const entryCount of [15, 16, 17]) {
     for (const edge of ["left", "right", "top", "bottom"] as const) {
-      it(`ranks a boundary-only closed Frame at the ${edge} edge with ${entryCount} entries`, () => {
+      it(`excludes a boundary-only Frame at the strict clip ${edge} edge with ${entryCount} entries`, () => {
         const clip = { x: 20, y: 10, w: 100, h: 80 };
         const tree = ir({
           ownership: { role: "source" },
@@ -164,11 +164,8 @@ describe("hitTest with clipping", () => {
           y: edge === "top" ? 1 : edge === "bottom" ? -1 : 0,
         };
         const index = buildHitTestIndex(tree);
-        expect(index.queryTopmost(point.x, point.y)?.nodeId).toBe("frame");
-        expect(index.queryCandidates(point.x, point.y).map((hit) => hit.source.nodeId)).toEqual([
-          "frame",
-          "paint",
-        ]);
+        expect(index.queryTopmost(point.x, point.y)).toBeNull();
+        expect(index.queryCandidates(point.x, point.y)).toEqual([]);
         expect(
           index.queryTopmost(point.x + 2 * direction.x, point.y + 2 * direction.y)?.nodeId,
         ).toBe("paint");
@@ -179,7 +176,7 @@ describe("hitTest with clipping", () => {
 
   for (const entryCount of [15, 16, 17]) {
     for (const edge of ["left", "right", "top", "bottom"] as const) {
-      it(`rejects a fully clipped adjacent node at the ${edge} edge with ${entryCount} entries`, () => {
+      it(`excludes paint on the strict clip ${edge} boundary with ${entryCount} entries`, () => {
         const filler: IRNode[] = Array.from({ length: entryCount - 2 }, (_, index) => ({
           ownership: { role: "source" },
           type: "rect",
@@ -217,11 +214,16 @@ describe("hitTest with clipping", () => {
           y: edge === "top" ? 10 : edge === "bottom" ? 90 : 50,
         };
         const index = buildHitTestIndex(tree);
-        expect(hitTest(tree, point.x, point.y)?.nodeId ?? null).toBe("visible");
-        expect(index.queryTopmost(point.x, point.y)?.nodeId ?? null).toBe("visible");
+        const inside = {
+          x: point.x + (edge === "left" ? 0.25 : edge === "right" ? -0.25 : 0),
+          y: point.y + (edge === "top" ? 0.25 : edge === "bottom" ? -0.25 : 0),
+        };
+        expect(index.queryTopmost(inside.x, inside.y)?.nodeId).toBe("visible");
+        expect(hitTest(tree, point.x, point.y)).toBeNull();
+        expect(index.queryTopmost(point.x, point.y)).toBeNull();
         expect(
           index.queryCandidates(point.x, point.y).map((candidate) => candidate.source.nodeId),
-        ).toEqual(["visible"]);
+        ).toEqual([]);
       });
     }
   }

@@ -22,8 +22,21 @@ continues through Core snapshot queries. Semantic Frames include rectangular
 corners and support library-owned BoxClips with
 finite affine poses. External clip/mask/visibility/pointer-event mutations are
 not promised to match native paint for those Frames.
-Frames meeting a clip only at a shared boundary still include that boundary and
-participate in IR ranking, even when their paint was culled.
+Canonical BoxClips and the IR viewport now use strict interiors. Frame rectangles
+remain closed, but a Frame meeting a clip only at its outer boundary is excluded.
+This changes `engine.hitTest`, `hitTest`, `buildHitTestIndex` and
+`buildInspectHitTestIndex`, including snapshot paint selections on clip/viewport
+boundaries. Native paint keeps browser behavior and may still reach ancestor
+handlers. Native hits may still select Box paint touching only a clip boundary
+and deliver its handler while a neighboring Box's color is visible. Frame gates do not
+reapply Core clips to native paint, eliminate every visually hidden callback, or
+fully restore earlier Browser hit behavior; SVG/PNG emission is unchanged.
+An integer left/top boundary query at identity/DPR 1 may coincide with
+the first painted pixel; fractional interior points remain eligible, so this is
+not a one-pixel-wide exclusion band. Floating transforms are not snapped: tiny
+computed overlaps can remain even at an authored ideal contact.
+`isPointInViewport` is available from `@boundsvg/core/scene` for the same pure IR
+viewport predicate; dimensions are checked and callers supply finite IR-root points.
 
 The React `useInteractiveSvg` container must contain exactly one outer SVG
 (`ownerSVGElement === null`). HTML wrappers around that SVG are supported;

@@ -23,7 +23,7 @@ const HANDLERS = {
 export const LIVE_INTERACTION_TEMPLATE: TemplateDef = {
   title: "Live paint and Frames",
   description:
-    "Stationary hover follows native paint and rectangular Frames with current endpoint poses and library BoxClips. The midpoint has zero Frame width. External individual transforms/3D and clip/mask/style mutations are outside the Frame guarantee.",
+    "Stationary hover follows native paint and rectangular Frames with current endpoint poses and strict clip/viewport interiors. The midpoint has zero Frame width. External individual transforms/3D and clip/mask/style mutations are outside the Frame guarantee.",
   animatedSvgOptions: { playback: { mode: "independent" } },
   vnode: toVNode(
     <Canvas width={780} height={220} background="#101827">
