@@ -262,7 +262,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** Host, scene dimensions, and inspection geometry for an overlay. */
 export type EventEffectOverlayOptions = {
-  /** Container element wrapping the main SVG output. Must have position:relative. */
+  /** Container wrapping the main SVG output; position:relative may come from inline or stylesheet CSS. */
   container: HTMLElement;
   /** Canvas width in SVG user units (from IR.width) */
   width: number;
@@ -309,7 +309,7 @@ export class EventEffectOverlay {
     const mainSvg = options.container.querySelector("svg");
     let wrapper: HTMLElement;
     let didCreateWrapper = false;
-    if (options.container.style.position === "relative") {
+    if (getComputedStyle(options.container).position === "relative") {
       wrapper = options.container;
     } else {
       if (mainSvg && !mainSvg.dataset.effectWrapper) {
