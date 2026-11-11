@@ -7,11 +7,18 @@ import {
 } from "../shrinkwrap-helpers";
 import type { Preset } from "../types";
 
+/** Demonstrates horizontal and vertical text shrinkwrap with ruby, rich text, and flow exclusions. */
 export const shrinkwrapPreset: Preset = {
   title: "Shrinkwrap",
   description:
     "Minimum-size sizing for horizontal and vertical text. Plain paragraph (left), ruby caption (center), vertical-rl plain/flow (right), and vertical richText shrinkwrap with ruby + decoratedSpan (far right).",
-  source: `// Plain text shrinkwrap — find tightest width for same line count
+  source: `import type { RichTextNode } from "@boundsvg/core";
+
+const fontFamily = "${FA}";
+const text = "縦組みABC123。句読点と英数字の向きを見ながら高さだけを詰める。";
+const captionText = "春はあけぼの。白くなりゆく山際、紫だちたる雲の細くたなびきたる。夏は夜。";
+
+// Plain text shrinkwrap — find tightest width for same line count
 const shrinkwrap = engine.shrinkwrapText({
   text, fontFamily, fontSizePx: 14, lineHeight: 1.5,
   language: "ja", wrap: "char", maxWidth: 260,
@@ -26,19 +33,25 @@ const vertical = engine.shrinkwrapText({
 });
 // vertical.chosenHeightPx — minimum height preserving column count
 
+// Resolved style uses the same font and paint as the vertical example.
+const richStyle = {
+  font: fontFamily, fontWeight: 400, fontStyle: "normal",
+  fontSizePx: 16, color: "#e2e8f0", letterSpacingPx: 0,
+} satisfies Extract<RichTextNode, { kind: "ruby" }>["style"];
+
 // Vertical richText shrinkwrap — ruby + decoratedSpan
 const rich = engine.shrinkwrapText({
   text: "", fontFamily, fontSizePx: 16, lineHeight: 1.4,
   language: "ja", wrap: "char", writingMode: "vertical-rl",
   textOrientation: "upright", maxWidth: 120, maxHeight: 160, minHeight: 48,
   richText: [
-    { kind: "ruby", style: { font: fontFamily, fontWeight: 400, fontSizePx: 16 },
+    { kind: "ruby", style: richStyle,
       base: [{ kind: "text", text: "星空" }],
-      rt: [{ kind: "text", text: "ほしぞら" }], rubyFontSizePx: 8 },
+      rt: [{ kind: "span", text: "ほしぞら", style: { ...richStyle, fontSizePx: 8 } }] },
     { kind: "text", text: "を" },
     { kind: "decoratedSpan",
-      style: { font: fontFamily, fontWeight: 400, fontSizePx: 16,
-        background: "#1e3a5f", paddingInline: [2, 2], borderRadius: 3 },
+      style: richStyle, background: "#1e3a5f",
+      paddingInline: [2, 2], borderRadius: [3, 3, 3, 3],
       children: [{ kind: "text", text: "見上げる" }] },
     { kind: "text", text: "夜明け前" },
   ],

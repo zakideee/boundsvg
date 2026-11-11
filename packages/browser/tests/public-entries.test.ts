@@ -64,7 +64,7 @@ describe("public browser entries", () => {
         png: "pngToDataUrl",
         fonts: "createFontLoader",
         assets: "readPngDimensions",
-        events: "resolveHitTarget",
+        events: "queryCurrentSvgHit",
       } as const;
 
       for (const entry of cjsEntries) {
@@ -110,13 +110,14 @@ describe("public browser entries", () => {
       const binding: import("../src/events.js").IRDomBinding = {
         root: {} as unknown as SVGSVGElement,
         sourceIndex: index.sourceIndex,
+        isComplete: false,
         occurrenceForElement: () => null,
         elementForNode: () => null,
         sourceForElement: () => null,
       };
-      expect(eventsEntry.resolveHitTarget(binding, index.queryCandidates(10, 20), 10, 20)).toEqual({
-        sourceIndex: 0,
-        nodeId: "representative-box",
+      expect(eventsEntry.queryCurrentSvgHit(binding, 10, 20)).toEqual({
+        status: "invalid",
+        reason: "bindingMismatch",
       });
     },
   );
@@ -135,8 +136,8 @@ describe("public browser entries", () => {
     expect(fontsEntry.preloadFonts).toBeDefined();
     expect(fontsEntry.clearFontCache).toBeDefined();
     expect(assetsEntry.readPngDimensions).toBeDefined();
-    expect(eventsEntry.resolveHitTarget).toBeDefined();
+    expect(eventsEntry.queryCurrentSvgHit).toBeDefined();
     expect(eventsEntry.translateSvgCoords).toBeDefined();
-    expect(eventsEntry.verifyPathGeometry).toBeDefined();
+    expect(eventsEntry.createSvgInteractionController).toBeDefined();
   });
 });

@@ -76,11 +76,12 @@ before(async () => {
 
 after(() => engine.dispose());
 
-test("React Templates groups the same six Text Motion samples as core", () => {
+test("React Templates groups the matching Text Motion samples and live interaction", () => {
   const textMotionGroup = TEMPLATE_GROUPS.find((group) => group.key === "text-motion");
 
   assert.equal(textMotionGroup?.label, "Text Motion");
   assert.deepEqual(textMotionGroup?.templateKeys, [
+    "live-interaction",
     "animated-svg-timeline",
     "typing-ime-timeline",
     "text-on-path-basics",

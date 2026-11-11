@@ -1,5 +1,5 @@
 import { createElement, createEngineAsync, type VNode } from "@boundsvg/core";
-import { buildIRSourceIndex } from "@boundsvg/core/scene";
+import { buildHitTestIndex, buildIRSourceIndex } from "@boundsvg/core/scene";
 import { expect, type Page, test } from "@playwright/test";
 import type {} from "../apps/playground-react/src/e2e/e2e-clip-hit-harness.js";
 
@@ -125,11 +125,11 @@ test("browser paints rounded child clips and visible positive/negative Path over
       throw new TypeError("Missing Path source");
     }
     const clippedCornerGeometry = await page.evaluate(
-      (ordinal) => window.boundsvgClipHit.pathGeometry(ordinal, 12, 12),
+      (ordinal) => window.boundsvgClipHit.currentHitMatchesSource(ordinal, 12, 12),
       pathCardSource.sourceIndex,
     );
-    // Geometry refinement is combined with Core clip gates; the primitive itself tests only Path paint.
-    expect(clippedCornerGeometry).toBe(true);
+    // Current hits honor the native ancestor clip instead of a separate Path-only refinement.
+    expect(clippedCornerGeometry).toBe(false);
 
     for (const isNegative of [false, true]) {
       const scene = pathScene(isNegative);
@@ -160,9 +160,9 @@ test("browser paints rounded child clips and visible positive/negative Path over
       await expect(wrapper.locator(":scope > path")).toHaveCount(1);
       const geometry = await page.evaluate(
         ({ insideX, outsideX: tailX, sourceIndex }) => ({
-          inside: window.boundsvgClipHit.pathGeometry(sourceIndex, insideX, 25),
-          empty: window.boundsvgClipHit.pathGeometry(sourceIndex, insideX, 59),
-          tail: window.boundsvgClipHit.pathGeometry(sourceIndex, tailX, 30),
+          inside: window.boundsvgClipHit.currentHitMatchesSource(sourceIndex, insideX, 25),
+          empty: window.boundsvgClipHit.currentHitMatchesSource(sourceIndex, insideX, 59),
+          tail: window.boundsvgClipHit.currentHitMatchesSource(sourceIndex, tailX, 30),
         }),
         { insideX: isNegative ? 180 : 130, outsideX, sourceIndex: source.sourceIndex },
       );
@@ -264,8 +264,7 @@ for (const shadow of [false, true]) {
             nodeId: "path",
             handlerName: "path-click",
             eventType: "click",
-            svgX: negative ? 100 : 200,
-            svgY: 30,
+            point: { svgX: negative ? 100 : 200, svgY: 30 },
           },
         ]);
       });
@@ -338,9 +337,9 @@ test("mounted Path holes fall through to the back sibling", async ({ page }) => 
 });
 
 for (const edge of ["left", "right", "top", "bottom"] as const) {
-  test(`mounted fully clipped adjacent Box receives no callback at the ${edge} edge`, async ({
+  test(`strict clip ${edge} boundary excludes an adjacent Frame and preserves native paint`, async ({
     page,
-  }) => {
+  }, testInfo) => {
     const scene = createElement(
       "Canvas",
       { width: 300, height: 160, background: "white" },
@@ -375,12 +374,94 @@ for (const edge of ["left", "right", "top", "bottom"] as const) {
         }),
       ),
     );
-    await mountInteractive(page, scene);
-    await page.mouse.click(
-      edge === "left" ? 10 : edge === "right" ? 110 : 60,
-      edge === "top" ? 10 : edge === "bottom" ? 110 : 60,
-    );
-    expect((await clickDeliveries(page)).map((delivery) => delivery.nodeId)).toEqual(["card"]);
+    const point = {
+      x: edge === "left" ? 10 : edge === "right" ? 110 : 60,
+      y: edge === "top" ? 10 : edge === "bottom" ? 110 : 60,
+    };
+    const direction = {
+      x: edge === "left" ? 1 : edge === "right" ? -1 : 0,
+      y: edge === "top" ? 1 : edge === "bottom" ? -1 : 0,
+    };
+    const engine = await createEngineAsync({});
+    try {
+      const rendered = engine.renderToSvgAndIR(scene, { nodeIdMetadata: "include" });
+      const sources = buildIRSourceIndex(rendered.ir);
+      const snapshot = buildHitTestIndex(rendered.ir);
+      const adjacent = [...sources.sources.values()].find(
+        (source) => source.source.nodeId === "underlay",
+      );
+      expect(adjacent?.primaryNodeIndex).toBeNull();
+      expect(adjacent?.node.bbox.w).toBe(100);
+      expect(adjacent?.node.bbox.h).toBe(100);
+      await mountInteractive(page, scene);
+      const observations = [];
+      for (const control of [
+        { name: "boundary", x: point.x, y: point.y, expected: null },
+        {
+          name: "inside",
+          x: point.x + 2 * direction.x,
+          y: point.y + 2 * direction.y,
+          expected: "card",
+        },
+        {
+          name: "outside",
+          x: point.x - 2 * direction.x,
+          y: point.y - 2 * direction.y,
+          expected: null,
+        },
+      ]) {
+        const current = await page.evaluate(({ x, y }) => {
+          const top = document.elementFromPoint(x, y);
+          return {
+            nativeTag: top?.localName ?? null,
+            nativeSource:
+              top
+                ?.closest('[data-boundsvg-role="source"]')
+                ?.getAttribute("data-boundsvg-node-id") ?? null,
+            snapshotHit: window.boundsvgClipHit.coreHit(x, y),
+          };
+        }, control);
+        // The snapshot excludes clip boundaries; current paint follows this browser's native top.
+        const currentExpected =
+          control.name === "boundary"
+            ? ["card", "underlay"].includes(current.nativeSource ?? "")
+              ? current.nativeSource
+              : null
+            : control.expected;
+        const expectedSource = [...sources.sources.values()].find(
+          (source) => source.source.nodeId === currentExpected,
+        );
+        const currentMatches = expectedSource
+          ? await page.evaluate(
+              ({ sourceIndex, x, y }) =>
+                window.boundsvgClipHit.currentHitMatchesSource(sourceIndex, x, y),
+              { sourceIndex: expectedSource.source.sourceIndex, x: control.x, y: control.y },
+            )
+          : null;
+        await page.evaluate(() => window.boundsvgClipHit.clearCallbacks());
+        await page.mouse.click(control.x, control.y);
+        const callbacks = (await clickDeliveries(page)).map((delivery) => delivery.nodeId);
+        observations.push({
+          control,
+          current,
+          currentMatches,
+          callbacks,
+          nodeSnapshot: snapshot.queryTopmost(control.x, control.y),
+        });
+        await testInfo.attach("strict-clip-boundary-control", {
+          body: JSON.stringify(observations.at(-1)),
+          contentType: "application/json",
+        });
+        expect(current.snapshotHit).toBe(control.expected);
+        expect(snapshot.queryTopmost(control.x, control.y)?.nodeId ?? null).toBe(control.expected);
+        if (expectedSource) {
+          expect(currentMatches).toBe(true);
+        }
+        expect(callbacks).toEqual(currentExpected ? [currentExpected] : []);
+      }
+    } finally {
+      engine.dispose();
+    }
   });
 }
 
@@ -509,9 +590,9 @@ for (const fixture of [
 }
 
 for (const scaleX of [1, -0.75, 0]) {
-  test(`mounted nested rotated clips preserve original coordinates (scaleX=${scaleX})`, async ({
+  test(`mounted nested rotated clips preserve coordinates and native paint authority (scaleX=${scaleX})`, async ({
     page,
-  }) => {
+  }, testInfo) => {
     const scene = createElement(
       "Canvas",
       { width: 300, height: 200, background: "white" },
@@ -560,9 +641,23 @@ for (const scaleX of [1, -0.75, 0]) {
       ),
     );
     await mountInteractive(page, scene);
+    const native = await page.evaluate(() => {
+      const top = document.elementFromPoint(150, 100);
+      return {
+        tag: top?.localName ?? null,
+        source:
+          top?.closest('[data-boundsvg-role="source"]')?.getAttribute("data-boundsvg-node-id") ??
+          null,
+      };
+    });
+    await testInfo.attach("nested-clip-native-paint", {
+      body: JSON.stringify({ scaleX, native }),
+      contentType: "application/json",
+    });
+    expect(["path", "underlay"]).toContain(native.source);
     await page.mouse.click(150, 100);
     expect((await clickDeliveries(page)).map((delivery) => delivery.nodeId)).toEqual([
-      scaleX === 0 ? "underlay" : "path",
+      scaleX === 0 ? native.source : "path",
     ]);
     await page.evaluate(() => window.boundsvgClipHit.clearCallbacks());
     const scaledX = -38 * scaleX;
@@ -574,8 +669,29 @@ for (const scaleX of [1, -0.75, 0]) {
     expect(
       await page.evaluate((point) => window.boundsvgClipHit.coreHit(point.x, point.y), corner),
     ).toBe("underlay");
+    const nativeCorner = await page.evaluate((point) => {
+      const top = document.elementFromPoint(point.x, point.y);
+      return {
+        tag: top?.localName ?? null,
+        source:
+          top?.closest('[data-boundsvg-role="source"]')?.getAttribute("data-boundsvg-node-id") ??
+          null,
+      };
+    }, corner);
+    await testInfo.attach("nested-clip-native-corner", {
+      body: JSON.stringify({
+        scaleX,
+        corner,
+        nativeCorner,
+        browserVersion: page.context().browser()?.version() ?? null,
+      }),
+      contentType: "application/json",
+    });
+    expect(["path", "underlay"]).toContain(nativeCorner.source);
     await page.mouse.click(corner.x, corner.y);
-    expect((await clickDeliveries(page)).map((delivery) => delivery.nodeId)).toEqual(["underlay"]);
+    expect((await clickDeliveries(page)).map((delivery) => delivery.nodeId)).toEqual([
+      scaleX === 0 ? nativeCorner.source : "underlay",
+    ]);
   });
 }
 

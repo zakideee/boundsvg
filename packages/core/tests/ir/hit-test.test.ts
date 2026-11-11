@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildHitTestIndex, hitTest } from "../../src/ir/hit-test.js";
+import { buildInspectHitTestIndex } from "../../src/ir/inspect-hit-test.js";
 import type { IR, IRNode } from "../../src/ir/types.js";
 
 function makeIR(nodes: IRNode[], width = 800, height = 600): IR {
@@ -265,5 +266,38 @@ describe("prepared hit candidates", () => {
     const index = buildHitTestIndex(ir);
     const candidates = index.queryCandidates(50, 15).map((candidate) => candidate.source.nodeId);
     expect(candidates).toEqual(["text1"]);
+  });
+});
+
+describe("snapshot viewport membership", () => {
+  it("shares strict viewport edges for paint, interaction and inspection candidates", () => {
+    const tree = makeIR(
+      [
+        {
+          type: "rect",
+          nodeId: "paint",
+          ownership: { role: "source" },
+          bbox: { x: -10, y: -10, w: 120, h: 100 },
+          fill: "red",
+        },
+      ],
+      100,
+      80,
+    );
+    for (const index of [buildHitTestIndex(tree), buildInspectHitTestIndex(tree)]) {
+      for (const [x, y] of [
+        [0, 40],
+        [100, 40],
+        [50, 0],
+        [50, 80],
+        [0, 0],
+        [100, 80],
+      ]) {
+        expect(index.queryTopmost(x!, y!)).toBeNull();
+        expect(index.queryCandidates(x!, y!)).toEqual([]);
+      }
+      expect(index.queryTopmost(0.25, 40)?.nodeId).toBe("paint");
+      expect(index.queryCandidates(0.25, 40)[0]?.source.nodeId).toBe("paint");
+    }
   });
 });

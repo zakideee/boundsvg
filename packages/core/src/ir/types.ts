@@ -12,6 +12,9 @@ import type {
 /** Axis-aligned bounding box in the generated public output contract. */
 export type BBox = GeneratedBBox;
 
+/** Finite coordinates in the matching IR snapshot's SVG user space. */
+export type SvgPoint = Readonly<{ svgX: number; svgY: number }>;
+
 /** One baked part of a shape IR node. */
 export type ShapePathPart = GeneratedShapePathPart;
 

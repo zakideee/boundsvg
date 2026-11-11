@@ -12,25 +12,14 @@ import { BoundSvgContext } from "../src/context.js";
 import { MainRenderSchedulerContext } from "../src/execution/context.js";
 import { MainRenderScheduler } from "../src/execution/main-render-scheduler.js";
 import type { BoundSvgContextValue, EventCallback } from "../src/types.js";
+import { installSvgDomPrimitives, svgForIr } from "./svg-dom-primitives.js";
 import { makeEngineMock } from "./test-doubles.js";
-
-// Geometry and browser clocks are exercised separately in real browser tests.
-vi.mock("@boundsvg/browser/events", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@boundsvg/browser/events")>()),
-  resolveHitTarget: (
-    _binding: unknown,
-    candidates: import("@boundsvg/core/scene").IRHitCandidate[],
-  ) => candidates[0]?.source ?? null,
-  translateSvgCoords: (_svg: Element, clientX: number, clientY: number) => ({
-    x: clientX,
-    y: clientY,
-  }),
-}));
 
 /** Mounted roots and schedulers owned by the current test. */
 const mountedFixtures: Array<{ root: Root; scheduler: MainRenderScheduler }> = [];
 
 beforeEach(() => {
+  installSvgDomPrimitives();
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 });
@@ -77,7 +66,7 @@ function renderIr(nodeId = "path", handlerName = "path-click"): IR {
 
 /** Render output with a visible path whose identity can be observed independently of engine calls. */
 function createSvgDocument(color = "red"): string {
-  return `<svg viewBox="0 0 100 100"><path d="M0 0H100V100H0Z" fill="${color}"/></svg>`;
+  return svgForIr(renderIr(), color);
 }
 
 /** Mount real display components while controlling only their engine output and readiness. */
@@ -184,7 +173,9 @@ describe("displayed SVG DOM stability", () => {
     const surface = svg?.parentElement;
     expect(surface).not.toBeNull();
     await act(async () => {
-      surface?.dispatchEvent(new PointerEvent("pointermove", { clientX: 20, clientY: 20 }));
+      surface?.dispatchEvent(
+        new PointerEvent("pointermove", { isPrimary: true, clientX: 20, clientY: 20 }),
+      );
       pendingFrame?.(0);
     });
     expect(onHoverChange).toHaveBeenLastCalledWith({ sourceIndex: 1, nodeId: "path" });

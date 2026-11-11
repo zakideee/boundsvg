@@ -200,8 +200,12 @@ describe("useTextCopy snapshot source lifetime", () => {
       const writeText = vi.fn().mockResolvedValue(undefined);
       vi.stubGlobal("navigator", { clipboard: { writeText } });
       const hook = await mountTextCopy(oldMap);
+      const oldMenuBuilder = hook.current().buildMenuInfo;
       expect(hook.current().resolveNodeText(oldSource)).toBe("old text");
       await hook.updateMap(nextMap);
+      expect(
+        oldMenuBuilder({ source: oldSource, point: { svgX: 5, svgY: 5 }, clientX: 5, clientY: 5 }),
+      ).toMatchObject({ nodeText: "old text", lineText: "old text" });
       expect(hook.current().resolveNodeText(oldSource)).toBeNull();
       expect(hook.current().resolveLineText(oldSource, { svgX: 5, svgY: 5 })).toBeNull();
       expect(hook.current().resolveAncestorText(oldSource)).toBeNull();

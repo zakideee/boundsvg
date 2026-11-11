@@ -824,11 +824,14 @@ function buildOpacityCanvas() {
   );
 }
 
+/** Compares shape opacity with a reference box to show that opacity is applied once. */
 export const shapeOpacityPreset: Preset = {
   title: "Shape: Opacity",
   description:
     "Shape and Symbol opacity is applied exactly once (wrapper group). The 0.5 Shape must match the tone of the 0.5 reference Box.",
-  source: `import { Box, Canvas, Flex, Shape } from "@boundsvg/core";
+  source: `import { Box, Canvas, Flex, Shape, type GeometryDoc } from "@boundsvg/core";
+
+const pill = ${JSON.stringify(PILL_GEOMETRY, null, 2)} satisfies GeometryDoc;
 
 // Shape opacity is applied once, on the wrapper group — a Shape with
 // opacity 0.5 renders at the same tone as any other node with opacity 0.5.

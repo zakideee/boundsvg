@@ -2,7 +2,8 @@
 /** @jsxImportSource react */
 
 import type { Engine, IR, VNode } from "@boundsvg/core";
-import { act, Suspense, useState } from "react";
+import { act, Suspense, startTransition, useState } from "react";
+import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -10,21 +11,11 @@ import { BoundSvgContext } from "../src/context.js";
 import { useInteractiveSvg } from "../src/hooks/use-interactive-svg.js";
 import { InteractiveBoundSvg } from "../src/interactive.js";
 import type { BoundSvgContextValue, EventCallback } from "../src/types.js";
+import { installSvgDomPrimitives, svgForIr } from "./svg-dom-primitives.js";
 import { makeEngineMock } from "./test-doubles.js";
 
-vi.mock("@boundsvg/browser/events", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@boundsvg/browser/events")>()),
-  resolveHitTarget: (
-    _binding: unknown,
-    candidates: import("@boundsvg/core/scene").IRHitCandidate[],
-  ) => candidates[0]?.source ?? null,
-  translateSvgCoords: (_svg: Element, clientX: number, clientY: number) => ({
-    x: clientX,
-    y: clientY,
-  }),
-}));
-
 beforeAll(() => {
+  installSvgDomPrimitives();
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 });
 
@@ -82,6 +73,54 @@ function createContextValue(engine: Engine): BoundSvgContextValue {
 }
 
 describe("useInteractiveSvg DOM lifecycle", () => {
+  it("retains the input TextMap and menu callback across an enter-triggered synchronous commit", async () => {
+    const engine = makeEngineMock({
+      renderToSvgAndIR: vi.fn((vnode: VNode) => {
+        const ir = sampleIr();
+        const label = ir.root.children[0];
+        if (label?.type !== "text") {
+          throw new TypeError("Expected the sample Text endpoint");
+        }
+        label.ownership = { role: "source", on: { onPointerEnter: "enter" } };
+        label.lines[0].text = vnode.props.width === 100 ? "H" : "HH";
+        return { svg: svgForIr(ir), ir };
+      }),
+    });
+    const menus = [vi.fn(), vi.fn()];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    function Fixture() {
+      const [revision, setRevision] = useState(0);
+      return (
+        <BoundSvgContext.Provider value={createContextValue(engine)}>
+          <InteractiveBoundSvg
+            vnode={sampleVNode(100 + revision)}
+            handlers={new Map([["enter", () => flushSync(() => setRevision(1))]])}
+            enableTextCopy
+            onTextCopyMenu={menus[revision]}
+          />
+        </BoundSvgContext.Provider>
+      );
+    }
+    await act(async () => root.render(<Fixture />));
+    await act(async () => {
+      container.querySelector("svg")?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 20,
+        }),
+      );
+    });
+    expect(menus[0]).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ nodeText: "H", lineText: "H", allText: "H" }),
+    );
+    expect(menus[1]).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
   it("delivers InteractiveBoundSvg render, hover, and text-copy callbacks", async () => {
     let scheduledFrame: FrameRequestCallback | null = null;
     vi.stubGlobal(
@@ -96,7 +135,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     const ir = sampleIr();
     const engine = makeEngineMock({
       renderToSvgAndIR: vi.fn(() => ({
-        svg: '<svg viewBox="0 0 100 100"></svg>',
+        svg: svgForIr(sampleIr()),
         ir,
       })),
     });
@@ -127,7 +166,9 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     expect(onRender).toHaveBeenCalledWith(ir);
 
     await act(async () => {
-      surface?.dispatchEvent(new PointerEvent("pointermove", { clientX: 10, clientY: 20 }));
+      surface?.dispatchEvent(
+        new PointerEvent("pointermove", { isPrimary: true, clientX: 10, clientY: 20 }),
+      );
     });
     const frame = scheduledFrame;
     scheduledFrame = null;
@@ -149,8 +190,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     expect(onTextCopyMenu).toHaveBeenCalledWith(
       expect.objectContaining({
         source: { sourceIndex: 1, nodeId: "txt" },
-        svgX: 10,
-        svgY: 20,
+        point: { svgX: 10, svgY: 20 },
         clientX: 10,
         clientY: 20,
         nodeText: "hello",
@@ -191,7 +231,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
 
   it("routes InteractiveBoundSvg declarative conversion errors to errorFallback", () => {
     const renderToSvgAndIR = vi.fn(() => ({
-      svg: '<svg viewBox="0 0 100 100"></svg>',
+      svg: svgForIr(sampleIr()),
       ir: sampleIr(),
     }));
     const engine = makeEngineMock({ renderToSvgAndIR });
@@ -226,7 +266,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
 
     const renderToSvgAndIR = vi.fn(() => ({
-      svg: '<svg viewBox="0 0 100 100"></svg>',
+      svg: svgForIr(sampleIr()),
       ir: sampleIr(),
     }));
     const engine = makeEngineMock({ renderToSvgAndIR });
@@ -249,7 +289,9 @@ describe("useInteractiveSvg DOM lifecycle", () => {
       return (
         <div
           data-surface="stateful"
-          data-hover={result.hoverSource?.nodeId ?? "none"}
+          data-hover={
+            (result.hover.status === "ready" ? result.hover.source?.nodeId : null) ?? "none"
+          }
           ref={result.containerRef}
           dangerouslySetInnerHTML={result.svg ? { __html: result.svg } : undefined}
         />
@@ -269,7 +311,9 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     expect(surface).not.toBeNull();
     await act(async () => {
       surface?.dispatchEvent(new MouseEvent("click", { clientX: 10, clientY: 10 }));
-      surface?.dispatchEvent(new PointerEvent("pointermove", { clientX: 10, clientY: 10 }));
+      surface?.dispatchEvent(
+        new PointerEvent("pointermove", { isPrimary: true, clientX: 10, clientY: 10 }),
+      );
     });
     const frame = scheduledFrame;
     scheduledFrame = null;
@@ -282,7 +326,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     await act(async () => {
       document
         .querySelector('[data-surface="stateful"]')
-        ?.dispatchEvent(new PointerEvent("pointerleave"));
+        ?.dispatchEvent(new PointerEvent("pointerleave", { isPrimary: true }));
     });
 
     expect(renderToSvgAndIR).toHaveBeenCalledTimes(1);
@@ -298,7 +342,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
 
   it("keeps committed handlers when a newer render suspends before commit", async () => {
     const renderToSvgAndIR = vi.fn(() => ({
-      svg: '<svg viewBox="0 0 100 100"></svg>',
+      svg: svgForIr(sampleIr()),
       ir: sampleIr(),
     }));
     const engine = makeEngineMock({ renderToSvgAndIR });
@@ -338,15 +382,17 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     expect(committedSurface).not.toBeNull();
 
     await act(async () => {
-      root.render(
-        <BoundSvgContext.Provider value={createContextValue(engine)}>
-          <Suspense fallback={<div data-fallback="true" />}>
-            <Probe label="abandoned" suspend />
-          </Suspense>
-        </BoundSvgContext.Provider>,
+      startTransition(() =>
+        root.render(
+          <BoundSvgContext.Provider value={createContextValue(engine)}>
+            <Suspense fallback={<div data-fallback="true" />}>
+              <Probe label="abandoned" suspend />
+            </Suspense>
+          </BoundSvgContext.Provider>,
+        ),
       );
     });
-    expect(document.querySelector('[data-fallback="true"]')).not.toBeNull();
+    expect(document.querySelector('[data-fallback="true"]')).toBeNull();
 
     await act(async () => {
       committedSurface?.dispatchEvent(new MouseEvent("click", { clientX: 10, clientY: 10 }));
@@ -360,7 +406,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
 
   it("renders exactly once more when a fresh VNode value changes", async () => {
     const renderToSvgAndIR = vi.fn(() => ({
-      svg: '<svg viewBox="0 0 100 100"></svg>',
+      svg: svgForIr(sampleIr()),
       ir: sampleIr(),
     }));
     const engine = makeEngineMock({ renderToSvgAndIR });
@@ -402,7 +448,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
 
   it("renders exactly once more when a nested render option changes", async () => {
     const renderToSvgAndIR = vi.fn(() => ({
-      svg: '<svg viewBox="0 0 100 100"></svg>',
+      svg: svgForIr(sampleIr()),
       ir: sampleIr(),
     }));
     const engine = makeEngineMock({ renderToSvgAndIR });
@@ -448,7 +494,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
 
   it("moves DOM listeners when the public containerRef is rebound to another node", async () => {
     const renderToSvgAndIR = vi.fn(() => ({
-      svg: '<svg viewBox="0 0 100 100"></svg>',
+      svg: svgForIr(sampleIr()),
       ir: sampleIr(),
     }));
     const engine = makeEngineMock({ renderToSvgAndIR });
@@ -460,13 +506,14 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     const root = createRoot(rootEl);
 
     function Probe({ version }: { version: number }) {
-      const { svg, containerRef } = useInteractiveSvg(vnode, handlers, {
+      const { svg, hover, containerRef } = useInteractiveSvg(vnode, handlers, {
         showPointerCursor: false,
       });
       return (
         <div
           key={version}
           data-surface={String(version)}
+          data-hover-state={hover.status}
           ref={containerRef}
           dangerouslySetInnerHTML={svg ? { __html: svg } : undefined}
         />
@@ -514,7 +561,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
   });
 
   it("reapplies touchAction to the generated inner SVG when SVG markup changes", async () => {
-    let svg = '<svg data-render="one" viewBox="0 0 100 100"></svg>';
+    let svg = svgForIr(sampleIr()).replace("<svg ", '<svg data-render="one" ');
     const renderToSvgAndIR = vi.fn(() => ({
       svg,
       ir: sampleIr(),
@@ -548,7 +595,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     expect(firstSvg).toBeInstanceOf(SVGElement);
     expect((firstSvg as SVGElement).style.touchAction).toBe("none");
 
-    svg = '<svg data-render="two" viewBox="0 0 100 100"></svg>';
+    svg = svgForIr(sampleIr()).replace("<svg ", '<svg data-render="two" ');
     await act(async () => {
       root.render(
         <BoundSvgContext.Provider value={createContextValue(engine)}>
@@ -580,7 +627,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
       },
     };
     const renderToSvgAndIR = vi.fn(() => ({
-      svg: '<svg viewBox="0 0 100 100"></svg>',
+      svg: svgForIr(sampleIr()),
       ir,
     }));
     const engine = makeEngineMock({ renderToSvgAndIR });
@@ -654,7 +701,7 @@ describe("useInteractiveSvg DOM lifecycle", () => {
     };
     const engine = makeEngineMock({
       renderToSvgAndIR: vi.fn(() => ({
-        svg: '<svg viewBox="0 0 100 100"></svg>',
+        svg: svgForIr(sampleIr()),
         ir,
       })),
     });
@@ -722,11 +769,19 @@ describe("useInteractiveSvg DOM lifecycle", () => {
       );
     });
 
-    expect(onPointerCancel).toHaveBeenCalledTimes(1);
-    expect(onPointerCancel).toHaveBeenCalledWith(
-      expect.objectContaining({ nodeId: "txt", nativeEvent: expect.any(PointerEvent) }),
-    );
+    expect(onPointerCancel).toHaveBeenCalledTimes(terminalEventType === "pointercancel" ? 1 : 0);
 
+    await act(async () => {
+      surface?.dispatchEvent(
+        new PointerEvent("pointercancel", {
+          pointerId: 1,
+          pointerType: "touch",
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
+    });
+    expect(onPointerCancel).toHaveBeenCalledTimes(1);
     await act(async () => {
       root.unmount();
     });
@@ -748,7 +803,7 @@ it("coalesces the latest pointer position and discards queued movement after lea
   }
   text.ownership.on = { onPointerMove: "move" };
   const engine = makeEngineMock({
-    renderToSvgAndIR: vi.fn(() => ({ svg: '<svg viewBox="0 0 100 100"></svg>', ir })),
+    renderToSvgAndIR: vi.fn(() => ({ svg: svgForIr(sampleIr()), ir })),
   });
   const onMove = vi.fn();
   const handlers = new Map<string, EventCallback>([["move", onMove]]);
@@ -764,18 +819,28 @@ it("coalesces the latest pointer position and discards queued movement after lea
   });
   const surface = element.querySelector(".latest-move");
   await act(async () => {
-    surface?.dispatchEvent(new PointerEvent("pointermove", { clientX: 10, clientY: 10 }));
-    surface?.dispatchEvent(new PointerEvent("pointermove", { clientX: 80, clientY: 10 }));
+    surface?.dispatchEvent(
+      new PointerEvent("pointermove", { isPrimary: true, clientX: 10, clientY: 10 }),
+    );
+    surface?.dispatchEvent(
+      new PointerEvent("pointermove", { isPrimary: true, clientX: 80, clientY: 10 }),
+    );
   });
   expect(schedule).toHaveBeenCalledTimes(1);
   await act(async () => {
     scheduledFrame?.(0);
   });
   expect(onMove).toHaveBeenCalledTimes(1);
-  expect(onMove).toHaveBeenLastCalledWith(expect.objectContaining({ svgX: 80, svgY: 10 }));
+  expect(onMove).toHaveBeenLastCalledWith(
+    expect.objectContaining({ point: { svgX: 80, svgY: 10 } }),
+  );
   await act(async () => {
-    surface?.dispatchEvent(new PointerEvent("pointermove", { clientX: 30, clientY: 10 }));
-    surface?.dispatchEvent(new PointerEvent("pointerleave", { clientX: 110, clientY: 10 }));
+    surface?.dispatchEvent(
+      new PointerEvent("pointermove", { isPrimary: true, clientX: 30, clientY: 10 }),
+    );
+    surface?.dispatchEvent(
+      new PointerEvent("pointerleave", { isPrimary: true, clientX: 110, clientY: 10 }),
+    );
     scheduledFrame?.(0);
   });
   expect(onMove).toHaveBeenCalledTimes(1);

@@ -1,9 +1,4 @@
-import {
-  bindIRToSvg,
-  type IRDomBinding,
-  resolveHitTarget,
-  translateSvgCoords,
-} from "@boundsvg/browser";
+import { bindIRToSvg, type IRDomBinding, translateSvgCoords } from "@boundsvg/browser";
 import type { IR } from "@boundsvg/core";
 import {
   buildHitTestIndex,
@@ -330,19 +325,18 @@ export function EditorCanvas({
     if (!svg) {
       return null;
     }
-    return translateSvgCoords(svg, event.clientX, event.clientY);
+    const coordinates = translateSvgCoords(svg, event.clientX, event.clientY);
+    return coordinates.status === "ready"
+      ? { x: coordinates.point.svgX, y: coordinates.point.svgY }
+      : null;
   };
 
-  const hitFromEvent = (
-    event: CanvasPointEvent,
-    point: { x: number; y: number },
-  ): string | null => {
+  const hitFromEvent = (point: { x: number; y: number }): string | null => {
     const binding = bindingRef.current;
     if (!interaction || binding?.sourceIndex !== interaction.hitIndex.sourceIndex) {
       return null;
     }
-    const candidates = interaction.hitIndex.queryCandidates(point.x, point.y);
-    return resolveHitTarget(binding, candidates, event.clientX, event.clientY)?.nodeId ?? null;
+    return interaction.hitIndex.queryTopmost(point.x, point.y)?.nodeId ?? null;
   };
 
   const enterTextEdit = (layer: EditorTextLayer, caret?: GlobalCaret) => {
@@ -419,7 +413,7 @@ export function EditorCanvas({
     if (!point) {
       return;
     }
-    const nodeId = hitFromEvent(event, point);
+    const nodeId = hitFromEvent(point);
     const layerId = resolvePointerLayerId(
       nodeId,
       point,
@@ -487,7 +481,7 @@ export function EditorCanvas({
       if (state.canvasMode === "move") {
         const point = pointFromEvent(event);
         if (point) {
-          const nodeId = hitFromEvent(event, point);
+          const nodeId = hitFromEvent(point);
           setHoveredLayerId(resolvePointerLayerId(nodeId, point, undefined, document.layers));
         }
       }
@@ -641,7 +635,7 @@ export function EditorCanvas({
     if (!point) {
       return;
     }
-    const nodeId = hitFromEvent(event, point);
+    const nodeId = hitFromEvent(point);
     const layerId = resolvePointerLayerId(nodeId, point, selectedLayer, document.layers);
     if (layerId && !state.present.selectedLayerIds.includes(layerId)) {
       dispatch({ type: "select", layerId });
@@ -657,7 +651,7 @@ export function EditorCanvas({
     if (!point) {
       return;
     }
-    const nodeId = hitFromEvent(event, point);
+    const nodeId = hitFromEvent(point);
     const layerId = resolveLayerId(nodeId, document.layers);
     const layer =
       document.layers.find((candidate) => candidate.id === layerId) ??

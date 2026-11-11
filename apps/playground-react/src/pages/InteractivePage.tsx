@@ -8,6 +8,7 @@ import {
 } from "@boundsvg/react/interactive";
 import { useBoundSvg } from "@boundsvg/react/provider";
 import Prism from "prismjs";
+import { LIVE_INTERACTION_TEMPLATE } from "./templates/live-interaction";
 import "prismjs/components/prism-markup";
 import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-jsx";
@@ -80,7 +81,7 @@ import { Flex, Box, Text } from "@boundsvg/react";
 
 function Demo() {
   const handle = (info: PointerEventInfo) => {
-    console.log(\`\${info.handlerName} at (\${info.svgX}, \${info.svgY})\`);
+    console.log(\`\${info.handlerName} at (\${info.point?.svgX}, \${info.point?.svgY})\`);
   };
 
   return (
@@ -255,7 +256,9 @@ export function InteractivePage() {
         time: now(),
         event,
         nodeId: info.nodeId,
-        coords: `(${Math.round(info.svgX)}, ${Math.round(info.svgY)})`,
+        coords: info.point
+          ? `(${Math.round(info.point.svgX)}, ${Math.round(info.point.svgY)})`
+          : "unavailable",
       };
       const next = [entry, ...prev];
       if (next.length > MAX_LOG) {
@@ -264,6 +267,17 @@ export function InteractivePage() {
       return next;
     });
   }, []);
+
+  const [liveHover, setLiveHover] = useState<string | null>(null);
+  const liveHandlers = useMemo(
+    () =>
+      new Map([
+        ["live-enter", (info: PointerEventInfo) => addLog("pointerEnter", info)],
+        ["live-leave", (info: PointerEventInfo) => addLog("pointerLeave", info)],
+        ["live-click", (info: PointerEventInfo) => addLog("click", info)],
+      ]),
+    [addLog],
+  );
 
   // Generic handler factory — logs + fires flash effect
   const handleEvent = useCallback(
@@ -548,6 +562,26 @@ export function InteractivePage() {
         </div>
 
         <div className="preview-body">
+          {viewTab === "preview" && LIVE_INTERACTION_TEMPLATE.vnode && (
+            <div data-testid="live-interaction-example">
+              <p>
+                Keep the pointer still over the moving paint or Frame. Hover:{" "}
+                <output>{liveHover ?? "none"}</output>
+              </p>
+              <InteractiveBoundSvg
+                vnode={LIVE_INTERACTION_TEMPLATE.vnode}
+                handlers={liveHandlers}
+                renderMode="animated"
+                renderOptions={{ playback: { mode: "independent" } }}
+                onHoverChange={(source) => setLiveHover(source?.nodeId ?? null)}
+              />
+              <p>
+                Frames include rectangular corners unless a library BoxClip restricts them. External
+                clip, mask, pointer-events, visibility and display changes are outside the Frame
+                guarantee.
+              </p>
+            </div>
+          )}
           {viewTab === "svg" && codeLayout === "tab" ? (
             <div
               className="code-block"

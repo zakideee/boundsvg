@@ -321,6 +321,29 @@ test.describe("mobile sample viewer", () => {
     await expect(eventLog).toContainText("touchEnd");
   });
 
+  test("touch logging keeps the interactive SVG separate from its caller-owned overlay", async ({
+    page,
+  }) => {
+    await page.goto("/#/interactive");
+    const touchCard = page.locator('[data-boundsvg-node-id="card-touch"]').first();
+    await expect(touchCard).toBeVisible({ timeout: 30_000 });
+    const interactive = page.locator(".interactive-canvas");
+    const root = interactive.locator(":scope > svg");
+    await expect(root).toHaveCount(1);
+    const originalRoot = await root.elementHandle();
+    await expect(page.locator(".interactive-stage-content > svg")).toHaveCount(1);
+    await touchCard.tap();
+    await expect(page.locator(".controls-panel")).toContainText("touchStart");
+    await expect(page.locator(".controls-panel")).toContainText("touchEnd");
+    await page.getByRole("button", { name: "Clear", exact: true }).click();
+    await page.locator('[data-boundsvg-node-id="card-ptr"]').first().tap();
+    await expect(page.locator(".controls-panel")).toContainText("pointerDown");
+    await expect(page.locator(".controls-panel")).toContainText("pointerUp");
+    await page.locator('[data-boundsvg-node-id="card-click"]').first().tap();
+    await expect(page.locator(".controls-panel")).toContainText("click");
+    expect(await root.evaluate((element, before) => element === before, originalRoot)).toBe(true);
+  });
+
   test("Controls Editor keeps selection handles usable at phone fit zoom", async ({ page }) => {
     await page.goto("/#/playground");
     const artboard = page.locator(".visual-editor-artboard-content");

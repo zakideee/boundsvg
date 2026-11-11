@@ -1021,9 +1021,11 @@ using CSS gradient strings in scene authoring; the engine resolves them once.
 Returns an `IRSourceRef` for the topmost conservative source candidate at canvas point
 `(x, y)`, or `null`. Path geometry/stroke bounds can extend beyond its layout
 `bbox`. Explicit rectangular and rounded clips exclude invisible portions of
-their owner and descendants in the clip's original coordinates. Candidate
-bounds still contain Path holes or curve whitespace; Browser/React interaction
-checks actual Path fill/stroke for the final target. Supply IR from the matching
+their owner and descendants in the clip's original coordinates. Clip outer boundaries
+(straight or elliptical) and the IR viewport outer boundary are excluded. Frame
+rectangles themselves remain closed, subject to those strict gates. Candidate
+bounds still contain Path holes or curve whitespace. These are snapshot queries;
+Browser/React interaction uses current native paint and semantic Frames independently. Supply IR from the matching
 engine version: missing canonical `pathGeometry` raises `FatalError` with code
 `VALIDATION`. Regenerate older IR from the scene rather than substituting layout
 bounds. Prepare repeated queries with `buildHitTestIndex(ir)` or
@@ -1675,6 +1677,65 @@ origins even when they have no primary text themselves. `TextMap.sourceIndex`
 is the ancestry authority; the old duplicated `parentMap` is removed.
 
 See [Choosing an API](/reference/api-selection) for bbox semantics, animation sampling, and cost.
+
+### Current Frame geometry and coordinates
+
+`SvgPoint` is the shared finite `{svgX, svgY}` type used by callbacks and matching
+TextMap/caret consumers. `resolveInteractionTarget(index, hitSource)` selects the
+outermost handler-bearing no-primary ancestor, or the hit itself; foreign/stale
+refs raise structured VALIDATION.
+
+`applyInverseAffineMatrixToPoint(matrix, point)` returns ready/degenerate/unavailable.
+It directly projects a finite point without materializing an inverse. Zero columns
+are distinct from unresolved determinant or nonfinite derived results.
+`isSemanticFrame(sourceInfo)` identifies a canonical source Group with no primary
+geometry and at least one handler reference. Eligibility is independent of area,
+current pose and the current callback Map.
+
+`HitPose`, `HitClip`, `HitContainmentResult`, `queryFrameContainment` and
+`isSemanticFrame` are new exports from `@boundsvg/core/scene`; they were not
+public interfaces in earlier releases. The checked
+`applyInverseAffineMatrixToPoint` function, its affine projection types and
+`SvgPoint` are also new scene exports.
+
+`isPointInViewport(dimensions, point)` tests the strict interior of the IR viewport.
+Pass `{ width, height }` and `{ x, y }` in IR root px. Dimensions are required,
+finite and nonnegative; noncanonical dimensions throw `FatalError` (`VALIDATION`)
+when queried, and zero dimensions are empty. The caller guarantees a finite
+point; this pure function does not validate the point again.
+
+```ts
+import { isPointInViewport } from "@boundsvg/core/scene";
+const isInsideViewport = isPointInViewport(ir, { x: 0.25, y: 20 });
+```
+
+The same predicate gates `engine.hitTest`, `hitTest`, `buildHitTestIndex` and
+`buildInspectHitTestIndex` queries once per query. Their boundary selections
+change: neither viewport nor canonical clip outer boundaries are candidates,
+including previously selectable snapshot paint on those boundaries. This does
+not change SVG or raster output. Floating transforms are compared as supplied;
+a tiny rounded overlap is not snapped into an ideal shared boundary.
+
+`queryFrameContainment(bbox, pose, clips, clientPoint)` returns ready.contains or
+unavailable. A `HitPose` has a required `matrix` and `linearWitnesses` array; a
+`HitClip` has `parent`, `pose` and canonical `geometry`. Witnesses are linear
+evidence, never transforms composed into the main position. Snapshot callers pass
+their IR matrix with `linearWitnesses: []`.
+
+Despite the parameter name `clientPoint`, the point uses the same query
+coordinate system as every supplied pose: Browser calls use client CSS px;
+snapshot calls use IR root px. The caller must supply finite `x` and `y`.
+The pure function does not revalidate the point; geometry, poses and clips are
+the checked inputs. Do not pass an unchecked client event directly to this Core
+boundary; the Browser coordinate/query APIs validate their own client inputs.
+
+All required coefficients, bbox endpoints and clips must be valid first. Then
+proven emptiness (zero area, an empty clip, a finite zero column or computed
+exclusion) takes priority over another constraint's unresolved/overflowed
+calculation. Without an empty proof, calculation failure remains unavailable.
+Frame, inner clip and ancestor order only determines which failure is reported.
+These pure functions read no DOM or clock and do not interpret external CSS or
+native paint.
 
 ## `@boundsvg/core/vnode`
 

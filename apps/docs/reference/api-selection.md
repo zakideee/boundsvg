@@ -41,16 +41,27 @@ Path hit-test candidates use Rust-derived conservative geometry/stroke bounds
 separate from the layout box. Explicit rectangular and rounded clips are tested
 in their original coordinates for their owner and descendants, including nested
 and transformed clips. `hitTest`, prepared `queryTopmost`, and candidate enumeration
-use the same rules. Generic spatial indexes and inspection selection use source primary geometry, or the source frame when no primary exists. Generic spatial indexes retain their caller-inserted box semantics.
+exclude canonical clip and IR viewport outer boundaries. This also changes
+snapshot paint selections on those boundaries. Frame rectangles themselves stay
+closed; floating transform overlap is not snapped away. Generic spatial indexes and inspection selection use source primary geometry, or the source frame when no primary exists. Generic spatial indexes retain their caller-inserted box semantics.
 
-Core returns candidates rather than exact painted ink: a curved Path's bounds
-can contain empty space, and text/shadows are not pixel-accurate. Browser event
-helpers and React interaction check painted Path fill/stroke before selecting
-the final target. React also accounts for native canvas-stable stroke paint at
-the current pointer under SVG viewport scaling. Core candidates assume output
-scale one for canvas-stable strokes. A Browser-only adapter using those
-candidates cannot recover additional stroke paint introduced by host CSS
-scaling; use React interaction for that native hit-stack handling.
+Core returns sampled candidates rather than exact painted ink: a curved Path's
+bounds can contain empty space, and text/shadows are not pixel-accurate.
+For a mounted SVG, use `queryCurrentSvgHit` from `@boundsvg/browser/events` or
+`useInteractiveSvg` from `@boundsvg/react/interactive`. Both use current native
+paint and the same semantic Frame rules. Path, Rect, Image, text and opaque SVG
+paint follow the native scope/stack, including viewport scaling and native clips.
+A no-primary source with handler references supplies a closed rectangular Frame,
+checked with its endpoint's current CTM, strict library BoxClip interiors and
+the strict IR viewport interior. Native paint does not use the Frame viewport
+gate; valid ancestor callbacks remain possible on native paint. External clip/mask,
+SMIL clip shape, pointer-events, visibility and display changes are outside the
+Frame guarantee; native paint keeps native behavior. See the
+[Browser interaction contract](../api/browser#dom-hit-testing-and-source-ownership).
+
+Current queries preserve invalid/unavailable states separately from a successful
+`hit: null`. They do not union native misses with sampled bbox candidates. Keep
+Core snapshot hit testing for inspection and explicit-time analysis.
 
 Use IR produced by the matching engine version. Schema-34 Path output requires
 `pathGeometry`; older hand-built or saved IR must be regenerated with

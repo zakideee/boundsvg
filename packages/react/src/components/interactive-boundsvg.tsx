@@ -1,5 +1,5 @@
 import type { IR, RenderAnimatedSvgOptions, RenderSvgOptions, VNode } from "@boundsvg/core";
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   type TextContextMenuHit,
   type UseInteractiveSvgOptions,
@@ -15,6 +15,7 @@ const ERROR_FONT_SIZE_PX = 12;
 
 /** Scene input, event callbacks, and loading/error presentation shared across render modes. */
 type InteractiveBoundSvgBaseProps = {
+  // Scene input
   /** VNode tree to render (explicit mode) */
   vnode?: VNode | null;
   /**
@@ -30,14 +31,16 @@ type InteractiveBoundSvgBaseProps = {
   background?: string;
   /** Declarative children — boundsvg phantom components with function handlers */
   children?: ReactNode;
+  // Interaction and presentation
   /** CSS class name for the wrapper div */
   className?: string;
   /** Whether to show pointer cursor on interactive elements (default: true) */
   showPointerCursor?: boolean;
-  /** Callback when hover state changes */
+  /** Notify committed logical-target changes; canonical ref replacement and pending do not emit it. */
   onHoverChange?: (source: import("@boundsvg/core/scene").IRSourceRef | null) => void;
   /** Callback when rendering completes, providing the IR for advanced consumers */
   onRender?: (ir: IR) => void;
+  // Text actions
   /**
    * Enable text copy feature. When true, right-clicking on a text node
    * (without a user-defined onContextMenu handler) fires `onTextCopyMenu`.
@@ -48,6 +51,7 @@ type InteractiveBoundSvgBaseProps = {
    * The consumer is responsible for rendering their own context menu UI.
    */
   onTextCopyMenu?: (info: TextCopyMenuInfo) => void;
+  // Loading and errors
   /** Fallback UI shown while engine is loading */
   fallback?: ReactNode;
   /** Fallback UI shown when rendering fails */
@@ -114,49 +118,26 @@ export function InteractiveBoundSvg({
     }
   }, [vnode, explicitHandlers, width, height, background, children]);
 
-  // Text copy hook — always called (hooks cannot be conditional)
-  const textCopyRef = useRef<ReturnType<typeof useTextCopy> | null>(null);
-  const onTextCopyMenuRef = useRef(onTextCopyMenu);
-  useLayoutEffect(() => {
-    onTextCopyMenuRef.current = onTextCopyMenu;
-  }, [onTextCopyMenu]);
+  const options: UseInteractiveSvgOptions =
+    renderMode === "animated"
+      ? {
+          renderMode,
+          renderOptions: renderOptions as RenderAnimatedSvgOptions,
+          showPointerCursor,
+          onHoverChange,
+          enableTextCopy,
+          onTextContextMenu: handleTextContextMenu,
+        }
+      : {
+          renderMode,
+          renderOptions: renderOptions as RenderSvgOptions | undefined,
+          showPointerCursor,
+          onHoverChange,
+          enableTextCopy,
+          onTextContextMenu: handleTextContextMenu,
+        };
 
-  // Bridge: hook's onTextContextMenu → build menu info → fire onTextCopyMenu
-  const handleTextContextMenu = useCallback((hit: TextContextMenuHit) => {
-    if (!onTextCopyMenuRef.current || !textCopyRef.current) {
-      return;
-    }
-    const menuInfo = textCopyRef.current.buildMenuInfo({
-      source: hit.source,
-      svgX: hit.svgX,
-      svgY: hit.svgY,
-      clientX: hit.clientX,
-      clientY: hit.clientY,
-    });
-    onTextCopyMenuRef.current(menuInfo);
-  }, []);
-
-  const options: UseInteractiveSvgOptions = useMemo(
-    () =>
-      renderMode === "animated"
-        ? {
-            renderMode,
-            renderOptions: renderOptions as RenderAnimatedSvgOptions,
-            showPointerCursor,
-            enableTextCopy,
-            onTextContextMenu: handleTextContextMenu,
-          }
-        : {
-            renderMode,
-            renderOptions: renderOptions as RenderSvgOptions | undefined,
-            showPointerCursor,
-            enableTextCopy,
-            onTextContextMenu: handleTextContextMenu,
-          },
-    [renderMode, renderOptions, showPointerCursor, enableTextCopy, handleTextContextMenu],
-  );
-
-  const { svg, ir, textMap, error, isReady, hoverSource, containerRef } = useInteractiveSvg(
+  const { svg, ir, textMap, error, isReady, containerRef } = useInteractiveSvg(
     resolved.vnode,
     resolved.handlers,
     options,
@@ -166,9 +147,11 @@ export function InteractiveBoundSvg({
   const svgMarkup = useMemo(() => ({ __html: svg ?? "" }), [svg]);
 
   const textCopy = useTextCopy(textMap);
-  useLayoutEffect(() => {
-    textCopyRef.current = textCopy;
-  }, [textCopy]);
+
+  // The controller retains this render's callback and matching TextMap across reentrant commits.
+  function handleTextContextMenu(hit: TextContextMenuHit): void {
+    onTextCopyMenu?.(textCopy.buildMenuInfo(hit));
+  }
 
   // Fire onRender callback when IR changes
   const onRenderRef = useRef(onRender);
@@ -180,16 +163,6 @@ export function InteractiveBoundSvg({
       onRenderRef.current(ir);
     }
   }, [ir]);
-
-  // Fire onHoverChange callback when hover changes
-  const prevHoverRef = useRef<import("@boundsvg/core/scene").IRSourceRef | null>(null);
-  useEffect(() => {
-    if (!onHoverChange || hoverSource === prevHoverRef.current) {
-      return;
-    }
-    prevHoverRef.current = hoverSource;
-    onHoverChange(hoverSource);
-  }, [hoverSource, onHoverChange]);
 
   // Error state
   if (resolved.error != null || error != null) {

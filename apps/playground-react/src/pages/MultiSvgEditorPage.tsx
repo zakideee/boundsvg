@@ -694,7 +694,10 @@ function CompositionPanelInner() {
       new Map(
         EDITOR_ASSET_IDS.map((assetId) => [
           handlerIds[assetId],
-          (info: { nativeEvent: PointerEvent | MouseEvent | TouchEvent }) => {
+          (info: Parameters<EventCallback>[0]) => {
+            if (info.cause !== "input") {
+              return;
+            }
             setSelectedAssetId(assetId);
             const evt = info.nativeEvent;
             if ("clientX" in evt) {
@@ -712,7 +715,7 @@ function CompositionPanelInner() {
     [handlerIds, placements, renderCache, selectedAssetId],
   );
 
-  const { svg, ir, error, hoverSource, isReady, containerRef } = useInteractiveSvg(vnode, handlers);
+  const { svg, ir, error, hover, isReady, containerRef } = useInteractiveSvg(vnode, handlers);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -976,7 +979,7 @@ function CompositionPanelInner() {
         codeLayout={codeLayout}
         highlightedRenderedSvg={highlightedRenderedSvg}
         selectedAssetId={selectedAssetId}
-        hoverNodeId={hoverSource?.nodeId ?? null}
+        hoverNodeId={hover.status === "ready" ? (hover.source?.nodeId ?? null) : null}
         isDragging={isDragging}
         error={error}
         isReady={isReady}

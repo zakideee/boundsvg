@@ -9,7 +9,7 @@
  * - `useSvgInspectFromData` — for Worker pages (accepts pre-computed SVG + IR)
  */
 
-import { bindIRToSvg, resolveHitTarget, translateSvgCoords } from "@boundsvg/browser";
+import { translateSvgCoords } from "@boundsvg/browser";
 import {
   buildInspectHitTestIndex,
   buildIRSourceIndex,
@@ -39,17 +39,12 @@ import { buildNodeLineMap, type NodeLineRange } from "../../../playground-shared
 
 function createHitTester(ir: IR): InspectHitTestFn {
   const index = buildInspectHitTestIndex(ir);
-  let binding: ReturnType<typeof bindIRToSvg> | null = null;
   return (svgEl, clientX, clientY) => {
     const coords = translateSvgCoords(svgEl, clientX, clientY);
-    if (!coords) {
-      return null;
+    if (coords.status !== "ready") {
+      return coords;
     }
-    const candidates = index.queryCandidates(coords.x, coords.y);
-    if (binding?.root !== svgEl) {
-      binding = bindIRToSvg(svgEl, index.sourceIndex);
-    }
-    return resolveHitTarget(binding, candidates, clientX, clientY);
+    return { ...coords, hit: index.queryTopmost(coords.point.svgX, coords.point.svgY) };
   };
 }
 

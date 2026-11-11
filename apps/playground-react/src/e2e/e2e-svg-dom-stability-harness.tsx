@@ -70,7 +70,7 @@ function DisplayFixture({ initial }: { initial: DisplayState }) {
       handlers.set(`${nodeId}-${eventName}`, (event) => {
         deliveries.push({
           nodeId: event.nodeId,
-          type: event.nativeEvent.type,
+          type: event.cause === "input" ? event.nativeEvent.type : "scene",
           generation: state.callbackGeneration,
           at: performance.now(),
         });

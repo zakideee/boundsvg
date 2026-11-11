@@ -56,7 +56,7 @@ export const PRESET_GROUPS: PresetGroupDef[] = [
   {
     key: "interaction",
     label: "Interaction",
-    presetKeys: ["mouse"],
+    presetKeys: ["mouse", "live-interaction"],
   },
   {
     key: "text-motion",

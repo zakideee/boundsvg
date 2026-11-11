@@ -404,33 +404,77 @@ inside `result`.
 
 <sub>`@boundsvg/react/interactive`</sub>
 
-Render a VNode tree with interactive event handling (hitTest, hover, click).
+Render a VNode tree with current SVG paint/Frame interaction. Path, Rect,
+Image, parts, Text and opaque Svg paint follow native hits. Handler-bearing
+no-primary Frames use closed IR rectangles and library BoxClips with live
+endpoint poses. Frame corners and positive-size empty Text Frames are included
+subject to the strict interiors of canonical BoxClips and the IR viewport.
+Clip/viewport outer boundaries exclude Frame candidates; native paint keeps its
+browser behavior and can still reach an ancestor handler.
+External clip/mask/SMIL shape, pointer-events, visibility and display mutations
+are not promised for semantic Frames. See [Browser interaction](/api/browser#dom-hit-testing-and-source-ownership)
+for ranking, supported geometry and failure states.
 
-Visible Path fill/stroke outside its layout box can receive events. Explicit
-rectangular and rounded ancestor clips exclude their owner and descendants
-outside the clip; Path holes fall through to a node underneath. The native
-current-pointer hit stack also covers canvas-stable strokes under SVG viewport
-scaling, including pointer capture. Generic text/image hit testing remains
-based on positioned bounds. Use static rendering or an explicit `timeMs` for
-matching sampled paint and hit geometry; live SVG playback does not update the
-Core hit index at every animation instant.
-Pointer movement is coalesced to the latest position once per animation frame.
-Leaving or canceling the pointer, or replacing its container, clears queued movement.
-
-```ts
-const { svg, ir, error, isReady, hoverSource, containerRef } =
-  useInteractiveSvg(vnode, handlers, options?);
+```tsx
+const { svg, ir, error, isReady, hover, containerRef } = useInteractiveSvg(
+  vnode,
+  handlers,
+  options,
+);
+const markup = useMemo(() => ({ __html: svg ?? "" }), [svg]);
+return <div ref={containerRef} dangerouslySetInnerHTML={markup} />;
 ```
 
-| Return         | Type                                     | Description                                       |
-| -------------- | ---------------------------------------- | ------------------------------------------------- |
-| `svg`          | `string \| null`                         | Rendered SVG string                               |
-| `ir`           | `IR \| null`                             | Full IR for advanced consumers                    |
-| `error`        | `Error \| null`                          | Rendering error                                   |
-| `isReady`      | `boolean`                                | Whether rendering succeeded                       |
-| `hoverSource`  | `IRSourceRef \| null`                    | Current snapshot-local source reference           |
-| `containerRef` | `(node: HTMLDivElement \| null) => void` | Ref callback for container div                    |
-| `textMap`      | `TextMap \| null`                        | Text structure map used by the text-copy features |
+Memoize the markup object to retain the same DOM and native animation clock
+when the SVG bytes are unchanged. The hook follows the actual container ref and
+rebinding at commit; it does not measure DOM during React render.
+
+The attached container must contain exactly one outer SVG, meaning an SVG whose
+`ownerSVGElement` is `null`. It can sit inside HTML wrappers within the container;
+SVG elements nested inside that outer SVG are not additional roots. Earlier
+versions bound the first matching SVG. With no outer SVG or multiple outer SVGs,
+`hover` becomes `{ status: "invalid", reason: "bindingMismatch" }` and no input
+callbacks are delivered from that binding. Render a single matching SVG before expecting input
+callbacks; `isReady` alone reports render success, not binding success.
+
+| Return         | Type                                     | Description                                |
+| -------------- | ---------------------------------------- | ------------------------------------------ |
+| `svg`          | `string \| null`                         | Rendered SVG                               |
+| `ir`           | `IR \| null`                             | Matching IR                                |
+| `error`        | `Error \| null`                          | Render failure                             |
+| `isReady`      | `boolean`                                | Rendering succeeded                        |
+| `hover`        | `SvgHoverState`                          | inactive/pending/ready/invalid/unavailable |
+| `containerRef` | `(node: HTMLDivElement \| null) => void` | Actual node lifetime attachment            |
+| `textMap`      | `TextMap \| null`                        | Matching snapshot text projection          |
+
+Narrow `hover.status === "ready"` before reading `hover.source`. Pending belongs
+to an uncommitted IR and must not be fed back as a successful null hit. Options
+`onHoverChange` is the single committed logical-target notification sink; the
+component prop uses that same sink. Structural continuation updates canonical
+refs without repeating enter/leave or onHoverChange. Notification refs belong
+to that notification snapshot; use the current render hover for current refs.
+
+Callbacks receive source/handlerName/nodeId, `point: SvgPoint|null`,
+`pointerId: number|null`, and a cause union. `cause: "input"` has a real
+PointerEvent or MouseEvent; `cause: "scene"` has `nativeEvent: null`.
+When `point` is nonnull it contains `svgX`/`svgY`; the unused TouchEvent union and
+`hoverSource` field are removed. Scene reevaluation does not fabricate moves.
+
+Pointermove is coalesced; discrete input flushes the pending move first.
+Animated known/visible/connected scenes reevaluate while stationary, including
+pause/finish. Static idle schedules no periodic RAF. Container replacement or
+dispose closes its resources. Blur/hidden loses position and freezes logical
+hover until new eligible input; lost capture does not cancel a gesture.
+
+Text-copy menu hits and `buildMenuInfo` take `point: SvgPoint|null`. Node,
+ancestor and whole-text copy remain available when line selection lacks a
+matching point. IR-authored Text/unit tracks or animated physical ancestors make
+the automatic line point null. Static labels in an otherwise animated scene
+retain line copy. This eligibility check reads IR-authored tracks; external CSS
+motion of Text or its ancestors does not resample the TextMap or guarantee
+current line selection. The native Text witness must belong to the selected
+paint or an ancestor Frame. Sharing an outer target with a separate foreground
+Frame does not expose the lower Text menu.
 
 ## Components
 
@@ -923,7 +967,10 @@ export type {
 
 Debug selection uses physical `nodeIndex` values from the matching inspection snapshot. Interaction and text-copy callbacks carry source references; use their `nodeId` only as an application label. Rebuild bindings and clear selected references when replacing the IR.
 
-Text copy methods resolve source refs against the current `TextMap.sourceIndex`.
-After an IR/index replacement, old node/line/ancestor refs return `null` and
+Text copy methods resolve source refs against the `TextMap.sourceIndex` supplied
+for that render. A retained menu builder keeps that snapshot; the automatic menu
+also retains its input-start callback and matching map across a synchronous render
+inside an enter callback.
+With the new render's methods after an IR/index replacement, old node/line/ancestor refs return `null` and
 copy methods return `false` without writing the clipboard. Reusing the same
 ordinal or node label does not make an old ref current.

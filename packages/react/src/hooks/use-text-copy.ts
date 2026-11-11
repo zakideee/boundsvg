@@ -1,4 +1,4 @@
-import type { IRSourceRef } from "@boundsvg/core/scene";
+import type { IRSourceRef, SvgPoint } from "@boundsvg/core/scene";
 import {
   findLineAtPoint,
   getAllText,
@@ -21,8 +21,7 @@ export type CopyStatus = "idle" | "copied" | "failed";
 /** Information passed to onTextCopyMenu callback */
 export type TextCopyMenuInfo = {
   source: IRSourceRef;
-  svgX: number;
-  svgY: number;
+  point: SvgPoint | null;
   clientX: number;
   clientY: number;
   /** Text of the hit node */
@@ -37,14 +36,12 @@ export type TextCopyMenuInfo = {
   copyToClipboard: (text: string) => Promise<boolean>;
 };
 
-/** Coordinate pair for line-level queries */
-export type SvgPoint = { svgX: number; svgY: number };
+export type { SvgPoint } from "@boundsvg/core/scene";
 
 /** Parameters for buildMenuInfo */
 export type BuildMenuInfoParams = {
   source: IRSourceRef;
-  svgX: number;
-  svgY: number;
+  point: SvgPoint | null;
   clientX: number;
   clientY: number;
 };
@@ -106,17 +103,12 @@ async function writeClipboard(text: string): Promise<boolean> {
 // Hook
 // ---------------------------------------------------------------------------
 
-/** Copy primary text from the current snapshot and report asynchronous clipboard status. */
+/** Bind text actions to one snapshot and report asynchronous clipboard status. */
 export function useTextCopy(textMap: TextMap | null): UseTextCopyResult {
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const statusTimerRef = useRef<ReturnType<typeof setTimeout>>(0 as never);
   const mountedRef = useRef(false);
   const requestGenerationRef = useRef(0);
-
-  const textMapRef = useRef(textMap);
-  useLayoutEffect(() => {
-    textMapRef.current = textMap;
-  }, [textMap]);
 
   useLayoutEffect(() => {
     mountedRef.current = true;
@@ -143,34 +135,23 @@ export function useTextCopy(textMap: TextMap | null): UseTextCopyResult {
     return ok;
   }, []);
 
-  const resolveNodeText = useCallback((source: IRSourceRef): string | null => {
-    if (!textMapRef.current) {
-      return null;
-    }
-    return getNodeText(textMapRef.current, source);
-  }, []);
+  const resolveNodeText = useCallback(
+    (source: IRSourceRef): string | null => (textMap ? getNodeText(textMap, source) : null),
+    [textMap],
+  );
 
-  const resolveLineText = useCallback((source: IRSourceRef, point: SvgPoint): string | null => {
-    if (!textMapRef.current) {
-      return null;
-    }
-    const line = findLineAtPoint(textMapRef.current, source, point);
-    return line?.text ?? null;
-  }, []);
+  const resolveLineText = useCallback(
+    (source: IRSourceRef, point: SvgPoint): string | null =>
+      textMap ? (findLineAtPoint(textMap, source, point)?.text ?? null) : null,
+    [textMap],
+  );
 
-  const resolveAncestorText = useCallback((source: IRSourceRef): string | null => {
-    if (!textMapRef.current) {
-      return null;
-    }
-    return getAncestorText(textMapRef.current, source);
-  }, []);
+  const resolveAncestorText = useCallback(
+    (source: IRSourceRef): string | null => (textMap ? getAncestorText(textMap, source) : null),
+    [textMap],
+  );
 
-  const resolveAllText = useCallback((): string => {
-    if (!textMapRef.current) {
-      return "";
-    }
-    return getAllText(textMapRef.current);
-  }, []);
+  const resolveAllText = useCallback((): string => (textMap ? getAllText(textMap) : ""), [textMap]);
 
   const copyNodeText = useCallback(
     async (source: IRSourceRef): Promise<boolean> => {
@@ -216,12 +197,11 @@ export function useTextCopy(textMap: TextMap | null): UseTextCopyResult {
   const buildMenuInfo = useCallback(
     (params: BuildMenuInfoParams): TextCopyMenuInfo => ({
       source: params.source,
-      svgX: params.svgX,
-      svgY: params.svgY,
+      point: params.point,
       clientX: params.clientX,
       clientY: params.clientY,
       nodeText: resolveNodeText(params.source),
-      lineText: resolveLineText(params.source, { svgX: params.svgX, svgY: params.svgY }),
+      lineText: params.point ? resolveLineText(params.source, params.point) : null,
       ancestorText: resolveAncestorText(params.source),
       allText: resolveAllText(),
       copyToClipboard,

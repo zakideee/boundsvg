@@ -7,16 +7,15 @@ import { presets } from "./presets/index";
 import { coreState, resolveDebugOverlayConfig } from "./state";
 import type { DragTarget, HitResult } from "./types";
 
-function getSvgPoint(svgEl: Element, e: PointerEvent): { x: number; y: number } {
+function getSvgPoint(svgEl: Element, e: PointerEvent): { x: number; y: number } | null {
   const svg = svgEl.querySelector("svg") ?? svgEl;
   if (svg instanceof SVGSVGElement) {
     const result = translateSvgCoords(svg, e.clientX, e.clientY);
-    if (result) {
-      return result;
+    if (result.status === "ready") {
+      return { x: result.point.svgX, y: result.point.svgY };
     }
   }
-  const rect = svgEl.getBoundingClientRect();
-  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  return null;
 }
 
 function hitCircle(
@@ -94,6 +93,7 @@ function applyDrag(target: DragTarget, x: number, y: number): void {
   }
 }
 
+/** Attach flow dragging; unavailable current coordinates leave the authored flow unchanged. */
 export function setupFlowDrag(
   container: HTMLElement,
   presetKey: string,
@@ -132,6 +132,9 @@ export function setupFlowDrag(
 
   const onDown = (e: PointerEvent): void => {
     const pt = getSvgPoint(container, e);
+    if (!pt) {
+      return;
+    }
     const hit = hitTestObstacle(pt.x, pt.y, presetKey);
     if (hit) {
       dragTarget = { preset: presetKey, ...hit };
@@ -144,6 +147,9 @@ export function setupFlowDrag(
   const onMove = (e: PointerEvent): void => {
     if (!dragTarget) {
       const pt = getSvgPoint(container, e);
+      if (!pt) {
+        return;
+      }
       const hit = hitTestObstacle(pt.x, pt.y, presetKey);
       container.style.cursor = hit ? "grab" : "";
       return;

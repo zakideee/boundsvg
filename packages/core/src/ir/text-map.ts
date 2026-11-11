@@ -1,5 +1,6 @@
 import type { BBox } from "../text/types.js";
 import type { IRSourceIndex, IRSourceInfo, IRSourceRef } from "./source-index.js";
+import type { SvgPoint } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -168,7 +169,7 @@ function scanLineByMidpoint(options: {
 export function findLineAtPoint(
   textMap: TextMap,
   source: IRSourceRef,
-  point: { svgX: number; svgY: number },
+  point: SvgPoint,
 ): LineEntry | null {
   const entry = resolveCurrentSource(textMap, source)
     ? textMap.nodes.get(source.sourceIndex)

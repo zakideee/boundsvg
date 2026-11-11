@@ -123,11 +123,14 @@ function buildBubbleFlowCanvas(engine?: Engine): VNode {
   return Canvas({ width: CANVAS_W, height: CANVAS_H, background: "#1a1a1a" }, ...children);
 }
 
+/** Demonstrates text-flow exclusions derived from the same geometry used to draw a speech bubble. */
 export const bubbleFlowPreset: Preset = {
   title: "Bubble Flow",
   description:
     "A speech bubble (CALLOUT_GEOMETRY) drawn as a Shape while geometryToFlowExclusion derives the text exclusion from the same GeometryDoc. The body includes an intentional missing-glyph tofu marker for 硯.",
-  source: `import { Canvas, Shape, Text, geometryToFlowExclusion } from "@boundsvg/core";
+  source: `import { Canvas, Shape, Text, geometryToFlowExclusion, type GeometryDoc } from "@boundsvg/core";
+
+const CALLOUT_GEOMETRY = ${JSON.stringify(CALLOUT_GEOMETRY, null, 2)} satisfies GeometryDoc;
 
 // The SAME GeometryDoc renders the bubble and excludes the body text.
 const bubble = { x: 560, y: 96, width: 260, height: 156 };

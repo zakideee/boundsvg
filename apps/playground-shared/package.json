@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@boundsvg/browser": "workspace:*",
     "@boundsvg/core": "workspace:*",
     "prismjs": "^1.30.0"
   },

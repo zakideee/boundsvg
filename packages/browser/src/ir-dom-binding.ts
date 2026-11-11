@@ -1,18 +1,19 @@
-import type {
-  IRHitIndex,
-  IRNodeOccurrence,
-  IRSourceIndex,
-  IRSourceRef,
+import {
+  type IRNodeOccurrence,
+  type IRSourceIndex,
+  type IRSourceRef,
+  isSemanticFrame,
 } from "@boundsvg/core/scene";
 
 /** Scoped correspondence between one emitted SVG document and its exact IR snapshot. */
-export type IRDomBinding = {
+export type IRDomBinding = Readonly<{
   sourceIndex: IRSourceIndex;
   root: SVGSVGElement;
+  readonly isComplete: boolean;
   occurrenceForElement: (target: Element) => IRNodeOccurrence | null;
   elementForNode: (nodeIndex: number) => Element | null;
   sourceForElement: (target: Element) => IRSourceRef | null;
-};
+}>;
 
 /** Decode an untrusted DOM ordinal without rounding, clamping or alternate spellings. */
 function readIndex(value: string | null, size: number): number | null {
@@ -120,9 +121,10 @@ export function bindIRToSvg(root: SVGSVGElement, sourceIndex: IRSourceIndex): IR
     }
     return null;
   }
-  return {
+  const binding: IRDomBinding = {
     root,
     sourceIndex,
+    isComplete,
     occurrenceForElement,
     elementForNode(nodeIndex) {
       return isComplete ? (endpoints.get(nodeIndex) ?? null) : null;
@@ -131,41 +133,45 @@ export function bindIRToSvg(root: SVGSVGElement, sourceIndex: IRSourceIndex): IR
       return occurrenceForElement(target)?.source ?? null;
     },
   };
+  frameBindings.set(binding, prepareFrames(sourceIndex));
+  return binding;
 }
 
-/** Read native Path hits in the same scope, retaining the prepared canvas/clip gates. */
-export function nativePathCandidates(
-  binding: IRDomBinding,
-  index: IRHitIndex,
-  point: { clientX: number; clientY: number; x: number; y: number },
-): ReturnType<IRHitIndex["queryCandidates"]> {
-  if (index.sourceIndex !== binding.sourceIndex) {
-    return [];
-  }
-  const rootNode = binding.root.getRootNode() as Document | ShadowRoot;
-  const hitRoot =
-    typeof rootNode.elementsFromPoint === "function" ? rootNode : binding.root.ownerDocument;
-  if (typeof hitRoot.elementsFromPoint !== "function") {
-    return [];
-  }
-  const candidates: ReturnType<IRHitIndex["queryCandidates"]> = [];
-  for (const element of hitRoot.elementsFromPoint(point.clientX, point.clientY)) {
-    const occurrence = binding.occurrenceForElement(element);
-    if (!occurrence || occurrence.node.type !== "path") {
+/** One semantic Frame and its physical ancestor clip endpoints, prepared per binding. */
+type BoundFrame = Readonly<{
+  occurrence: IRNodeOccurrence;
+  clipOwners: readonly IRNodeOccurrence[];
+}>;
+
+/** Binding-lifetime IR links; current matrices and query results are never retained here. */
+const frameBindings = new WeakMap<IRDomBinding, readonly BoundFrame[]>();
+
+function prepareFrames(index: IRSourceIndex): readonly BoundFrame[] {
+  const frames: BoundFrame[] = [];
+  for (const info of index.sources.values()) {
+    if (!isSemanticFrame(info)) {
       continue;
     }
-    const endpoint = binding.elementForNode(occurrence.nodeIndex);
-    // Path paint is the direct child of its emitted viewport, never embedded markup.
-    if (element.localName !== "path" || element.parentElement !== endpoint) {
+    const occurrence = index.nodes.get(info.source.sourceIndex);
+    if (!occurrence) {
       continue;
     }
-    const candidate = index.pathCandidateForSource(occurrence.source.sourceIndex, point.x, point.y);
-    if (
-      candidate &&
-      !candidates.some((entry) => entry.source.sourceIndex === candidate.source.sourceIndex)
-    ) {
-      candidates.push(candidate);
+    const clipOwners: IRNodeOccurrence[] = [];
+    let ancestor: IRNodeOccurrence | undefined = occurrence;
+    while (ancestor) {
+      if (ancestor.node.type === "group" && ancestor.node.clip) {
+        clipOwners.push(ancestor);
+      }
+      ancestor =
+        ancestor.parentNodeIndex === null ? undefined : index.nodes.get(ancestor.parentNodeIndex);
     }
+    // Stack outer owners first so the resulting HitClip head is the innermost clip.
+    frames.push({ occurrence, clipOwners: clipOwners.reverse() });
   }
-  return candidates;
+  return frames.sort((left, right) => right.occurrence.leaveOrder - left.occurrence.leaveOrder);
+}
+
+/** Internal current-query projection owned by the binding lifetime. */
+export function getBoundFrames(binding: IRDomBinding): readonly BoundFrame[] | null {
+  return frameBindings.get(binding) ?? null;
 }
