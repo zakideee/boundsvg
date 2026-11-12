@@ -1,5 +1,12 @@
 # @boundsvg/cli
 
+## 0.11.0
+
+### Patch Changes
+
+- Updated dependencies [[`e815fe6`](https://github.com/zakideee/boundsvg/commit/e815fe640e19746184cd073f0c3500216a6b924c), [`1104db4`](https://github.com/zakideee/boundsvg/commit/1104db4ec067d3df6d7b71d1604136e2a0027b00), [`a81b30e`](https://github.com/zakideee/boundsvg/commit/a81b30e8858daf09d9d281dab88c6e3eba424f06)]:
+  - @boundsvg/core@0.11.0
+
 ## 0.10.0
 
 ### Minor Changes
